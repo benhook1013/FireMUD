@@ -40,6 +40,8 @@ import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.AccountProfileJson;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Shared test-only Account runtime fake; its responses establish no canonical runtime authority.
@@ -55,6 +57,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           "GetTenantEntitlementsForRuntime",
           "IssueDirectTextConnectScope",
           "JoinPublicProductionMembership");
+
+  private static final JsonMapper PROFILE_JSON_MAPPER = JsonMapper.builder().build();
 
   private final Server server;
   private final Clock clock;
@@ -449,14 +453,35 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       responseObserver.onCompleted();
       return;
     }
-    StubProfile profile = profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
+    final long tenantId;
     try {
+      tenantId = Long.parseLong(request.getTenantId());
+      if (tenantId <= 0L || !Long.toString(tenantId).equals(request.getTenantId())) {
+        throw new IllegalArgumentException("tenantId must be canonical and positive");
+      }
+    } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           GetProfileResponse.newBuilder()
-              .setProfileJson(
+              .setError(ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT"))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
+    StubProfile profile = profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
+    try {
+      ObjectNode projection =
+          (ObjectNode)
+              PROFILE_JSON_MAPPER.readTree(
                   new AccountProfileJson(
                           profile.displayName(), profile.bio(), profile.presenceVisibilityPolicy())
-                      .toJson())
+                      .toJson());
+      // Controlled fixture request binding only: this fake has no persisted tenant ownership,
+      // authenticated issuer, or gameplay admission authority.
+      projection.put("accountId", accountUuidForTestFixture(accountId));
+      projection.put("tenantId", tenantId);
+      responseObserver.onNext(
+          GetProfileResponse.newBuilder()
+              .setProfileJson(PROFILE_JSON_MAPPER.writeValueAsString(projection))
               .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {

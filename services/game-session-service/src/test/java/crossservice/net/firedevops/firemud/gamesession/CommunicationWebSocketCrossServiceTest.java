@@ -609,6 +609,11 @@ class CommunicationWebSocketCrossServiceTest {
                       .addPresences(
                           FriendPresenceEntry.newBuilder()
                               .setFriendAccountId(SORA_ACCOUNT_UUID)
+                              // Controlled Social-authorized friend projection, not raw presence
+                              // authority.
+                              .setVisibilityPolicy(
+                                  FriendPresenceVisibilityPolicy
+                                      .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                               .setOnline(true)
                               .setCharacterId(ChatTestFixtures.PLAYER_SORA)
                               .setCharacterName("Sora")
