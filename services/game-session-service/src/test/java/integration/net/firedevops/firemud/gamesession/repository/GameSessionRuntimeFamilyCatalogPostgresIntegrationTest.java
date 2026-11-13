@@ -1949,7 +1949,10 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     if (addedTrigger != null) {
       assertThat(f.guards()).containsKey(addedTrigger);
       assertThat(f.guards().get(addedTrigger))
-          .contains("BEFORE INSERT")
+          .contains(
+              "reject_gs_capacity_close_after_final_receipt()".equals(addedTriggerRoutine)
+                  ? "BEFORE UPDATE"
+                  : "BEFORE INSERT")
           .contains("EXECUTE FUNCTION")
           .contains(addedTriggerRoutine.substring(0, addedTriggerRoutine.indexOf('(')));
     }
