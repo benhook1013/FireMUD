@@ -725,6 +725,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       return dsl.transactionResult(
           configuration -> {
             DSLContext transaction = DSL.using(configuration);
+            transaction.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
             lockRegionScope(transaction, expectedTag);
             Record currentRow =
                 transaction.fetchOne(

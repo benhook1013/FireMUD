@@ -1675,6 +1675,60 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void committedFinalAdmissionReplayAtomicallyRetainsPreviouslySplitExecutionEvidence()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var readback =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      commitHistoricalSplitReceipt(readback);
+      var authorized =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT status, terminal_readback FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                  readback.execution().digest());
+      assertThat(authorized.get("status", String.class)).isEqualTo("AUTHORIZED");
+      assertThat(authorized.get("terminal_readback", byte[].class)).isNull();
+
+      inventory.commitOriginalNewFinalAdmission(readback);
+
+      var retainedRow =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT status, terminal_readback FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                  readback.execution().digest());
+      assertThat(retainedRow.get("status", String.class)).isEqualTo("COMMITTED");
+      assertThat(retainedRow.get("terminal_readback", byte[].class)).isNotNull();
+      var retained =
+          capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+      assertThat(retained.disposition()).isEqualTo("COMMITTED");
+      assertThat(retained.physicalDigest()).isEqualTo("sha256:" + readback.finalSessionSha256());
+      byte[] exactProof = retained.canonicalReadback();
+
+      inventory.commitOriginalNewFinalAdmission(readback);
+
+      assertThat(
+              capacityOwner()
+                  .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                  .canonicalReadback())
+          .containsExactly(exactProof);
+    }
+  }
+
+  @Test
   void committedRedisWinnerMustAcquireFullPositiveSqlRetentionBeforeActualHandoff()
       throws Exception {
     repairAccountMember();
@@ -2464,6 +2518,28 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation())
                 .canonicalReadback())
         .containsExactly(retained.canonicalReadback());
+  }
+
+  @Test
+  void closeReplayAfterServingRetirementUsesRetainedClosedProof() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var owner = capacityOwner();
+    owner.closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    var retained = owner.readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    controlledRemoveServingKeys(source, assignment);
+    String rows = sqlImage();
+    var physical = physicalImage();
+
+    owner.closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
+    var replay = owner.readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(replay.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+    assertThat(replay.canonicalReadback()).containsExactly(retained.canonicalReadback());
   }
 
   @Test
