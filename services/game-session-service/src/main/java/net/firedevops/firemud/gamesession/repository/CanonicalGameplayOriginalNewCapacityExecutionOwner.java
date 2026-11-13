@@ -984,7 +984,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   private static void retainTerminal(
       DSLContext tx, OriginalNewCapacityExecution execution, String status, byte[] proof) {
-    Record row = find(tx, execution);
+    Record row =
+        tx.fetchOne(
+            "SELECT * FROM " + TABLE + " WHERE execution_digest = ? FOR UPDATE",
+            execution.digest());
     if (row == null) throw unavailable();
     exact(row, execution);
     String current = row.get("status", String.class);
@@ -1212,7 +1215,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
           new CanonicalGameplayOriginalNewCapacityExecutionOwner(
               dsl, redis, scripts, clock, tags, budget, connection));
     } finally {
-      connection.closeAsync();
+      budget.awaitAsyncClose(connection.closeAsync());
     }
   }
 
