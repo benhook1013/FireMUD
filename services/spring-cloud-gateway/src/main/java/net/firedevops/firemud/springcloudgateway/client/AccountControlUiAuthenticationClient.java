@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.AccountControlUiAuthenticationServiceGrpc;
+import net.firedevops.firemud.account.v1.AuthLoginResponse;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Request;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Result;
@@ -27,8 +28,6 @@ public final class AccountControlUiAuthenticationClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public AccountControlUiAuthenticationClient(
       ServiceEndpointsProperties endpoints,
@@ -49,13 +48,8 @@ public final class AccountControlUiAuthenticationClient
 
   /** Initializes only when the isolated receiving profile explicitly enables this client. */
   public synchronized void init() throws SSLException, IOException {
-    if (closed) throw new IllegalStateException("Account authentication client is closed");
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("Account authentication stub is unavailable");
-    }
-    initialized = true;
+    initOnce(
+        "Account authentication client is closed", "Account authentication stub is unavailable");
   }
 
   /** Sends one exact authentication request without a retry or credential-bearing diagnostics. */
@@ -65,12 +59,14 @@ public final class AccountControlUiAuthenticationClient
       throw new IllegalArgumentException("Control-UI caller namespace does not match Gateway");
     }
     var wireRequest = AccountControlUiAuthenticationGrpcCodec.toRequest(request);
+    AuthLoginResponse wireResponse;
     try {
-      var wireResponse =
-          requireStub()
-              .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-              .authLogin(wireRequest);
-      return AccountControlUiAuthenticationGrpcCodec.requireResponse(request, wireResponse);
+      wireResponse =
+          withPublishedInitializedStub(
+              "Account authentication stub is unavailable",
+              stub ->
+                  stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                      .authLogin(wireRequest));
     } catch (StatusRuntimeException unavailable) {
       if (unavailable.getStatus().getCode() == Status.Code.ALREADY_EXISTS) {
         throw new AuthenticationConflictException();
@@ -79,6 +75,13 @@ public final class AccountControlUiAuthenticationClient
         throw new AuthenticationInvalidRequestException();
       }
       throw new AuthenticationUnavailableException();
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalStateException("Account authentication response was invalid");
+    } catch (IllegalStateException unavailable) {
+      throw new AuthenticationUnavailableException();
+    }
+    try {
+      return AccountControlUiAuthenticationGrpcCodec.requireResponse(request, wireResponse);
     } catch (IllegalArgumentException malformed) {
       throw new IllegalStateException("Account authentication response was invalid");
     }
@@ -105,25 +108,6 @@ public final class AccountControlUiAuthenticationClient
         // CallCredentials runs before HTTP/2 releases request headers or the primary-secret body.
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri));
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private AccountControlUiAuthenticationServiceGrpc
-          .AccountControlUiAuthenticationServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new AuthenticationUnavailableException();
-    }
-    return currentStub;
   }
 
   private static GrpcChannelFactory nonRetryingChannelFactory(GrpcChannelFactory delegate) {

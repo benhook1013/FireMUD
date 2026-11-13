@@ -78,7 +78,8 @@ public final class AccountControlUiAuthenticationGrpcService
       } finally {
         Arrays.fill(compact, (byte) 0);
       }
-    } catch (AuthenticationException denied) {
+    } catch (AuthenticationException
+        | AccountControlUiIssuanceService.PermanentRecoveryDenialException denied) {
       response.onNext(AccountControlUiAuthenticationGrpcCodec.toResponse(request, null));
       response.onCompleted();
     } catch (AccountControlUiIssuanceService.IdempotencyConflictException conflict) {

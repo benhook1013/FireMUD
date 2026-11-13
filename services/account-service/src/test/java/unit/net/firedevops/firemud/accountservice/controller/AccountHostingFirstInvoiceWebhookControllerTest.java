@@ -65,12 +65,10 @@ class AccountHostingFirstInvoiceWebhookControllerTest {
   }
 
   @Test
-  void retainedButNonterminalCompletionIsNotAcknowledgedAsProcessed() throws Exception {
+  void unresolvedCompletionWithoutLocalRequestIdIsNotAcknowledgedAsProcessed() throws Exception {
     var payments = mock(AccountHostingFirstInvoicePaymentService.class);
     when(payments.completeSigned("{}", "t=1,v1=controlled"))
-        .thenReturn(
-            new AccountHostingFirstInvoicePaymentService.Completion(
-                "RECONCILING", UUID.randomUUID()));
+        .thenReturn(new AccountHostingFirstInvoicePaymentService.Completion("RECONCILING", null));
     var result =
         new AccountHostingFirstInvoiceWebhookController(payments)
             .receive(request("{}".getBytes(StandardCharsets.UTF_8)));
