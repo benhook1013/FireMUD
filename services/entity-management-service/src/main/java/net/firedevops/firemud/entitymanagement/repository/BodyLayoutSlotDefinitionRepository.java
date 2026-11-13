@@ -3,6 +3,7 @@ package net.firedevops.firemud.entitymanagement.repository;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.BODY_LAYOUT_SLOT_DEFINITIONS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.List;
 import net.firedevops.firemud.entitymanagement.entity.BodyLayoutSlotDefinition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -44,6 +45,20 @@ public class BodyLayoutSlotDefinitionRepository {
                     .and(BODY_LAYOUT_SLOT_DEFINITIONS.VERSION_ID.eq(versionId))
                     .and(BODY_LAYOUT_SLOT_DEFINITIONS.BODY_LAYOUT_KEY.eq(bodyLayoutKey))
                     .and(BODY_LAYOUT_SLOT_DEFINITIONS.SLOT_KEY.eq(slotKey))));
+  }
+
+  public List<BodyLayoutSlotDefinition> findByTenantIdAndVersionIdOrderByBodyLayoutKeyAscSlotKeyAsc(
+      Long tenantId, Long versionId) {
+    return dsl.selectFrom(BODY_LAYOUT_SLOT_DEFINITIONS)
+        .where(
+            BODY_LAYOUT_SLOT_DEFINITIONS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(BODY_LAYOUT_SLOT_DEFINITIONS.VERSION_ID.eq(versionId)))
+        .orderBy(
+            BODY_LAYOUT_SLOT_DEFINITIONS.BODY_LAYOUT_KEY.asc(),
+            BODY_LAYOUT_SLOT_DEFINITIONS.SLOT_KEY.asc())
+        .fetch(this::toEntity);
   }
 
   public BodyLayoutSlotDefinition save(BodyLayoutSlotDefinition entity) {

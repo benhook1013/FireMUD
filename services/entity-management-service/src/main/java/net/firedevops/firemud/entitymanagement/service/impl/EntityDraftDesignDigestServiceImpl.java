@@ -5,15 +5,22 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.Map;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.entitymanagement.entity.BodyLayoutSlotDefinition;
 import net.firedevops.firemud.entitymanagement.entity.CraftingIngredient;
+import net.firedevops.firemud.entitymanagement.entity.EquipmentSlotDefinition;
+import net.firedevops.firemud.entitymanagement.repository.BodyLayoutSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.CraftingRecipeRepository;
+import net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.NpcRepository;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
 
 @Service
 @SuppressFBWarnings(
@@ -21,21 +28,27 @@ import tools.jackson.databind.ObjectMapper;
     justification =
         "Injected repositories and ObjectMapper are managed dependencies kept internal.")
 public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDigestService {
-  private static final int DIGEST_SCHEMA_VERSION = 1;
+  private static final int DIGEST_SCHEMA_VERSION = 2;
 
   private final ItemRepository itemRepository;
   private final NpcRepository npcRepository;
   private final CraftingRecipeRepository craftingRecipeRepository;
+  private final EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository;
+  private final BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository;
   private final ObjectMapper objectMapper;
 
   public EntityDraftDesignDigestServiceImpl(
       ItemRepository itemRepository,
       NpcRepository npcRepository,
       CraftingRecipeRepository craftingRecipeRepository,
+      EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository,
+      BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository,
       ObjectMapper objectMapper) {
     this.itemRepository = itemRepository;
     this.npcRepository = npcRepository;
     this.craftingRecipeRepository = craftingRecipeRepository;
+    this.equipmentSlotDefinitionRepository = equipmentSlotDefinitionRepository;
+    this.bodyLayoutSlotDefinitionRepository = bodyLayoutSlotDefinitionRepository;
     this.objectMapper = objectMapper;
   }
 
@@ -48,66 +61,126 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
     long versionKey = RequestIdValidation.requirePositiveLong(versionId, "versionId");
     try {
       String canonicalJson =
-          objectMapper.writeValueAsString(
-              Map.of(
-                  "items",
-                  itemRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          item ->
-                              Map.<String, Object>of(
-                                  "id", item.getId(),
-                                  "name", item.getName(),
-                                  "description", value(item.getDescription()),
-                                  "equipmentSlot", value(item.getEquipmentSlot()),
-                                  "container", item.isContainer(),
-                                  "stackable", item.isStackable(),
-                                  "stackCompatibilityMode", item.getStackCompatibilityMode().name(),
-                                  "stackVariantKey", value(item.getStackVariantKey()),
-                                  "effectPayloadJson", value(item.getEffectPayloadJson())))
-                      .toList(),
-                  "npcs",
-                  npcRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          npc ->
-                              Map.<String, Object>of(
-                                  "id", npc.getId(),
-                                  "name", npc.getName(),
-                                  "behavior", value(npc.getBehavior()),
-                                  "respawnDelaySeconds", npc.getRespawnDelaySeconds()))
-                      .toList(),
-                  "craftingRecipes",
-                  craftingRecipeRepository
-                      .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
-                      .stream()
-                      .map(
-                          recipe ->
-                              Map.<String, Object>of(
-                                  "id",
-                                  recipe.getId(),
-                                  "name",
-                                  recipe.getName(),
-                                  "resultItemId",
-                                  recipe.getResultItem().getId(),
-                                  "resultQuantity",
-                                  recipe.getResultQuantity(),
-                                  "ingredients",
-                                  recipe.getIngredients().stream()
-                                      .sorted(
-                                          Comparator.comparing(
-                                                  (CraftingIngredient ingredient) ->
-                                                      ingredient.getItem().getId())
-                                              .thenComparingInt(CraftingIngredient::getQuantity))
-                                      .map(
-                                          ingredient ->
-                                              Map.<String, Object>of(
-                                                  "itemId", ingredient.getItem().getId(),
-                                                  "quantity", ingredient.getQuantity()))
-                                      .toList()))
-                      .toList()));
+          objectMapper
+              .writer(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+              .writeValueAsString(
+                  Map.of(
+                      "items",
+                      itemRepository
+                          .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                          .stream()
+                          .map(
+                              item ->
+                                  Map.<String, Object>ofEntries(
+                                      Map.entry("id", item.getId()),
+                                      Map.entry("name", item.getName()),
+                                      Map.entry("description", value(item.getDescription())),
+                                      Map.entry(
+                                          "equipmentSlot",
+                                          normalizeOptionalKey(item.getEquipmentSlot())),
+                                      Map.entry(
+                                          "equipmentSlotGroupKey",
+                                          normalizeOptionalKey(item.getEquipmentSlotGroupKey())),
+                                      Map.entry("container", item.isContainer()),
+                                      Map.entry("stackable", item.isStackable()),
+                                      Map.entry(
+                                          "stackCompatibilityMode",
+                                          item.getStackCompatibilityMode().name()),
+                                      Map.entry(
+                                          "stackVariantKey", value(item.getStackVariantKey())),
+                                      Map.entry(
+                                          "effectPayloadJson",
+                                          canonicalizeOptionalJson(item.getEffectPayloadJson()))))
+                          .toList(),
+                      "npcs",
+                      npcRepository
+                          .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                          .stream()
+                          .map(
+                              npc ->
+                                  Map.<String, Object>of(
+                                      "id", npc.getId(),
+                                      "name", npc.getName(),
+                                      "behavior", value(npc.getBehavior()),
+                                      "respawnDelaySeconds", npc.getRespawnDelaySeconds()))
+                          .toList(),
+                      "craftingRecipes",
+                      craftingRecipeRepository
+                          .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
+                          .stream()
+                          .map(
+                              recipe ->
+                                  Map.<String, Object>of(
+                                      "id",
+                                      recipe.getId(),
+                                      "name",
+                                      recipe.getName(),
+                                      "resultItemId",
+                                      recipe.getResultItem().getId(),
+                                      "resultQuantity",
+                                      recipe.getResultQuantity(),
+                                      "ingredients",
+                                      recipe.getIngredients().stream()
+                                          .sorted(
+                                              Comparator.comparing(
+                                                      (CraftingIngredient ingredient) ->
+                                                          ingredient.getItem().getId())
+                                                  .thenComparingInt(
+                                                      CraftingIngredient::getQuantity))
+                                          .map(
+                                              ingredient ->
+                                                  Map.<String, Object>of(
+                                                      "itemId", ingredient.getItem().getId(),
+                                                      "quantity", ingredient.getQuantity()))
+                                          .toList()))
+                          .toList(),
+                      "equipmentSlotDefinitions",
+                      equipmentSlotDefinitionRepository
+                          .findByTenantIdAndVersionIdOrderBySlotKeyAsc(tenantKey, versionKey)
+                          .stream()
+                          .sorted(
+                              Comparator.comparing(
+                                      (EquipmentSlotDefinition definition) ->
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "equipment slot key"))
+                                  .thenComparing(definition -> value(definition.getDisplayName()))
+                                  .thenComparing(
+                                      definition ->
+                                          normalizeOptionalKey(definition.getSlotGroupKey())))
+                          .map(
+                              definition ->
+                                  Map.<String, Object>of(
+                                      "slotKey",
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "equipment slot key"),
+                                      "displayName", value(definition.getDisplayName()),
+                                      "slotGroupKey",
+                                          normalizeOptionalKey(definition.getSlotGroupKey())))
+                          .toList(),
+                      "bodyLayoutSlotDefinitions",
+                      bodyLayoutSlotDefinitionRepository
+                          .findByTenantIdAndVersionIdOrderByBodyLayoutKeyAscSlotKeyAsc(
+                              tenantKey, versionKey)
+                          .stream()
+                          .sorted(
+                              Comparator.comparing(
+                                      (BodyLayoutSlotDefinition definition) ->
+                                          canonicalRequiredKey(
+                                              definition.getBodyLayoutKey(), "body layout key"))
+                                  .thenComparing(
+                                      definition ->
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "body layout slot key")))
+                          .map(
+                              definition ->
+                                  Map.<String, Object>of(
+                                      "bodyLayoutKey",
+                                          canonicalRequiredKey(
+                                              definition.getBodyLayoutKey(), "body layout key"),
+                                      "slotKey",
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "body layout slot key")))
+                          .toList()));
       return new EntityDraftDesignDigest(
           tenantId,
           versionId,
@@ -121,6 +194,45 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
 
   private String value(String value) {
     return value == null ? "" : value;
+  }
+
+  private String normalizeOptionalKey(String value) {
+    return value == null || value.isBlank() ? "" : value.trim().toUpperCase(Locale.ROOT);
+  }
+
+  private String canonicalRequiredKey(String value, String fieldName) {
+    if (value == null || value.isBlank() || !value.equals(value.trim().toUpperCase(Locale.ROOT))) {
+      throw new IllegalArgumentException(fieldName + " must use its canonical stored key");
+    }
+    return value;
+  }
+
+  private String canonicalizeOptionalJson(String value) {
+    if (value == null || value.isBlank()) {
+      return "";
+    }
+    try {
+      return objectMapper.writeValueAsString(canonicalizeJsonNode(objectMapper.readTree(value)));
+    } catch (Exception ex) {
+      throw new IllegalStateException("effectPayloadJson is not valid JSON", ex);
+    }
+  }
+
+  private JsonNode canonicalizeJsonNode(JsonNode node) {
+    if (node == null || node.isNull() || node.isValueNode()) {
+      return node;
+    }
+    if (node.isObject()) {
+      var canonicalObject = objectMapper.createObjectNode();
+      node.properties().stream()
+          .sorted(Map.Entry.comparingByKey())
+          .forEach(
+              entry -> canonicalObject.set(entry.getKey(), canonicalizeJsonNode(entry.getValue())));
+      return canonicalObject;
+    }
+    var canonicalArray = objectMapper.createArrayNode();
+    node.valueStream().map(this::canonicalizeJsonNode).forEach(canonicalArray::add);
+    return canonicalArray;
   }
 
   private String sha256(String value) {
