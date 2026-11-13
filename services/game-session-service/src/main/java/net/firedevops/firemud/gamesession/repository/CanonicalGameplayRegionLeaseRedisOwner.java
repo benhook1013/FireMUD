@@ -673,22 +673,28 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     try {
       return pending.get(timeout, TimeUnit.MILLISECONDS);
     } catch (InterruptedException interrupted) {
-      Thread.currentThread().interrupt();
-      closeLateConnection(pending);
+      try {
+        awaitLateConnectionCleanup(pending);
+      } finally {
+        Thread.currentThread().interrupt();
+      }
       throw unavailable(interrupted);
     } catch (TimeoutException expired) {
-      closeLateConnection(pending);
+      awaitLateConnectionCleanup(pending);
       throw unavailable(expired);
     } catch (ExecutionException failure) {
       throw unavailable(failure);
     }
   }
 
-  private static void closeLateConnection(
+  private static void awaitLateConnectionCleanup(
       io.lettuce.core.ConnectionFuture<StatefulRedisConnection<byte[], byte[]>> pending) {
-    // The public Lettuce future wraps the channel handshake. Keep its result observable so
-    // an asynchronously successful connection after our deadline can be closed.
-    pending.thenAccept(connection -> connection.closeAsync());
+    // The caller returns at the operation deadline. This worker keeps its admission permit
+    // until the pending handshake and any late connection close have finished.
+    pending
+        .thenCompose(StatefulRedisConnection::closeAsync)
+        .handle((ignored, failure) -> null)
+        .join();
   }
 
   private RedisScriptDescriptor requireBridgeDescriptor() {

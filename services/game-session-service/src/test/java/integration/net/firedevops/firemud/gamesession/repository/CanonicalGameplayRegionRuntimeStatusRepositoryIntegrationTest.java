@@ -360,6 +360,72 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void ownerInstallUsesFreshReadCommittedSnapshotAfterWaitingForAdvisoryLock() throws Exception {
+    try (var proof = new TransferSqlProof();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        var blocker =
+            java.sql.DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      var dispatched = proof.newControlledExecution();
+      String tag =
+          CanonicalGameplayRegionRedisKeys.tenantRegionTag(
+              proof.scope.tenantId(), proof.scope.gameInstanceId(), proof.scope.regionId());
+      blocker.setAutoCommit(false);
+      try (var lock =
+          blocker.prepareStatement("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))")) {
+        lock.setString(1, "game-session-region-owner-install:v1:" + tag);
+        lock.execute();
+      }
+      int blockerPid;
+      try (var statement = blocker.createStatement();
+          var result = statement.executeQuery("SELECT pg_backend_pid()")) {
+        assertThat(result.next()).isTrue();
+        blockerPid = result.getInt(1);
+      }
+
+      var repeatableReadSource =
+          new DriverManagerDataSource() {
+            @Override
+            public java.sql.Connection getConnection() throws java.sql.SQLException {
+              java.sql.Connection connection = super.getConnection();
+              connection.setTransactionIsolation(java.sql.Connection.TRANSACTION_REPEATABLE_READ);
+              return connection;
+            }
+          };
+      repeatableReadSource.setDriverClassName(POSTGRES.getDriverClassName());
+      String url = POSTGRES.getJdbcUrl();
+      repeatableReadSource.setUrl(url + (url.contains("?") ? "&" : "?") + "currentSchema=public");
+      repeatableReadSource.setUsername(POSTGRES.getUsername());
+      repeatableReadSource.setPassword(POSTGRES.getPassword());
+      var repeatableReadRepository =
+          new CanonicalGameplayRegionRuntimeStatusRepository(
+              DSL.using(repeatableReadSource, SQLDialect.POSTGRES));
+      Future<?> install =
+          executor.submit(
+              () ->
+                  repeatableReadRepository.installOwner(
+                      proof.scope,
+                      1L,
+                      proof.prior,
+                      "e".repeat(64),
+                      "game-session-service",
+                      "repeatable-read-successor",
+                      Instant.parse("2026-10-26T00:00:03Z")));
+
+      try {
+        assertDatabaseWaitsFor(proof.sql, blockerPid);
+        proof.seedUndeliveredDispatch(dispatched);
+      } finally {
+        blocker.commit();
+      }
+
+      assertThatThrownBy(install::get).hasRootCauseInstanceOf(IllegalStateException.class);
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+      assertThat(proof.executionState(dispatched)).isEqualTo("INSTALL_DISPATCHED");
+    }
+  }
+
+  @Test
   void actualAuthorizationHoldingRegionRowMakesFreezeWaitAndRetainsThatOriginal() throws Exception {
     try (var proof = new TransferSqlProof();
         var credential =
