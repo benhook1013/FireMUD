@@ -9,7 +9,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionProvisioner;
+import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
@@ -29,20 +31,14 @@ class AccountHostingSubscriptionProvisioningServiceTest {
       mock(AccountHostingSubscriptionLifecycleRepository.class);
   private final StripeHostingSubscriptionProvisioner provider =
       mock(StripeHostingSubscriptionProvisioner.class);
-  private final AccountHostingSubscriptionLifecycleService lifecycle =
-      mock(AccountHostingSubscriptionLifecycleService.class);
+  private final StripeHostingFirstInvoicePaymentClient firstInvoiceProvider =
+      mock(StripeHostingFirstInvoicePaymentClient.class);
+  private final AccountHostingFirstInvoicePaymentRepository firstInvoices =
+      mock(AccountHostingFirstInvoicePaymentRepository.class);
   private final LocalTransactions transactions = new LocalTransactions();
   private final AccountHostingSubscriptionProvisioningService service =
       new AccountHostingSubscriptionProvisioningService(
-          repository,
-          provider,
-          mock(
-              net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient
-                  .class),
-          mock(
-              net.firedevops.firemud.accountservice.repository
-                  .AccountHostingFirstInvoicePaymentRepository.class),
-          transactions);
+          repository, provider, firstInvoiceProvider, firstInvoices, transactions);
   private final ProvisioningClaim claim = mock(ProvisioningClaim.class);
 
   @AfterEach
@@ -90,7 +86,7 @@ class AccountHostingSubscriptionProvisioningServiceTest {
             service.provision(claim, UUID.randomUUID(), UUID.randomUUID());
     assertThat(result.disposition()).isEqualTo(Disposition.WAITING);
     assertThat(transactions.commits).isEqualTo(3);
-    verifyNoInteractions(lifecycle);
+    verifyNoInteractions(firstInvoiceProvider, firstInvoices);
   }
 
   @ParameterizedTest
@@ -115,7 +111,7 @@ class AccountHostingSubscriptionProvisioningServiceTest {
             new AccountHostingSubscriptionProvisioningService.Pending(
                 Disposition.ATTEMPT_EXPIRED, providerResult));
     assertThat(transactions.commits).isEqualTo(3);
-    verifyNoInteractions(lifecycle);
+    verifyNoInteractions(firstInvoiceProvider, firstInvoices);
   }
 
   @ParameterizedTest
@@ -144,7 +140,7 @@ class AccountHostingSubscriptionProvisioningServiceTest {
                 new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_FENCE_REJECTED", null)));
     assertThat(transactions.commits).isEqualTo(readbackRefused ? 2 : 1);
     verify(repository).deferUnresolved(claim);
-    verifyNoInteractions(provider, lifecycle);
+    verifyNoInteractions(provider, firstInvoiceProvider, firstInvoices);
   }
 
   @Test
@@ -158,7 +154,7 @@ class AccountHostingSubscriptionProvisioningServiceTest {
         .isInstanceOf(FenceRejectedException.class)
         .hasMessage("stale retained attempt");
     assertThat(transactions.commits).isZero();
-    verifyNoInteractions(provider, lifecycle);
+    verifyNoInteractions(provider, firstInvoiceProvider, firstInvoices);
   }
 
   @Test
@@ -170,7 +166,7 @@ class AccountHostingSubscriptionProvisioningServiceTest {
     assertThatThrownBy(() -> service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
         .hasMessageContaining("readback rejected");
     assertThat(transactions.commits).isEqualTo(1);
-    verifyNoInteractions(provider, lifecycle);
+    verifyNoInteractions(provider, firstInvoiceProvider, firstInvoices);
   }
 
   @Test
@@ -182,7 +178,7 @@ class AccountHostingSubscriptionProvisioningServiceTest {
     TransactionSynchronizationManager.initSynchronization();
     assertThatThrownBy(() -> service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
         .hasMessageContaining("ambient SQL");
-    verifyNoInteractions(repository, provider, lifecycle);
+    verifyNoInteractions(repository, provider, firstInvoiceProvider, firstInvoices);
   }
 
   private static final class LocalTransactions extends AbstractPlatformTransactionManager {

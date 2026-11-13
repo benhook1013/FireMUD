@@ -615,9 +615,33 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
   @Test
   void exactRetainedEvaluationOutsideOwnerWindowIsStaleWithoutOwnerMutation() throws Exception {
-    try (Session session = session(Clock.offset(CLOCK, Duration.ofSeconds(60)))) {
+    try (Session session = session()) {
+      waitForDatabaseTime(session.dsl, session.capacityRequest.evidence().expiresAt());
       assertCapacityRefusalWithoutMutation(
           session, session.capacityRequest, Status.Code.UNAVAILABLE, "CAPACITY_ADMISSION_STALE");
+    }
+  }
+
+  @Test
+  void capacityOwnerAcceptsFreshEvidenceWhenItsApplicationClockTrailsPostgres() throws Exception {
+    try (Session session = session()) {
+      var evidence = session.capacityRequest.evidence();
+      Clock behindEvidence = Clock.fixed(evidence.evaluatedAt().minusSeconds(1), ZoneOffset.UTC);
+      assertThat(behindEvidence.instant()).isBefore(evidence.evaluatedAt());
+      assertThat(AccountTenantCapacityRepository.databaseNow(session.dsl))
+          .isAfterOrEqualTo(evidence.evaluatedAt());
+
+      var owner = session.account.capacityOwner(behindEvidence);
+      var result = owner.commit(session.capacityRequest, GS);
+
+      assertThat(result.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      var usage =
+          session.dsl.fetchSingle(
+              "SELECT held_units, used_units FROM account_tenant_capacity_usage "
+                  + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+              result.identity().tenantId());
+      assertThat(usage.get("held_units", Long.class)).isEqualTo(1L);
+      assertThat(usage.get("used_units", Long.class)).isZero();
     }
   }
 

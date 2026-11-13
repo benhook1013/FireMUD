@@ -370,6 +370,31 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
+  void capacityEvaluationUsesDatabaseTimeWhenApplicationClockTrailsByOneSecond() {
+    Clock behindDatabase = Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-1));
+    Fixture f = fixture(false, behindDatabase);
+    assertThat(behindDatabase.instant()).isBefore(databaseNow(f.dsl));
+
+    var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
+    Instant databaseAfterEvaluation = databaseNow(f.dsl);
+    assertThat(value.evaluatedAt()).isBeforeOrEqualTo(databaseAfterEvaluation);
+
+    var retained =
+        f.dsl.fetchOne(
+            "SELECT canonical_evidence, evaluated_at, expires_at "
+                + "FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+            value.fields().get("evaluationIdentity"));
+    assertThat(retained).isNotNull();
+    assertThat(retained.get("canonical_evidence", byte[].class))
+        .containsExactly(value.canonicalBytes());
+    assertThat(AccountTenantCapacityRepository.time(retained, "evaluated_at"))
+        .isEqualTo(value.evaluatedAt());
+
+    var capacity = new AccountTenantCapacityRepository(f.dsl);
+    f.transaction.executeWithoutResult(status -> capacity.requireFresh(Evidence.player(value)));
+  }
+
+  @Test
   void actualFirstJoinRetainsItsPositiveMembershipAndExactScopeBinding() {
     Fixture f = fixture(true);
     var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);

@@ -48,13 +48,6 @@ public final class AccountHostingFirstInvoicePaymentService {
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
 
-  /** The authenticated subject, not a body account field, selects billing ownership. */
-  public AccountHostingFirstInvoicePayment readOwner(String bearer, UUID subscriptionId) {
-    outsideSql();
-    return actors.withCurrentAccount(
-        bearer, actor -> payments.requireOwner(subscriptionId, actor.accountId()));
-  }
-
   public OwnerView describeOwner(String bearer, UUID subscriptionId) {
     outsideSql();
     return actors.withCurrentAccount(
@@ -82,27 +75,6 @@ public final class AccountHostingFirstInvoicePaymentService {
                   : null,
               payments.authorizationVersion(subscriptionId));
         });
-  }
-
-  public UUID reauthenticate(
-      String bearer,
-      UUID subscriptionId,
-      UUID reauthenticationRequestId,
-      UUID confirmationRequestId,
-      String email,
-      String secret) {
-    outsideSql();
-    var invoice = readOwner(bearer, subscriptionId);
-    var evidence =
-        reauthentication.reauthenticate(
-            new AccountRecentReauthenticationService.Request(
-                reauthenticationRequestId,
-                invoice.ownerAccountId(),
-                AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
-                confirmationRequestId,
-                email,
-                secret));
-    return evidence.evidenceId();
   }
 
   /** Genuine reauthentication bound to one exact invoice and its intended authorization attempt. */
@@ -257,10 +229,14 @@ public final class AccountHostingFirstInvoicePaymentService {
             actors.withCurrentAccount(
                 bearer,
                 actor -> {
-                  reauthentication.requireCurrentBillingEvidenceLocked(
-                      dispatch.reauthenticationEvidenceId(),
-                      actor.accountId(),
-                      dispatch.authorizationRequestId());
+                  var evidence =
+                      reauthentication.requireCurrentBillingEvidenceLocked(
+                          dispatch.reauthenticationEvidenceId(),
+                          actor.accountId(),
+                          dispatch.authorizationRequestId());
+                  if (evidence.billingContext() == null) {
+                    throw new IllegalStateException("Exact first-invoice billing binding required");
+                  }
                   return payments.claimCommand(dispatch, actor.accountId());
                 }));
   }
@@ -271,9 +247,13 @@ public final class AccountHostingFirstInvoicePaymentService {
     outsideSql();
     var event = verifier.verify(payload, signature);
     transaction.executeWithoutResult(status -> inbox.retainOrReplay(event));
-    var candidate =
-        Objects.requireNonNull(
-            transaction.execute(status -> payments.candidateForSignedEvent(event)));
+    UUID retainedConflict =
+        transaction.execute(status -> payments.retainedSignedConflictRequestId(event));
+    if (retainedConflict != null) {
+      return new Completion("OPERATOR_RECONCILIATION_REQUIRED", retainedConflict);
+    }
+    var candidate = transaction.execute(status -> payments.candidateForSignedEvent(event));
+    if (candidate == null) return new Completion("IGNORED", null);
     boolean alreadyCompleted =
         Boolean.TRUE.equals(
             transaction.execute(
@@ -282,10 +262,12 @@ public final class AccountHostingFirstInvoicePaymentService {
                         candidate.invoice().subscriptionId(), candidate.lifecycleRequestId())));
     if (!alreadyCompleted) {
       var observed = provider.observe(candidate.invoice());
-      transaction.executeWithoutResult(
-          status -> {
-            payments.retainSignedSuccess(event, observed);
-          });
+      var signed =
+          Objects.requireNonNull(
+              transaction.execute(status -> payments.retainSignedOutcome(event, observed)));
+      if (signed.latePaidConflict()) {
+        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", candidate.requestId());
+      }
       var transition =
           lifecycle.reconcile(
               candidate.lifecycleRequestId(),

@@ -271,7 +271,11 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
 
   private static List<String> guards(DSLContext dsl) {
     return dsl.fetch(
-            "SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE NOT tgisinternal ORDER BY tgrelid, tgname")
+            "SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t "
+                + "JOIN pg_class relation ON relation.oid = t.tgrelid "
+                + "JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace "
+                + "WHERE namespace.nspname = current_schema() AND NOT t.tgisinternal "
+                + "ORDER BY relation.relname, t.tgname")
         .getValues(0, String.class);
   }
 

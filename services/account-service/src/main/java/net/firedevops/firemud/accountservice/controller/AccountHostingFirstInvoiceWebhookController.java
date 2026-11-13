@@ -60,12 +60,14 @@ public final class AccountHostingFirstInvoiceWebhookController {
               .decode(ByteBuffer.wrap(bytes))
               .toString();
       var completion = payments.completeSigned(raw, signature);
-      // Do not acknowledge a nonterminal owner outcome as processed. Provider redelivery may
-      // reconcile this same signed event, never issue another payment confirmation.
-      return ResponseEntity.status(
-              "COMMITTED".equals(completion.state())
-                  ? HttpStatus.OK
-                  : HttpStatus.SERVICE_UNAVAILABLE)
+      // Acknowledge only exact terminal owner classifications. Stripe redelivery can retry
+      // RECONCILING and unknown outcomes, but cannot resolve operator-owned reconciliation.
+      String state = completion.state();
+      boolean terminal =
+          "COMMITTED".equals(state)
+              || "IGNORED".equals(state)
+              || "OPERATOR_RECONCILIATION_REQUIRED".equals(state);
+      return ResponseEntity.status(terminal ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE)
           .cacheControl(CacheControl.noStore())
           .header("Pragma", "no-cache")
           .body(completion);
