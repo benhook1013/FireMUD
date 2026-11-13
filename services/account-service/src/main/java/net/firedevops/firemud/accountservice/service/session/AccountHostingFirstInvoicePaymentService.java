@@ -138,6 +138,26 @@ public final class AccountHostingFirstInvoicePaymentService {
     return evidence.evidenceId();
   }
 
+  /** Returns only an exact, credential-bound replay of retained pre-binding billing evidence. */
+  public UUID replayHistoricalUnboundReauthentication(
+      String bearer,
+      UUID reauthenticationRequestId,
+      UUID authorizationRequestId,
+      String email,
+      String secret) {
+    outsideSql();
+    var actor = actors.authenticateAccount(bearer);
+    var request =
+        new AccountRecentReauthenticationService.Request(
+            reauthenticationRequestId,
+            actor.accountId(),
+            AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
+            authorizationRequestId,
+            email,
+            secret);
+    return reauthentication.replayHistoricalUnboundBilling(request, actors, bearer).evidenceId();
+  }
+
   /**
    * Explicit consent names the immutable tuple shown to the owner; browser success grants nothing.
    */
@@ -225,23 +245,38 @@ public final class AccountHostingFirstInvoicePaymentService {
             });
     outsideSql();
     try {
-      return provider.confirm(
-          dispatch,
-          () ->
-              actors.withCurrentAccount(
-                  bearer,
-                  actor -> {
-                    var evidence =
-                        reauthentication.requireCurrentBillingEvidenceLocked(
-                            dispatch.reauthenticationEvidenceId(),
-                            actor.accountId(),
-                            dispatch.authorizationRequestId());
-                    if (evidence.billingContext() == null) {
-                      throw new IllegalStateException(
-                          "Exact first-invoice billing binding required");
-                    }
-                    return payments.claimCommand(dispatch, actor.accountId());
-                  }));
+      Handoff handoff =
+          provider.confirm(
+              dispatch,
+              () ->
+                  actors.withCurrentAccount(
+                      bearer,
+                      actor -> {
+                        var evidence =
+                            reauthentication.requireCurrentBillingEvidenceLocked(
+                                dispatch.reauthenticationEvidenceId(),
+                                actor.accountId(),
+                                dispatch.authorizationRequestId());
+                        if (evidence.billingContext() == null) {
+                          throw new IllegalStateException(
+                              "Exact first-invoice billing binding required");
+                        }
+                        return payments.claimCommand(dispatch, actor.accountId());
+                      }));
+      if (handoff.clientSecret() != null) {
+        actors.withCurrentAccount(
+            bearer,
+            actor -> {
+              var evidence =
+                  reauthentication.requireCurrentBillingEvidenceLocked(
+                      dispatch.reauthenticationEvidenceId(),
+                      actor.accountId(),
+                      dispatch.authorizationRequestId());
+              payments.validateHandoffAuthorization(dispatch, actor.accountId(), evidence);
+              return null;
+            });
+      }
+      return handoff;
     } catch (ExpiredBeforePost observation) {
       transaction.executeWithoutResult(status -> payments.retainExpiredBeforePost(observation));
       throw observation;
@@ -260,7 +295,23 @@ public final class AccountHostingFirstInvoicePaymentService {
       return new Completion("OPERATOR_RECONCILIATION_REQUIRED", retainedConflict);
     }
     var candidate = transaction.execute(status -> payments.candidateForSignedEvent(event));
-    if (candidate == null) return new Completion("IGNORED", null);
+    if (candidate == null) {
+      var invoice = transaction.execute(status -> payments.unconsentedCanceledInvoice(event));
+      if (invoice == null) {
+        boolean linked =
+            Boolean.TRUE.equals(
+                transaction.execute(status -> payments.hasSignedFirstInvoiceLinkage(event)));
+        return new Completion(linked ? "RECONCILING" : "IGNORED", null);
+      }
+      var observed = provider.observe(invoice);
+      var outcome =
+          Objects.requireNonNull(
+              transaction.execute(status -> payments.retainSignedOutcome(event, observed)));
+      if (!outcome.latePaidConflict()) {
+        throw new IllegalStateException("Exact late-payment operator conflict is required");
+      }
+      return new Completion("OPERATOR_RECONCILIATION_REQUIRED", outcome.conflictRequestId());
+    }
     boolean alreadyCompleted =
         Boolean.TRUE.equals(
             transaction.execute(
@@ -273,7 +324,7 @@ public final class AccountHostingFirstInvoicePaymentService {
           Objects.requireNonNull(
               transaction.execute(status -> payments.retainSignedOutcome(event, observed)));
       if (signed.latePaidConflict()) {
-        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", candidate.requestId());
+        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", signed.conflictRequestId());
       }
       var transition =
           lifecycle.reconcile(

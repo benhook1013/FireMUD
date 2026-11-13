@@ -156,7 +156,11 @@ class AccountTenantCapacityClientMtlsTest {
         .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED);
     assertThat(replay.durableDenialId()).isEqualTo(denialId);
     assertThatThrownBy(
-            () -> AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(null))
+            () ->
+                assertThat(
+                        AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(
+                            null))
+                    .isNotNull())
         .isInstanceOf(IllegalArgumentException.class);
   }
 

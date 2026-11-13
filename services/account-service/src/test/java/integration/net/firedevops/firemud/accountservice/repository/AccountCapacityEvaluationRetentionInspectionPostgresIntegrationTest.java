@@ -217,6 +217,146 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void populatedMixedCohortKeepsExactImagesAcrossBoundedPolicyAndUnqualifiedReads() {
+    String schema = "capacity_retention_mixed_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      configure(data, schema).target("1043").load().migrate();
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
+      var transactions = new DataSourceTransactionManager(data);
+      var write = new TransactionTemplate(transactions);
+      populate(dsl, write);
+      UUID tenant =
+          dsl.fetchSingle("SELECT tenant_uuid FROM account_tenant_capacity_reservations")
+              .get(0, UUID.class);
+      Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+      // Controlled historical storage, not production hold authority or cleanup eligibility.
+      // The existing game-session history/direct references share this tenant but not the
+      // world-management owner scope of these unrelated evaluations.
+      write.executeWithoutResult(
+          status -> {
+            for (var row :
+                List.of(
+                    new Object[] {
+                      digest('4'), now.minus(Duration.ofDays(10)), now.minus(Duration.ofDays(9)), 4
+                    },
+                    new Object[] {
+                      digest('5'), now.minus(Duration.ofDays(9)), now.minus(Duration.ofDays(8)), 5
+                    },
+                    new Object[] {
+                      digest('6'), now.minus(Duration.ofDays(8)), now.minus(Duration.ofDays(7)), 6
+                    },
+                    new Object[] {
+                      digest('7'),
+                      now.minus(Duration.ofHours(12)),
+                      now.minus(Duration.ofHours(6)),
+                      7
+                    },
+                    new Object[] {
+                      digest('8'), now.minus(Duration.ofHours(1)), now.plus(Duration.ofHours(1)), 8
+                    })) {
+              dsl.execute(
+                  "INSERT INTO account_tenant_capacity_evaluations "
+                      + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, "
+                      + "canonical_evidence, evaluated_at, expires_at) "
+                      + "VALUES (?, ?, ?, 'test-workload', 'world-management-service', ?, ?::timestamptz, ?::timestamptz)",
+                  row[0],
+                  digest('d'),
+                  tenant,
+                  new byte[(int) row[3]],
+                  row[1].toString(),
+                  row[2].toString());
+            }
+          });
+      var beforeMigration = rowImages(dsl);
+      var guards = guardImages(dsl);
+      configure(data, schema).load().migrate();
+      assertThat(rowImages(dsl)).isEqualTo(beforeMigration);
+      assertThat(guardImages(dsl)).isEqualTo(guards);
+      var conservation =
+          dsl.fetch(
+                  "SELECT to_jsonb(c)::text AS row, xmin::text AS xmin "
+                      + "FROM account_tenant_capacity_conservation c ORDER BY tenant_uuid, owner_service")
+              .intoMaps();
+      var flyway =
+          dsl.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank").intoMaps();
+      var owner = new AccountCapacityEvaluationRetentionInspectionOwner(dsl, transactions);
+      // Same controlled schedule as the existing physical qualification, not a new policy choice.
+      var schedule =
+          new AccountCapacityEvaluationRetentionPolicy.Schedule(
+              "physical-fixture/v1",
+              Duration.ofDays(30),
+              Duration.ofDays(2),
+              Duration.ofDays(3),
+              Duration.ofDays(4),
+              Duration.ofDays(5),
+              Duration.ofDays(6));
+      var safety =
+          new AccountCapacityEvaluationRetentionPolicy.Safety(
+              "physical-fixture/v1",
+              now.minusSeconds(1),
+              now.plus(Duration.ofHours(1)),
+              now.minus(Duration.ofDays(1)),
+              Map.of(
+                  digest('a'), AccountCapacityEvaluationRetentionPolicy.Hold.CLEAR,
+                  digest('b'), AccountCapacityEvaluationRetentionPolicy.Hold.CLEAR,
+                  digest('c'), AccountCapacityEvaluationRetentionPolicy.Hold.CLEAR,
+                  digest('4'), AccountCapacityEvaluationRetentionPolicy.Hold.CLEAR,
+                  digest('5'), AccountCapacityEvaluationRetentionPolicy.Hold.HELD,
+                  digest('7'), AccountCapacityEvaluationRetentionPolicy.Hold.CLEAR,
+                  digest('8'), AccountCapacityEvaluationRetentionPolicy.Hold.CLEAR));
+      for (int repeat = 0; repeat < 2; repeat++) {
+        var bounded = owner.observe(3, schedule, safety);
+        assertThat(bounded.sampledRows()).isEqualTo(3);
+        assertThat(bounded.sampleTruncated()).isTrue();
+        assertThat(bounded.candidates().rows()).isOne();
+        assertThat(bounded.candidates().evidenceBytes()).isEqualTo(4);
+        assertThat(bounded.blockers().get(Blocker.HELD).rows()).isOne();
+        assertThat(bounded.blockers().get(Blocker.POLICY_AND_HOLD_AUTHORITY_UNAVAILABLE).rows())
+            .isOne();
+        var all = owner.observe(10, schedule, safety);
+        assertThat(all.sampledRows()).isEqualTo(8);
+        assertThat(all.sampleTruncated()).isFalse();
+        assertThat(all.governanceBlocker()).isNull();
+        assertThat(all.candidates().rows()).isOne();
+        assertThat(all.candidates().evidenceBytes()).isEqualTo(4);
+        assertThat(all.candidates().oldestEvaluatedAt()).contains(now.minus(Duration.ofDays(10)));
+        assertThat(all.blockers().get(Blocker.RETAINED_RESERVATION_SCOPE).rows()).isEqualTo(2);
+        assertThat(all.blockers().get(Blocker.RETAINED_RESERVATION_SCOPE).evidenceBytes())
+            .isEqualTo(262145);
+        assertThat(all.blockers().get(Blocker.HELD).rows()).isOne();
+        assertThat(all.blockers().get(Blocker.HELD).evidenceBytes()).isEqualTo(5);
+        assertThat(all.blockers().get(Blocker.POLICY_AND_HOLD_AUTHORITY_UNAVAILABLE).rows())
+            .isOne();
+        assertThat(all.blockers().get(Blocker.ABOVE_SAFE_WATERMARK).rows()).isOne();
+        assertThat(all.blockers().get(Blocker.RETENTION_WINDOW_OPEN).rows()).isOne();
+        assertThat(all.blockers().get(Blocker.LIVE_EVALUATION).rows()).isOne();
+        var unqualified = owner.observe(10);
+        assertThat(unqualified.candidates().rows()).isZero();
+        assertThat(unqualified.blockers().get(Blocker.RETAINED_RESERVATION_SCOPE).rows())
+            .isEqualTo(2);
+        assertThat(unqualified.blockers().get(Blocker.LIVE_EVALUATION).rows()).isOne();
+        assertThat(unqualified.blockers().get(Blocker.POLICY_AND_HOLD_AUTHORITY_UNAVAILABLE).rows())
+            .isEqualTo(5);
+        assertThat(rowImages(dsl)).isEqualTo(beforeMigration);
+        assertThat(guardImages(dsl)).isEqualTo(guards);
+        assertThat(
+                dsl.fetch(
+                        "SELECT to_jsonb(c)::text AS row, xmin::text AS xmin "
+                            + "FROM account_tenant_capacity_conservation c ORDER BY tenant_uuid, owner_service")
+                    .intoMaps())
+            .isEqualTo(conservation);
+        assertThat(
+                dsl.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank").intoMaps())
+            .isEqualTo(flyway);
+      }
+    } finally {
+      new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
   private static void verifyForwardMigration(boolean populated) {
     String schema = "capacity_retention_" + UUID.randomUUID().toString().replace("-", "");
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
@@ -429,6 +569,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
                 evaluation[3]);
           }
           UUID attempt = UUID.randomUUID();
+          String mutationDigest = "e".repeat(64);
           byte[] capacityPayload = {7};
           dsl.execute(
               "INSERT INTO account_capacity_origin_decisions "
@@ -439,7 +580,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
               request,
               admission,
               attempt,
-              "e".repeat(64),
+              mutationDigest,
               capacityPayload,
               UUID.randomUUID());
           dsl.execute(
@@ -453,7 +594,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
               admission,
               UUID.randomUUID(),
               attempt,
-              "e".repeat(64),
+              mutationDigest,
               capacityPayload,
               digest('b'));
           dsl.execute(

@@ -180,8 +180,17 @@ public final class AccountControlUiIssuanceService {
                   AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
                   try {
                     authenticated =
-                        primaryAuthentication.authenticateControlUiPrimaryIdentity(
-                            email, request.secret);
+                        request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT
+                            ? primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                                email,
+                                request.secret,
+                                () -> {
+                                  if (!credentialAbuse.isUsable(selectedPermit)) {
+                                    throw AccountCredentialAbuseRefusal.unavailable();
+                                  }
+                                })
+                            : primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                                email, request.secret);
                   } catch (AuthenticationException denial) {
                     // Only primary denial commits attempt accounting. No signer/issuance work
                     // follows.
@@ -346,15 +355,20 @@ public final class AccountControlUiIssuanceService {
       // Persist denial first; ambiguous/missing Redis evidence leaves REVOKING, never success.
       var failed =
           transaction.execute(ignored -> operations.beginRecoveryFailure(permanent.original));
-      if (failed != null && "REVOKING".equals(failed.status)) {
+      if (failed == null) {
+        throw denied();
+      }
+      if ("REVOKING".equals(failed.status)) {
         var receipt = registry.revoke(failed);
         transaction.execute(
             ignored -> {
               operations.finishRecoveryFailure(failed, receipt);
               return null;
             });
+      } else if (!java.util.List.of("FAILED", "REVOKED").contains(failed.status)) {
+        throw denied();
       }
-      throw denied();
+      throw new PermanentRecoveryDenialException();
     } finally {
       Arrays.fill(exactRequest, (byte) 0);
     }
@@ -389,6 +403,13 @@ public final class AccountControlUiIssuanceService {
   public static final class IdempotencyConflictException extends IllegalArgumentException {
     public IdempotencyConflictException() {
       super("Control-ui issuance idempotency conflict");
+    }
+  }
+
+  /** Signals a retained original credential that can no longer be recovered. */
+  public static final class PermanentRecoveryDenialException extends RuntimeException {
+    public PermanentRecoveryDenialException() {
+      super("Control-ui original credential recovery is permanently denied");
     }
   }
 

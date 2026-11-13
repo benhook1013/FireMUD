@@ -19,6 +19,7 @@ import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
+import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.ObservedSubscription;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.Reason;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.Status;
@@ -121,6 +122,47 @@ class AccountHostingSubscriptionLifecyclePolicyTest {
         observed(response.replace("\"ended_at\":null", "\"ended_at\":1780592000"), NOW);
     assertThat(policy().evaluate(contradictory, NOW, null).reason())
         .isEqualTo(Reason.CONTRADICTORY_PROVIDER_FACTS);
+  }
+
+  @Test
+  void incompleteExpiredMapsOnlyThroughDedicatedUnpaidCancellationAndSharedTerminalWindow() {
+    String incompleteExpired =
+        RESPONSE
+            .replace("\"active\"", "\"incomplete_expired\"")
+            .replace("\"current_period_start\":1778000000", "\"current_period_start\":null")
+            .replace("\"current_period_end\":1780592000", "\"current_period_end\":null");
+    var observation = observed(incompleteExpired, NOW);
+    assertThat(observation).isInstanceOf(ObservedSubscription.class);
+    var observed = (ObservedSubscription) observation;
+    var dedicated = policy().evaluateIncompleteExpiredFirstInvoiceCancellation(observed, NOW);
+
+    assertThat(observed.providerStatus()).isEqualTo("incomplete_expired");
+    assertThat(dedicated.status()).isEqualTo(Status.CANCELED);
+    assertThat(dedicated.validUntil()).isEqualTo(NOW.plusSeconds(15));
+    assertThat(dedicated.cutoffAt()).isEqualTo(NOW);
+    assertThat(policy().evaluate(observed, NOW, null).reason())
+        .isEqualTo(Reason.UNMAPPED_PROVIDER_STATUS);
+    assertThat(
+            policy()
+                .evaluateIncompleteExpiredFirstInvoiceCancellation(observed, NOW.plusSeconds(15))
+                .reason())
+        .isEqualTo(Reason.OBSERVATION_EXPIRED);
+    var futureEndedObservation =
+        observed(incompleteExpired.replace("\"ended_at\":null", "\"ended_at\":1778000011"), NOW);
+    assertThat(futureEndedObservation).isInstanceOf(ObservedSubscription.class);
+    assertThat(
+            policy()
+                .evaluateIncompleteExpiredFirstInvoiceCancellation(
+                    (ObservedSubscription) futureEndedObservation, NOW)
+                .reason())
+        .isEqualTo(Reason.CONTRADICTORY_PROVIDER_FACTS);
+
+    String scheduledButUnmapped =
+        RESPONSE
+            .replace("\"active\"", "\"incomplete_expired\"")
+            .replace("\"cancel_at\":null", "\"cancel_at\":1778000000");
+    assertThat(policy().evaluate(observed(scheduledButUnmapped, NOW), NOW, null).status())
+        .isNotEqualTo(Status.CANCELED);
   }
 
   @Test

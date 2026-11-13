@@ -25,6 +25,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
@@ -288,13 +289,22 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       requirePrincipal(await(commands::aclWhoami, budget));
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
-      if (budget != null) budget.check();
+      if (budget != null) {
+        byte[][] probe = arguments.clone();
+        probe[1] = ascii("PROBE");
+        probe[probe.length - 1] = ascii(Long.toString(budget.absoluteDeadlineMillis()));
+        Long result =
+            await(() -> commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, probe), budget);
+        if (result == null || (result != 0L && result != 1L)) throw unavailable();
+      }
       return new PreparedTimelineInitialization(
           connection, commands, loadedSha, keys, arguments, grant, preparation, budget);
     } catch (RuntimeException failure) {
       if (connection != null) {
         if (budget == null) connection.close();
-        else connection.closeAsync().join();
+        else
+          budget.awaitAsyncClose(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
       }
       throw unavailable(failure);
     }
@@ -379,6 +389,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     private final CompletableFuture<Void> disposal = new CompletableFuture<>();
     private boolean initialized;
     private boolean closed;
+    private boolean retainedWorkInFlight;
     private boolean initializationInFlight;
     private CompletableFuture<Void> boundedClose;
 
@@ -401,12 +412,131 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.budget = budget;
     }
 
+    /**
+     * Runs a bounded companion read under this prepared operation's retained background permit. The
+     * read uses its own worker and does not use or close the prepared Redis connection.
+     */
+    <T> T runWithinRetainedPermit(
+        Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation) {
+      Objects.requireNonNull(operation, "operation");
+      CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget;
+      CompletableFuture<Void> workLifetime = new CompletableFuture<>();
+      synchronized (this) {
+        requireNoAmbientTransaction();
+        if (closed || initialized || retainedWorkInFlight) throw unavailable();
+        retainedWorkInFlight = true;
+        retainedBudget = budget;
+        if (retainedBudget != null) {
+          retainedBudget.retainUntilCompletion(workLifetime);
+          workLifetime.whenComplete(
+              (ignored, failure) -> {
+                synchronized (PreparedTimelineInitialization.this) {
+                  retainedWorkInFlight = false;
+                }
+              });
+        }
+      }
+
+      if (retainedBudget == null) {
+        try {
+          return operation.apply(null);
+        } finally {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
+        }
+      }
+
+      CompletableFuture<T> result = new CompletableFuture<>();
+      AtomicReference<Thread> workerReference = new AtomicReference<>();
+      Context.CancellationListener listener =
+          ignored -> {
+            Thread worker = workerReference.get();
+            if (worker != null) worker.interrupt();
+            retainedBudget.cancel();
+            result.completeExceptionally(unavailable());
+          };
+      Context caller = null;
+      boolean listenerRegistered = false;
+      boolean workerStarted = false;
+      Thread worker = null;
+      try {
+        caller = Context.current();
+        Context workerContext = caller;
+        worker =
+            Thread.ofVirtual()
+                .name("game-session-region-timeline-retained-read")
+                .unstarted(
+                    () -> {
+                      Context previous = null;
+                      T value = null;
+                      Throwable failure = null;
+                      try {
+                        previous = workerContext.attach();
+                        retainedBudget.check();
+                        value = operation.apply(retainedBudget);
+                        retainedBudget.check();
+                      } catch (RuntimeException | Error operationFailure) {
+                        failure = operationFailure;
+                      } finally {
+                        try {
+                          retainedBudget.releaseRetainedWorkConnections();
+                        } catch (RuntimeException | Error cleanupFailure) {
+                          if (failure == null) failure = cleanupFailure;
+                          else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
+                        } finally {
+                          try {
+                            if (previous != null) workerContext.detach(previous);
+                          } finally {
+                            workLifetime.complete(null);
+                          }
+                        }
+                      }
+                      if (failure == null) result.complete(value);
+                      else result.completeExceptionally(failure);
+                    });
+        workerReference.set(worker);
+        caller.addListener(listener, Runnable::run);
+        listenerRegistered = true;
+        worker.start();
+        workerStarted = true;
+        return result.get(retainedBudget.remainingNanos(), TimeUnit.NANOSECONDS);
+      } catch (InterruptedException interrupted) {
+        if (worker != null) worker.interrupt();
+        retainedBudget.cancel();
+        Thread.currentThread().interrupt();
+        throw unavailable();
+      } catch (ExecutionException failure) {
+        if (failure.getCause() instanceof RuntimeException runtime) throw runtime;
+        if (failure.getCause() instanceof Error error) throw error;
+        throw unavailable();
+      } catch (TimeoutException | RuntimeException expired) {
+        if (workerStarted) {
+          worker.interrupt();
+          retainedBudget.cancel();
+        } else {
+          workLifetime.complete(null);
+        }
+        throw expired instanceof RuntimeException runtime ? runtime : unavailable();
+      } catch (Error startupFailure) {
+        if (workerStarted) {
+          worker.interrupt();
+          retainedBudget.cancel();
+        } else {
+          workLifetime.complete(null);
+        }
+        throw unavailable(startupFailure);
+      } finally {
+        if (listenerRegistered) caller.removeListener(listener);
+      }
+    }
+
     LeaseGrant initialize(
         CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
       byte[][] evalArguments;
       synchronized (this) {
         requireNoAmbientTransaction();
-        if (closed || initialized) throw unavailable();
+        if (closed || initialized || retainedWorkInFlight) throw unavailable();
         boolean mayCreate = permit != null;
         if (mayCreate
             && (!permit.operationId().equals(preparation.operationId())
@@ -487,11 +617,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       initializationInFlight = false;
       closed = true;
       if (boundedClose == null) {
-        try {
-          boundedClose = connection.closeAsync();
-        } catch (RuntimeException failure) {
-          boundedClose = CompletableFuture.failedFuture(failure);
-        }
+        boundedClose =
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection);
         boundedClose.whenComplete(
             (ignored, failure) -> {
               if (failure == null) disposal.complete(null);
@@ -772,7 +899,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       CanonicalGameplayOriginalNewCapacityExecutionBudget budget,
       boolean acquiring) {
     if (budget != null) budget.check();
-    try (StatefulRedisConnection<byte[], byte[]> connection = openConnection(budget)) {
+    StatefulRedisConnection<byte[], byte[]> connection = openConnection(budget);
+    try {
       RedisAsyncCommands<byte[], byte[]> commands = connection.async();
       requirePrincipal(await(commands::aclWhoami, budget));
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
@@ -792,6 +920,11 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       return result;
     } catch (RuntimeException failure) {
       throw unavailable(failure);
+    } finally {
+      if (budget == null) connection.close();
+      else
+        budget.awaitAsyncClose(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
     }
   }
 
@@ -807,13 +940,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       return pending.get(timeout, TimeUnit.MILLISECONDS);
     } catch (InterruptedException interrupted) {
       try {
-        awaitLateConnectionCleanup(pending);
+        awaitLateConnectionCleanup(pending, budget);
       } finally {
         Thread.currentThread().interrupt();
       }
       throw unavailable(interrupted);
     } catch (TimeoutException expired) {
-      awaitLateConnectionCleanup(pending);
+      awaitLateConnectionCleanup(pending, budget);
       throw unavailable(expired);
     } catch (ExecutionException failure) {
       throw unavailable(failure);
@@ -821,13 +954,15 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   }
 
   private static void awaitLateConnectionCleanup(
-      io.lettuce.core.ConnectionFuture<StatefulRedisConnection<byte[], byte[]>> pending) {
+      io.lettuce.core.ConnectionFuture<StatefulRedisConnection<byte[], byte[]>> pending,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
     // The caller returns at the operation deadline. This worker keeps its admission permit
     // until the pending handshake and any late connection close have finished.
-    pending
-        .thenCompose(StatefulRedisConnection::closeAsync)
-        .handle((ignored, failure) -> null)
-        .join();
+    var connection = pending.handle((opened, failure) -> opened).join();
+    if (connection == null) return;
+    var close = CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection);
+    budget.retainUntilAsyncClose(close);
+    close.handle((ignored, failure) -> null).join();
   }
 
   private RedisScriptDescriptor requireBridgeDescriptor() {

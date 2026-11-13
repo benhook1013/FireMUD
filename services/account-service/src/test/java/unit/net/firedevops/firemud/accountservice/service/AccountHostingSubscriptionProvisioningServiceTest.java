@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.UUID;
@@ -64,7 +66,7 @@ class AccountHostingSubscriptionProvisioningServiceTest {
         .thenAnswer(
             call -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(transactions.commits).isEqualTo(1);
+              assertThat(transactions.commits).isEqualTo(2);
               return readback;
             });
     when(provider.provision(readback))
@@ -72,7 +74,7 @@ class AccountHostingSubscriptionProvisioningServiceTest {
             call -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
               assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              assertThat(transactions.commits).isEqualTo(2);
+              assertThat(transactions.commits).isEqualTo(3);
               return new StripeHostingSubscriptionProvisioner.Pending("UNKNOWN", null);
             });
     when(repository.deferUnresolved(claim))
@@ -85,8 +87,10 @@ class AccountHostingSubscriptionProvisioningServiceTest {
         (AccountHostingSubscriptionProvisioningService.Pending)
             service.provision(claim, UUID.randomUUID(), UUID.randomUUID());
     assertThat(result.disposition()).isEqualTo(Disposition.WAITING);
-    assertThat(transactions.commits).isEqualTo(3);
-    verifyNoInteractions(firstInvoiceProvider, firstInvoices);
+    assertThat(transactions.commits).isEqualTo(4);
+    verify(firstInvoices).findAwaitingPayment(claim);
+    verifyNoMoreInteractions(firstInvoices);
+    verifyNoInteractions(firstInvoiceProvider);
   }
 
   @ParameterizedTest
@@ -110,8 +114,10 @@ class AccountHostingSubscriptionProvisioningServiceTest {
         .isEqualTo(
             new AccountHostingSubscriptionProvisioningService.Pending(
                 Disposition.ATTEMPT_EXPIRED, providerResult));
-    assertThat(transactions.commits).isEqualTo(3);
-    verifyNoInteractions(firstInvoiceProvider, firstInvoices);
+    assertThat(transactions.commits).isEqualTo(4);
+    verify(firstInvoices).findAwaitingPayment(claim);
+    verifyNoMoreInteractions(firstInvoices);
+    verifyNoInteractions(firstInvoiceProvider);
   }
 
   @ParameterizedTest
@@ -138,9 +144,11 @@ class AccountHostingSubscriptionProvisioningServiceTest {
             new AccountHostingSubscriptionProvisioningService.Pending(
                 Disposition.TERMINAL_FAILURE,
                 new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_FENCE_REJECTED", null)));
-    assertThat(transactions.commits).isEqualTo(readbackRefused ? 2 : 1);
+    assertThat(transactions.commits).isEqualTo(readbackRefused ? 4 : 3);
     verify(repository).deferUnresolved(claim);
-    verifyNoInteractions(provider, firstInvoiceProvider, firstInvoices);
+    verify(firstInvoices, times(2)).findAwaitingPayment(claim);
+    verifyNoMoreInteractions(firstInvoices);
+    verifyNoInteractions(provider, firstInvoiceProvider);
   }
 
   @Test
@@ -153,8 +161,10 @@ class AccountHostingSubscriptionProvisioningServiceTest {
     assertThatThrownBy(() -> service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
         .isInstanceOf(FenceRejectedException.class)
         .hasMessage("stale retained attempt");
-    assertThat(transactions.commits).isZero();
-    verifyNoInteractions(provider, firstInvoiceProvider, firstInvoices);
+    assertThat(transactions.commits).isEqualTo(2);
+    verify(firstInvoices, times(2)).findAwaitingPayment(claim);
+    verifyNoMoreInteractions(firstInvoices);
+    verifyNoInteractions(provider, firstInvoiceProvider);
   }
 
   @Test
@@ -165,8 +175,10 @@ class AccountHostingSubscriptionProvisioningServiceTest {
         .thenThrow(new IllegalStateException("readback rejected"));
     assertThatThrownBy(() -> service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
         .hasMessageContaining("readback rejected");
-    assertThat(transactions.commits).isEqualTo(1);
-    verifyNoInteractions(provider, firstInvoiceProvider, firstInvoices);
+    assertThat(transactions.commits).isEqualTo(2);
+    verify(firstInvoices).findAwaitingPayment(claim);
+    verifyNoMoreInteractions(firstInvoices);
+    verifyNoInteractions(provider, firstInvoiceProvider);
   }
 
   @Test

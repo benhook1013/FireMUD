@@ -153,6 +153,7 @@ async function signIn() {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   for (const store of stores) store.signOut();
   stores.clear();
   window.history.replaceState({}, '', '/');
@@ -467,6 +468,45 @@ describe('App-owned first-invoice route', () => {
     await screen.findByText('in_existing');
     expect(login).toHaveBeenCalledTimes(2);
     expect(login.mock.calls[1][0].secret).toBe('');
+  });
+
+  it('replaces same-request guidance when the recovery window expires', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const { api } = setupApp();
+    const login = vi.mocked(api.login);
+    login.mockRejectedValue(new AccountControlUiApiError(0));
+
+    fireEvent.change(screen.getByLabelText('Account email'), {
+      target: { value: 'owner@example.com' },
+    });
+    const secret = screen.getByLabelText(
+      'Primary authentication secret'
+    ) as HTMLInputElement;
+    fireEvent.change(secret, { target: { value: 'one-time-code' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.getByText(/re-enter the same secret and select Sign in/)
+    ).toBeTruthy();
+    expect(secret.value).toBe('');
+    expect(login.mock.calls[0][0].secret).toBe('');
+
+    await act(async () => {
+      vi.advanceTimersByTime(60_001);
+    });
+
+    expect(screen.getByRole('status').textContent).toBe(
+      'The sign-in recovery window expired. Start a new sign-in. If you use email codes, request a fresh code before entering it.'
+    );
+    expect(login).toHaveBeenCalledOnce();
+    expect(login.mock.calls[0][0]).toMatchObject({
+      email: 'owner@example.com',
+      secret: '',
+    });
   });
 
   it.each(['navigation', 'replacement login'])(

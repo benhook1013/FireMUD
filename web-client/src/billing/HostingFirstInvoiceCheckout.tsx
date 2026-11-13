@@ -52,6 +52,10 @@ export default function HostingFirstInvoiceCheckout({
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(false);
+  const [dispatchedOperation, setDispatchedOperation] = useState<Pick<
+    Attempt,
+    'invoice' | 'requestId'
+  > | null>(null);
   const [evidenceReady, setEvidenceReady] = useState(false);
   const [held, setHeld] = useState(false);
   const [renewing, setRenewing] = useState(false);
@@ -131,8 +135,20 @@ export default function HostingFirstInvoiceCheckout({
       !evidenceReady &&
       !renewing
     );
+  const retainedOperationMatchesAttempt = Boolean(
+    dispatchedOperation &&
+    invoice &&
+    (invoice.confirmationRequestId === dispatchedOperation.requestId ||
+      preRowOriginal?.requestId === dispatchedOperation.requestId) &&
+    sameCharge(dispatchedOperation.invoice, invoice)
+  );
+  const canRenewAuthorization = Boolean(
+    (invoice?.confirmationRequestId || preRowOriginal) &&
+    (!dispatchedOperation || retainedOperationMatchesAttempt)
+  );
 
   function renewAuthorization() {
+    if (!canRenewAuthorization) return;
     attempt.current = preRowOriginal
       ? {
           invoice: preRowOriginal.invoice,
@@ -194,17 +210,33 @@ export default function HostingFirstInvoiceCheckout({
         Date.now() >= Date.parse(latest.expiresAt)
       ) {
         setAccepted(null);
-        setMessage(
-          'The invoice changed or expired. Review the current details again.'
-        );
+        setEvidenceReady(false);
+        if (attempt.current?.dispatched) {
+          attempt.current.evidenceId = undefined;
+          setHeld(true);
+          setRenewing(false);
+          setMessage(
+            'The invoice changed or expired after confirmation was sent. Check Account status. Renewal requires the same retained operation and invoice version. No new charge was requested.'
+          );
+        } else {
+          attempt.current = null;
+          setMessage(
+            'The invoice changed or expired. Review the current details again.'
+          );
+        }
         return;
       }
       let retained = attempt.current;
       if (retained && !sameCharge(retained.invoice, latest)) {
         // Never turn an uncertain old charge into a replacement confirmation.
         if (retained.dispatched) {
+          retained.evidenceId = undefined;
+          setAccepted(null);
+          setEvidenceReady(false);
+          setHeld(true);
+          setRenewing(false);
           setMessage(
-            'The earlier confirmation needs Account reconciliation. No new charge was requested.'
+            'The invoice fence changed after confirmation was sent. Check Account status. Renewal requires the same retained operation and invoice version. No new charge was requested.'
           );
           return;
         }
@@ -256,7 +288,7 @@ export default function HostingFirstInvoiceCheckout({
         latest.preRowOriginalRequestId !== null &&
         latest.preRowOriginalRequestId !== retained.requestId
       ) {
-        attempt.current = null;
+        if (!retained.dispatched) attempt.current = null;
         setHeld(true);
         setRenewing(false);
         setAccepted(null);
@@ -318,6 +350,10 @@ export default function HostingFirstInvoiceCheckout({
         return;
       }
       retained.dispatched = true;
+      setDispatchedOperation({
+        invoice: retained.invoice,
+        requestId: retained.requestId,
+      });
       setPending(true);
       setMessage(
         'Confirmation requested. Account has not confirmed payment completion.'
@@ -348,7 +384,7 @@ export default function HostingFirstInvoiceCheckout({
         const loadedStripe = submittedStripe.stripe;
         if (!loadedStripe || currentStripe.current !== submittedStripe) {
           setMessage(
-            'Stripe authentication is unavailable. Check Account status or explicitly resume this same confirmation when authentication is available.'
+            'Stripe authentication is unavailable. Check Account status before taking another action.'
           );
           await query.refetch();
           return;
@@ -513,7 +549,13 @@ export default function HostingFirstInvoiceCheckout({
                 )}
                 {readOnlyRecovery ? (
                   <Alert severity="warning">
-                    {invoice.confirmationRequestId ? (
+                    {dispatchedOperation && !retainedOperationMatchesAttempt ? (
+                      <>
+                        Account status does not confirm the original operation
+                        and invoice version. Only status recovery is available.
+                        Authorization cannot safely be renewed.
+                      </>
+                    ) : invoice.confirmationRequestId ? (
                       <>
                         Account retained an earlier confirmation. Only status
                         recovery is automatic. Explicit fresh authorization can
@@ -597,7 +639,7 @@ export default function HostingFirstInvoiceCheckout({
             !committed &&
             !canceled &&
             !expired &&
-            (invoice?.confirmationRequestId || preRowOriginal) && (
+            canRenewAuthorization && (
               <Button
                 disabled={busy || query.isError}
                 onClick={renewAuthorization}

@@ -627,6 +627,49 @@ describe('owner first-invoice checkout', () => {
     expect(stripe.handleNextAction).not.toHaveBeenCalled();
   });
 
+  it.each(['same operation', 'different operation', 'changed charge'] as const)(
+    'keeps a dispatched attempt status-only after a row-version change for the %s',
+    async (operation) => {
+      const { client, setCurrent } = setup();
+      client.confirm.mockResolvedValue({
+        status: 'processing',
+        clientSecret: null,
+      });
+      fireEvent.click(await consent());
+      await screen.findByText(
+        'Waiting for Account to verify and commit payment completion.'
+      );
+      const originalRequestId = client.confirm.mock.calls[0][2].requestId;
+      setCurrent({
+        ...initial,
+        expectedRowVersion: 4,
+        confirmationRequestId:
+          operation !== 'different operation'
+            ? originalRequestId
+            : '55555555-5555-4555-8555-555555555555',
+        ...(operation === 'changed charge' ? { amount: '1599' } : {}),
+        authorizationVersion: 1,
+      });
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Resume exact confirmation' })
+      );
+      await screen.findByText(
+        /The invoice changed or expired after confirmation was sent/
+      );
+
+      expect(client.confirm).toHaveBeenCalledOnce();
+      expect(client.renew).not.toHaveBeenCalled();
+      expect(screen.queryByRole('checkbox')).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: 'Renew exact authorization' })
+      ).toBeNull();
+      expect(
+        screen.getByText(/Only status recovery is available/)
+      ).toBeTruthy();
+    }
+  );
+
   it('holds an authorized-but-unconfirmed result without repeating provider work', async () => {
     const { client, stripe } = setup();
     client.confirm.mockResolvedValue({
