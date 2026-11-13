@@ -19,6 +19,9 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Re
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.client.GameSessionCanonicalInitialAdmissionOwnerClient;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Controlled client-boundary proof only; mocked Game Session responses do not qualify the remote
@@ -131,6 +134,43 @@ class WorldCanonicalInitialAdmissionHoldOwnerTest {
         .isInstanceOf(
             WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldEvidenceException.class);
     verifyNoInteractions(repository);
+  }
+
+  @Test
+  void absentOwnerProofCannotBeReinterpretedAsAbortOrReleaseTheHold() {
+    var repository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var gameSessionOwner = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
+    var owner = new WorldCanonicalInitialAdmissionHoldOwner(repository, gameSessionOwner);
+    HoldIdentity identity = identity(request("a"));
+    when(gameSessionOwner.read(identity)).thenReturn(null);
+
+    assertThatThrownBy(() -> owner.settleFromAuthenticatedOwnerRead(identity))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage("Game Session owner reader returned no proof");
+    verify(gameSessionOwner).read(identity);
+    verifyNoInteractions(repository);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void ambientTransactionOrSynchronizationRejectsBeforeRemoteRead(boolean actualTransaction) {
+    var repository = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
+    var gameSessionOwner = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
+    var owner = new WorldCanonicalInitialAdmissionHoldOwner(repository, gameSessionOwner);
+    HoldIdentity identity = identity(request("b"));
+    try {
+      if (actualTransaction) {
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+      } else {
+        TransactionSynchronizationManager.initSynchronization();
+      }
+      assertThatThrownBy(() -> owner.settleFromAuthenticatedOwnerRead(identity))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Game Session owner proof must be read outside a World transaction");
+      verifyNoInteractions(repository, gameSessionOwner);
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
   }
 
   private static GameSessionCanonicalInitialAdmissionOwnerProof pending(HoldIdentity identity) {
