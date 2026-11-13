@@ -632,6 +632,17 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   }
 
   private static Map<String, byte[]> capacityPhysicalFields(ScriptCase original, String state) {
+    if ("FENCED_INDETERMINATE".equals(state)) {
+      return Map.of(
+          "binding",
+          original.arguments()[16],
+          "digest",
+          original.arguments()[18],
+          "state",
+          ascii(state),
+          "fenceDispatchId",
+          fenceDispatchId(original));
+    }
     return Map.of(
         "binding", original.arguments()[16],
         "digest", original.arguments()[18],
@@ -761,7 +772,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   private static ScriptCase action(ScriptCase source, String action) {
     byte[][] arguments = source.arguments().clone();
     arguments[17] = ascii(action);
+    if ("FENCE".equals(action)) arguments[15] = fenceDispatchId(source);
     return new ScriptCase(source.keys(), arguments);
+  }
+
+  private static byte[] fenceDispatchId(ScriptCase source) {
+    return ascii(UUID.nameUUIDFromBytes(source.arguments()[16]).toString());
   }
 
   @Test

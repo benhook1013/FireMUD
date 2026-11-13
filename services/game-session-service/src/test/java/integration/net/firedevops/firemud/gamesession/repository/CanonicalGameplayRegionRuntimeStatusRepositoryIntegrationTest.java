@@ -1784,6 +1784,43 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void lostFenceDispatchReplyRecoversOnlyItsPhysicalWitnessAndCannotRecreateIt() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var item =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.capture(id).getFirst());
+      long deadline = transferDeadline();
+      proof.transfers.within(
+          deadline,
+          budget -> {
+            var before = proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+            var dispatch = proof.transfers.fenceDispatch(item, before);
+            var competing = proof.transfers.fenceDispatch(item, before);
+            assertThat(competing.takeSubmission(item)).isNull();
+            var owner = proof.capacity(proof.sql).forTransferBudget(budget);
+            owner.fenceForTransfer(item, dispatch, deadline);
+            return null;
+          });
+      assertThat(proof.itemImage(id)).contains("\"fence_readback\": null");
+      proof.recreateTransferOwners();
+      proof.fence(item);
+      proof.verifyPage(id);
+      proof.transfers.within(transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      var installed = proof.install(id);
+      String receipt = proof.itemImage(id);
+      String completion = proof.transferImage(id);
+      proof.losePhysicalExecution(item.execution());
+      assertThatThrownBy(() -> proof.fence(item)).isInstanceOf(IllegalStateException.class);
+      assertThat(proof.physicalExecutionExists(item.execution())).isFalse();
+      assertThat(proof.currentOwner()).isEqualTo(installed);
+      assertThat(proof.transferImage(id)).isEqualTo(completion);
+      assertThat(proof.itemImage(id)).isEqualTo(receipt);
+    }
+  }
+
+  @Test
   void recreatedRepositoryRetainsLostFenceReplyAndImmutableOriginalReceiptsAndCompletion()
       throws Exception {
     try (var proof = new TransferSqlProof()) {
@@ -2474,16 +2511,17 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private void fence(CanonicalGameplayRegionOwnerTransferRepository.Item item) {
-      var before =
-          receiver.observeForRegionOwnerTransfer(
-              item.transferId(), item.ordinal(), transferDeadline());
-      var actual = capacity(sql).fenceForTransfer(item, transferDeadline());
-      var after =
-          receiver.observeForRegionOwnerTransfer(
-              item.transferId(), item.ordinal(), transferDeadline());
+      long deadline = transferDeadline();
       transfers.within(
-          transferDeadline(),
-          ignored -> {
+          deadline,
+          budget -> {
+            var before =
+                receiver.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), deadline);
+            var dispatch = transfers.fenceDispatch(item, before);
+            var actual =
+                capacity(sql).forTransferBudget(budget).fenceForTransfer(item, dispatch, deadline);
+            var after =
+                receiver.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), deadline);
             transfers.retainFence(item, actual, before, after);
             return null;
           });
