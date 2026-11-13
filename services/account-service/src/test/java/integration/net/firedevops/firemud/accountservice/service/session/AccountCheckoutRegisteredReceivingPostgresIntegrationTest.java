@@ -53,6 +53,8 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicatio
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
 import net.firedevops.firemud.accountservice.service.impl.AccountControlUiAuthenticationGrpcService;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
@@ -159,6 +161,9 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
               "checkout-receiving-primary",
               "6379");
 
+  @Container
+  static final GenericContainer<?> credentialCache = AccountCredentialAbuseCacheFixture.container();
+
   @TempDir Path temporary;
 
   @ParameterizedTest
@@ -188,7 +193,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
                       account.getAccountUuid())
                   .get(0, Long.class))
           .isZero();
-      try (var receiving = new RegisteredChain(temporary, upstream, hosting)) {
+      try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+          var receiving = new RegisteredChain(temporary, upstream, hosting, abuse.service())) {
         var login =
             Map.of(
                 "requestId",
@@ -282,6 +288,27 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         assertThat(wrongOwner.statusCode()).isEqualTo(409);
         assertThat(wrongOwner.body())
             .doesNotContain(tuple.path("invoiceId").asText(), "clientSecret", PASSWORD);
+
+        denied.put("requestId", UUID.randomUUID());
+        assertThat(receiving.request("POST", "/api/account/auth/login", null, denied).statusCode())
+            .isEqualTo(401);
+        denied.put("requestId", UUID.randomUUID());
+        var throttled = receiving.request("POST", "/api/account/auth/login", null, denied);
+        assertThat(throttled.statusCode()).isEqualTo(429);
+        assertThat(throttled.headers().firstValue("retry-after")).contains("1");
+        assertThat(throttled.body()).contains("AUTH_RETRY_LATER");
+
+        abuse.disconnectApplication();
+        denied.put("requestId", UUID.randomUUID());
+        var unavailable = receiving.request("POST", "/api/account/auth/login", null, denied);
+        assertThat(unavailable.statusCode()).isEqualTo(503);
+        assertThat(unavailable.body()).contains("AUTH_ABUSE_CONTROL_UNAVAILABLE");
+        var replay = receiving.request("POST", "/api/account/auth/login", null, login);
+        assertThat(replay.statusCode()).isEqualTo(200);
+        assertThat(JSON.readTree(replay.body()).path("data").path("authToken").asText())
+            .isEqualTo(bearer);
+        assertThat(receiving.request("GET", path, bearer, null).statusCode()).isEqualTo(200);
+
         assertThat(hosting.firstInvoiceConfirmations()).isZero();
         UUID confirmation = UUID.randomUUID();
         var proof =
@@ -451,7 +478,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
     RegisteredChain(
         Path directory,
         AccountControlUiOriginalOrderFixture upstream,
-        CanonicalHostingSubscriptionTestFixture.Fixture hosting)
+        CanonicalHostingSubscriptionTestFixture.Fixture hosting,
+        AccountCredentialAbuseService credentialAbuse)
         throws Exception {
       var f = upstream.receivingSources();
       var signer = upstream.signerFixture;
@@ -532,6 +560,7 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         account.registerBean(
             AccountPlatformRestrictionOperationRepository.class, () -> f.restrictionOperations);
         account.registerBean(AccountServiceImpl.class, () -> f.primary);
+        account.registerBean(AccountCredentialAbuseService.class, () -> credentialAbuse);
         account.registerBean(AccountJwtSignerDesiredStateRepository.class, () -> signer.desired);
         account.registerBean(AccountJwtJwksPublicationRepository.class, () -> signer.publication);
         account.registerBean(AccountJwtSignerMaterializerTrustBinding.class, () -> signer.trust);
