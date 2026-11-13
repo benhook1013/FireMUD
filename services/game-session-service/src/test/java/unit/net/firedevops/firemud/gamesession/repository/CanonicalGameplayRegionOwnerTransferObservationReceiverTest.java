@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -27,6 +28,7 @@ import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -532,6 +534,15 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
       release.countDown();
       peerRelease.countDown();
       peer.join(2_000L);
+      var backgroundPermits =
+          (Semaphore)
+              java.util.Objects.requireNonNull(
+                  ReflectionTestUtils.getField(
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                      "BACKGROUND_OPERATIONS"));
+      int slots = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+      assertThat(backgroundPermits.tryAcquire(slots, 2, TimeUnit.SECONDS)).isTrue();
+      backgroundPermits.release(slots);
     }
   }
 

@@ -1,4 +1,5 @@
--- Claims only a lease whose separate canonical timeline metadata already matches the expected epoch.
+-- Claims a region lease only when the canonical timeline matches the expected epoch.
+-- gs_region_lease/v2 checks its fifth argument against Redis TIME. Zero omits the deadline.
 local leaseKey = KEYS[1]
 local metaKey = KEYS[2]
 if #KEYS ~= 2 or #ARGV ~= 5 or ARGV[1] ~= 'gs_region_lease/v2' then return -1 end

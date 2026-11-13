@@ -13,6 +13,7 @@ import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.RestoreArgs;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
@@ -2103,8 +2104,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     } else if (fault.equals("restored-authorization")) {
       assertThat(beforeFence).isNotNull();
       assertThat(admin.hget(key, ascii("state"))).containsExactly(ascii("FENCED_INDETERMINATE"));
-      admin.del(new byte[][] {key});
-      admin.restore(key, 0L, beforeFence);
+      admin.restore(key, beforeFence, RestoreArgs.Builder.ttl(0L).replace());
       assertThat(admin.hget(key, ascii("state"))).containsExactly(ascii("AUTHORIZED"));
     } else admin.hset(key, ascii("binding"), ascii("{}"));
     byte[] physical =
@@ -3277,6 +3277,53 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             capacityOwner()
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation())
                 .canonicalReadback())
+        .containsExactly(retained.canonicalReadback());
+  }
+
+  @Test
+  void concurrentExactClosuresReplayIdenticalRetainedProof() throws Exception {
+    repairAccountMember();
+    bridge();
+    var firstOwner = capacityOwner();
+    var secondOwner = capacityOwner();
+    var start = new java.util.concurrent.CountDownLatch(1);
+    var callers = java.util.concurrent.Executors.newFixedThreadPool(2);
+    try {
+      var first =
+          callers.submit(
+              () -> {
+                start.await();
+                firstOwner.closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation());
+                return true;
+              });
+      var second =
+          callers.submit(
+              () -> {
+                start.await();
+                secondOwner.closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation());
+                return true;
+              });
+      start.countDown();
+      assertThat(first.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      assertThat(second.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    } finally {
+      callers.shutdownNow();
+    }
+
+    var retained =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(retained.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+    assertThat(retained.canonicalReadback()).isNotEmpty();
+    var row =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT status, terminal_readback FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                retained.execution().digest());
+    assertThat(row.get("status", String.class)).isEqualTo("CLOSED");
+    assertThat(row.get("terminal_readback", byte[].class))
         .containsExactly(retained.canonicalReadback());
   }
 

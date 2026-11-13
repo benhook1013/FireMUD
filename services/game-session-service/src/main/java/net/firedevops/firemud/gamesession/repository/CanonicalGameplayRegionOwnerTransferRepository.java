@@ -139,8 +139,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   }
 
   /**
-   * Pins the captured original or the exact terminal original that committed before capture.
-   * Neither path creates a transfer, an inventory item or provisional admission authority.
+   * Pins the captured original or the exact original whose transition became terminal before
+   * capture. Neither path creates a transfer, an inventory item or provisional admission authority.
    */
   FrozenOriginal frozenOriginal(UUID transitionId) {
     noSql();
@@ -178,20 +178,30 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       return new FrozenOriginal(id, item.execution().digest(), item.candidate());
     }
 
+    // An Account abort changes the transition, not its capacity outcome. An unresolved execution
+    // still belongs to the normal capture and fencing pass when this transfer resumes.
     var terminalRows =
         tx.fetch(
-            "SELECT t.transfer_id,e.execution_digest,e.canonical_execution,c.original_new_candidate_bytes"
+            "SELECT t.transfer_id,e.execution_digest,e.canonical_execution,"
+                + "c.original_new_candidate_bytes,c.original_new_candidate_digest"
                 + " FROM game_session_canonical_binding_transition c"
                 + " JOIN game_session_original_new_capacity_execution e ON e.transition_id=c.transition_id"
-                + " AND e.execution_digest=c.original_new_capacity_execution_digest"
+                + " AND e.tenant_id=c.tenant_id AND e.request_id=c.admission_request_id"
+                + " AND e.admission_id=c.transition_id"
                 + " JOIN game_session_canonical_binding_region_bridge_obligation b ON b.transition_id=c.transition_id"
                 + " JOIN "
                 + TRANSFER
                 + " t ON t.tenant_id=b.tenant_id AND t.game_instance_id=b.game_instance_id"
                 + " AND t.region_id=b.region_id AND t.region_epoch=b.region_epoch"
                 + " AND t.old_owner_id=e.selected_owner_id AND t.old_owner_fence=e.selected_owner_fence"
-                + " WHERE c.transition_id=? AND c.status='COMMITTED' AND e.status='COMMITTED'"
-                + " AND c.original_new_final_session_sha256 IS NOT NULL AND t.state='FROZEN' LIMIT 2",
+                + " WHERE c.transition_id=? AND t.state='FROZEN'"
+                + " AND c.original_new_candidate_state='READBACK_CONFIRMED'"
+                + " AND ((c.status='COMMITTED' AND e.status='COMMITTED'"
+                + " AND e.execution_digest=c.original_new_capacity_execution_digest"
+                + " AND c.original_new_final_session_sha256 IS NOT NULL)"
+                + " OR (c.status='ABORTED' AND c.admission_orphan_cleanup_id IS NOT NULL"
+                + " AND c.original_new_final_session_sha256 IS NULL"
+                + " AND e.status IN ('INSTALL_DISPATCHED','AUTHORIZED','CLOSED'))) LIMIT 2",
             transitionId);
     if (terminalRows.isEmpty()) return null;
     if (terminalRows.size() != 1) throw unavailable();
@@ -201,11 +211,19 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     byte[] candidateBytes = row.get("original_new_candidate_bytes", byte[].class);
     var candidate = CanonicalGameplayOriginalNewCandidate.parseCanonical(candidateBytes);
     var execution = decode(row.get("canonical_execution", byte[].class));
+    String candidateDigest = digest(candidateBytes);
     var binding = candidate.bindingIdentity();
     if (!candidate.bindingDecisionId().equals(transitionId)
         || !execution.transitionId().equals(transitionId)
         || !execution.digest().equals(row.get("execution_digest", String.class))
-        || !execution.candidateDigest().equals(digest(candidateBytes))
+        || !execution.candidateDigest().equals(candidateDigest)
+        || !candidateDigest.equals(row.get("original_new_candidate_digest", String.class))
+        || !execution
+            .request()
+            .identity()
+            .requestId()
+            .toString()
+            .equals(candidate.leaseEvidence().carrier().get("requestId"))
         || !execution.selectedOwnerId().equals(transfer.get("old_owner_id", String.class))
         || execution.selectedOwnerFence() != transfer.get("old_owner_fence", Long.class)
         || !binding.tenantId().equals(transfer.get("tenant_id", UUID.class))
@@ -213,6 +231,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || !binding.regionId().equals(transfer.get("region_id", UUID.class))
         || binding.regionEpoch().longValueExact() != transfer.get("region_epoch", Long.class))
       throw unavailable();
+    requireExecutionPlayerBinding(execution, candidate);
     return new FrozenOriginal(id, execution.digest(), candidate);
   }
 
@@ -1035,14 +1054,20 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || !assignment.workloadNamespace().equals(retained.get("workload_namespace", String.class))
         || assignment.allocationVersion() != retained.get("allocation_version", Integer.class))
       throw unavailable();
+    requireExecutionPlayerBinding(execution, candidate);
+    return new Item(transferId, ordinal, execution, candidate, assignment);
+  }
+
+  private static void requireExecutionPlayerBinding(
+      OriginalNewCapacityExecution execution, CanonicalGameplayOriginalNewCandidate candidate) {
     var player = (TenantCapacityAdmission.PlayerContext) execution.request().context();
+    var binding = candidate.bindingIdentity();
     if (!binding.accountId().equals(player.accountId())
         || !binding.tenantId().equals(player.tenantId())
         || !binding.gameInstanceId().equals(player.gameInstanceId())
         || !binding.playableStateNamespaceId().equals(player.playableStateNamespaceId())
         || !binding.characterId().equals(player.characterId())
         || !binding.sessionId().equals(player.sessionId().toString())) throw unavailable();
-    return new Item(transferId, ordinal, execution, candidate, assignment);
   }
 
   static Record current(DSLContext tx, UUID id, boolean lock) {

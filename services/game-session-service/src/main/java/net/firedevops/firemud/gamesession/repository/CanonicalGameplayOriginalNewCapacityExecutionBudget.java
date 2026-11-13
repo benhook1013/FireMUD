@@ -63,6 +63,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private final Map<DSLContext, DSLContext> contexts = new IdentityHashMap<>();
   private Statement active;
   private OwnedConnection activeConnection;
+  private int outstandingAsyncCloses;
   private boolean workerDone;
   private boolean cancellationStarted;
   private boolean cancellationDone;
@@ -240,6 +241,32 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     remainingNanos();
   }
 
+  /** Waits for one Redis close attempt only through this operation's deadline. */
+  void awaitAsyncClose(CompletableFuture<Void> closeAttempt) {
+    Objects.requireNonNull(closeAttempt);
+    synchronized (lifecycle) {
+      outstandingAsyncCloses++;
+    }
+    closeAttempt.whenComplete(
+        (ignored, failure) -> {
+          synchronized (lifecycle) {
+            outstandingAsyncCloses--;
+            releaseIfFinished();
+          }
+        });
+    try {
+      closeAttempt.get(remainingNanos(), TimeUnit.NANOSECONDS);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw unavailable();
+    } catch (java.util.concurrent.ExecutionException
+        | java.util.concurrent.CancellationException failedClose) {
+      // An exceptional close ends the one attempt but leaves disposal unproved.
+    } catch (java.util.concurrent.TimeoutException expired) {
+      throw unavailable();
+    }
+  }
+
   /** Both acquisition and statements run only inside the capped resource worker. */
   DSLContext sql(DSLContext source) {
     check();
@@ -348,6 +375,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     if (!released
         && workerDone
         && outstandingConnections.get() == 0
+        && outstandingAsyncCloses == 0
         && (!cancellationStarted || cancellationDone)) {
       released = true;
       OPERATIONS.release();
