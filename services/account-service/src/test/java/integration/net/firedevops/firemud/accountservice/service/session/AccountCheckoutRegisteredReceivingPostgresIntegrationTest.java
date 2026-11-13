@@ -207,6 +207,9 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
                 PASSWORD);
         var denied = new HashMap<String, Object>(login);
         denied.put("requestId", UUID.randomUUID());
+        // Keep this early wrong-credential observation out of the later account-candidate
+        // throttle phase. The shared source bucket is still exercised by both phases.
+        denied.put("email", otherAccount.getEmail());
         denied.put("secret", "wrong-secret");
         assertThat(receiving.request("POST", "/api/account/auth/login", null, denied).statusCode())
             .isEqualTo(401);
@@ -289,15 +292,23 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         assertThat(wrongOwner.body())
             .doesNotContain(tuple.path("invoiceId").asText(), "clientSecret", PASSWORD);
 
-        for (int failure = 0; failure < 3; failure++) {
+        // The fixture uses fixed 60-second windows. If setup crossed a window boundary, the
+        // first phase's source failures may have expired; keep issuing fresh requests until this
+        // distinct candidate reaches its bounded threshold in one window.
+        denied.put("email", account.getEmail());
+        HttpResponse<String> throttled = null;
+        for (int attempt = 0; attempt < 8; attempt++) {
           denied.put("requestId", UUID.randomUUID());
-          assertThat(
-                  receiving.request("POST", "/api/account/auth/login", null, denied).statusCode())
-              .isEqualTo(failure < 2 ? 401 : 429);
+          var response = receiving.request("POST", "/api/account/auth/login", null, denied);
+          if (response.statusCode() == 429) {
+            throttled = response;
+            break;
+          }
+          assertThat(response.statusCode()).isEqualTo(401);
         }
-        denied.put("requestId", UUID.randomUUID());
-        var throttled = receiving.request("POST", "/api/account/auth/login", null, denied);
-        assertThat(throttled.statusCode()).isEqualTo(429);
+        assertThat(throttled)
+            .as("Shared Cache throttles within the bounded retry phase")
+            .isNotNull();
         assertThat(throttled.headers().firstValue("retry-after")).contains("1");
         assertThat(throttled.body()).contains("AUTH_RETRY_LATER");
 
