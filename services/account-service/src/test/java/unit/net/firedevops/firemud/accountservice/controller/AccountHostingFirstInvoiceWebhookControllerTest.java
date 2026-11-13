@@ -28,6 +28,43 @@ class AccountHostingFirstInvoiceWebhookControllerTest {
   }
 
   @Test
+  void exactUnrelatedEventClassificationIsAcknowledgedWithoutCache() throws Exception {
+    var payments = mock(AccountHostingFirstInvoicePaymentService.class);
+    var completion = new AccountHostingFirstInvoicePaymentService.Completion("IGNORED", null);
+    when(payments.completeSigned("{}", "t=1,v1=controlled")).thenReturn(completion);
+
+    var response =
+        new AccountHostingFirstInvoiceWebhookController(payments)
+            .receive(request("{}".getBytes(StandardCharsets.UTF_8)));
+
+    assertThat(response.getStatusCode().value()).isEqualTo(200);
+    assertThat(response.getBody()).isEqualTo(completion);
+    assertThat(response.getHeaders().getCacheControl()).isEqualTo("no-store");
+    assertThat(response.getHeaders().getFirst("Pragma")).isEqualTo("no-cache");
+    verify(payments).completeSigned("{}", "t=1,v1=controlled");
+  }
+
+  @Test
+  void exactLateConflictClassificationIsAcknowledgedForOperatorReconciliation() throws Exception {
+    var payments = mock(AccountHostingFirstInvoicePaymentService.class);
+    UUID requestId = UUID.randomUUID();
+    var completion =
+        new AccountHostingFirstInvoicePaymentService.Completion(
+            "OPERATOR_RECONCILIATION_REQUIRED", requestId);
+    when(payments.completeSigned("{}", "t=1,v1=controlled")).thenReturn(completion);
+
+    var response =
+        new AccountHostingFirstInvoiceWebhookController(payments)
+            .receive(request("{}".getBytes(StandardCharsets.UTF_8)));
+
+    assertThat(response.getStatusCode().value()).isEqualTo(200);
+    assertThat(response.getBody()).isEqualTo(completion);
+    assertThat(response.getHeaders().getCacheControl()).isEqualTo("no-store");
+    assertThat(response.getHeaders().getFirst("Pragma")).isEqualTo("no-cache");
+    verify(payments).completeSigned("{}", "t=1,v1=controlled");
+  }
+
+  @Test
   void retainedButNonterminalCompletionIsNotAcknowledgedAsProcessed() throws Exception {
     var payments = mock(AccountHostingFirstInvoicePaymentService.class);
     when(payments.completeSigned("{}", "t=1,v1=controlled"))

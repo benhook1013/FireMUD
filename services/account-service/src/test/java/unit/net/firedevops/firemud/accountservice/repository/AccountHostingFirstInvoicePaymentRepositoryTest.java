@@ -160,6 +160,37 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
         .isNotEqualTo(invoice("in_exact", "pi_exact", 2500, "usd").digest());
     assertThat(invoice.digest())
         .isNotEqualTo(invoice("in_exact", "pi_exact", 2400, "eur").digest());
+    assertThat(invoice.digest())
+        .isNotEqualTo(
+            invoice(
+                    "in_exact",
+                    "pi_exact",
+                    2400,
+                    "usd",
+                    UUID.randomUUID(),
+                    invoice.billingPolicyDigest(),
+                    invoice.expiresAt())
+                .digest())
+        .isNotEqualTo(
+            invoice(
+                    "in_exact",
+                    "pi_exact",
+                    2400,
+                    "usd",
+                    invoice.paymentInstrumentId(),
+                    "sha256:" + "c".repeat(64),
+                    invoice.expiresAt())
+                .digest())
+        .isNotEqualTo(
+            invoice(
+                    "in_exact",
+                    "pi_exact",
+                    2400,
+                    "usd",
+                    invoice.paymentInstrumentId(),
+                    invoice.billingPolicyDigest(),
+                    invoice.expiresAt().minusSeconds(1))
+                .digest());
   }
 
   @Test
@@ -540,13 +571,31 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
 
   private static AccountHostingFirstInvoicePayment invoice(
       String invoice, String intent, long amount, String currency) {
+    return invoice(
+        invoice,
+        intent,
+        amount,
+        currency,
+        UUID.fromString("d4bc0143-4bf9-48ac-86a7-88f422146cfa"),
+        "sha256:" + "b".repeat(64),
+        Instant.parse("2026-11-07T23:00:00Z"));
+  }
+
+  private static AccountHostingFirstInvoicePayment invoice(
+      String invoice,
+      String intent,
+      long amount,
+      String currency,
+      UUID instrument,
+      String billingPolicyDigest,
+      Instant expiresAt) {
     UUID id = UUID.fromString("d4bc0143-4bf9-48ac-86a7-88f422146cfa");
     return new AccountHostingFirstInvoicePayment(
         id,
         id,
         id,
         id,
-        id,
+        instrument,
         1,
         "sub_exact",
         "cus_exact",
@@ -559,9 +608,9 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
         "price_exact",
         1,
         1,
-        "sha256:" + "b".repeat(64),
+        billingPolicyDigest,
         false,
         Instant.parse("2026-11-07T00:00:00Z"),
-        Instant.parse("2026-11-07T23:00:00Z"));
+        expiresAt);
   }
 }

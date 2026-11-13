@@ -62,6 +62,7 @@ import net.firedevops.firemud.accountservice.repository.AccountSubscriptionInten
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceKind;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.security.AccountPlayerAdmissionEntitlementWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner.Request;
@@ -215,6 +216,18 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .verify(f.scopes)
         .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(f.scope.connectScopeId()));
     order.verify(f.demos).readCurrent(TENANT);
+  }
+
+  @Test
+  void capacityEvidenceFreshnessUsesDatabaseTimeWhenApplicationClockTrails() throws Exception {
+    Fixture f = new Fixture(true);
+    f.time.set(NOW.minusSeconds(1));
+    f.databaseTime.set(NOW);
+
+    var value = f.owner.evaluate(f.request, "controlled-token");
+
+    assertThat(value.evaluatedAt()).isEqualTo(NOW);
+    assertThat(value.evaluatedAt()).isAfter(f.time.get());
   }
 
   @ParameterizedTest
@@ -974,6 +987,8 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     private boolean missingCapacityRetentionReadback;
     private final java.util.concurrent.atomic.AtomicReference<Instant> time =
         new java.util.concurrent.atomic.AtomicReference<>(NOW);
+    private final java.util.concurrent.atomic.AtomicReference<Instant> databaseTime =
+        new java.util.concurrent.atomic.AtomicReference<>(NOW);
     private final FreshTenantCreationEvidence source = source();
     private final TenantAuthorityEventV1Codec.Event tenantEvent = tenantEvent(source);
     private final CanonicalJoinScopeV2 scope;
@@ -1097,6 +1112,11 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
                 Object[] values = (Object[]) invocation.getRawArguments()[1];
                 return retainedCapacity.get((String) values[0]);
               });
+      var evaluationTime = mock(org.jooq.Record.class);
+      when(evaluationTime.get("observed_at", java.time.OffsetDateTime.class))
+          .thenAnswer(invocation -> AccountTenantCapacityRepository.at(databaseTime.get()));
+      when(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at"))
+          .thenAnswer(invocation -> evaluationTime);
       var connection = mock(Connection.class);
       when(connection.getTransactionIsolation()).thenReturn(Connection.TRANSACTION_SERIALIZABLE);
       doAnswer(

@@ -15,25 +15,21 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "dev-tools/validation/check-authz-route-matrix.py"
 MATRIX = ROOT / "design/architecture/system-architecture-authz-route-matrix.yaml"
-FIRST_INVOICE_OWNER_CHECKS = {
+EXPECTED_FIRST_INVOICE_LIVE_CHECKS = {
+    "issuer_generation",
+    "account_generation",
     "current_subscription_owner",
     "exact_reserved_instrument",
 }
-EXPECTED_FIRST_INVOICE_ROUTE_CHECKS = {
-    "GET /billing/hosting/subscriptions/{subscriptionId}/first-invoice": (
-        FIRST_INVOICE_OWNER_CHECKS.copy()
-    ),
+EXPECTED_FIRST_INVOICE_ROUTES = (
+    "GET /billing/hosting/subscriptions/{subscriptionId}/first-invoice",
     (
         "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/"
         "reauthenticate"
-    ): FIRST_INVOICE_OWNER_CHECKS.copy(),
-    (
-        "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm"
-    ): FIRST_INVOICE_OWNER_CHECKS.copy(),
-    (
-        "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew"
-    ): FIRST_INVOICE_OWNER_CHECKS.copy(),
-}
+    ),
+    "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm",
+    "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew",
+)
 
 
 def load_validator():
@@ -158,12 +154,13 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
     def test_current_matrix_passes(self):
         self.assertEqual([], self.validator.validate(MATRIX))
 
-    def test_first_invoice_routes_require_both_owner_checks(self):
+    def test_first_invoice_routes_require_current_owner_and_generations(self):
+        self.assertEqual(EXPECTED_FIRST_INVOICE_ROUTES, self.validator.FIRST_INVOICE_ROUTES)
         self.assertEqual(
-            EXPECTED_FIRST_INVOICE_ROUTE_CHECKS,
-            self.validator.FIRST_INVOICE_ROUTE_REQUIRED_LIVE_CHECKS,
+            EXPECTED_FIRST_INVOICE_LIVE_CHECKS,
+            self.validator.FIRST_INVOICE_REQUIRED_LIVE_CHECKS,
         )
-        for route_name, expected_checks in EXPECTED_FIRST_INVOICE_ROUTE_CHECKS.items():
+        for route_name in EXPECTED_FIRST_INVOICE_ROUTES:
             with self.subTest(route=route_name):
                 document = self.validator.yaml.safe_load(
                     MATRIX.read_text(encoding="utf-8")
@@ -173,12 +170,14 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     "target_not_currently_routable", route["route_status"]
                 )
                 self.assertTrue(
-                    expected_checks.issubset(route["required_live_checks"])
+                    EXPECTED_FIRST_INVOICE_LIVE_CHECKS.issubset(
+                        route["required_live_checks"]
+                    )
                 )
 
-    def test_first_invoice_owner_checks_cannot_be_omitted_or_aliased(self):
-        for route_name, required_checks in EXPECTED_FIRST_INVOICE_ROUTE_CHECKS.items():
-            for required_check in required_checks:
+    def test_first_invoice_live_checks_cannot_be_omitted_or_aliased(self):
+        for route_name in EXPECTED_FIRST_INVOICE_ROUTES:
+            for required_check in EXPECTED_FIRST_INVOICE_LIVE_CHECKS:
                 with self.subTest(route=route_name, check=required_check):
                     document = self.validator.yaml.safe_load(
                         MATRIX.read_text(encoding="utf-8")
@@ -196,11 +195,25 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                     self.assertTrue(
                         any(
                             f"account-service {route_name} is missing required "
-                            "first-invoice owner checks" in error
+                            "first-invoice live checks" in error
                             for error in errors
                         ),
                         errors,
                     )
+
+    def test_first_invoice_routes_cannot_be_promoted_while_held(self):
+        for route_name in EXPECTED_FIRST_INVOICE_ROUTES:
+            with self.subTest(route=route_name):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(document, "account-service", route_name)
+                route["route_status"] = "current_openapi_operator_surface"
+
+                self.assertIn(
+                    f"account-service {route_name} must remain target_not_currently_routable",
+                    validate_document(self.validator, document),
+                )
 
     def test_moderation_root_contract_declares_receiving_redemption_and_selector(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

@@ -312,6 +312,58 @@ describe('owner first-invoice checkout', () => {
     );
   });
 
+  it('lets the owner correct a refused primary secret with a fresh reauth request ID', async () => {
+    const { client } = setup();
+    client.reauthenticate.mockRejectedValueOnce(
+      new FirstInvoiceError(401, 'AUTH_INVALID_CREDENTIALS')
+    );
+    const button = await consent();
+    fireEvent.click(button);
+
+    await screen.findByText(
+      'Account refused the primary authentication secret. Check the email and secret, then review and authorize this exact charge again.'
+    );
+    expect(client.confirm).not.toHaveBeenCalled();
+    const refusedRequestId = client.reauthenticate.mock.calls[0][1].requestId;
+
+    fireEvent.change(screen.getByLabelText('Primary authentication secret'), {
+      target: { value: 'corrected-secret' },
+    });
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(button);
+
+    await waitFor(() => expect(client.confirm).toHaveBeenCalledOnce());
+    expect(client.reauthenticate.mock.calls[1][1].requestId).not.toBe(
+      refusedRequestId
+    );
+  });
+
+  it('keeps the same reauth request ID after an unknown response', async () => {
+    const { client } = setup();
+    client.reauthenticate
+      .mockRejectedValueOnce(new FirstInvoiceError(0))
+      .mockResolvedValueOnce({
+        evidenceId: '55555555-5555-4555-8555-555555555555',
+      });
+    const button = await consent();
+    fireEvent.click(button);
+
+    await screen.findByText(
+      'The result is unknown. Check Account status or retry this same confirmation. Do not start another payment.'
+    );
+    const uncertainRequestId = client.reauthenticate.mock.calls[0][1].requestId;
+
+    fireEvent.change(screen.getByLabelText('Primary authentication secret'), {
+      target: { value: 'primary-secret' },
+    });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(client.confirm).toHaveBeenCalledOnce());
+    expect(client.reauthenticate.mock.calls[1][1].requestId).toBe(
+      uncertainRequestId
+    );
+  });
+
   it.each(['processing', 'succeeded'])(
     'keeps provider %s pending until independent Account COMMITTED read',
     async (status) => {

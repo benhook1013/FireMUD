@@ -646,6 +646,7 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     var invoice = requireOwner(dispatch.invoice().subscriptionId(), actor);
     requireCheckoutCurrent(invoice);
     requireAwaitingPayment(invoice, dispatch.expectedRowVersion());
+    intents.lockForFirstInvoiceCommand(invoice.creationRequestId(), dispatch.expectedRowVersion());
     Record auth = Objects.requireNonNull(authorization(dispatch.authorizationRequestId()));
     if (!dispatch.independentlyRead()
         || !dispatch.requestId().equals(auth.get("request_id", UUID.class))
@@ -686,18 +687,24 @@ public final class AccountHostingFirstInvoicePaymentRepository {
 
   public ConfirmationDispatch candidateForSignedEvent(VerifiedEvent verified) {
     transaction();
-    if (!"payment_intent.succeeded".equals(verified.eventType())) throw refused();
+    if (!"payment_intent.succeeded".equals(verified.eventType())) return null;
     String intent =
         JSON.readTree(verified.rawPayload()).path("data").path("object").path("id").asText();
     Record row =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT c.* FROM subscription_first_invoice_confirmations c "
-                    + "JOIN subscription_first_invoices i USING (subscription_id) WHERE i.payment_intent_id = ?",
-                intent));
+        dsl.fetchOne(
+            "SELECT c.* FROM subscription_first_invoice_confirmations c "
+                + "JOIN subscription_first_invoices i USING (subscription_id) WHERE i.payment_intent_id = ?",
+            intent);
+    if (row == null) return null;
     var invoice = Objects.requireNonNull(find(row.get("subscription_id", UUID.class)));
     requireSignedTuple(verified, row, invoice);
     return dispatch(row, invoice, false, false);
+  }
+
+  public UUID retainedSignedConflictRequestId(VerifiedEvent verified) {
+    transaction();
+    return new AccountHostingFirstInvoicePaymentConflictRepository(dsl)
+        .retainedConflictRequestId(verified);
   }
 
   public boolean completed(UUID subscriptionId, UUID lifecycleRequestId) {
@@ -728,6 +735,13 @@ public final class AccountHostingFirstInvoicePaymentRepository {
 
   /** The verified payload, not a browser result or invoice.paid, establishes success evidence. */
   public ConfirmationDispatch retainSignedSuccess(VerifiedEvent verified, Observation observed) {
+    var retained = retainSignedOutcome(verified, observed);
+    if (retained.latePaidConflict()) throw refused();
+    return retained.dispatch();
+  }
+
+  /** Separately retains a verified paid conflict without changing a committed cancellation. */
+  public SignedOutcome retainSignedOutcome(VerifiedEvent verified, Observation observed) {
     transaction();
     if (!"payment_intent.succeeded".equals(verified.eventType())) throw refused();
     JsonNode object = JSON.readTree(verified.rawPayload()).path("data").path("object");
@@ -754,6 +768,11 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || now().isBefore(observed.observedAt())
         || Duration.between(observed.readStartedAt(), now()).compareTo(Duration.ofSeconds(20)) >= 0)
       throw refused();
+    var dispatch = dispatch(row, invoice, true, false);
+    if (new AccountHostingFirstInvoicePaymentConflictRepository(dsl)
+        .retainIfCanceled(verified, dispatch, observed)) {
+      return new SignedOutcome(dispatch, true);
+    }
     var intake = new StripeEventInboxRepository(dsl).retainOrReplay(verified);
     dsl.execute(
         "INSERT INTO subscription_first_invoice_success_evidence (request_id, subscription_id, provider_event_id, event_payload_digest, tuple_digest, observed_at) "
@@ -764,8 +783,10 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         intake.payloadSha256(),
         invoice.digest(),
         utc(observed.observedAt()));
-    return dispatch(row, invoice, true, false);
+    return new SignedOutcome(dispatch, false);
   }
+
+  public record SignedOutcome(ConfirmationDispatch dispatch, boolean latePaidConflict) {}
 
   private static void requireSignedTuple(
       VerifiedEvent verified, Record confirmation, AccountHostingFirstInvoicePayment invoice) {

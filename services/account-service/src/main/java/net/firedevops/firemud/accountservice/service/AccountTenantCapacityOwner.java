@@ -191,7 +191,9 @@ public final class AccountTenantCapacityOwner {
     var evidence = request.evidence();
     capacity.requireRetained(evidence);
     Instant now = clock.instant();
-    requireCurrentLifetime(evidence, now);
+    // Capacity evidence is stamped and compared against PostgreSQL time. Keep the injected Account
+    // clock for its other bounded source checks below, but never let clock skew reject that bundle.
+    requireCurrentLifetime(evidence, AccountTenantCapacityRepository.databaseNow(dsl));
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
     var parsed =
         RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(

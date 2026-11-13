@@ -9,7 +9,12 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReconciliationLimits;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Explicit, unregistered paid-source composition for Account's original NEW lease owner.
@@ -20,6 +25,12 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Provider observation runs only outside SQL. This component registers no route or provider write.
  */
 public final class AccountGameplayAdmissionPaidSource {
+  private static final JsonMapper BILLING_HINT_JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
+  private static final String BILLING_SCHEMA_VERSION = "account-hosting-subscription-event/v1";
   private final AccountHostingPlanCatalog plans;
   private final Clock clock;
   private final ReconciliationLimits limits;
@@ -51,6 +62,37 @@ public final class AccountGameplayAdmissionPaidSource {
   Preparation prepare(DSLContext exactDsl, String expectedNamespace, UUID tenantId) {
     requireNamespace(expectedNamespace);
     return new Preparation(this, reader(exactDsl).prepareCurrentRead(tenantId));
+  }
+
+  /**
+   * Unlocked routing hint from the exact current tenant source head. The paid lifecycle owner locks
+   * its sources first, then the locked selector validates the complete current envelope.
+   */
+  boolean hasCurrentPaidSourceCandidate(
+      DSLContext exactDsl, String expectedNamespace, UUID tenantId) {
+    requireNamespace(expectedNamespace);
+    Record source =
+        exactDsl.fetchOne(
+            "SELECT e.payload "
+                + "FROM account_tenant_authority_source_records h "
+                + "JOIN account_tenant_entitlement_outbox_events e "
+                + "ON e.tenant_uuid = h.tenant_uuid "
+                + "AND e.tenant_billing_sequence = h.tenant_billing_sequence "
+                + "AND e.request_id = h.last_request_id "
+                + "AND e.event_id = h.tenant_billing_event_id "
+                + "AND e.event_digest = h.tenant_billing_event_digest "
+                + "WHERE h.tenant_uuid = ?",
+            tenantId);
+    if (source == null) return false;
+    byte[] payload = source.get("payload", byte[].class);
+    if (payload == null || payload.length == 0 || payload.length > 32768) return false;
+    try {
+      JsonNode envelope = BILLING_HINT_JSON.readTree(payload);
+      return envelope != null
+          && BILLING_SCHEMA_VERSION.equals(envelope.path("schemaVersion").asText());
+    } catch (RuntimeException unreadableHint) {
+      return false;
+    }
   }
 
   Observation observe(Preparation preparation) {
