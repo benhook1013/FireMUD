@@ -39,6 +39,7 @@ import net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadClient
 import net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadEvidence;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -63,7 +64,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers(disabledWithoutDocker = true)
 class DraftAuthorizationFencePostgresIntegrationTest {
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void twoOwnerConsumerPersistsWorldOnceAndRecoversMissingGameDesignOnRetry() {
