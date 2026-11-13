@@ -298,11 +298,10 @@ public final class AccountHostingFirstInvoicePaymentService {
     if (candidate == null) {
       var invoice = transaction.execute(status -> payments.unconsentedCanceledInvoice(event));
       if (invoice == null) {
-        // A verified first-invoice success without local confirmation linkage may become
-        // correlatable after the local owner catches up. Keep Stripe delivery retryable instead
-        // of acknowledging an event that has only been retained as immutable intake.
-        return new Completion(
-            "payment_intent.succeeded".equals(event.eventType()) ? "RECONCILING" : "IGNORED", null);
+        boolean linked =
+            Boolean.TRUE.equals(
+                transaction.execute(status -> payments.hasSignedFirstInvoiceLinkage(event)));
+        return new Completion(linked ? "RECONCILING" : "IGNORED", null);
       }
       var observed = provider.observe(invoice);
       var outcome =
