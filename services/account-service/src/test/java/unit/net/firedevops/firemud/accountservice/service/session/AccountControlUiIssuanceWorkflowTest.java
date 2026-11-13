@@ -335,8 +335,12 @@ class AccountControlUiIssuanceWorkflowTest {
     when(authenticated.accountId()).thenReturn(fixture.account);
     AtomicReference<byte[]> requestBytes = new AtomicReference<>();
     when(fixture.primary.authenticateControlUiPrimaryIdentity(
-            "creator@example.test", "test-only-secret"))
-        .thenReturn(authenticated);
+            eq("creator@example.test"), eq("test-only-secret"), any(Runnable.class)))
+        .thenAnswer(
+            call -> {
+              call.getArgument(2, Runnable.class).run();
+              return authenticated;
+            });
     when(fixture.authority.captureAccount(fixture.account)).thenReturn(source);
     when(fixture.signers.captureCurrent()).thenReturn(signer);
     when(fixture.signers.requireOriginal(any(byte[].class))).thenReturn(signer);
@@ -429,7 +433,8 @@ class AccountControlUiIssuanceWorkflowTest {
     var order = org.mockito.Mockito.inOrder(fixture.primary, fixture.authority);
     order
         .verify(fixture.primary)
-        .authenticateControlUiPrimaryIdentity("creator@example.test", "test-only-secret");
+        .authenticateControlUiPrimaryIdentity(
+            eq("creator@example.test"), eq("test-only-secret"), any(Runnable.class));
     order.verify(fixture.authority, org.mockito.Mockito.times(5)).captureAccount(fixture.account);
     verify(fixture.authority, never()).captureInitial(any(), any());
     verify(fixture.authority, never()).capture(any(), any(), any());
@@ -505,7 +510,8 @@ class AccountControlUiIssuanceWorkflowTest {
     verify(replay.authority, org.mockito.Mockito.atLeastOnce()).captureAccount(replay.account);
     verify(replay.actors).authenticateAccount("test-only-account-original");
     verify(replay.operations, never()).recordReplayFailure(any());
-    verify(replay.primary, never()).authenticateControlUiPrimaryIdentity(anyString(), anyString());
+    verify(replay.primary, never())
+        .authenticateControlUiPrimaryIdentity(anyString(), anyString(), any(Runnable.class));
     verify(replay.signers, never()).sign(any(), any(), any());
     assertThat(original.scopeKind()).isEqualTo(AccountControlUiAuthority.ScopeKind.ACCOUNT);
     assertThat(original.optionalTenantId()).isEmpty();
@@ -777,9 +783,11 @@ class AccountControlUiIssuanceWorkflowTest {
   void remoteAdmissionAndFailureAccountingRunOutsideSqlAfterCredentialDenialCommits() {
     var f = new Fixture(NOW.plusSeconds(30));
     f.allowControlledAttempt();
-    when(f.primary.authenticateControlUiPrimaryIdentity(anyString(), anyString()))
+    when(f.primary.authenticateControlUiPrimaryIdentity(
+            anyString(), anyString(), any(Runnable.class)))
         .thenAnswer(
             call -> {
+              call.getArgument(2, Runnable.class).run();
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
               throw new AuthenticationException("AUTH_INVALID_CREDENTIALS", "Invalid credentials");
             });
@@ -793,7 +801,9 @@ class AccountControlUiIssuanceWorkflowTest {
     ordered.verify(f.abuse).admit(any(), eq("creator@example.test"));
     ordered.verify(f.operations).lockReplayRequest(f.requestId);
     ordered.verify(f.operations).findRequest(f.requestId);
-    ordered.verify(f.primary).authenticateControlUiPrimaryIdentity(anyString(), anyString());
+    ordered
+        .verify(f.primary)
+        .authenticateControlUiPrimaryIdentity(anyString(), anyString(), any(Runnable.class));
     ordered.verify(f.transactions).commit(any());
     ordered.verify(f.abuse).recordFailure(any());
     verify(f.transactions, never()).rollback(any());
@@ -804,8 +814,13 @@ class AccountControlUiIssuanceWorkflowTest {
   void failedSharedAccountingReturnsUnavailableRatherThanCredentialDenial() {
     var f = new Fixture(NOW.plusSeconds(30));
     f.allowControlledAttempt();
-    when(f.primary.authenticateControlUiPrimaryIdentity(anyString(), anyString()))
-        .thenThrow(new AuthenticationException("AUTH_INVALID_CREDENTIALS", "Invalid credentials"));
+    when(f.primary.authenticateControlUiPrimaryIdentity(
+            anyString(), anyString(), any(Runnable.class)))
+        .thenAnswer(
+            call -> {
+              call.getArgument(2, Runnable.class).run();
+              throw new AuthenticationException("AUTH_INVALID_CREDENTIALS", "Invalid credentials");
+            });
     when(f.abuse.recordFailure(any()))
         .thenReturn(
             new AccountCredentialAbuseService.Decision(
@@ -863,7 +878,7 @@ class AccountControlUiIssuanceWorkflowTest {
   }
 
   @Test
-  void expiredAdmissionAfterRequestLockWaitNeverConsumesPrimaryCredential() {
+  void expiredAdmissionBeforePrimaryOwnerLocksNeverConsumesPrimaryCredential() {
     var f = new Fixture(NOW.plusSeconds(30));
     f.allowControlledAttempt();
     when(f.abuse.isUsable(any())).thenReturn(false);
@@ -872,7 +887,31 @@ class AccountControlUiIssuanceWorkflowTest {
           .isInstanceOf(AccountCredentialAbuseRefusal.class);
     }
     verifyNoInteractions(f.primary, f.authority, f.signers, f.registry);
+    verify(f.abuse).isUsable(any());
     verify(f.abuse, never()).recordFailure(any());
+  }
+
+  @Test
+  void admissionExpiredDuringPrimaryOwnerLocksRefusesBeforeCredentialVerification() {
+    var f = new Fixture(NOW.plusSeconds(30));
+    f.allowControlledAttempt();
+    when(f.abuse.isUsable(any())).thenReturn(true, false);
+    when(f.primary.authenticateControlUiPrimaryIdentity(
+            anyString(), anyString(), any(Runnable.class)))
+        .thenAnswer(
+            call -> {
+              call.getArgument(2, Runnable.class).run();
+              return null;
+            });
+    try (var ignored = f.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> f.service().issueAccount(f.accountRequest()))
+          .isInstanceOf(AccountCredentialAbuseRefusal.class);
+    }
+    verify(f.primary)
+        .authenticateControlUiPrimaryIdentity(anyString(), anyString(), any(Runnable.class));
+    verify(f.abuse, org.mockito.Mockito.times(2)).isUsable(any());
+    verify(f.abuse, never()).recordFailure(any());
+    verifyNoInteractions(f.authority, f.signers, f.registry);
   }
 
   private static final class Fixture {

@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.lettuce.core.ClientOptions;
+import io.lettuce.core.RedisCommandExecutionException;
 import io.lettuce.core.RedisFuture;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -275,6 +276,46 @@ class AccountCredentialAbuseRedisStoreTest {
     assertThat(fixture.calls).hasSize(3);
   }
 
+  @Test
+  void completedErrorsFromNonMutatingPreparationCommandsDoNotFenceLaterAttempts() {
+    for (String failedCommand : List.of("WHOAMI", "LOAD")) {
+      var fixture = new AsyncFixture();
+      var store = fixture.store();
+      var failOnce = new AtomicBoolean(true);
+      fixture.completion =
+          (command, evaluation, reply, timeout, unit) -> {
+            if (command.equals(failedCommand) && failOnce.getAndSet(false))
+              throw new RedisCommandExecutionException("ERR controlled preparation failure");
+            return reply;
+          };
+
+      assertThat(store.admit(fixture.policy, fixture.buckets, fixture.now)).isNull();
+      assertThat(fixture.calls).hasSize(failedCommand.equals("WHOAMI") ? 1 : 2);
+      fixture.completion = AsyncFixture.IMMEDIATE;
+      assertThat(store.admit(fixture.policy, fixture.buckets, fixture.now)).isNotNull();
+      assertThat(fixture.calls).hasSize(failedCommand.equals("WHOAMI") ? 8 : 9);
+    }
+  }
+
+  @Test
+  void completedRedisErrorFromScriptEvaluationKeepsTheConnectionFenced() {
+    var fixture = new AsyncFixture();
+    var store = fixture.store();
+    var failOnce = new AtomicBoolean(true);
+    fixture.completion =
+        (command, evaluation, reply, timeout, unit) -> {
+          if (command.equals("EVAL") && failOnce.getAndSet(false))
+            throw new RedisCommandExecutionException("ERR controlled script failure");
+          return reply;
+        };
+
+    assertThat(store.admit(fixture.policy, fixture.buckets, fixture.now)).isNull();
+    assertThat(fixture.calls).hasSize(3);
+    fixture.completion = AsyncFixture.IMMEDIATE;
+    assertThat(store.admit(fixture.policy, fixture.buckets, fixture.now)).isNull();
+    assertThat(fixture.calls).hasSize(3);
+  }
+
   private static void awaitTimedWait(Thread thread) throws InterruptedException {
     long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
     while (thread.isAlive()
@@ -412,13 +453,18 @@ class AccountCredentialAbuseRedisStoreTest {
                       .isPositive()
                       .isLessThanOrEqualTo(policy.decisionTimeout().toNanos());
                   assertThat(unit).isEqualTo(TimeUnit.NANOSECONDS);
-                  completed.complete(completion.get(command, evaluation, reply, timeout, unit));
+                  try {
+                    completed.complete(completion.get(command, evaluation, reply, timeout, unit));
+                  } catch (RedisCommandExecutionException redisError) {
+                    completed.completeExceptionally(redisError);
+                  }
                   yield completed.get(timeout, unit);
                 }
                 case "cancel" -> {
                   cancellations.incrementAndGet();
                   yield completed.cancel((Boolean) arguments[0]);
                 }
+                case "isDone" -> completed.isDone();
                 default ->
                     throw new AssertionError("Unexpected future method: " + method.getName());
               });

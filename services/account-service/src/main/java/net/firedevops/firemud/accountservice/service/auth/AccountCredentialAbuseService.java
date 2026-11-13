@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.LongSupplier;
 
 /**
  * One Account-global credential-attempt owner. It never receives a secret, looks up an Account,
@@ -15,12 +16,23 @@ public final class AccountCredentialAbuseService {
   private final AccountCredentialAbusePolicySource policies;
   private final Backend store;
   private final Clock clock;
+  private final LongSupplier nanoTime;
 
   public AccountCredentialAbuseService(
       AccountCredentialAbusePolicySource policies, Backend store, Clock clock) {
+    this(policies, store, clock, System::nanoTime);
+  }
+
+  AccountCredentialAbuseService(
+      AccountCredentialAbusePolicySource policies,
+      Backend store,
+      Clock clock,
+      LongSupplier nanoTime) {
     this.policies = policies;
     this.store = store;
     this.clock = Objects.requireNonNull(clock, "Credential-abuse clock is required");
+    this.nanoTime =
+        Objects.requireNonNull(nanoTime, "Credential-abuse monotonic clock is required");
   }
 
   /** Called only after the receiving owner authenticates the workload and source carrier. */
@@ -40,14 +52,14 @@ public final class AccountCredentialAbuseService {
               keys.candidate(candidate, window),
               keys.pressure(window),
               policy.expiryEpochMillis(window));
-      long started = System.nanoTime();
+      long started = nanoTime.getAsLong();
       var signals = store.admit(policy, buckets, now);
       if (signals == null
-          || System.nanoTime() - started > policy.maximumSignalSkew().toNanos()
+          || !signalWithinSkew(started, policy)
           || !policy.isEffectiveAt(clock.instant())) return unavailable(policy);
       Optional<Duration> retry = policy.retryAfter(signals);
       if (retry.isPresent()) return new Decision(Outcome.RETRY_LATER, retry.get(), null);
-      return new Decision(Outcome.ADMITTED, null, new Permit(this, policy, buckets));
+      return new Decision(Outcome.ADMITTED, null, new Permit(this, policy, buckets, started));
     } catch (RuntimeException unavailable) {
       // Never preserve exceptions that may contain a raw candidate, source or delivered secret.
       return unavailable(policy);
@@ -60,7 +72,8 @@ public final class AccountCredentialAbuseService {
     try {
       Instant now = clock.instant();
       return permit.policy.isEffectiveAt(now)
-          && now.toEpochMilli() < permit.buckets.expiryEpochMillis();
+          && now.toEpochMilli() < permit.buckets.expiryEpochMillis()
+          && signalWithinSkew(permit.signalStartedAtNanos, permit.policy);
     } catch (RuntimeException unavailable) {
       return false;
     }
@@ -89,6 +102,11 @@ public final class AccountCredentialAbuseService {
   private static Decision unavailable(AccountCredentialAbusePolicy policy) {
     return new Decision(
         Outcome.UNAVAILABLE, policy == null ? null : policy.unavailableRetry(), null);
+  }
+
+  private boolean signalWithinSkew(long startedAtNanos, AccountCredentialAbusePolicy policy) {
+    long elapsedNanos = nanoTime.getAsLong() - startedAtNanos;
+    return elapsedNanos >= 0L && elapsedNanos <= policy.maximumSignalSkew().toNanos();
   }
 
   /** Backend is injected only by the owning composition; it is not source or store authority. */
@@ -158,13 +176,18 @@ public final class AccountCredentialAbuseService {
     private final AccountCredentialAbuseService owner;
     private final AccountCredentialAbusePolicy policy;
     private final Buckets buckets;
+    private final long signalStartedAtNanos;
     private final AtomicBoolean consumed = new AtomicBoolean();
 
     private Permit(
-        AccountCredentialAbuseService owner, AccountCredentialAbusePolicy policy, Buckets buckets) {
+        AccountCredentialAbuseService owner,
+        AccountCredentialAbusePolicy policy,
+        Buckets buckets,
+        long signalStartedAtNanos) {
       this.owner = owner;
       this.policy = policy;
       this.buckets = buckets;
+      this.signalStartedAtNanos = signalStartedAtNanos;
     }
 
     @Override
