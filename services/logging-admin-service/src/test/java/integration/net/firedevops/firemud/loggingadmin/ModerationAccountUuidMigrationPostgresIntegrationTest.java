@@ -3,8 +3,15 @@ package net.firedevops.firemud.loggingadmin;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -109,6 +116,73 @@ class ModerationAccountUuidMigrationPostgresIntegrationTest {
         .isEqualTo("bigint");
   }
 
+  @Test
+  void concurrentModerationWriterBlocksMigrationThenItsCommittedRowForcesRefusal()
+      throws Exception {
+    List<String> historyBefore = migrationHistory();
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try (Connection writer = dataSource.getConnection()) {
+      writer.setAutoCommit(false);
+      int writerPid;
+      String rowBefore;
+      try (Statement statement = writer.createStatement()) {
+        statement.setQueryTimeout(5);
+        try (var result = statement.executeQuery("SELECT pg_backend_pid()")) {
+          result.next();
+          writerPid = result.getInt(1);
+        }
+        statement.executeUpdate(
+            "INSERT INTO moderation_actions (tenant_id, account_id, action, reason) VALUES (17, 9007199254740993, 'ban', 'concurrent retained action')");
+        try (var result =
+            statement.executeQuery("SELECT row_to_json(m)::text FROM moderation_actions m")) {
+          result.next();
+          rowBefore = result.getString(1);
+        }
+      }
+      Future<?> migration = executor.submit(() -> flyway("1003").migrate());
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      boolean blocked = false;
+      try (Connection observer = dataSource.getConnection();
+          var query =
+              observer.prepareStatement(
+                  "SELECT EXISTS (SELECT 1 FROM pg_locks l WHERE l.relation = 'public.moderation_actions'::regclass AND l.mode = 'AccessExclusiveLock' AND NOT l.granted AND ? = ANY(pg_blocking_pids(l.pid)))")) {
+        query.setQueryTimeout(2);
+        query.setInt(1, writerPid);
+        while (System.nanoTime() < deadline && !migration.isDone()) {
+          try (var result = query.executeQuery()) {
+            result.next();
+            blocked = result.getBoolean(1);
+          }
+          if (blocked) {
+            break;
+          }
+          Thread.sleep(25);
+        }
+      }
+      assertThat(blocked).as("V1003 must wait on the uncommitted moderation writer").isTrue();
+      assertThat(migration.isDone()).isFalse();
+      writer.commit();
+      assertThatThrownBy(() -> migration.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasStackTraceContaining("Cannot migrate populated legacy moderation Account references");
+      assertThat(migrationHistory()).isEqualTo(historyBefore);
+      assertThat(
+              jdbc.queryForList(
+                  "SELECT row_to_json(m)::text FROM moderation_actions m", String.class))
+          .containsExactly(rowBefore);
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'moderation_actions' AND column_name = 'account_id'",
+                  String.class))
+          .isEqualTo("bigint");
+    } finally {
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(25, TimeUnit.SECONDS))
+          .as("bounded migration task must finish before the fixture is reused")
+          .isTrue();
+    }
+  }
+
   private List<String> migrationHistory() {
     return jdbc.queryForList(
         "SELECT row_to_json(h)::text FROM flyway_schema_history h ORDER BY installed_rank",
@@ -118,6 +192,7 @@ class ModerationAccountUuidMigrationPostgresIntegrationTest {
   private Flyway flyway(String target) {
     return Flyway.configure()
         .dataSource(dataSource)
+        .initSql("SET lock_timeout = '15s'; SET statement_timeout = '20s'")
         .locations("classpath:db/migration")
         .placeholders(Map.of("serviceSchema", "public"))
         .target(MigrationVersion.fromVersion(target))
