@@ -46,6 +46,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -70,7 +71,8 @@ class AccountLogoutAllDraftSettlementPostgresIntegrationTest {
   private static final String TOKEN_PROFILE = "control-ui";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void commitsAccountGenerationFenceClosedEventCheckpointAndImmutableReceiptTogether() {
@@ -575,10 +577,6 @@ class AccountLogoutAllDraftSettlementPostgresIntegrationTest {
   }
 
   private Seed seedAccount(Fixture fixture) {
-    return seedAccount(fixture, 1L);
-  }
-
-  private Seed seedAccount(Fixture fixture, long initialCounter) {
     return transaction(
         fixture.transaction(),
         () -> {
@@ -588,29 +586,16 @@ class AccountLogoutAllDraftSettlementPostgresIntegrationTest {
           account.setEmail("logout-all-" + unique + "@example.test");
           account.setPasswordHash("initial-verifier");
           Account saved = fixture.accounts().save(account);
-          if (initialCounter == 1L) {
-            fixture.authority().initialize(AuthorityScope.account(saved.getAccountUuid()));
-          } else {
-            // Seed a synthetic retained maximum by INSERT, not an illegal monotonic jump.
-            // All migration constraints and update triggers stay enabled for the whole test.
-            fixture
-                .transactionDsl()
-                .execute(
-                    "INSERT INTO account_authority_generations "
-                        + "(scope_kind, account_uuid, generation, source_version) "
-                        + "VALUES ('ACCOUNT', ?, ?, ?)",
-                    saved.getAccountUuid(),
-                    initialCounter,
-                    initialCounter);
-            fixture
-                .transactionDsl()
-                .execute(
-                    "INSERT INTO account_authority_issuance_fences "
-                        + "(account_uuid, issuance_fence, source_version) VALUES (?, ?, ?)",
-                    saved.getAccountUuid(),
-                    initialCounter,
-                    initialCounter);
-          }
+          // Fresh repository insertion atomically establishes exact Account and issuer baselines.
+          // Reads verify that evidence; generic initialization cannot enroll or repair a source.
+          ScopeState initialState =
+              fixture.authority().read(AuthorityScope.account(saved.getAccountUuid()));
+          assertThat(
+                  new net.firedevops.firemud.accountservice.repository
+                          .AccountAuthoritySourceEvidenceRepository(
+                          fixture.transactionDsl(), fixture.authority(), fixture.outbox())
+                      .readCurrentAccountSource(saved.getAccountUuid(), initialState))
+              .isNotNull();
           PasswordResetToken token = new PasswordResetToken();
           String rawToken = "reset-token-" + unique;
           LocalDateTime deadline = LocalDateTime.now().plusHours(2);
@@ -618,11 +603,7 @@ class AccountLogoutAllDraftSettlementPostgresIntegrationTest {
           token.setToken(rawToken);
           token.setExpiresAt(deadline);
           fixture.tokens().save(token);
-          return new Seed(
-              saved.getId(),
-              saved.getAccountUuid(),
-              rawToken,
-              fixture.authority().read(AuthorityScope.account(saved.getAccountUuid())));
+          return new Seed(saved.getId(), saved.getAccountUuid(), rawToken, initialState);
         });
   }
 

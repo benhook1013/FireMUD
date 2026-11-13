@@ -31,6 +31,7 @@ import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEncoding;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -55,7 +56,8 @@ class AccountHostedTermsPostgresIntegrationTest {
   private static final String TEST_NAMESPACE = "account-hosted-terms-isolated-test";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void migrationRetainsExistingPartyAndBackfillsNoCatalogOrAcceptance() throws Exception {
