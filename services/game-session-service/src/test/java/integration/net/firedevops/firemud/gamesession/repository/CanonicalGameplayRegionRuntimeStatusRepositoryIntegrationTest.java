@@ -2221,6 +2221,17 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
         long maximumBindingBytes,
         int maximumRetainedRecords)
         throws Exception {
+      this(listener, maximumRecords, maximumBindingBytes, maximumRetainedRecords, 256, 1024);
+    }
+
+    private TransferSqlProof(
+        DefaultExecuteListener listener,
+        int maximumRecords,
+        long maximumBindingBytes,
+        int maximumRetainedRecords,
+        int maximumTransfers,
+        int maximumItems)
+        throws Exception {
       String password = UUID.randomUUID().toString();
       try (var administrator =
               RedisClient.create(RedisURI.create(REDIS.getHost(), REDIS.getMappedPort(6379)));
@@ -2357,9 +2368,11 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           maximumRetainedRecords);
       sql.execute(
           "INSERT INTO game_session_region_transfer_history_budget"
-              + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,256,1024)"
+              + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,?,?)"
               + " ON CONFLICT DO NOTHING",
-          assignment.tenantId());
+          assignment.tenantId(),
+          maximumTransfers,
+          maximumItems);
       execution = newControlledExecution();
       precharge(execution);
       recreateTransferOwners();
