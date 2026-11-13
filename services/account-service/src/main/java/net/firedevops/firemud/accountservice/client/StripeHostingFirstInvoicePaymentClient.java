@@ -123,9 +123,9 @@ public final class StripeHostingFirstInvoicePaymentClient {
                     .addExpand("payments.data.payment.payment_intent")
                     .build(),
                 options);
+    if (invoice == null) throw refused();
     require(
-        invoice != null
-            && "invoice".equals(invoice.getObject())
+        "invoice".equals(invoice.getObject())
             && expected.invoiceId().equals(invoice.getId())
             && expected.providerCustomerId().equals(invoice.getCustomer())
             && Boolean.valueOf(expected.livemode()).equals(invoice.getLivemode())
@@ -166,9 +166,9 @@ public final class StripeHostingFirstInvoicePaymentClient {
             && line.getPricing().getPriceDetails() != null
             && expected.providerPriceId().equals(line.getPricing().getPriceDetails().getPrice()));
     var payment = invoice.getPayments().getData().getFirst();
+    if (payment == null) throw refused();
     require(
-        payment != null
-            && payment.getPayment() != null
+        payment.getPayment() != null
             && "payment_intent".equals(payment.getPayment().getType())
             && expected.paymentIntentId().equals(payment.getPayment().getPaymentIntent()));
     PaymentIntent expandedIntent = payment.getPayment().getPaymentIntentObject();
