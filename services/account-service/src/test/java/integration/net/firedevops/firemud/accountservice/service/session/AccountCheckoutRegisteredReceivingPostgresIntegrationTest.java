@@ -289,9 +289,12 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         assertThat(wrongOwner.body())
             .doesNotContain(tuple.path("invoiceId").asText(), "clientSecret", PASSWORD);
 
-        denied.put("requestId", UUID.randomUUID());
-        assertThat(receiving.request("POST", "/api/account/auth/login", null, denied).statusCode())
-            .isEqualTo(401);
+        for (int failure = 0; failure < 3; failure++) {
+          denied.put("requestId", UUID.randomUUID());
+          assertThat(
+                  receiving.request("POST", "/api/account/auth/login", null, denied).statusCode())
+              .isEqualTo(failure < 2 ? 401 : 429);
+        }
         denied.put("requestId", UUID.randomUUID());
         var throttled = receiving.request("POST", "/api/account/auth/login", null, denied);
         assertThat(throttled.statusCode()).isEqualTo(429);
