@@ -580,15 +580,24 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         };
     byte[][] arguments = grant.arguments(includeTtl ? ttlMillis : null);
     if (arguments.length != expectedArguments.size()) throw unavailable();
-    return executeInteger(source, keys, arguments, includeTtl);
+    return executeInteger(
+        source,
+        keys,
+        arguments,
+        includeTtl,
+        CanonicalGameplayRegionLeaseRedisScriptContribution.ACQUIRE_ID.equals(scriptId));
   }
 
   private long executeInteger(byte[] script, byte[][] keys, byte[][] arguments) {
-    return executeInteger(script, keys, arguments, false);
+    return executeInteger(script, keys, arguments, false, false);
   }
 
   private long executeInteger(
-      byte[] script, byte[][] keys, byte[][] arguments, boolean hasLeaseDeadlineArgument) {
+      byte[] script,
+      byte[][] keys,
+      byte[][] arguments,
+      boolean hasLeaseDeadlineArgument,
+      boolean acquiring) {
     requireNoAmbientTransaction();
     if (handoffClock != null) {
       return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
@@ -601,17 +610,18 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
               scopedArguments[arguments.length - 1] =
                   ascii(Long.toString(budget.absoluteDeadlineMillis()));
             }
-            return executeInteger(script, keys, scopedArguments, budget);
+            return executeInteger(script, keys, scopedArguments, budget, acquiring);
           });
     }
-    return executeInteger(script, keys, arguments, null);
+    return executeInteger(script, keys, arguments, null, false);
   }
 
   private long executeInteger(
       byte[] script,
       byte[][] keys,
       byte[][] arguments,
-      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget,
+      boolean acquiring) {
     if (budget != null) budget.check();
     try (StatefulRedisConnection<byte[], byte[]> connection =
         redisClient.connect(ByteArrayCodec.INSTANCE)) {
@@ -619,6 +629,14 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       requirePrincipal(await(commands::aclWhoami, budget));
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
+      if (acquiring) {
+        // If the reply is lost, the new contender token must expire within one operation budget.
+        int ttlIndex = arguments.length - 2;
+        long configuredTtl =
+            Long.parseLong(new String(arguments[ttlIndex], StandardCharsets.US_ASCII));
+        arguments[ttlIndex] =
+            ascii(Long.toString(Math.min(configuredTtl, budget.remainingMillis())));
+      }
       Long result =
           await(
               () -> commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, arguments), budget);
