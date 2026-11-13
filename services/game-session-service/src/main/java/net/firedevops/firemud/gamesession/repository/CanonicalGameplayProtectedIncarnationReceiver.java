@@ -40,8 +40,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
   private static final String OBSERVATION_SCHEMA = "firemud.gs.protected-incarnation-read/v1";
   private static final String INITIAL_OBSERVATION_SCHEMA =
       "firemud.gs.protected-initial-account-barrier-read/v1";
-  private static final String REGION_OWNER_TRANSFER_OBSERVATION_SCHEMA =
-      "firemud.gs.protected-region-owner-transfer-read/v1";
   private static final String INCARNATION_BINDING_SCHEMA =
       "firemud.gs.protected-incarnation-binding/v1";
   private static final Pattern KEY_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
@@ -93,24 +91,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
           "tenantGameplayTag",
           "workloadNamespace",
           "allocationVersion");
-  private static final Set<String> REGION_OWNER_TRANSFER_OWNER_FIELDS =
-      Set.of(
-          "ownerKind",
-          "transferId",
-          "transferIntentDigest",
-          "frozenSourceDigest",
-          "oldRegionOwnerId",
-          "oldRegionOwnerFence",
-          "gameInstanceId",
-          "regionId",
-          "regionEpoch",
-          "transitionId",
-          "requestId",
-          "accountId",
-          "executionDigest",
-          "candidateDigest",
-          "controlState",
-          "completionDigest");
   private static final Set<String> EVIDENCE_FIELDS =
       Set.of(
           "deploymentIdentity",
@@ -132,7 +112,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
 
   private final CanonicalGameplayAccountAdmissionBarrierRepository intentRepository;
   private final CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository;
-  private final CanonicalGameplayRegionOwnerTransferObservationSource regionOwnerTransferSource;
   private final CanonicalGameplayTenantGameplayTagRepository tenantTagRepository;
   private final ProtectedObservationChannel observationChannel;
   private final TrustedConfiguration trustedConfiguration;
@@ -147,7 +126,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       Clock clock) {
     this(
         intentRepository,
-        null,
         null,
         tenantTagRepository,
         observationChannel,
@@ -165,7 +143,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       SecureRandom secureRandom) {
     this(
         intentRepository,
-        null,
         null,
         tenantTagRepository,
         observationChannel,
@@ -183,7 +160,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     this(
         null,
         initialRepository,
-        null,
         tenantTagRepository,
         observationChannel,
         trustedConfiguration,
@@ -191,20 +167,9 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
         new SecureRandom());
   }
 
-  static CanonicalGameplayProtectedIncarnationReceiver forRegionOwnerTransfer(
-      CanonicalGameplayRegionOwnerTransferObservationSource source,
-      CanonicalGameplayTenantGameplayTagRepository tags,
-      ProtectedObservationChannel channel,
-      TrustedConfiguration trust,
-      Clock clock) {
-    return new CanonicalGameplayProtectedIncarnationReceiver(
-        null, null, source, tags, channel, trust, clock, new SecureRandom());
-  }
-
   private CanonicalGameplayProtectedIncarnationReceiver(
       CanonicalGameplayAccountAdmissionBarrierRepository intentRepository,
       CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository,
-      CanonicalGameplayRegionOwnerTransferObservationSource regionOwnerTransferSource,
       CanonicalGameplayTenantGameplayTagRepository tenantTagRepository,
       ProtectedObservationChannel observationChannel,
       TrustedConfiguration trustedConfiguration,
@@ -212,7 +177,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       SecureRandom secureRandom) {
     this.intentRepository = intentRepository;
     this.initialRepository = initialRepository;
-    this.regionOwnerTransferSource = regionOwnerTransferSource;
     this.tenantTagRepository = tenantTagRepository;
     this.observationChannel = observationChannel;
     this.trustedConfiguration = trustedConfiguration;
@@ -248,75 +212,15 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     return observeCurrentContext(before, () -> loadInitialCurrentContext(originalRequestId));
   }
 
-  /**
-   * Current-read proof for normal transfer or sealed successor currentness, never mutation
-   * authority. It is not reset recovery or historical no-execution proof.
-   */
-  VerifiedIncarnation observeForRegionOwnerTransfer(
-      UUID transferId, long targetOrdinal, long absoluteDeadlineMillis) {
-    requireNoAmbientTransaction();
-    requireNonNil(transferId, "transferId");
-    if (targetOrdinal < 0L) {
-      throw new IllegalArgumentException("targetOrdinal must not be negative");
-    }
-    requireAvailable(OwnerKind.REGION_OWNER_TRANSFER);
-    if (absoluteDeadlineMillis <= clock.millis()) {
-      throw new ObservationUnavailableException("Protected transfer observation deadline expired");
-    }
-    try {
-      return regionOwnerTransferSource.withinObservation(
-          clock,
-          absoluteDeadlineMillis,
-          budget -> observeForRegionOwnerTransfer(transferId, targetOrdinal, budget));
-    } catch (CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable expired) {
-      throw new ObservationUnavailableException(
-          "Protected transfer observation deadline or admission unavailable");
-    }
-  }
-
-  VerifiedIncarnation observeForRegionOwnerTransfer(
-      UUID transferId,
-      long targetOrdinal,
-      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
-    requireNoAmbientTransaction();
-    requireAvailable(OwnerKind.REGION_OWNER_TRANSFER);
-    long absoluteDeadlineMillis = budget.absoluteDeadlineMillis();
-    CurrentContext before =
-        loadRegionOwnerTransferCurrentContext(transferId, targetOrdinal, absoluteDeadlineMillis);
-    budget.check();
-    return observeCurrentContext(
-        before,
-        () -> {
-          budget.check();
-          return loadRegionOwnerTransferCurrentContext(
-              transferId, targetOrdinal, absoluteDeadlineMillis);
-        },
-        absoluteDeadlineMillis);
-  }
-
   private VerifiedIncarnation observeCurrentContext(
       CurrentContext before, java.util.function.Supplier<CurrentContext> reload) {
-    return observeCurrentContext(before, reload, Long.MAX_VALUE);
-  }
-
-  private VerifiedIncarnation observeCurrentContext(
-      CurrentContext before,
-      java.util.function.Supplier<CurrentContext> reload,
-      long absoluteDeadlineMillis) {
     long issuedAt = clock.millis();
-    if (issuedAt <= 0L || absoluteDeadlineMillis <= issuedAt) {
+    if (issuedAt <= 0L) {
       throw new ObservationUnavailableException("Protected observation clock is unavailable");
     }
     long expiresAt;
     try {
-      expiresAt =
-          Math.addExact(
-              issuedAt,
-              before.ownerKind() == OwnerKind.REGION_OWNER_TRANSFER
-                  ? Math.min(
-                      trustedConfiguration.observationTtlMillis(),
-                      absoluteDeadlineMillis - issuedAt)
-                  : trustedConfiguration.observationTtlMillis());
+      expiresAt = Math.addExact(issuedAt, trustedConfiguration.observationTtlMillis());
     } catch (ArithmeticException overflow) {
       throw new ObservationUnavailableException("Protected observation time window is invalid");
     }
@@ -376,7 +280,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
   private void requireAvailable(OwnerKind ownerKind) {
     if ((ownerKind == OwnerKind.ACCOUNT_FENCE && intentRepository == null)
         || (ownerKind == OwnerKind.INITIAL_ACCOUNT_BARRIER && initialRepository == null)
-        || (ownerKind == OwnerKind.REGION_OWNER_TRANSFER && regionOwnerTransferSource == null)
         || tenantTagRepository == null
         || observationChannel == null
         || trustedConfiguration == null
@@ -444,7 +347,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
         null,
         null,
         null,
-        null,
         null);
   }
 
@@ -486,59 +388,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
         context.sourceControlState(),
         context.sourceControlEpoch().toString(),
         context.accountLoginEvidenceDigest(),
-        context.sourceControlDigest(),
-        null);
-  }
-
-  private CurrentContext loadRegionOwnerTransferCurrentContext(
-      UUID transferId, long targetOrdinal, long deadline) {
-    requireNoAmbientTransaction();
-    CanonicalGameplayRegionOwnerTransferObservationSource.Context context =
-        regionOwnerTransferSource.readCurrent(transferId, targetOrdinal, deadline);
-    if (context == null
-        || !transferId.equals(context.transferId())
-        || targetOrdinal != context.targetOrdinal()) {
-      throw new ObservationRejectedException("Protected transfer observation source differs");
-    }
-    CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
-        regionOwnerTransferSource.readAssignment(
-            context.transitionId(), tenantTagRepository, deadline);
-    if (assignment == null
-        || !assignment.isBindingTransition()
-        || !context.transitionId().equals(assignment.transitionId())
-        || !context.accountId().equals(assignment.accountId())
-        || !context.tenantId().equals(assignment.tenantId())
-        || !context.gameInstanceId().equals(assignment.gameInstanceId())
-        || !context.playableStateNamespaceId().equals(assignment.playableStateNamespaceId())
-        || !context.tenantGameplayTag().equals(assignment.tenantGameplayTag())
-        || !context.workloadNamespace().equals(assignment.workloadNamespace())
-        || context.allocationVersion() != assignment.allocationVersion()) {
-      throw new ObservationRejectedException(
-          "Protected transfer observation differs from current transition assignment");
-    }
-    return new CurrentContext(
-        OwnerKind.REGION_OWNER_TRANSFER,
-        context.transferId(),
-        context.requestId(),
-        context.accountId(),
-        null,
-        null,
-        null,
-        null,
-        null,
-        context.targetOrdinal(),
-        context.tenantId(),
-        context.playableStateNamespaceId(),
-        context.tenantGameplayTag(),
-        context.workloadNamespace(),
-        context.allocationVersion(),
-        null,
-        0L,
-        null,
-        null,
-        null,
-        null,
-        context);
+        context.sourceControlDigest());
   }
 
   private VerifiedPayload verifyObservation(
@@ -572,11 +422,9 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
 
     requireExactFields(root, ROOT_FIELDS);
     String expectedSchema =
-        switch (expected.ownerKind()) {
-          case ACCOUNT_FENCE -> OBSERVATION_SCHEMA;
-          case INITIAL_ACCOUNT_BARRIER -> INITIAL_OBSERVATION_SCHEMA;
-          case REGION_OWNER_TRANSFER -> REGION_OWNER_TRANSFER_OBSERVATION_SCHEMA;
-        };
+        expected.ownerKind() == OwnerKind.ACCOUNT_FENCE
+            ? OBSERVATION_SCHEMA
+            : INITIAL_OBSERVATION_SCHEMA;
     requireText(root, "schema", expectedSchema);
     requireText(root, "attestorBinding", trustedConfiguration.attestorBinding());
     requireText(root, "attestorKeyId", keyId);
@@ -606,7 +454,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       requireText(owner, "inventorySnapshotRevision", expected.inventorySnapshotRevision());
       requireText(owner, "cohortDigest", expected.cohortDigest());
       requireText(owner, "barrierTargetDigest", expected.barrierTargetDigest());
-    } else if (expected.ownerKind() == OwnerKind.INITIAL_ACCOUNT_BARRIER) {
+    } else {
       requireExactFields(owner, INITIAL_OWNER_FIELDS);
       requireText(owner, "ownerKind", OwnerKind.INITIAL_ACCOUNT_BARRIER.name());
       requireText(owner, "initializerId", expected.operationId().toString());
@@ -622,33 +470,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       requireText(owner, "accountLoginEvidenceDigest", expected.accountLoginEvidenceDigest());
       requireText(owner, "sourceControlDigest", expected.sourceControlDigest());
       requireText(owner, "targetDigest", expected.barrierTargetDigest());
-    } else {
-      requireExactFields(owner, REGION_OWNER_TRANSFER_OWNER_FIELDS);
-      var transfer = expected.regionOwnerTransferContext();
-      requireText(owner, "ownerKind", OwnerKind.REGION_OWNER_TRANSFER.name());
-      requireText(owner, "transferId", transfer.transferId().toString());
-      requireText(owner, "transferIntentDigest", transfer.transferIntentDigest());
-      requireText(owner, "frozenSourceDigest", transfer.frozenSourceDigest());
-      requireText(owner, "oldRegionOwnerId", transfer.oldRegionOwnerId());
-      if (requiredPositiveLong(owner, "oldRegionOwnerFence") != transfer.oldRegionOwnerFence()
-          || requiredPositiveLong(owner, "regionEpoch") != transfer.regionEpoch()) {
-        throw new ObservationRejectedException("Protected transfer owner fence or epoch differs");
-      }
-      requireText(owner, "gameInstanceId", transfer.gameInstanceId().toString());
-      requireText(owner, "regionId", transfer.regionId().toString());
-      requireText(owner, "transitionId", transfer.transitionId().toString());
-      requireText(owner, "requestId", transfer.requestId().toString());
-      requireText(owner, "accountId", transfer.accountId().toString());
-      requireText(owner, "executionDigest", transfer.executionDigest());
-      requireText(owner, "candidateDigest", transfer.candidateDigest());
-      requireText(owner, "controlState", transfer.controlState());
-      if (transfer.completionDigest() == null) {
-        if (!owner.get("completionDigest").isNull()) {
-          throw new ObservationRejectedException("Protected FROZEN context has a completion");
-        }
-      } else {
-        requireText(owner, "completionDigest", transfer.completionDigest());
-      }
     }
 
     JsonNode target = requiredObject(root, "target");
@@ -1122,8 +943,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
 
   enum OwnerKind {
     ACCOUNT_FENCE,
-    INITIAL_ACCOUNT_BARRIER,
-    REGION_OWNER_TRANSFER
+    INITIAL_ACCOUNT_BARRIER
   }
 
   /** Discriminated current owner and exact target tuple obtained from the actual SQL owners. */
@@ -1148,8 +968,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       String sourceControlState,
       String sourceControlEpoch,
       String accountLoginEvidenceDigest,
-      String sourceControlDigest,
-      CanonicalGameplayRegionOwnerTransferObservationSource.Context regionOwnerTransferContext) {
+      String sourceControlDigest) {
     CurrentContext {
       Objects.requireNonNull(ownerKind, "ownerKind");
       Objects.requireNonNull(operationId, "operationId");
@@ -1164,7 +983,7 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
         Objects.requireNonNull(operationFence, "operationFence");
         Objects.requireNonNull(cohortDigest, "cohortDigest");
         Objects.requireNonNull(barrierTargetDigest, "barrierTargetDigest");
-      } else if (ownerKind == OwnerKind.INITIAL_ACCOUNT_BARRIER) {
+      } else {
         Objects.requireNonNull(originalCallerContextId, "originalCallerContextId");
         Objects.requireNonNull(sourceControlState, "sourceControlState");
         Objects.requireNonNull(accountLoginEvidenceDigest, "accountLoginEvidenceDigest");
@@ -1178,35 +997,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
           throw new IllegalArgumentException(
               "INITIAL owner context is not the positively read NO_ACTIVE arm");
         }
-      } else {
-        Objects.requireNonNull(regionOwnerTransferContext, "regionOwnerTransferContext");
-        if (!operationId.equals(regionOwnerTransferContext.transferId())
-            || !requestId.equals(regionOwnerTransferContext.requestId())
-            || !accountId.equals(regionOwnerTransferContext.accountId())
-            || targetOrdinal != regionOwnerTransferContext.targetOrdinal()
-            || !tenantId.equals(regionOwnerTransferContext.tenantId())
-            || !playableStateNamespaceId.equals(
-                regionOwnerTransferContext.playableStateNamespaceId())
-            || !tenantGameplayTag.equals(regionOwnerTransferContext.tenantGameplayTag())
-            || !workloadNamespace.equals(regionOwnerTransferContext.workloadNamespace())
-            || allocationVersion != regionOwnerTransferContext.allocationVersion()
-            || operationFence != null
-            || plannedAccountAdmissionFence != null
-            || inventorySnapshotRevision != null
-            || cohortDigest != null
-            || barrierTargetDigest != null
-            || originalCallerContextId != null
-            || originalAttemptFence != 0L
-            || sourceControlState != null
-            || sourceControlEpoch != null
-            || accountLoginEvidenceDigest != null
-            || sourceControlDigest != null) {
-          throw new IllegalArgumentException(
-              "Transfer context must use its separate typed owner arm");
-        }
-      }
-      if (ownerKind != OwnerKind.REGION_OWNER_TRANSFER && regionOwnerTransferContext != null) {
-        throw new IllegalArgumentException("Transfer context cannot be used by another owner kind");
       }
     }
   }
@@ -1256,14 +1046,6 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
 
     OwnerKind ownerKind() {
       return context.ownerKind();
-    }
-
-    CanonicalGameplayRegionOwnerTransferObservationSource.Context regionOwnerTransferContext() {
-      if (context.ownerKind() != OwnerKind.REGION_OWNER_TRANSFER) {
-        throw new ObservationRejectedException(
-            "Protected observation is not a region-owner transfer");
-      }
-      return context.regionOwnerTransferContext();
     }
 
     UUID requestId() {
