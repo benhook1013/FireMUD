@@ -2145,6 +2145,17 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     return new TransferSqlProof(maximumRecords, maximumBindingBytes, maximumRecords);
   }
 
+  private static void assertTransferHistoryGuard(Runnable action, String message) {
+    assertThatThrownBy(action::run)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage()).contains(message);
+            });
+  }
+
   private TransferSqlProof withTransferHistoryBudget(int maximumTransfers, int maximumItems)
       throws Exception {
     return new TransferSqlProof(
@@ -2518,6 +2529,13 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private UUID insertRawFrozenTransfer(DSLContext context) {
+      return insertRawFrozenTransfer(context, scope, prior);
+    }
+
+    private UUID insertRawFrozenTransfer(
+        DSLContext context,
+        CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+        CanonicalGameplayRegionRuntimeStatus owner) {
       UUID transferId = UUID.randomUUID();
       context.execute(
           "INSERT INTO game_session_region_owner_transfer"
@@ -2525,14 +2543,14 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
               + " old_lease_correlation,source_digest,intent_digest,state)"
               + " VALUES (?,?,?,?,?,?,?,?,?,?,'FROZEN')",
           transferId,
-          scope.tenantId(),
-          scope.gameInstanceId(),
-          scope.regionId(),
-          prior.regionEpoch(),
-          prior.ownerInstanceId(),
-          prior.executorFence().longValueExact(),
-          prior.leaseTokenCorrelation(),
-          CanonicalGameplayRegionOwnerTransferRepository.sourceDigest(scope, prior),
+          source.tenantId(),
+          source.gameInstanceId(),
+          source.regionId(),
+          owner.regionEpoch(),
+          owner.ownerInstanceId(),
+          owner.executorFence().longValueExact(),
+          owner.leaseTokenCorrelation(),
+          CanonicalGameplayRegionOwnerTransferRepository.sourceDigest(source, owner),
           "sha256:" + "c".repeat(64));
       return transferId;
     }
