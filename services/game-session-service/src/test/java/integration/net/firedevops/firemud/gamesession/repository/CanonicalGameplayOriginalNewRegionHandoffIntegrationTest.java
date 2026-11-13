@@ -1080,6 +1080,101 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
   }
 
   @Test
+  void committedOriginalCanStartTopologyHandoffUnderRetainedAccountFenceIntent() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var original = regionBinding.installation();
+    var accountOpen = controlledAccountOpen();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var readback =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen(), controlledCapacity, deadline())) {
+      inventory.commitOriginalNewFinalAdmission(readback);
+    }
+
+    var retained = inventory.readRegionTransferOriginalSource(fixture.transitionId(), source);
+    assertThat(retained.transitionStatus())
+        .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+    var terminal =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    byte[] session = admin.get(ascii(installation.sessionKey()));
+    byte[] accountBarrier =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+            admin, ascii(accountOpen.key()));
+    String originalRepair =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT to_jsonb(repair)::text FROM game_session_canonical_account_member_repair_operation repair WHERE transition_id=?",
+                fixture.transitionId())
+            .get(0, String.class);
+
+    var fenceIntent =
+        new CanonicalGameplayAccountAdmissionBarrierRepository(fixture.dsl())
+            .beginFenceIntent(source.candidate().bindingIdentity().accountId(), UUID.randomUUID());
+    assertThat(fenceIntent.state().name()).isEqualTo("ACQUISITION_INTENT");
+    assertThat(fenceIntent.cohortRows())
+        .filteredOn(
+            row ->
+                row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.TRANSITION
+                    && row.sourceKey().equals(fixture.transitionId().toString()))
+        .hasSize(1);
+    String fencedControl =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT to_jsonb(control)::text FROM game_session_canonical_account_coverage_control control WHERE account_id=?",
+                source.candidate().bindingIdentity().accountId())
+            .get(0, String.class);
+
+    assertThatThrownBy(() -> inventory.readOriginalNewFinalAdmissionSource(decision))
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    var underFence = inventory.readRegionTransferOriginalSource(fixture.transitionId(), source);
+    assertThat(underFence.finalReceipt()).isEqualTo(retained.finalReceipt());
+
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var successor = actualTransferHandoff();
+
+    assertThat(successor.evidence).isNull();
+    assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
+    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(session);
+    assertThat(
+            CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+                admin, ascii(accountOpen.key())))
+        .containsExactly(accountBarrier);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_jsonb(control)::text FROM game_session_canonical_account_coverage_control control WHERE account_id=?",
+                    source.candidate().bindingIdentity().accountId())
+                .get(0, String.class))
+        .isEqualTo(fencedControl);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_jsonb(repair)::text FROM game_session_canonical_account_member_repair_operation repair WHERE transition_id=?",
+                    fixture.transitionId())
+                .get(0, String.class))
+        .isEqualTo(originalRepair);
+    assertThat(
+            inventory
+                .readRegionTransferOriginalSource(fixture.transitionId(), underFence)
+                .finalReceipt())
+        .isEqualTo(retained.finalReceipt());
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(terminal.canonicalReadback());
+  }
+
+  @Test
   void frozenTransferResumesExactTerminalOriginalThatCommittedBeforeCapture() throws Exception {
     repairAccountMember();
     bridge();

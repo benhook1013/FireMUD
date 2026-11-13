@@ -88,7 +88,8 @@ public final class AccountControlUiAuthenticationGrpcService
                   : AccountControlUiAuthenticationGrpcCodec.Outcome.ABUSE_UNAVAILABLE,
               refusal.retryAfterMillis()));
       response.onCompleted();
-    } catch (AuthenticationException denied) {
+    } catch (AuthenticationException
+        | AccountControlUiIssuanceService.PermanentRecoveryDenialException denied) {
       response.onNext(AccountControlUiAuthenticationGrpcCodec.toResponse(request, null));
       response.onCompleted();
     } catch (AccountControlUiIssuanceService.IdempotencyConflictException conflict) {
