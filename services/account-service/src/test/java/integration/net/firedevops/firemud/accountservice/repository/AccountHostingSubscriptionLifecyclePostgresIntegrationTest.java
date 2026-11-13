@@ -548,7 +548,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         List.of(
             "UPDATE subscription_first_invoice_expired_before_post SET observed_at = observed_at",
             "DELETE FROM subscription_first_invoice_expired_before_post",
-            "TRUNCATE subscription_first_invoice_expired_before_post")) {
+            "TRUNCATE subscription_first_invoice_expired_before_post, subscription_first_invoice_no_send_cancellations")) {
       assertSqlState("23514", () -> c.setup().execute(sql));
     }
   }
