@@ -110,6 +110,8 @@ if KEYS[1] ~= prefix .. slot .. ':' .. gameInstanceId .. ':' .. sessionId
 -- Only a separately qualified current incarnation may dispatch FENCE during normal owner handoff.
 -- It excludes future execution, including delayed old callers, but never proves no earlier commit.
 if action == 'FENCE' then
+  local dispatchId = ARGV[16]
+  if not uuid(dispatchId) then return -2 end
   local capacityType = redis.call('TYPE', KEYS[7]).ok
   if capacityType ~= 'none' then
     if capacityType ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1
@@ -125,9 +127,12 @@ if action == 'FENCE' then
           or continuity <= admissionAt or continuity - admissionAt > 300000 then return -1 end
       return 9
     end
-    if fields ~= 3 then return -1 end
     -- Completed exact outcomes are read-only, even after the operation deadline.
-    if state == 'FENCED_INDETERMINATE' then return 8 end
+    if state == 'FENCED_INDETERMINATE' then
+      if fields == 3 or (fields == 4 and uuid(redis.call('HGET', KEYS[7], 'fenceDispatchId'))) then return 8 end
+      return -1
+    end
+    if fields ~= 3 then return -1 end
     if state == 'CLOSED' then return 7 end
     if state ~= 'AUTHORIZED' then return -1 end
   end
@@ -140,9 +145,9 @@ if action == 'FENCE' then
   if fenceNow <= 0 or fenceNow >= deadline then return -1 end
   if capacityType == 'none' then
     redis.call('HSET', KEYS[7], 'binding', capacityBytes, 'digest', capacityDigest,
-      'state', 'FENCED_INDETERMINATE')
+      'state', 'FENCED_INDETERMINATE', 'fenceDispatchId', dispatchId)
   else
-    redis.call('HSET', KEYS[7], 'state', 'FENCED_INDETERMINATE')
+    redis.call('HSET', KEYS[7], 'state', 'FENCED_INDETERMINATE', 'fenceDispatchId', dispatchId)
   end
   return 5
 end

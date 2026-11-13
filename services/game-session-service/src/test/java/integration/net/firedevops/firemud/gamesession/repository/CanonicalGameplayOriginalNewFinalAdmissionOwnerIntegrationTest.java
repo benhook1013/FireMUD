@@ -749,7 +749,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
                         ownerClient, catalog, CLOCK, tags)
                     .fenceCapacityExecutionOnce(
-                        changed, source.candidate(), assignment, deadline()))
+                        changed, source.candidate(), assignment, UUID.randomUUID(), deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(admin.type(ascii(capacityKey(assignment)))).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(retained);
