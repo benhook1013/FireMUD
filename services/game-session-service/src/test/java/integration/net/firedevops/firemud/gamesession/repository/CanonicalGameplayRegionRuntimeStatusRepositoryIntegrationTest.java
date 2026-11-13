@@ -1147,6 +1147,20 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
         assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
         String frozen = proof.transferImage(id);
         String inventory = proof.itemImage(id);
+        assertThatThrownBy(
+                () -> proof.rawCompleteAndInstall(id, "sql-proof-successor", "e".repeat(64), true))
+            .rootCause()
+            .isInstanceOfSatisfying(
+                org.postgresql.util.PSQLException.class,
+                failure -> {
+                  assertThat(failure.getSQLState()).isEqualTo("23514");
+                  assertThat(failure.getMessage())
+                      .contains(
+                          "Captured region transfer item lacks its full exact current receipt");
+                });
+        assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+        assertThat(proof.transferImage(id)).isEqualTo(frozen);
+        assertThat(proof.itemImage(id)).isEqualTo(inventory);
         var status = new CanonicalGameplayRegionRuntimeStatusRepository(proof.sql);
 
         assertThatThrownBy(
@@ -1171,8 +1185,14 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
             proof.transfers.within(
                 transferDeadline(), ignored -> proof.transfers.finishVerification(id));
         assertThat(verified).isTrue();
-        assertThat(proof.install(id).ownerInstanceId()).isEqualTo("sql-proof-successor");
+        assertThat(
+                proof
+                    .rawCompleteAndInstall(id, "sql-proof-successor", "e".repeat(64))
+                    .ownerInstanceId())
+            .isEqualTo("sql-proof-successor");
         assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
+        assertThat(proof.transfers.readCurrent(id, captured.getFirst().ordinal()).controlState())
+            .isEqualTo("COMPLETED");
       }
     }
   }
@@ -1656,12 +1676,12 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                     .addCommand(CommandType.DEL)
                     .addCommand(CommandType.TIME));
       }
-      redis =
-          RedisClient.create(
-              RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379))
-                  .withAuthentication("gamesession_coord_app", password)
-                  .withTimeout(Duration.ofSeconds(5))
-                  .build());
+      var coordinationUri =
+          RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379))
+              .withAuthentication("gamesession_coord_app", password)
+              .withTimeout(Duration.ofSeconds(5))
+              .build();
+      redis = RedisClient.create(coordinationUri);
       redis.setOptions(ClientOptions.builder().autoReconnect(false).build());
       var dataSource = new DriverManagerDataSource();
       dataSource.setDriverClassName(POSTGRES.getDriverClassName());
@@ -1735,6 +1755,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
               sql,
               redis,
+              coordinationUri,
               fixture.transitionId(),
               upstream.request,
               upstream.resolver,
@@ -2031,6 +2052,87 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           scope.tenantId(),
           scope.gameInstanceId(),
           scope.regionId());
+    }
+
+    private CanonicalGameplayRegionRuntimeStatus rawCompleteAndInstall(
+        UUID transferId, String owner, String correlation) {
+      return rawCompleteAndInstall(transferId, owner, correlation, false);
+    }
+
+    private CanonicalGameplayRegionRuntimeStatus rawCompleteAndInstall(
+        UUID transferId, String owner, String correlation, boolean claimCompleteVerification) {
+      String schema = sql.fetchSingle("SELECT current_schema()").get(0, String.class);
+      try (var connection =
+          java.sql.DriverManager.getConnection(
+              POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        connection.setSchema(schema);
+        connection.setAutoCommit(false);
+        DSLContext transaction = DSL.using(connection, SQLDialect.POSTGRES);
+        transaction.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+        long fence =
+            transaction
+                .fetchSingle("SELECT nextval('game_session_region_executor_fence_seq') AS fence")
+                .get("fence", Long.class);
+        if (claimCompleteVerification) {
+          transaction.execute(
+              "UPDATE game_session_region_owner_transfer"
+                  + " SET incarnation_digest=?,verification_round=?,verification_complete=true"
+                  + " WHERE transfer_id=? AND state='FROZEN'",
+              "sha256:" + "f".repeat(64),
+              UUID.randomUUID(),
+              transferId);
+        }
+        if (transaction.execute(
+                "UPDATE game_session_region_owner_transfer"
+                    + " SET state='COMPLETED',new_owner_id=?,new_owner_fence=?,new_lease_correlation=?"
+                    + " WHERE transfer_id=? AND state='FROZEN'",
+                owner,
+                fence,
+                correlation,
+                transferId)
+            != 1) throw new IllegalStateException("Expected one frozen transfer");
+        Record installed =
+            transaction.fetchOne(
+                "UPDATE game_session_region_runtime_status"
+                    + " SET executor_fence=?,lease_token_correlation=?,owner_service=?,owner_instance_id=?,"
+                    + " updated_at=CURRENT_TIMESTAMP::timestamp"
+                    + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?"
+                    + " AND tenant_region_tag=? AND canonical_region_id=? AND lifecycle_epoch=?"
+                    + " AND lifecycle_row_version=? AND capture_id=? AND lifecycle_request_bytes=?"
+                    + " AND graph_sha256=? AND preparation_input_digest=? AND region_epoch=?"
+                    + " AND executor_fence=? AND lease_token_correlation=? AND owner_service=?"
+                    + " AND owner_instance_id=? AND paused=? AND last_committed_tick_id=?"
+                    + " AND last_committed_tick_batch_id IS NOT DISTINCT FROM ? RETURNING *",
+                fence,
+                correlation,
+                "game-session-service",
+                owner,
+                prior.tenantId(),
+                prior.gameInstanceId(),
+                prior.regionId(),
+                prior.tenantRegionTag(),
+                prior.canonicalRegionId(),
+                prior.lifecycleEpoch(),
+                prior.lifecycleRowVersion(),
+                prior.captureId(),
+                prior.lifecycleRequest().canonicalBytes(),
+                prior.graphSha256(),
+                prior.preparationInputDigest(),
+                prior.regionEpoch(),
+                prior.executorFence().longValueExact(),
+                prior.leaseTokenCorrelation(),
+                prior.ownerService(),
+                prior.ownerInstanceId(),
+                prior.paused(),
+                prior.lastCommittedTickId(),
+                prior.lastCommittedTickBatchId());
+        if (installed == null) throw new IllegalStateException("Expected exact prior region owner");
+        var result = CanonicalGameplayRegionRuntimeStatusRepository.toStatus(installed);
+        connection.commit();
+        return result;
+      } catch (java.sql.SQLException failure) {
+        throw new IllegalStateException(failure);
+      }
     }
 
     private String originalImage() {
