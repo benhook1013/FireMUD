@@ -35,6 +35,7 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
@@ -1265,6 +1266,46 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void installationResumesFrozenTransferWhenTheOriginalAbortedBeforeCapture() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      assertThat(id).isNotNull();
+      assertThat(proof.itemImage(id)).isEqualTo("[]");
+      assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
+      String tag =
+          proof.tags.assignmentForTransition(proof.execution.transitionId()).tenantGameplayTag();
+      assertThat(proof.fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+      String originalExecution = proof.originalImage();
+      var original = proof.region.installation();
+      try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+        assertThat(connection.sync().pexpire(ascii(original.grant.key()), 0)).isTrue();
+      }
+      proof.recreateTransferOwners();
+
+      var installed =
+          CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+              proof.sql,
+              proof.redis,
+              proof.coordinationUri,
+              RedisScriptCatalog.fromContributions(
+                  List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution())),
+              original,
+              proof.upstream.resolver,
+              proof.coordinator,
+              transferDeadline());
+
+      assertThat(installed.status.executorFence()).isGreaterThan(proof.prior.executorFence());
+      assertThat(installed.status).isEqualTo(proof.currentOwner());
+      assertThat(installed.evidence).isNull();
+      assertThat(proof.transfers.readCurrent(id, 0).controlState()).isEqualTo("COMPLETED");
+      assertThat(proof.itemImage(id)).contains(proof.execution.digest());
+      assertThat(proof.physicalExecutionExists(proof.execution, tag)).isTrue();
+      assertThat(proof.originalImage()).isEqualTo(originalExecution);
+    }
+  }
+
+  @Test
   void installationRefusesSignedEvidenceThatExpiresWhileAcquiringTheRegionLock() throws Exception {
     try (var proof = new TransferSqlProof()) {
       proof.seedUndeliveredDispatch(proof.newControlledExecution());
@@ -1826,6 +1867,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   private final class TransferSqlProof implements AutoCloseable {
     private final Clock clock = Clock.systemUTC();
     private final RedisClient redis;
+    private final RedisURI coordinationUri;
     private final CanonicalGameplayAdmissionAbortCompositionFixture fixture;
     private final CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources
         upstream;
@@ -1919,7 +1961,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                     .addCommand(CommandType.DEL)
                     .addCommand(CommandType.TIME));
       }
-      var coordinationUri =
+      coordinationUri =
           RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379))
               .withAuthentication("gamesession_coord_app", password)
               .withTimeout(Duration.ofSeconds(5))
@@ -2015,6 +2057,11 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           maximumRecords,
           maximumBindingBytes,
           maximumRetainedRecords);
+      sql.execute(
+          "INSERT INTO game_session_region_transfer_history_budget"
+              + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,256,1024)"
+              + " ON CONFLICT DO NOTHING",
+          assignment.tenantId());
       execution = newControlledExecution();
       precharge(execution);
       recreateTransferOwners();
@@ -2109,7 +2156,6 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           != null) return;
       var request = original.request();
       var identity = request.identity();
-      var assignment = tags.assignmentForTransition(original.transitionId());
       sql.execute(
           "INSERT INTO game_session_capacity_evidence_charge"
               + " (admission_attempt_id,tenant_id,request_id,admission_id,capacity_rearm_fence,"
@@ -2327,6 +2373,10 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
 
     private boolean physicalExecutionExists(OriginalNewCapacityExecution original) {
       String tag = tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
+      return physicalExecutionExists(original, tag);
+    }
+
+    private boolean physicalExecutionExists(OriginalNewCapacityExecution original, String tag) {
       try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
         return connection
                 .sync()
