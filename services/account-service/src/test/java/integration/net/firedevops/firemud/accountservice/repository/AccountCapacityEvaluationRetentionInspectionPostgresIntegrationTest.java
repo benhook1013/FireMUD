@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountCapacityOriginDecisionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBinding;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
@@ -108,6 +109,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
                 unrelated,
                 unrelated.evidence().evaluatedAt(),
                 unrelated.evidence().expiresAt());
+            new AccountCapacityOriginDecisionRepository(dsl).accept(prior);
             dsl.execute(
                 "INSERT INTO account_tenant_capacity_reservations "
                     + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, "
@@ -426,6 +428,20 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
                 evaluation[2],
                 evaluation[3]);
           }
+          UUID attempt = UUID.randomUUID();
+          byte[] capacityPayload = {7};
+          dsl.execute(
+              "INSERT INTO account_capacity_origin_decisions "
+                  + "(tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, "
+                  + "mutation_digest, canonical_payload, decision, decision_id) "
+                  + "VALUES (?, ?, ?, 1, ?, ?, ?, 'ACCEPTED', ?)",
+              tenant.canonicalTenantId(),
+              request,
+              admission,
+              attempt,
+              "e".repeat(64),
+              capacityPayload,
+              UUID.randomUUID());
           dsl.execute(
               "INSERT INTO account_tenant_capacity_reservations (tenant_uuid, request_id, admission_id, reservation_id, "
                   + "owner_service, caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence, mutation_digest, "
@@ -436,9 +452,9 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
               request,
               admission,
               UUID.randomUUID(),
-              UUID.randomUUID(),
+              attempt,
               "e".repeat(64),
-              new byte[] {7},
+              capacityPayload,
               digest('b'));
           dsl.execute(
               "INSERT INTO account_tenant_capacity_attempt_history (tenant_uuid, request_id, admission_id, admission_attempt_id, "
