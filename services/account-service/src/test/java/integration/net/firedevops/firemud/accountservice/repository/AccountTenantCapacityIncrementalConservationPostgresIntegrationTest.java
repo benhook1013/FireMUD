@@ -177,6 +177,18 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
                     capacity.tenantUuid(),
                     capacity.requestId(),
                     capacity.admissionId());
+                UUID rearmedAttempt = UUID.randomUUID();
+                String rearmedDigest = hex('6');
+                byte[] rearmedPayload = new byte[] {2};
+                insertOriginDecision(
+                    dsl,
+                    capacity.tenantUuid(),
+                    capacity.requestId(),
+                    capacity.admissionId(),
+                    2,
+                    rearmedAttempt,
+                    rearmedDigest,
+                    rearmedPayload);
                 dsl.execute(
                     "INSERT INTO account_tenant_capacity_attempt_history "
                         + "(tenant_uuid, request_id, admission_id, admission_attempt_id, capacity_rearm_fence, mutation_digest, canonical_payload, owner_readback) "
@@ -190,9 +202,9 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
                         + "capacity_rearm_fence = capacity_rearm_fence + 1, reservation_fence = reservation_fence + 1, "
                         + "mutation_digest = ?, canonical_payload = ?, execution_status = 'OWNER_EXECUTION_PENDING', "
                         + "owner_readback = NULL, owner_readback_digest = NULL WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
-                    UUID.randomUUID(),
-                    hex('6'),
-                    new byte[] {2},
+                    rearmedAttempt,
+                    rearmedDigest,
+                    rearmedPayload,
                     capacity.tenantUuid(),
                     capacity.requestId(),
                     capacity.admissionId());
@@ -405,22 +417,39 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
         .executeWithoutResult(
             status -> {
               changeUsage(dsl, capacity, count, 0);
-              assertThat(
-                      dsl.execute(
-                          "INSERT INTO account_tenant_capacity_reservations "
-                              + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, "
-                              + "capacity_rearm_fence, reservation_fence, mutation_digest, canonical_payload, evaluation_identity, capacity_delta, "
-                              + "expires_at, state, execution_status, reconcile_deadline) "
-                              + "SELECT ?, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'game-session-service', ?, gen_random_uuid(), "
-                              + "1, 1, ?, ?, ?, 1, CURRENT_TIMESTAMP + INTERVAL '5 minutes', 'RESERVED', 'OWNER_EXECUTION_PENDING', "
-                              + "CURRENT_TIMESTAMP + INTERVAL '10 minutes' FROM generate_series(1, ?)",
-                          capacity.tenantUuid(),
-                          capacity.callerWorkload(),
-                          hex('9'),
-                          new byte[] {9},
-                          capacity.evaluationIdentity(),
-                          count))
-                  .isEqualTo(count);
+              for (int index = 0; index < count; index++) {
+                UUID requestId = UUID.randomUUID();
+                UUID admissionId = UUID.randomUUID();
+                UUID attemptId = UUID.randomUUID();
+                String mutationDigest = hex('9');
+                byte[] canonicalPayload = new byte[] {9};
+                insertOriginDecision(
+                    dsl,
+                    capacity.tenantUuid(),
+                    requestId,
+                    admissionId,
+                    1,
+                    attemptId,
+                    mutationDigest,
+                    canonicalPayload);
+                dsl.execute(
+                    "INSERT INTO account_tenant_capacity_reservations "
+                        + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, "
+                        + "capacity_rearm_fence, reservation_fence, mutation_digest, canonical_payload, evaluation_identity, capacity_delta, "
+                        + "expires_at, state, execution_status, reconcile_deadline) "
+                        + "VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 1, "
+                        + "CURRENT_TIMESTAMP + INTERVAL '5 minutes', 'RESERVED', 'OWNER_EXECUTION_PENDING', "
+                        + "CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
+                    capacity.tenantUuid(),
+                    requestId,
+                    admissionId,
+                    UUID.randomUUID(),
+                    capacity.callerWorkload(),
+                    attemptId,
+                    mutationDigest,
+                    canonicalPayload,
+                    capacity.evaluationIdentity());
+              }
               changeUsage(dsl, capacity, -count, count);
               assertThat(
                       dsl.execute(
@@ -439,6 +468,18 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
   private static CapacityFixture insertReservation(
       DSLContext dsl, CapacityFixture capacity, long delta) {
     UUID request = UUID.randomUUID(), admission = UUID.randomUUID();
+    UUID attempt = UUID.randomUUID();
+    String mutationDigest = hex('4');
+    byte[] canonicalPayload = new byte[] {4};
+    insertOriginDecision(
+        dsl,
+        capacity.tenantUuid(),
+        request,
+        admission,
+        1,
+        attempt,
+        mutationDigest,
+        canonicalPayload);
     dsl.execute(
         "INSERT INTO account_tenant_capacity_reservations "
             + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, "
@@ -451,9 +492,9 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
         admission,
         UUID.randomUUID(),
         capacity.callerWorkload(),
-        UUID.randomUUID(),
-        hex('4'),
-        new byte[] {4},
+        attempt,
+        mutationDigest,
+        canonicalPayload,
         capacity.evaluationIdentity(),
         delta);
     return new CapacityFixture(
@@ -462,6 +503,30 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
         admission,
         capacity.evaluationIdentity(),
         capacity.callerWorkload());
+  }
+
+  private static void insertOriginDecision(
+      DSLContext dsl,
+      UUID tenantUuid,
+      UUID requestId,
+      UUID admissionId,
+      long rearmFence,
+      UUID attemptId,
+      String mutationDigest,
+      byte[] canonicalPayload) {
+    dsl.execute(
+        "INSERT INTO account_capacity_origin_decisions "
+            + "(tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, "
+            + "mutation_digest, canonical_payload, decision, decision_id) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', ?)",
+        tenantUuid,
+        requestId,
+        admissionId,
+        rearmFence,
+        attemptId,
+        mutationDigest,
+        canonicalPayload,
+        UUID.randomUUID());
   }
 
   private static void settle(DSLContext dsl, CapacityFixture capacity, String state) {

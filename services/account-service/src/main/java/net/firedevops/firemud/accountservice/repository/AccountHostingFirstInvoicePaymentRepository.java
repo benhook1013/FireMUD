@@ -5,8 +5,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost;
 import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.Observation;
 import net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifier.VerifiedEvent;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
@@ -666,6 +668,22 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     return inserted == 1 ? new CommandClaim(dispatch) : null;
   }
 
+  /** Retains the exact no-send observation without altering the original command claim. */
+  public void retainExpiredBeforePost(ExpiredBeforePost observation) {
+    transaction();
+    Instant observedAt = observation.observedAt().truncatedTo(ChronoUnit.MICROS);
+    dsl.execute(
+        "INSERT INTO subscription_first_invoice_expired_before_post (request_id, observed_at) "
+            + "VALUES (?, ?::timestamptz) ON CONFLICT (request_id) DO NOTHING",
+        observation.requestId(),
+        utc(observedAt));
+    Record retained =
+        dsl.fetchOne(
+            "SELECT observed_at FROM subscription_first_invoice_expired_before_post WHERE request_id = ?",
+            observation.requestId());
+    if (retained == null || !observedAt.equals(instant(retained, "observed_at"))) throw refused();
+  }
+
   void requireAwaitingPayment(AccountHostingFirstInvoicePayment invoice, long expectedVersion) {
     transaction();
     Record row =
@@ -745,13 +763,19 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     transaction();
     if (!"payment_intent.succeeded".equals(verified.eventType())) throw refused();
     JsonNode object = JSON.readTree(verified.rawPayload()).path("data").path("object");
+    Record subscription =
+        dsl.fetchOne(
+            "SELECT s.subscription_id FROM subscription s JOIN subscription_first_invoices i USING (subscription_id) "
+                + "WHERE i.payment_intent_id = ? FOR UPDATE OF s",
+            object.path("id").asText());
+    if (subscription == null) throw refused();
+    UUID subscriptionId = subscription.get("subscription_id", UUID.class);
     Record row =
         dsl.fetchOne(
-            "SELECT c.* FROM subscription_first_invoice_confirmations c JOIN subscription_first_invoices i USING (subscription_id) "
-                + "WHERE i.payment_intent_id = ? FOR UPDATE OF c",
-            object.path("id").asText());
+            "SELECT * FROM subscription_first_invoice_confirmations WHERE subscription_id = ? FOR UPDATE",
+            subscriptionId);
     if (row == null) throw refused();
-    var invoice = Objects.requireNonNull(find(row.get("subscription_id", UUID.class)));
+    var invoice = Objects.requireNonNull(find(subscriptionId));
     requireSignedTuple(verified, row, invoice);
     if (!"succeeded".equals(observed.status())
         || !invoice.invoiceId().equals(observed.invoiceId())

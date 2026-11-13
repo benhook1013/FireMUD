@@ -154,13 +154,15 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
   private final java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>>
       scopedConnection;
   private final java.util.function.LongSupplier remainingCommandMillis;
+  private final java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>>
+      scopedClose;
 
   CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
       io.lettuce.core.RedisClient redisClient,
       RedisScriptCatalog catalog,
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tenantTags) {
-    this(redisClient, catalog, clock, tenantTags, null, null);
+    this(redisClient, catalog, clock, tenantTags, null, null, null);
   }
 
   CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
@@ -169,12 +171,15 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tenantTags,
       java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>> scopedConnection,
-      java.util.function.LongSupplier remainingCommandMillis) {
-    if ((scopedConnection == null) != (remainingCommandMillis == null))
+      java.util.function.LongSupplier remainingCommandMillis,
+      java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>> scopedClose) {
+    if ((scopedConnection == null) != (remainingCommandMillis == null)
+        || (scopedConnection == null) != (scopedClose == null))
       throw new IllegalArgumentException(
-          "Scoped connection and command budget must be supplied together");
+          "Scoped connection, command budget and close must be supplied together");
     this.scopedConnection = scopedConnection;
     this.remainingCommandMillis = remainingCommandMillis;
+    this.scopedClose = scopedClose;
     this.redisClient = Objects.requireNonNull(redisClient, "Configured Redis client is required");
     this.catalog = Objects.requireNonNull(catalog, "Manual Redis script catalog is required");
     this.clock = Objects.requireNonNull(clock, "Clock is required");
@@ -887,7 +892,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       if (connection != null) {
         try {
           if (scopedConnection == null) connection.close();
-          else connection.closeAsync();
+          else scopedClose.accept(connection.closeAsync());
         } catch (RuntimeException cleanupFailure) {
           throw unavailable();
         }
@@ -1004,7 +1009,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(issuerBarrierKey);
       if (connection != null) {
         if (scopedConnection == null) connection.close();
-        else connection.closeAsync();
+        else scopedClose.accept(connection.closeAsync());
       }
     }
   }
