@@ -3,8 +3,13 @@ package net.firedevops.firemud.springcloudgateway.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 
+import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -16,6 +21,8 @@ import io.grpc.stub.StreamObserver;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -164,6 +171,46 @@ class AccountControlUiAuthenticationClientMtlsTest {
     assertThat(observed.get()).isEqualTo(request());
   }
 
+  @Test
+  void certificateReloadKeepsTheSelectedChannelUntilLoginReturns() throws Exception {
+    var observed = new AtomicReference<Request>();
+    var peer = new AtomicReference<GrpcPeerIdentity>();
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    AtomicInteger handlers = startServer("account-server", observed, peer, null, entered, release);
+    client = newClient(server.getPort());
+    var selectedChannel = new AtomicReference<ManagedChannel>();
+    doAnswer(
+            call -> {
+              ManagedChannel built = (ManagedChannel) call.callRealMethod();
+              selectedChannel.compareAndSet(null, built);
+              return built;
+            })
+        .when(channelFactory)
+        .buildNonRetryingChannel(
+            anyString(), anyInt(), any(CommonGrpcClientProperties.class), anyBoolean());
+    client.init();
+
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var result = executor.submit(() -> client.login(request()));
+      try {
+        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+        ManagedChannel original = selectedChannel.get();
+        assertThat(original).isNotNull();
+
+        reloadClientChannel();
+
+        assertThat(original.isShutdown()).isFalse();
+      } finally {
+        release.countDown();
+      }
+
+      assertThat(result.get(5, TimeUnit.SECONDS).outcome()).isEqualTo(Outcome.SUCCESS);
+      assertThat(handlers).hasValue(1);
+      assertThat(selectedChannel.get().isShutdown()).isTrue();
+    }
+  }
+
   private AtomicInteger startServer(
       String serverIdentityAlias,
       AtomicReference<Request> observed,
@@ -188,6 +235,17 @@ class AccountControlUiAuthenticationClientMtlsTest {
       AtomicReference<GrpcPeerIdentity> peer,
       Status.Code failureCode)
       throws Exception {
+    return startServer(serverIdentityAlias, observed, peer, failureCode, null, null);
+  }
+
+  private AtomicInteger startServer(
+      String serverIdentityAlias,
+      AtomicReference<Request> observed,
+      AtomicReference<GrpcPeerIdentity> peer,
+      Status.Code failureCode,
+      CountDownLatch entered,
+      CountDownLatch release)
+      throws Exception {
     var serverIdentity = pki.identity(serverIdentityAlias);
     AtomicInteger handlers = new AtomicInteger();
     AccountControlUiAuthenticationServiceGrpc.AccountControlUiAuthenticationServiceImplBase
@@ -202,6 +260,23 @@ class AccountControlUiAuthenticationClientMtlsTest {
                 peer.set(GrpcPeerIdentity.current());
                 Request request = AccountControlUiAuthenticationGrpcCodec.parseRequest(wireRequest);
                 observed.set(request);
+                if (entered != null) {
+                  entered.countDown();
+                  try {
+                    if (!release.await(10, TimeUnit.SECONDS)) {
+                      responseObserver.onError(
+                          Status.DEADLINE_EXCEEDED
+                              .withDescription("Controlled test response timeout")
+                              .asRuntimeException());
+                      return;
+                    }
+                  } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    responseObserver.onError(
+                        Status.CANCELLED.withCause(interrupted).asRuntimeException());
+                    return;
+                  }
+                }
                 if (failureCode != null) {
                   responseObserver.onError(
                       Status.fromCode(failureCode)
@@ -228,6 +303,12 @@ class AccountControlUiAuthenticationClientMtlsTest {
             .build()
             .start();
     return handlers;
+  }
+
+  private void reloadClientChannel() throws ReflectiveOperationException {
+    var reload = client.getClass().getSuperclass().getDeclaredMethod("reloadChannel");
+    reload.setAccessible(true);
+    reload.invoke(client);
   }
 
   private AccountControlUiAuthenticationClient newClient(int port) throws Exception {
