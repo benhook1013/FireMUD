@@ -80,6 +80,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   private RedisClient administrator;
   private StatefulRedisConnection<byte[], byte[]> administration;
   private RedisClient coordination;
+  private RedisURI coordinationUri;
   private CanonicalGameplayAdmissionAbortCompositionFixture binding;
   private CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources sources;
   private CanonicalGameplayTenantGameplayTagRepository tags;
@@ -156,11 +157,11 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                 .addCommand(CommandType.HDEL)
                 .addCommand(CommandType.PEXPIRE)
                 .addCommand(CommandType.TIME));
-    coordination =
-        RedisClient.create(
-            RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379))
-                .withAuthentication("gamesession_coord_app", password)
-                .build());
+    coordinationUri =
+        RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379))
+            .withAuthentication("gamesession_coord_app", password)
+            .build();
+    coordination = RedisClient.create(coordinationUri);
     coordination.setOptions(ClientOptions.builder().autoReconnect(false).build());
     binding =
         new CanonicalGameplayAdmissionAbortCompositionFixture(
@@ -185,6 +186,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
             binding.dsl(),
             coordination,
+            coordinationUri,
             scripts,
             CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                 ::controlledRegionIncarnation,
@@ -925,6 +927,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
           CanonicalGameplayRegionLeaseOwnerFactory.compose(
               sql,
               coordination,
+              coordinationUri,
               scripts,
               CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                   ::controlledRegionIncarnation,
@@ -1051,6 +1054,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
             binding.dsl(),
             coordination,
+            coordinationUri,
             scripts,
             regionInstallation,
             sources.resolver,

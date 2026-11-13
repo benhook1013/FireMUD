@@ -103,44 +103,53 @@ final class CanonicalGameplayRegionLeaseOwner {
         transferOwner != null && existingRegionInstallation == null
             ? transferOwner.frozenOriginal(transitionId, handoffDeadline)
             : null;
-    var retainedOriginal =
+    RegionTransferTerminalSource retainedTerminalSource =
         frozenOriginal == null
             ? null
             : readInstallationInventory(
                     transferOwner,
                     handoffDeadline,
                     inventory ->
-                        inventory.readRegionTransferCommittedSource(
+                        inventory.readRegionTransferTerminalSource(
                             transitionId, frozenOriginal.candidate()))
                 .orElse(null);
+    OriginalNewFinalAdmissionSource retainedOriginal =
+        retainedTerminalSource instanceof OriginalNewFinalAdmissionSource committed
+            ? committed
+            : null;
     CanonicalGameplayBindingProvisionalCasEvidence evidence =
-        retainedOriginal == null
+        retainedTerminalSource == null
             ? readInstallationInventory(
                 transferOwner,
                 handoffDeadline,
                 inventory -> readCurrentProvisionalEvidence(inventory, transitionId))
             : null;
     ResolvedBridgeSource initialResolved =
-        retainedOriginal == null
+        retainedTerminalSource == null
             ? resolveExactBridgeSource(worldRequest, evidence.candidate().identity(), worldDeadline)
             : resolveExactBridgeSource(
-                worldRequest, retainedOriginal.candidate().bindingIdentity(), worldDeadline);
+                worldRequest,
+                retainedTerminalSource.candidate().bindingIdentity(),
+                worldDeadline);
     CanonicalGameplayRegionRuntimeStatusRepository.Source source = initialResolved.source;
     CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation =
         readCurrentIncarnation(source);
     long expectedRegionEpoch =
         exactExpectedRegionEpoch(
-            retainedOriginal == null
+            retainedTerminalSource == null
                 ? evidence.candidate().identity().regionEpoch()
-                : retainedOriginal.candidate().bindingIdentity().regionEpoch());
+                : retainedTerminalSource.candidate().bindingIdentity().regionEpoch());
     CanonicalGameplayRegionRuntimeStatus prior =
         withTransferStatusRepository(
                 transferOwner, handoffDeadline, repository -> repository.find(source))
             .orElse(null);
     if (prior == null && expectedRegionEpoch != 1L) throw unavailable();
     if (prior != null && prior.regionEpoch() != expectedRegionEpoch) throw unavailable();
-    if (retainedOriginal != null) {
-      if (prior == null || retainedOriginal.finalReceipt().isEmpty()) throw unavailable();
+    if (retainedTerminalSource != null) {
+      if (prior == null
+          || retainedOriginal != null && retainedOriginal.finalReceipt().isEmpty()) {
+        throw unavailable();
+      }
       transferOwner.requireFrozenOriginal(frozenOriginal, source, prior, handoffDeadline);
       transferOwner.requireUnreservedFrozenIntent(
           frozenOriginal.transferId(), source, prior, handoffDeadline);
@@ -152,9 +161,9 @@ final class CanonicalGameplayRegionLeaseOwner {
     CanonicalGameplayRegionLeaseRedisOwner handoffRedisOwner =
         transferOwner == null ? redisOwner : redisOwner.forHandoffDeadline(clock, handoffDeadline);
     UUID transferId = null;
-    RegionTransferTerminalSource transferSource = retainedOriginal;
+    RegionTransferTerminalSource transferSource = retainedTerminalSource;
     CanonicalGameplayOriginalNewCandidate transferCandidate =
-        retainedOriginal == null ? null : retainedOriginal.candidate();
+        retainedTerminalSource == null ? null : retainedTerminalSource.candidate();
     PendingTransfer transferContinuation = null;
 
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
