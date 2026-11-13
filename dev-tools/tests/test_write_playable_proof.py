@@ -8,10 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = (
-    Path(__file__).resolve().parents[1]
-    / "hosted/preview/write-playable-proof.py"
-)
+SCRIPT = Path(__file__).resolve().parents[1] / "hosted/preview/write-playable-proof.py"
 SPEC = importlib.util.spec_from_file_location("write_playable_proof", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 proof = importlib.util.module_from_spec(SPEC)
@@ -60,9 +57,7 @@ def make_identity(*, namespace_uid: str = "runtime-uid", head: str = HEAD_SHA):
         "status": {
             "phase": "Ready",
             "observedGeneration": 4,
-            "conditions": [
-                {"type": "Ready", "status": "True", "observedGeneration": 4}
-            ],
+            "conditions": [{"type": "Ready", "status": "True", "observedGeneration": 4}],
             "profile": {
                 "runtimeNamespaceUid": namespace_uid,
                 "requestedHeadSha": head,
@@ -107,9 +102,7 @@ def make_pods(*, image_tag: str = IMAGE_TAG, include_digest: bool = True):
                 "status": {
                     "phase": "Running",
                     "conditions": [{"type": "Ready", "status": "True"}],
-                    "containerStatuses": [
-                        {"name": service, "ready": True, "imageID": image_id}
-                    ],
+                    "containerStatuses": [{"name": service, "ready": True, "imageID": image_id}],
                 },
             }
         )
@@ -140,9 +133,7 @@ class WritePlayableProofTests(unittest.TestCase):
         self.assertEqual(record["identity"]["headSha"], HEAD_SHA)
         self.assertEqual(record["namespace"]["uid"], "runtime-uid")
         self.assertEqual(record["namespace"]["exposureMode"], "public")
-        self.assertEqual(
-            record["proofType"], "hosted-pr-transport-diagnostic"
-        )
+        self.assertEqual(record["proofType"], "hosted-pr-transport-diagnostic")
         self.assertEqual(
             record["outcomes"],
             {
@@ -157,9 +148,9 @@ class WritePlayableProofTests(unittest.TestCase):
 
     def test_accepts_base_image_reuse_bound_to_the_exact_comparison(self):
         # The current image resolver can choose the base image after exact-tree proof.
-        record = build(image_tag=BASE_SHA,
-                       namespace=make_namespace(image_tag=BASE_SHA),
-                       pods=make_pods(image_tag=BASE_SHA))
+        record = build(
+            image_tag=BASE_SHA, namespace=make_namespace(image_tag=BASE_SHA), pods=make_pods(image_tag=BASE_SHA)
+        )
         self.assertEqual(record["identity"]["imageTag"], BASE_SHA)
         self.assertEqual(record["identity"]["mergeSha"], MERGE_SHA)
 
@@ -174,8 +165,7 @@ class WritePlayableProofTests(unittest.TestCase):
             for target in ("status", "condition"):
                 with self.subTest(value=value, target=target):
                     identity = make_identity()
-                    record = (identity["status"] if target == "status"
-                              else identity["status"]["conditions"][0])
+                    record = identity["status"] if target == "status" else identity["status"]["conditions"][0]
                     record["observedGeneration"] = value
                     with self.assertRaisesRegex(ValueError, "positive integer"):
                         build(identity=identity)
@@ -206,24 +196,36 @@ class WritePlayableProofTests(unittest.TestCase):
                     build(pods=pods)
 
     def test_rejects_unbounded_and_noncanonical_json(self):
-        for payload in (b'{"x":1,"x":2}', b'{"x":NaN}', b'[] []',
-                        b'\xff', b' ' * (proof.MAX_INPUT_BYTES + 1)):
-            with self.subTest(payload=payload[:30]):
-                with self.assertRaises(ValueError):
-                    proof._read_json("-", "fixture", payload)
+        for payload in (b'{"x":1,"x":2}', b'{"x":NaN}', b"[] []", b"\xff", b" " * (proof.MAX_INPUT_BYTES + 1)):
+            with self.subTest(payload=payload[:30]), self.assertRaises(ValueError):
+                proof._read_json("-", "fixture", payload)
 
     def test_cli_is_offline_and_emits_only_the_allowlisted_record(self):
         with tempfile.TemporaryDirectory() as directory:
             paths = []
-            for name, value in (("namespace", make_namespace()),
-                                ("identity", make_identity()), ("pods", make_pods())):
+            for name, value in (("namespace", make_namespace()), ("identity", make_identity()), ("pods", make_pods())):
                 path = Path(directory) / (name + ".json")
                 path.write_text(json.dumps(value), encoding="utf-8")
                 paths += ["--" + name + "-json", str(path)]
-            command = [sys.executable, str(SCRIPT), "--pr-number", "42",
-                       "--base-sha", BASE_SHA, "--head-sha", HEAD_SHA,
-                       "--merge-sha", MERGE_SHA, "--image-tag", IMAGE_TAG,
-                       "--telnet-outcome", "passed", "--wss-outcome", "passed", *paths]
+            command = [
+                sys.executable,
+                str(SCRIPT),
+                "--pr-number",
+                "42",
+                "--base-sha",
+                BASE_SHA,
+                "--head-sha",
+                HEAD_SHA,
+                "--merge-sha",
+                MERGE_SHA,
+                "--image-tag",
+                IMAGE_TAG,
+                "--telnet-outcome",
+                "passed",
+                "--wss-outcome",
+                "passed",
+                *paths,
+            ]
             result = subprocess.run(command, capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), build())
@@ -285,4 +287,3 @@ class WritePlayableProofTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

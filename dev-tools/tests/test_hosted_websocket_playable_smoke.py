@@ -1,5 +1,4 @@
 import contextlib
-from email.message import Message
 import importlib.util
 import io
 import json
@@ -8,6 +7,7 @@ import sys
 import time
 import unittest
 from collections import deque
+from email.message import Message
 from unittest.mock import patch
 
 HELPER = pathlib.Path(__file__).parents[1] / "hosted/shared/hosted-websocket-playable-smoke.py"
@@ -29,8 +29,7 @@ def local_http_server():
     class OfflineHttpHandler(MODULE.urllib.request.HTTPHandler):
         def http_open(self, request):
             parsed = MODULE.urllib.parse.urlsplit(request.full_url)
-            requests.append((request.get_method(), request.full_url,
-                             dict(request.header_items()), request.data or b""))
+            requests.append((request.get_method(), request.full_url, dict(request.header_items()), request.data or b""))
             query = MODULE.urllib.parse.parse_qs(parsed.query)
             headers = Message()
             status, body = 200, b"ok"
@@ -48,14 +47,17 @@ def local_http_server():
                 status, body = 401, b"e" * MODULE.MAX_HTTP_RESPONSE_BYTES
             elif parsed.path == "/error-over":
                 status, body = 401, b"do-not-print-this" + b"x" * MODULE.MAX_HTTP_RESPONSE_BYTES
-            response = MODULE.urllib.response.addinfourl(io.BytesIO(body), headers,
-                                                       request.full_url, status)
+            response = MODULE.urllib.response.addinfourl(io.BytesIO(body), headers, request.full_url, status)
             response.msg = "fixture"
             return response
 
-    with patch.object(MODULE.urllib.request, "build_opener",
-                      side_effect=lambda *handlers: real_build_opener(
-                          MODULE.urllib.request.ProxyHandler({}), OfflineHttpHandler(), *handlers)):
+    with patch.object(
+        MODULE.urllib.request,
+        "build_opener",
+        side_effect=lambda *handlers: real_build_opener(
+            MODULE.urllib.request.ProxyHandler({}), OfflineHttpHandler(), *handlers
+        ),
+    ):
         yield "http://offline.invalid", requests
 
 
@@ -1068,16 +1070,24 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
     def test_current_held_connect_admission_never_opens_websocket(self):
         for status in (200, 503):
             http = FakeHttp()
-            def held(method, url, payload, headers, timeout):
+
+            def held(method, url, payload, headers, timeout, status=status, http=http):
                 if url.endswith("/auth/connect-token"):
-                    return MODULE.HttpResponse(status, {}, {
-                        "data": {"issuedAt": "2026-01-01T00:00:00Z"},
-                        "error": {"code": "AUTH_UNAVAILABLE", "message": "private-detail"}})
+                    return MODULE.HttpResponse(
+                        status,
+                        {},
+                        {
+                            "data": {"issuedAt": "2026-01-01T00:00:00Z"},
+                            "error": {"code": "AUTH_UNAVAILABLE", "message": "private-detail"},
+                        },
+                    )
                 return http(method, url, payload, headers, timeout)
+
             opened = []
             with self.subTest(status=status), self.assertRaises(MODULE.HostedWebSocketPlayableSmokeError) as caught:
-                MODULE.run_smoke(self.config(), http_request=held,
-                                 websocket_factory=lambda *args: opened.append(args))
+                MODULE.run_smoke(
+                    self.config(), http_request=held, websocket_factory=lambda *args, opened=opened: opened.append(args)
+                )
             self.assertEqual(opened, [])
             self.assertNotIn("private-detail", str(caught.exception))
 
@@ -1086,25 +1096,35 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             def send(self, command):
                 if command.startswith("PLAY"):
                     self.commands.append(command)
-                    self.responses.append(json.dumps({"eventType": "command_result",
-                        "commandType": "PLAY", "accepted": False,
-                        "errorCode": "ENTITLEMENT_UNAVAILABLE"}))
+                    self.responses.append(
+                        json.dumps(
+                            {
+                                "eventType": "command_result",
+                                "commandType": "PLAY",
+                                "accepted": False,
+                                "errorCode": "ENTITLEMENT_UNAVAILABLE",
+                            }
+                        )
+                    )
                 else:
                     super().send(command)
+
         socket = HeldPlay()
         with self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "PLAY was rejected"):
-            MODULE.run_smoke(self.config(), http_request=FakeHttp(),
-                             websocket_factory=lambda *args: socket)
+            MODULE.run_smoke(self.config(), http_request=FakeHttp(), websocket_factory=lambda *args: socket)
         self.assertNotIn("LOOK", socket.commands)
         self.assertTrue(socket.closed)
 
     def test_timeout_is_bounded_before_any_transport(self):
         for timeout in (0, -1, float("inf"), float("nan")):
             http = FakeHttp()
-            with self.subTest(timeout=timeout), self.assertRaisesRegex(
-                    MODULE.HostedWebSocketPlayableSmokeError, "finite and positive"):
-                MODULE.run_smoke(self.config(timeout_seconds=timeout), http_request=http,
-                                 websocket_factory=FakeWebSocket)
+            with (
+                self.subTest(timeout=timeout),
+                self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "finite and positive"),
+            ):
+                MODULE.run_smoke(
+                    self.config(timeout_seconds=timeout), http_request=http, websocket_factory=FakeWebSocket
+                )
             self.assertEqual(http.calls, [])
 
     def test_failure_does_not_echo_credentials(self):
@@ -1147,4 +1167,3 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
