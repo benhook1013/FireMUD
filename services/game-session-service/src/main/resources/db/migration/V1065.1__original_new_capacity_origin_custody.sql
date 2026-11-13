@@ -347,6 +347,47 @@ VALUES ('game_session_original_new_capacity_origin','game_session_original_new_c
     ('game_session_capacity_origin_transfer_item','game_session_capacity_origin_transfer_item','CONTROL','NOT_PAYLOAD','CONTROL_ONLY','OWNER_POLICY_RETAINED',
     'Retain the exact original origin bytes and protected successor custody. Do not reconstruct or discard the evidence during owner movement.');
 
+-- Include the origin receiver's immutable evidence in the same tenant history envelope.
+CREATE OR REPLACE FUNCTION count_gs_region_transfer_pending_origins(
+    tenant UUID, game UUID, region UUID, remaining BIGINT
+) RETURNS BIGINT LANGUAGE sql AS $$
+    SELECT count(*) FROM (
+        SELECT 1 FROM game_session_original_new_capacity_origin o
+        WHERE o.tenant_id=tenant AND o.game_instance_id=game AND o.region_id=region
+        LIMIT remaining + 1
+    ) pending
+$$;
+
+CREATE OR REPLACE FUNCTION count_gs_region_transfer_legacy_origin_items(
+    tenant UUID, remaining BIGINT
+) RETURNS BIGINT LANGUAGE sql AS $$
+    SELECT count(*) FROM (
+        SELECT 1 FROM game_session_region_owner_transfer t
+        JOIN game_session_capacity_origin_transfer_item i ON i.transfer_id=t.transfer_id
+        WHERE t.tenant_id=tenant AND t.reserved_origin_items IS NULL
+        LIMIT remaining + 1
+    ) retained
+$$;
+
+CREATE FUNCTION require_gs_region_origin_transfer_item_reservation()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE reserved_items INTEGER;
+BEGIN
+    SELECT reserved_origin_items INTO STRICT reserved_items
+        FROM game_session_region_owner_transfer WHERE transfer_id=NEW.transfer_id;
+    IF reserved_items IS NOT NULL AND (
+        NEW.target_ordinal >= reserved_items
+        OR octet_length(NEW.account_resolution_bytes) > 1048576
+    ) THEN
+        RAISE EXCEPTION 'Origin transfer item is outside its reserved inventory or size' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER gs_origin_transfer_item_reservation
+    BEFORE INSERT ON game_session_capacity_origin_transfer_item
+    FOR EACH ROW EXECUTE FUNCTION require_gs_region_origin_transfer_item_reservation();
+
 DO $migration$
 DECLARE definition TEXT; original TEXT; replacement TEXT;
 BEGIN
