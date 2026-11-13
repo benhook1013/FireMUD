@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
@@ -334,6 +335,45 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
+  void postCommitClockQueryIsCancelledAndReleasesItsConnection() {
+    var clockReads = new AtomicInteger();
+    var blockedBackend = new AtomicInteger();
+    Fixture f =
+        fixture(
+            false,
+            Clock.systemUTC(),
+            new org.jooq.impl.DefaultExecuteListener() {
+              @Override
+              public void renderEnd(org.jooq.ExecuteContext context) {
+                if (!"SELECT clock_timestamp() AS observed_at".equals(context.sql())
+                    || clockReads.incrementAndGet() != 2) return;
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+                try (var statement = context.connection().createStatement();
+                    var result = statement.executeQuery("SELECT pg_backend_pid()")) {
+                  assertThat(result.next()).isTrue();
+                  blockedBackend.set(result.getInt(1));
+                } catch (SQLException failure) {
+                  throw new IllegalStateException(failure);
+                }
+                context.sql("SELECT clock_timestamp() AS observed_at FROM pg_sleep(15)");
+              }
+            });
+    long started = System.nanoTime();
+    assertThatThrownBy(() -> f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            SQLException.class, failure -> assertThat(failure.getSQLState()).isEqualTo("57014"));
+    assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(10));
+    assertThat(blockedBackend.get()).isPositive();
+    assertThat(
+            f.dsl.fetchExists(
+                DSL.selectOne().from("pg_stat_activity").where("pid = ?", blockedBackend.get())))
+        .isFalse();
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_evaluations"))).isOne();
+  }
+
+  @Test
   void capacityEvaluationUsesDatabaseTimeWhenApplicationClockIsOneSecondAhead() {
     Clock aheadOfDatabase = Clock.offset(Clock.systemUTC(), Duration.ofSeconds(1));
     Fixture f = fixture(false, aheadOfDatabase);
@@ -519,6 +559,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   private Fixture fixture(boolean join, Clock applicationClock) {
+    return fixture(join, applicationClock, new org.jooq.impl.DefaultExecuteListener());
+  }
+
+  private Fixture fixture(boolean join, Clock applicationClock, org.jooq.ExecuteListener listener) {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     schemas.add(schema);
     DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
@@ -532,7 +576,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .migrate();
     DSLContext setupDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     Instant baseTime = databaseNow(setupDsl).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
-    return new Fixture(dataSource, join, baseTime, applicationClock);
+    return new Fixture(dataSource, join, baseTime, applicationClock, listener);
   }
 
   private static Instant databaseNow(DSLContext dsl) {
@@ -647,10 +691,12 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         DriverManagerDataSource dataSource,
         boolean join,
         Instant baseTime,
-        Clock applicationClock) {
+        Clock applicationClock,
+        org.jooq.ExecuteListener listener) {
       this.dataSource = dataSource;
       this.baseTime = baseTime;
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+      dsl.configuration().set(new org.jooq.impl.DefaultExecuteListenerProvider(listener));
       var transactions = new DataSourceTransactionManager(dataSource);
       transaction = new TransactionTemplate(transactions);
       accounts = new AccountRepository(dsl);
