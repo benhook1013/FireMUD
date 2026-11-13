@@ -53,9 +53,9 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
     f.fencePresent = false;
     assertThat(f.read()).isNull();
+
+    f.fencePresent = true;
     f.confirmation = UUID.randomUUID();
-    f.version = 2;
-    f.commandClaimed = true;
     assertThat(f.read()).isNull();
   }
 

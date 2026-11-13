@@ -6,6 +6,7 @@ import {
   type AccountControlUiLoginRequest,
   type AccountControlUiLoginResult,
 } from '../api/accountControlUi';
+import { authenticationErrorCode } from '../api/hostingFirstInvoice';
 
 export interface ControlUiSessionView {
   readonly identity: string;
@@ -399,6 +400,37 @@ export class ControlUiSessionStore {
         } catch (error) {
           discardResponse(response);
           throw error;
+        }
+        if (
+          response.status === 401 &&
+          target.pathname.endsWith('/reauthenticate')
+        ) {
+          let bytes: Uint8Array;
+          try {
+            bytes = await readBoundedBytes(response, controller.signal);
+          } catch {
+            assertCurrent();
+            assertWithinDeadline();
+            this.clearIfCurrent(session.identity, revision);
+            throw new ControlUiSessionError('AUTH_REJECTED');
+          }
+          assertCurrent();
+          assertWithinDeadline();
+          const boundedResponse = guardedJsonResponse(
+            response.status,
+            bytes,
+            assertCurrent,
+            response.headers.get('content-type') ?? 'application/json'
+          );
+          if (await authenticationErrorCode(boundedResponse)) {
+            assertCurrent();
+            assertWithinDeadline();
+            return boundedResponse;
+          }
+          discardResponse(boundedResponse);
+          this.requests.delete(controller);
+          this.clearIfCurrent(session.identity, revision);
+          throw new ControlUiSessionError('AUTH_REJECTED');
         }
         if (response.status === 401 || response.status === 403) {
           discardResponse(response);
