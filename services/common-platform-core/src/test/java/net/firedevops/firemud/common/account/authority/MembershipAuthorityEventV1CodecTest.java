@@ -66,6 +66,64 @@ class MembershipAuthorityEventV1CodecTest {
   }
 
   @Test
+  void authorityCheckpointRetainsV1ShapeAndMayRefreshOnlyCurrentAuthority() {
+    MembershipEvent retainedVector =
+        MembershipAuthorityEventV1Codec.verify(
+            vectors.path("validEvents").get(0).path("event").toString());
+    MembershipEvent original = seal(activeMembershipPreimage());
+    ObjectNode checkpointPreimage = authorityCheckpointPreimage();
+    String tenantId = checkpointPreimage.path("tenantId").asText();
+    MembershipEvent checkpoint = seal(checkpointPreimage);
+
+    assertThat(checkpoint.schemaVersion())
+        .isEqualTo(MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
+    assertThat(checkpoint.eventType())
+        .isEqualTo(MembershipAuthorityEventV1Codec.AUTHORITY_CHECKPOINT_EVENT_TYPE);
+    assertThat(checkpoint.membershipLifecycleState())
+        .isEqualTo(original.membershipLifecycleState());
+    assertThat(checkpoint.roles()).isEqualTo(original.roles());
+    assertThat(checkpoint.membershipVersion()).isEqualTo(original.membershipVersion());
+    assertThat(checkpoint.membershipAuthorityGeneration())
+        .isEqualTo(original.membershipAuthorityGeneration());
+    assertThat(checkpoint.authorityTuple().tenantAuthorityGeneration())
+        .containsEntry(
+            tenantId,
+            checkpointPreimage
+                .path("authorityTuple")
+                .path("tenantAuthorityGeneration")
+                .path(tenantId)
+                .asText())
+        .isNotEqualTo(original.authorityTuple().tenantAuthorityGeneration());
+    assertThat(checkpoint.authorityTuple().tenantBillingCutoff().orElseThrow())
+        .containsKey(tenantId);
+    assertThat(MembershipAuthorityEventV1Codec.verify(original.canonicalJson()).canonicalJson())
+        .isEqualTo(original.canonicalJson());
+    assertThat(MembershipAuthorityEventV1Codec.verify(checkpoint.canonicalJson()).canonicalJson())
+        .isEqualTo(checkpoint.canonicalJson());
+    assertThat(
+            MembershipAuthorityEventV1Codec.verify(
+                    vectors.path("validEvents").get(0).path("event").toString())
+                .canonicalJson())
+        .isEqualTo(retainedVector.canonicalJson());
+  }
+
+  @Test
+  void authorityCheckpointRequiresActiveAdmittingNonInvalidatedMembership() {
+    ObjectNode inactive = authorityCheckpointPreimage();
+    inactive.put("membershipLifecycleState", "INACTIVE");
+    inactive.put("gameplayAdmissionAllowed", false);
+    assertThatThrownBy(() -> seal(inactive)).isInstanceOf(IllegalArgumentException.class);
+
+    ObjectNode nonAdmitting = authorityCheckpointPreimage();
+    nonAdmitting.put("gameplayAdmissionAllowed", false);
+    assertThatThrownBy(() -> seal(nonAdmitting)).isInstanceOf(IllegalArgumentException.class);
+
+    ObjectNode invalidated = authorityCheckpointPreimage();
+    invalidated.put("callerBoundAuthorityInvalidated", true);
+    assertThatThrownBy(() -> seal(invalidated)).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void changedDeclaredFieldsChangeTheDigestAndCannotReuseTheOriginalDigest() throws Exception {
     ObjectNode baseline = (ObjectNode) vectors.path("validEvents").get(0).path("event").deepCopy();
     String originalDigest = baseline.path("eventDigest").asText();
@@ -198,6 +256,50 @@ class MembershipAuthorityEventV1CodecTest {
     byte[] canonical = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(preimage));
     return "sha256:"
         + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
+  }
+
+  private static ObjectNode activeMembershipPreimage() {
+    ObjectNode event = (ObjectNode) vectors.path("validEvents").get(0).path("event").deepCopy();
+    event.remove("eventDigest");
+    event.put("eventType", MembershipAuthorityEventV1Codec.EVENT_TYPE);
+    event.put("eventId", "membership-event-1");
+    event.put("requestId", "membership-request-1");
+    event.put("outboxSequence", "1");
+    event.put("callerBoundAuthorityInvalidated", false);
+    ((com.fasterxml.jackson.databind.node.ArrayNode)
+            event.path("authorityTuple").path("privateRealmGrantVersions"))
+        .removeAll();
+    return event;
+  }
+
+  private static ObjectNode authorityCheckpointPreimage() {
+    ObjectNode event = activeMembershipPreimage();
+    event.put("eventType", MembershipAuthorityEventV1Codec.AUTHORITY_CHECKPOINT_EVENT_TYPE);
+    event.put("eventId", "authority-checkpoint-event-2");
+    event.put("requestId", "authority-checkpoint-request-2");
+    event.put("outboxSequence", "2");
+    String tenantId = event.path("tenantId").asText();
+    ObjectNode tuple = (ObjectNode) event.get("authorityTuple");
+    ObjectNode tenantGenerations = JSON.createObjectNode();
+    tenantGenerations.put(tenantId, "14");
+    tuple.set("tenantAuthorityGeneration", tenantGenerations);
+    ObjectNode tenantCutoff = JSON.createObjectNode();
+    tenantCutoff.put("tenantAuthorityGeneration", "14");
+    tenantCutoff.put("tenantBillingSequence", "6");
+    tenantCutoff.put(
+        "outboxStreamKey",
+        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "tenant/" + tenantId);
+    tenantCutoff.put("outboxSequence", "10");
+    ObjectNode tenantCutoffs = JSON.createObjectNode();
+    tenantCutoffs.set(tenantId, tenantCutoff);
+    tuple.set("tenantBillingCutoff", tenantCutoffs);
+    return event;
+  }
+
+  private static MembershipEvent seal(ObjectNode preimage) {
+    Map<String, Object> fields =
+        JSON.convertValue(preimage, new TypeReference<LinkedHashMap<String, Object>>() {});
+    return MembershipAuthorityEventV1Codec.seal(fields);
   }
 
   private static void set(ObjectNode root, String pointer, JsonNode value) {
