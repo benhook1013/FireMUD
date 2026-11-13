@@ -3867,36 +3867,28 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void grantRealmAccessUpsertsRuntimeGrant() {
-    Account account = new Account();
-    account.setId(11L);
-    setPersistedAuthenticationIdentity(account);
-    account.setUsername("demo");
-    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
-    when(accountRealmAccessGrantRepository.findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-            11L, 7L, "demo", "preview"))
-        .thenReturn(Optional.empty());
-    when(accountRealmAccessGrantRepository.save(
-            org.mockito.ArgumentMatchers.any(AccountRealmAccessGrant.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-
-    var result =
-        service.grantRealmAccess(
-            new RealmAccessGrantRequest(
-                11L, 7L, "demo", "preview", "operator", "preview access", "req-grant-1"));
-
-    assertTrue(result.granted());
-    assertEquals(1L, result.grantVersion());
-    org.mockito.Mockito.verify(accountRealmAccessGrantRepository)
-        .save(org.mockito.ArgumentMatchers.any(AccountRealmAccessGrant.class));
+  void grantRealmAccessRefusesBeforeAccountOrGrantLookup() {
+    AuthenticationException failure =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.grantRealmAccess(
+                    new RealmAccessGrantRequest(
+                        11L, 7L, "demo", "preview", "operator", "preview access", "req-grant-1")));
+    assertEquals("AUTH_UNAVAILABLE", failure.getCode());
+    verifyNoInteractions(
+        accountRepository, accountRealmAccessGrantRepository, accountTenantMembershipRepository);
   }
 
   @Test
-  void revokeRealmAccessUsesDurableRepositoryRevocation() {
-    service.revokeRealmAccess(11L, 7L, "demo", "preview");
-
-    org.mockito.Mockito.verify(accountRealmAccessGrantRepository)
-        .revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(11L, 7L, "demo", "preview");
+  void revokeRealmAccessRefusesBeforeGrantMutation() {
+    AuthenticationException failure =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.revokeRealmAccess(11L, 7L, "demo", "preview"));
+    assertEquals("AUTH_UNAVAILABLE", failure.getCode());
+    verifyNoInteractions(
+        accountRepository, accountRealmAccessGrantRepository, accountTenantMembershipRepository);
   }
 
   @Test
@@ -3936,34 +3928,17 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void grantRealmAccessReactivatesRetainedTombstoneAndAdvancesItsVersion() {
-    Account account = new Account();
-    account.setId(11L);
-    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
-    AccountRealmAccessGrant revoked = new AccountRealmAccessGrant();
-    revoked.setId(19L);
-    revoked.setAccount(account);
-    revoked.setTenantId(7L);
-    revoked.setWorldSlug("demo");
-    revoked.setRealmSlug("preview");
-    revoked.setGrantVersion(7L);
-    revoked.setGranted(false);
-    when(accountRealmAccessGrantRepository.findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-            11L, 7L, "demo", "preview"))
-        .thenReturn(Optional.of(revoked));
-    when(accountRealmAccessGrantRepository.save(
-            org.mockito.ArgumentMatchers.any(AccountRealmAccessGrant.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-
-    var result =
-        service.grantRealmAccess(
-            new RealmAccessGrantRequest(
-                11L, 7L, "demo", "preview", "operator", "regrant", "req-grant-3"));
-
-    assertTrue(result.granted());
-    assertEquals(8L, result.grantVersion());
-    assertTrue(revoked.isGranted());
-    org.mockito.Mockito.verify(accountRealmAccessGrantRepository).save(revoked);
+  void grantRealmAccessCannotReactivateOrAdvanceRetainedGrant() {
+    AuthenticationException failure =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.grantRealmAccess(
+                    new RealmAccessGrantRequest(
+                        11L, 7L, "demo", "preview", "operator", "regrant", "req-grant-3")));
+    assertEquals("AUTH_UNAVAILABLE", failure.getCode());
+    verifyNoInteractions(
+        accountRepository, accountRealmAccessGrantRepository, accountTenantMembershipRepository);
   }
 
   @Test

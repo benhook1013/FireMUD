@@ -20,6 +20,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperati
 import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository.OperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountTenantRoleOperationRepository.Request;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -38,7 +39,8 @@ class AccountTenantRoleOperationRepositoryPostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "tenant_role_operation_proof_";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void immutableJournalRetriesOriginalBytesAfterLaterRoleOperationAndRejectsChangedIntent() {

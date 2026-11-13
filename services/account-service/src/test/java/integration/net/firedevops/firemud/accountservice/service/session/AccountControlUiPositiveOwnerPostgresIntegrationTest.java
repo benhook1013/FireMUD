@@ -114,7 +114,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * issuance, physical Coordination Redis and actor/order owners execute. No production trust,
  * deployed Pod attribution, World APPLIED, public wiring or runtime activation is established.
  */
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class AccountControlUiPositiveOwnerPostgresIntegrationTest {
   private static final Network NETWORK = Network.newNetwork();
