@@ -1893,7 +1893,15 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   "UPDATE game_session_region_owner_transfer SET state=state",
                   "FOR SHARE OF e",
                   "e.status IN ('INSTALL_DISPATCHED','AUTHORIZED')",
-                  "Transfer item differs from unresolved original region execution")),
+                  "Transfer item differs from unresolved original region execution"),
+              "guard_gs_region_owner_transfer()",
+              List.of(
+                  "NEW.state='COMPLETED' AND OLD.state='FROZEN'",
+                  "NEW.verification_complete IS DISTINCT FROM true",
+                  "i.before_payload_digest IS NULL",
+                  "i.after_payload_digest IS NULL",
+                  "i.verified_round IS DISTINCT FROM NEW.verification_round",
+                  "Captured region transfer item lacks its full exact current receipt")),
           "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt",
           "reject_gs_capacity_close_after_final_receipt()");
     }
@@ -1915,16 +1923,6 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
         Map.of(guardRoutine, guardFragments),
         addedTrigger,
         guardRoutine);
-  }
-
-  private static void assertCapacityCatalogGuardUpgrade(
-      Fixture f,
-      String target,
-      long priorEpoch,
-      String script,
-      Map<String, List<String>> guardFragmentsByRoutine) {
-    assertCapacityCatalogGuardUpgrade(
-        f, target, priorEpoch, script, guardFragmentsByRoutine, null, null);
   }
 
   private static void assertCapacityCatalogGuardUpgrade(
