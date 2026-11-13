@@ -87,9 +87,9 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           if (transfer == null) return null;
           var owner = capacity.forTransferBudget(budget);
           for (var item : repository.capture(transfer)) {
-            var before = observe(item, budget.absoluteDeadlineMillis());
+            var before = observe(item, budget);
             var physical = owner.fenceForTransfer(item, budget.absoluteDeadlineMillis());
-            var after = observe(item, budget.absoluteDeadlineMillis());
+            var after = observe(item, budget);
             repository.retainFence(item, physical, before, after);
           }
           // A verification round re-reads every retained marker, including older generations,
@@ -98,9 +98,9 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           List<CanonicalGameplayRegionOwnerTransferRepository.Item> page =
               repository.page(transfer, cursor);
           for (var item : page) {
-            var before = observe(item, budget.absoluteDeadlineMillis());
+            var before = observe(item, budget);
             var actual = owner.readTransferFence(item, budget.absoluteDeadlineMillis());
-            var after = observe(item, budget.absoluteDeadlineMillis());
+            var after = observe(item, budget);
             repository.retainVerification(item, actual, before, after);
           }
           if (!repository.finishVerification(transfer)) throw held();
@@ -131,7 +131,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
                     ownerInstanceId,
                     clock.instant());
           }
-          var before = observe(first.getFirst(), budget.absoluteDeadlineMillis());
+          var before = observe(first.getFirst(), budget);
           var owner = capacity.forTransferBudget(budget);
           // Stream the entire frozen inventory through bounded pages under this one absolute
           // operation budget. Earlier page receipts cannot hide a subsequently lost marker.
@@ -148,7 +148,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
                   page = repository.page(transferId, page.getLast().ordinal());
                 }
               });
-          var after = observe(first.getFirst(), budget.absoluteDeadlineMillis());
+          var after = observe(first.getFirst(), budget);
           var proof =
               repository.qualify(transferId, before, after, budget.absoluteDeadlineMillis());
           var installed =
@@ -166,7 +166,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           // the immutable completed successor against the actual current region owner.
           var completed =
               observations.observeForRegionOwnerTransfer(
-                  transferId, first.getFirst().ordinal(), budget.absoluteDeadlineMillis());
+                  transferId, first.getFirst().ordinal(), budget);
           if (!after.incarnationDigest().equals(completed.incarnationDigest())) throw held();
           repository.requireRetainedPhysical(
               first.getFirst(),
@@ -188,7 +188,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
             return completed.status();
           }
           var first = firstPage.getFirst();
-          var before = observe(first, budget.absoluteDeadlineMillis());
+          var before = observe(first, budget);
           if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();
           var owner = capacity.forTransferBudget(budget);
           owner.withTransferReadback(
@@ -203,7 +203,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
                   page = repository.completedPage(transferId, page.getLast().ordinal());
                 }
               });
-          var after = observe(first, budget.absoluteDeadlineMillis());
+          var after = observe(first, budget);
           if (!after.incarnationDigest().equals(completed.incarnationDigest())
               || !completed.equals(
                   repository.completedSuccessor(transferId, ownerInstance, correlation))) {
@@ -214,9 +214,10 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
   }
 
   private CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation observe(
-      CanonicalGameplayRegionOwnerTransferRepository.Item item, long deadline) {
+      CanonicalGameplayRegionOwnerTransferRepository.Item item,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
     var value =
-        observations.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), deadline);
+        observations.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), budget);
     if (!repository
             .readCurrent(item.transferId(), item.ordinal())
             .equals(value.regionOwnerTransferContext())
