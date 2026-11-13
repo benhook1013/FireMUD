@@ -1386,7 +1386,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                 () ->
                     proof.receiver.observeForRegionOwnerTransfer(
                         id, captured.getFirst().ordinal(), proof.clock.millis() + 500L))
-            .isInstanceOf(IllegalStateException.class);
+            .isInstanceOf(
+                CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(3));
       } finally {
         lock.rollback();
