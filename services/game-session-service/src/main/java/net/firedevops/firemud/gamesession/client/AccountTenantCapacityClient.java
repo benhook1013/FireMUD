@@ -8,6 +8,7 @@ import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.time.Clock;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
@@ -97,7 +98,7 @@ public final class AccountTenantCapacityClient
       throw TenantCapacityAdmissionGrpcCodec.validateFailure(failure);
     }
     try {
-      var refusal = TenantCapacityAdmissionGrpcCodec.readRefusal(request, response);
+      var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response);
       if (refusal.isPresent()) throw new CapacityRefusedException(refusal.orElseThrow());
       // Exact retry may replay an expired/terminal reservation. The final owner still checks it.
       return TenantCapacityAdmissionGrpcCodec.requireResponse(request, response);
@@ -111,14 +112,29 @@ public final class AccountTenantCapacityClient
   /** Exact Account domain refusal without a capacity commitment. */
   public static final class CapacityRefusedException extends IllegalStateException {
     private final TenantCapacityAdmissionGrpcCodec.Failure code;
+    private final UUID durableDenialId;
 
-    private CapacityRefusedException(TenantCapacityAdmissionGrpcCodec.Failure code) {
-      super(code.name());
-      this.code = code;
+    private CapacityRefusedException(TenantCapacityAdmissionGrpcCodec.Refusal refusal) {
+      super(refusal.code().name());
+      this.code = refusal.code();
+      this.durableDenialId = refusal.durableDenialId();
+    }
+
+    /** Replays a durable quota denial after the local owner verifies its exact retained binding. */
+    public static CapacityRefusedException retainedQuotaDenial(UUID denialId) {
+      return new CapacityRefusedException(
+          new TenantCapacityAdmissionGrpcCodec.Refusal(
+              TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED,
+              TenantCapacityAdmission.uuid(denialId)));
     }
 
     public TenantCapacityAdmissionGrpcCodec.Failure code() {
       return code;
+    }
+
+    /** The exact Account denial receipt, if the authenticated response carried one. */
+    public UUID durableDenialId() {
+      return durableDenialId;
     }
   }
 

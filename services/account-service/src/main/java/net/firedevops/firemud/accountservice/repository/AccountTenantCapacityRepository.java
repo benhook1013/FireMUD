@@ -7,9 +7,11 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Identity;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -153,13 +155,13 @@ public final class AccountTenantCapacityRepository {
         "observed_at");
   }
 
-  /** The owner already holds this usage row before its final current-source qualification. */
-  public Result create(Request request, Record usage, Instant expiresAt) {
+  /** Retains acceptance only after the locked quota check, in the same reservation transaction. */
+  public Optional<Result> createIfQuotaAvailable(Request request, Record usage, Instant expiresAt) {
     requireFresh(request.evidence());
     long delta = Objects.requireNonNull(request.capacityDelta());
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
-    if (delta > request.evidence().quota() - occupied)
-      throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED);
+    if (delta > request.evidence().quota() - occupied) return Optional.empty();
+    new AccountCapacityOriginDecisionRepository(dsl).accept(request);
     long held = Math.addExact(number(usage, "held_units"), delta);
     updateUsage(request, usage, held, number(usage, "used_units"));
     int created =
@@ -182,7 +184,7 @@ public final class AccountTenantCapacityRepository {
             at(expiresAt),
             at(expiresAt.plusSeconds(60)));
     if (created != 1) throw unavailable();
-    return exact(request, Objects.requireNonNull(find(request.identity())));
+    return Optional.of(exact(request, Objects.requireNonNull(find(request.identity()))));
   }
 
   public static void requireCurrentLifetime(Evidence evidence, Instant now) {
@@ -263,14 +265,28 @@ public final class AccountTenantCapacityRepository {
 
   public static final class CapacityException extends IllegalStateException {
     private final Failure code;
+    private final UUID durableDenialId;
 
     public CapacityException(Failure code) {
       super(code.name());
       this.code = code;
+      this.durableDenialId = null;
+    }
+
+    public CapacityException(Failure code, UUID durableDenialId) {
+      super(code.name());
+      if (code != Failure.CAPACITY_QUOTA_EXCEEDED)
+        throw new IllegalArgumentException("Only a quota refusal can carry a durable denial");
+      this.code = code;
+      this.durableDenialId = TenantCapacityAdmission.uuid(durableDenialId);
     }
 
     public Failure code() {
       return code;
+    }
+
+    public UUID durableDenialId() {
+      return durableDenialId;
     }
   }
 }

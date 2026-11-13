@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(14);
+      assertThat(catalog.catalogEpoch()).isEqualTo(15);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -204,7 +204,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.2",
               "catalog-installation:1065.0.3",
               "catalog-installation:1065.0.4",
-              "catalog-installation:1065.0.5")
+              "catalog-installation:1065.0.5",
+              "catalog-installation:1065.0.6")
           .noneMatch(
               identity ->
                   identity.contains(":1057:")
@@ -220,7 +221,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       || identity.contains(":1065.0.2:")
                       || identity.contains(":1065.0.3:")
                       || identity.contains(":1065.0.4:")
-                      || identity.contains(":1065.0.5:"));
+                      || identity.contains(":1065.0.5:")
+                      || identity.contains(":1065.0.6:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -763,7 +765,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(14);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(15);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -912,7 +914,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.2",
             "1065.0.3",
             "1065.0.4",
-            "1065.0.5")) {
+            "1065.0.5",
+            "1065.0.6")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -954,7 +957,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.2",
             "1065.0.3",
             "1065.0.4",
-            "1065.0.5")) {
+            "1065.0.5",
+            "1065.0.6")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "
@@ -975,12 +979,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture(null)) {
       var original = f.owner().capture(request());
       f.addComponent();
-      for (long invalid : new long[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16}) {
+      for (long invalid : new long[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17}) {
         assertThatThrownBy(() -> f.installEpoch(invalid))
             .hasMessageContaining("exact classified installed schema");
       }
       // Controlled explicit owner revision, not an exposed registry/runtime mutation API.
-      f.installEpoch(15);
+      f.installEpoch(16);
       assertThatThrownBy(() -> f.owner().capture(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
@@ -988,9 +992,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.evidence(original.request()))
           .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
       var revised = f.owner().capture(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(15);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(16);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
-      assertThat(f.count(EPOCHS)).isEqualTo(15);
+      assertThat(f.count(EPOCHS)).isEqualTo(16);
     }
   }
 
