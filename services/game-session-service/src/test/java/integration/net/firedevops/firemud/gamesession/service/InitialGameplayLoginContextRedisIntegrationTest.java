@@ -362,11 +362,16 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     var original = coordinates();
     own(original);
     var provider = new TracedProvider(writer);
-    var client = client(provider, new ControlledAuthority(), 1);
+    var client =
+        client(
+            provider,
+            new ControlledAuthority(),
+            new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 3_000));
     var expected = InitialGameplayLoginContextState.pending(original);
 
-    assertThat(client.createPending(original).orElseThrow().encode())
-        .containsExactly(expected.encode());
+    var createdPending = client.createPending(original);
+    assertThat(createdPending).as("physical create observations: %s", provider.traces).isPresent();
+    assertThat(createdPending.orElseThrow().encode()).containsExactly(expected.encode());
     byte[] created = admin.get(key(original));
     assertThat(created).containsExactly(expected.encode());
     assertThat(admin.pexpiretime(key(original))).isEqualTo(-1L);

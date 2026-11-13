@@ -166,6 +166,30 @@ class AccountControlUiAuthenticationGrpcServiceTest {
   }
 
   @Test
+  void permanentRecoveryDenialIsAClosedLoginResult() {
+    var issuer = mock(AccountControlUiIssuanceService.class);
+    var actors = mock(AccountControlUiActorService.class);
+    when(issuer.issueAccount(any()))
+        .thenThrow(new AccountControlUiIssuanceService.PermanentRecoveryDenialException());
+    var receiver = new AccountControlUiAuthenticationGrpcService(issuer, actors, "test");
+    var request = request("test");
+    var denied = new Result();
+
+    gateway()
+        .run(
+            () ->
+                receiver.authLogin(
+                    AccountControlUiAuthenticationGrpcCodec.toRequest(request), denied));
+
+    assertThat(denied.failureCode).isNull();
+    assertThat(denied.completed).isTrue();
+    assertThat(denied.value.getStatusList())
+        .containsExactly(
+            AccountControlUiAuthLoginStatus.ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_DENIED);
+    verifyNoInteractions(actors);
+  }
+
+  @Test
   void overlongSecretIsInvalidArgumentBeforeIssuance() {
     var issuer = mock(AccountControlUiIssuanceService.class);
     var actors = mock(AccountControlUiActorService.class);

@@ -304,6 +304,85 @@ class AccountCheckoutHttpClientTlsTest {
         Arguments.of(HttpMethod.GET, "", 503, "AUTH_UNAVAILABLE"));
   }
 
+  @ParameterizedTest
+  @MethodSource("reauthenticationCredentialDenials")
+  void preservesOnlyKnownCredentialCodesFromBoundedReauthenticationErrors(String code)
+      throws Exception {
+    var captured = new AtomicReference<CapturedRequest>();
+    String body =
+        "{\"status\":\"ERROR\",\"data\":null,\"error\":{\"code\":\""
+            + code
+            + "\",\"message\":\"private account detail\"}}";
+    AtomicInteger requests = startServer(401, body.getBytes(StandardCharsets.UTF_8), captured);
+    client = newClient(pki.caCertificate(), server.port());
+    HttpHeaders headers = authorizationHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+
+    var result =
+        client
+            .forward(
+                HttpMethod.POST,
+                SUBSCRIPTION_PATH + "/reauthenticate",
+                headers,
+                "{}".getBytes(StandardCharsets.UTF_8))
+            .block(Duration.ofSeconds(8));
+
+    assertThat(result).isNotNull();
+    assertThat(result.status()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(result.contentType()).isEqualTo(MediaType.APPLICATION_JSON_VALUE);
+    assertThat(new String(result.body(), StandardCharsets.UTF_8))
+        .isEqualTo(
+            "{\"status\":\"ERROR\",\"data\":null,\"error\":{\"code\":\""
+                + code
+                + "\",\"message\":\"Invalid credentials\"}}");
+    assertThat(new String(result.body(), StandardCharsets.UTF_8))
+        .doesNotContain("private account detail");
+    assertThat(requests).hasValue(1);
+  }
+
+  private static Stream<Arguments> reauthenticationCredentialDenials() {
+    return Stream.of(Arguments.of("AUTH_INVALID_CREDENTIALS"), Arguments.of("INVALID_CREDENTIALS"));
+  }
+
+  @ParameterizedTest
+  @MethodSource("uncontractedCredentialDenials")
+  void stripsCredentialDenialsOutsideExactReauthenticationErrorShape(String suffix, String body)
+      throws Exception {
+    AtomicInteger requests =
+        startServer(401, body.getBytes(StandardCharsets.UTF_8), new AtomicReference<>());
+    client = newClient(pki.caCertificate(), server.port());
+    HttpHeaders headers = authorizationHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+
+    var result =
+        client
+            .forward(
+                HttpMethod.POST,
+                SUBSCRIPTION_PATH + suffix,
+                headers,
+                "{}".getBytes(StandardCharsets.UTF_8))
+            .block(Duration.ofSeconds(8));
+
+    assertThat(result).isNotNull();
+    assertThat(result.status()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(result.body()).isEmpty();
+    assertThat(requests).hasValue(1);
+  }
+
+  private static Stream<Arguments> uncontractedCredentialDenials() {
+    String validShape =
+        "{\"status\":\"ERROR\",\"data\":null,\"error\":{\"code\":\"INVALID_CREDENTIALS\",\"message\":\"Invalid credentials\"}}";
+    return Stream.of(
+        Arguments.of("/confirm", validShape),
+        Arguments.of(
+            "/reauthenticate",
+            "{\"status\":\"ERROR\",\"data\":null,\"error\":{\"code\":\"AUTH_SESSION_REVOKED\",\"message\":\"Invalid credentials\"}}"),
+        Arguments.of(
+            "/reauthenticate",
+            "{\"status\":\"ERROR\",\"data\":null,\"error\":{\"code\":\"INVALID_CREDENTIALS\",\"message\":\"Invalid credentials\",\"extra\":\"private\"}}"),
+        Arguments.of("/reauthenticate", validShape + " ".repeat(1024)));
+  }
+
   @Test
   void preservesReconcilingWebhook503WithoutForwardingPrivateOutcomeOrRetrying() throws Exception {
     var captured = new AtomicReference<CapturedRequest>();
