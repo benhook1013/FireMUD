@@ -246,7 +246,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verify(connection, timeout(1000)).closeAsync();
       assertPermitRemainsHeld(operations, operationMaximum);
       assertPermitRemainsHeld(background, backgroundMaximum);
-      verify(commands, never()).evalsha(any(), any(), any(), any());
+      var probeArguments = org.mockito.ArgumentCaptor.forClass(byte[][].class);
+      verify(commands, org.mockito.Mockito.times(1))
+          .evalsha(any(), any(), any(), probeArguments.capture());
+      assertThat(probeArguments.getValue()[1])
+          .containsExactly("PROBE".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
 
       close.complete(null);
       assertThat(operations.tryAcquire(operationMaximum, 2, TimeUnit.SECONDS)).isTrue();
@@ -254,7 +258,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       assertThat(background.tryAcquire(backgroundMaximum, 2, TimeUnit.SECONDS)).isTrue();
       background.release(backgroundMaximum);
       verify(connection, org.mockito.Mockito.times(1)).closeAsync();
-      verify(commands, never()).evalsha(any(), any(), any(), any());
+      // Closing must not dispatch INITIALIZE or repeat the preparation probe.
+      verify(commands, org.mockito.Mockito.times(1))
+          .evalsha(any(), any(), any(), any(byte[][].class));
     } finally {
       if (prepared != null) prepared.close();
       close.complete(null);
