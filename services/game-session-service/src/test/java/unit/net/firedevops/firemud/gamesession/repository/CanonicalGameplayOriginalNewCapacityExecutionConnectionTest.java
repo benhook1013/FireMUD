@@ -323,7 +323,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
   }
 
   @Test
-  void failedLateCloseIsNotRetriedOrPermitLeaked() {
+  void failedLateCloseIsNotRetriedAndRetainsItsPermit() {
     RedisClient redis = mock();
     StatefulRedisConnection<byte[], byte[]> asyncFailure = mock();
     StatefulRedisConnection<byte[], byte[]> syncFailure = mock();
@@ -336,18 +336,31 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
         .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("close failed")));
     when(syncFailure.closeAsync()).thenThrow(new IllegalStateException("close failed"));
     var owner = owner(mock(), redis, mock());
-
-    assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
-    verify(asyncFailure).closeAsync();
-    verify(syncFailure).closeAsync();
     Semaphore operationPermits =
         (Semaphore)
             java.util.Objects.requireNonNull(
                 ReflectionTestUtils.getField(
                     CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
-    assertThat(operationPermits.availablePermits())
-        .isEqualTo(CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS);
+    var retained =
+        (java.util.concurrent.atomic.AtomicInteger)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS"));
+    int available = operationPermits.availablePermits();
+    int before = retained.get();
+    try {
+      assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+      verify(asyncFailure).closeAsync();
+      verify(syncFailure).closeAsync();
+      assertThat(operationPermits.availablePermits()).isEqualTo(available - 2);
+      assertThat(retained.get()).isEqualTo(before + 2);
+    } finally {
+      // No physical sockets exist in this mock fixture.
+      operationPermits.release(available - operationPermits.availablePermits());
+      retained.set(before);
+    }
   }
 
   @Test
