@@ -820,7 +820,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   private static AccountHostingSubscriptionProvisioningService service(Fixture f) {
-    migrate(f.source(), f.schema(), "1041");
+    migrate(f.source(), f.schema(), null);
     f.dsl()
         .execute(
             "INSERT INTO account_hosting_billing_policy_values (provider_price_id, policy_version, quantity, amount, currency) "

@@ -788,6 +788,15 @@ public final class AccountHostingSubscriptionLifecycleRepository {
           prepared.requestId(), Outcome.RECONCILING, 0, decision.reason().name());
     }
     Objects.requireNonNull(observed);
+    if (!unpaidCancellation
+        && oldReceipt == null
+        && current.status().equals("provisioning")
+        && decision.status() == Status.CANCELED
+        && firstPaymentProof(current.subscriptionId(), prepared.requestId()) != null) {
+      String reason = "PAID_FIRST_INVOICE_PROVIDER_CANCELED";
+      terminalLifecycle(operation, reason, now);
+      return new TransitionResult(prepared.requestId(), Outcome.TERMINAL_FAILURE, 0, reason);
+    }
     Record firstPayment = null;
     if (java.util.Set.of(Status.TRIALING, Status.ACTIVE, Status.PAST_DUE, Status.GRACE)
             .contains(decision.status())

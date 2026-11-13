@@ -139,8 +139,12 @@ public final class AccountPlayerAdmissionEntitlementOwner {
           case PAID_HOSTING -> capturePaidSources(request, caller, prepared);
           case NON_PAID_DEMO -> captureDemoSources(request, caller, prepared);
         };
+    // Preserve the live caller-scope deadline after the final source transaction commits. This
+    // check uses Account's application clock; the evidence timestamp comparison below uses the
+    // same PostgreSQL clock that stamped the retained bundle.
+    requireCurrentTimes(prepared.player(), now());
     try {
-      evidence.requireCurrentAt(now());
+      evidence.requireCurrentAt(AccountTenantCapacityRepository.databaseNow(dsl));
     } catch (IllegalArgumentException expired) {
       // This final post-commit check only rejects an expired or future source observation.
       throw unavailable();
@@ -635,9 +639,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     // The capacity bundle's freshness is enforced against PostgreSQL time by the capacity owner.
     // Keep all source checks on the injected Account clock, but stamp this new evaluation from the
     // same database clock so a small application/database skew cannot future-date its evidence.
-    Instant capacityEvaluatedAt =
-        AccountTenantCapacityRepository.time(
-            dsl.fetchSingle("SELECT clock_timestamp() AS evaluated_at"), "evaluated_at");
+    Instant capacityEvaluatedAt = AccountTenantCapacityRepository.databaseNow(dsl);
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
             request.requestId(),

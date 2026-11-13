@@ -181,6 +181,24 @@ class StripeHostingFirstInvoicePaymentClientTest {
   }
 
   @Test
+  void insufficientAuthorizationWindowAfterProviderReadsLeavesCommandUnclaimed() {
+    var transport =
+        new Transport(invoice("requires_confirmation"), intent("requires_confirmation"));
+    var dispatch = dispatch();
+    when(dispatch.validUntil()).thenReturn(NOW.plusSeconds(1));
+    assertThatThrownBy(
+            () ->
+                client(transport)
+                    .confirm(
+                        dispatch,
+                        () -> {
+                          throw new AssertionError("Expired dispatch budget reached the claim");
+                        }))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+  }
+
+  @Test
   void expiryAfterDispatchDoesNotPermitAnotherCommandOrClientSecretDisclosure() {
     var transport = new Transport();
     var original = dispatch();

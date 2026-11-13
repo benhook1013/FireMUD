@@ -81,6 +81,9 @@ class AccountHostingFirstInvoicePaymentServiceTest {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
               return observed;
             });
+    when(payments.retainSignedOutcome(event, observed))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, false));
     var committed = new TransitionResult(lifecycleRequestId, Outcome.COMMITTED, 5, null);
     when(lifecycle.reconcile(
             lifecycleRequestId,
@@ -102,8 +105,38 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     verify(lifecycle, times(1)).readCurrent(invoice.tenantId());
     verify(provider, times(1)).observe(invoice);
     verify(provider, times(0)).confirm(any(), any());
-    verify(payments, times(1)).retainSignedSuccess(event, observed);
+    verify(payments, times(1)).retainSignedOutcome(event, observed);
     verifyNoInteractions(actors, reauthentication);
+  }
+
+  @Test
+  void exactLatePaidConflictReplayNeverReadsProviderOrChangesLifecycle() throws Exception {
+    var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    UUID requestId = UUID.randomUUID();
+    when(verifier.verify("signed", "header")).thenReturn(event);
+    when(payments.retainedSignedConflictRequestId(event)).thenReturn(requestId);
+
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(
+            new AccountHostingFirstInvoicePaymentService.Completion(
+                "OPERATOR_RECONCILIATION_REQUIRED", requestId));
+
+    verify(inbox).retainOrReplay(event);
+    verify(payments).retainedSignedConflictRequestId(event);
+    verifyNoInteractions(provider, lifecycle, actors, reauthentication);
+  }
+
+  @Test
+  void unrelatedSignedEventIsRetainedWithoutDispatchOrLifecycleWork() throws Exception {
+    var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    when(verifier.verify("signed", "header")).thenReturn(event);
+
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(new AccountHostingFirstInvoicePaymentService.Completion("IGNORED", null));
+
+    verify(inbox).retainOrReplay(event);
+    verify(payments).candidateForSignedEvent(event);
+    verifyNoInteractions(provider, lifecycle, actors, reauthentication);
   }
 
   @Test
@@ -153,6 +186,8 @@ class AccountHostingFirstInvoicePaymentServiceTest {
               return action.apply(actor);
             });
     var proof = mock(AccountRecentReauthenticationEvidence.class);
+    when(proof.billingContext())
+        .thenReturn(mock(AccountRecentReauthenticationEvidence.BillingContext.class));
     when(reauthentication.requireCurrentBillingEvidenceLocked(evidenceId, account, authorization))
         .thenReturn(proof);
     var prepared = mock(ConfirmationDispatch.class);

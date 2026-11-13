@@ -326,9 +326,27 @@ export default function HostingFirstInvoiceCheckout({
       ) {
         setAccepted(null);
         if (attempt.current?.dispatched) setHeld(true);
-        setMessage(
-          'The current control-ui session or billing-owner authority was refused. Sign in again through the account flow.'
-        );
+        if (error.code === 'AUTH_INVALID_CREDENTIALS') {
+          const failedAttempt = attempt.current;
+          if (
+            failedAttempt &&
+            !failedAttempt.evidenceId &&
+            !failedAttempt.dispatched
+          ) {
+            failedAttempt.reauthenticationRequestId = crypto.randomUUID();
+          }
+          setMessage(
+            'Account refused the primary authentication secret. Check the email and secret, then review and authorize this exact charge again.'
+          );
+        } else if (error.code === 'INVALID_CREDENTIALS') {
+          setMessage(
+            'Account could not match this reauthentication retry to its original credentials. Check Account status before explicitly renewing authorization.'
+          );
+        } else {
+          setMessage(
+            'The current control-ui session or billing-owner authority was refused. Sign in again through the account flow.'
+          );
+        }
       } else if (
         error instanceof FirstInvoiceError &&
         [409, 410].includes(error.status)

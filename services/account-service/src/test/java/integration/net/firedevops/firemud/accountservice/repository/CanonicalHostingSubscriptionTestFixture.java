@@ -526,6 +526,27 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch authorize(
         String password) {
+      var dispatch = prepareConfirmationDispatch(password);
+      try {
+        assertThat(
+                provider
+                    .confirm(
+                        dispatch,
+                        () ->
+                            in(
+                                transaction,
+                                () -> payments.claimCommand(dispatch, invoice.ownerAccountId())))
+                    .status())
+            .isEqualTo("succeeded");
+        assertThat(transport.confirmations).isOne();
+        return dispatch;
+      } catch (StripeException failure) {
+        throw new IllegalStateException("Controlled confirmation failed", failure);
+      }
+    }
+
+    public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch
+        prepareConfirmationDispatch(String password) {
       UUID requestId = UUID.randomUUID();
       Account account =
           in(
@@ -576,24 +597,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
                     invoice.digest(),
                     evidence);
               });
-      var dispatch =
-          in(transaction, () -> payments.readDispatch(prepared, invoice.ownerAccountId()));
-      try {
-        assertThat(
-                provider
-                    .confirm(
-                        dispatch,
-                        () ->
-                            in(
-                                transaction,
-                                () -> payments.claimCommand(dispatch, invoice.ownerAccountId())))
-                    .status())
-            .isEqualTo("succeeded");
-        assertThat(transport.confirmations).isOne();
-        return dispatch;
-      } catch (StripeException failure) {
-        throw new IllegalStateException("Controlled confirmation failed", failure);
-      }
+      return in(transaction, () -> payments.readDispatch(prepared, invoice.ownerAccountId()));
     }
 
     /**
@@ -620,6 +624,10 @@ public final class CanonicalHostingSubscriptionTestFixture {
               + ",\"livemode\":false,\"data\":{\"object\":"
               + transport.intent("succeeded")
               + "}}";
+      return signWebhookPayload(payload);
+    }
+
+    public SignedSuccess signWebhookPayload(String payload) {
       String timestamp = Long.toString(clock.instant().getEpochSecond());
       try {
         Mac mac = Mac.getInstance("HmacSHA256");

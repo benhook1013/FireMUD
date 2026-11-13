@@ -141,8 +141,16 @@ public final class AccountTenantCapacityRepository {
   /** Fresh database time, not the transaction-start timestamp or an injected application clock. */
   public void requireFresh(Evidence evidence) {
     transaction();
-    Instant now = time(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at"), "observed_at");
-    requireCurrentLifetime(evidence, now);
+    requireCurrentLifetime(evidence, databaseNow(dsl));
+  }
+
+  /**
+   * Reads PostgreSQL wall time for evidence creation/freshness checks across application clocks.
+   */
+  public static Instant databaseNow(DSLContext exactDsl) {
+    return time(
+        Objects.requireNonNull(exactDsl).fetchSingle("SELECT clock_timestamp() AS observed_at"),
+        "observed_at");
   }
 
   /** The owner already holds this usage row before its final current-source qualification. */

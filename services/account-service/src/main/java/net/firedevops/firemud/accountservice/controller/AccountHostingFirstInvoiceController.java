@@ -47,15 +47,7 @@ public final class AccountHostingFirstInvoiceController {
       @RequestBody ReauthenticationRequest request) {
     String token = bearer(transport, authorization);
     if (request.billingBinding() == null) {
-      return noStore(
-          new ReauthenticationResponse(
-              payments.reauthenticate(
-                  token,
-                  subscriptionId,
-                  request.requestId(),
-                  request.confirmationRequestId(),
-                  request.email(),
-                  request.secret())));
+      throw new IllegalStateException("Exact first-invoice billing binding required");
     }
     var binding = request.billingBinding();
     return noStore(
