@@ -32,6 +32,12 @@ public class AccountEmailLoginChallengeRepository {
     dsl.fetch("select pg_advisory_xact_lock(?)", accountId);
   }
 
+  /** Billing already holds shared producer locks and must release them on OTP contention. */
+  public boolean tryLockAccountChallenge(long accountId) {
+    return Boolean.TRUE.equals(
+        dsl.fetchSingle("select pg_try_advisory_xact_lock(?)", accountId).get(0, Boolean.class));
+  }
+
   public AccountEmailLoginChallenge save(AccountEmailLoginChallenge entity) {
     if (entity.getId() == null) {
       Long id =
