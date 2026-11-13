@@ -140,7 +140,7 @@ final class CanonicalGameplayRegionLeaseOwner {
                     worldRequest, evidence.candidate().identity(), worldDeadline);
     CanonicalGameplayRegionRuntimeStatusRepository.Source source = initialResolved.source;
     CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation =
-        readCurrentIncarnation(source);
+        readInstallationIncarnation(transferOwner, handoffDeadline, source);
     long expectedRegionEpoch =
         exactExpectedRegionEpoch(
             retainedOriginal != null
@@ -221,7 +221,7 @@ final class CanonicalGameplayRegionLeaseOwner {
                 worldRequest, beforeClaimEvidence.candidate().identity(), worldDeadline);
         requireSameSource(source, beforeClaimWorld.source);
         CanonicalGameplayRegionIncarnationSource.StableEvidence beforeClaimIncarnation =
-            readCurrentIncarnation(source);
+            readInstallationIncarnation(transferOwner, handoffDeadline, source);
         requireSameIncarnation(incarnation, beforeClaimIncarnation);
         if (!statusRepository.matchesTimelinePreparation(
             preparation,
@@ -244,7 +244,8 @@ final class CanonicalGameplayRegionLeaseOwner {
         grant = session.initialize(permit.orElse(null));
       }
       redisOwner.verifyInitializedTimeline(grant, preparation);
-      requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+      requireSameIncarnation(
+          incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
       ResolvedBridgeSource afterInitWorld =
           resolveExactBridgeSource(worldRequest, evidence.candidate().identity(), worldDeadline);
       requireSameSource(source, afterInitWorld.source);
@@ -318,7 +319,8 @@ final class CanonicalGameplayRegionLeaseOwner {
                   transferOwner,
                   handoffDeadline,
                   worldDeadline));
-          requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+          requireSameIncarnation(
+              incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
           handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
           if (transferCandidate == null) {
             transferCandidate =
@@ -380,7 +382,8 @@ final class CanonicalGameplayRegionLeaseOwner {
     requireSameSource(source, afterAcquire);
     handoffRedisOwner.renew(grant, leaseTtl);
     handoffRedisOwner.requireCurrent(grant);
-    requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+    requireSameIncarnation(
+        incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
     handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
 
     if (transferOwner != null && clock.millis() >= handoffDeadline) throw unavailable();
@@ -476,7 +479,9 @@ final class CanonicalGameplayRegionLeaseOwner {
         pending.grant(), pending.source(), pending.expectedRegionEpoch(), runtimeIdentity);
     handoffRedisOwner.requireCurrent(pending.grant());
     handoffRedisOwner.verifyInitializedTimeline(pending.grant(), pending.preparation());
-    requireSameIncarnation(pending.incarnation(), readCurrentIncarnation(pending.source()));
+    requireSameIncarnation(
+        pending.incarnation(),
+        readInstallationIncarnation(pending.transferOwner(), deadline, pending.source()));
     var installed =
         pending
             .transferOwner()
@@ -562,7 +567,8 @@ final class CanonicalGameplayRegionLeaseOwner {
             worldDeadline);
     requireSameSource(source, afterInstall);
     handoffRedisOwner.requireCurrent(grant);
-    requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+    requireSameIncarnation(
+        incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
     handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
     withTransferStatusRepository(
         transferOwner,
@@ -570,7 +576,8 @@ final class CanonicalGameplayRegionLeaseOwner {
         repository -> repository.markTimelineInstalled(preparation, installed, clock.instant()));
     handoffRedisOwner.requireCurrent(grant);
     handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
-    requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+    requireSameIncarnation(
+        incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
     requireSameSource(
         source,
         resolveCurrentInstallationSource(
@@ -1148,6 +1155,20 @@ final class CanonicalGameplayRegionLeaseOwner {
       throw unavailable();
     }
     return current;
+  }
+
+  CanonicalGameplayRegionIncarnationSource.StableEvidence readInstallationIncarnation(
+      CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
+      long handoffDeadline,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source) {
+    if (transferOwner == null) return readCurrentIncarnation(source);
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+        clock,
+        handoffDeadline,
+        budget -> {
+          budget.check();
+          return readCurrentIncarnation(source);
+        });
   }
 
   private static void requireSameIncarnation(

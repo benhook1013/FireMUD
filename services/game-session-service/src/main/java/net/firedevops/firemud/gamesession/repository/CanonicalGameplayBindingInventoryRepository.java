@@ -2984,6 +2984,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
           requireOriginalNewFinalRegionAcknowledgement(transaction, candidate, transition, entry);
           if (committed) {
             requireOriginalNewFinalReceipt(row, verified, decision);
+            CanonicalGameplayOriginalNewCapacityExecutionOwner.retainCommittedInTransaction(
+                transaction, verified.execution(), receipt);
             return transition;
           }
           requireNoOriginalNewFinalAdmissionReceipt(row);
