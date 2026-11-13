@@ -1170,6 +1170,34 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void contenderAcquireUsesBoundedInitialTtlWhileOrdinaryRenewKeepsConfiguredTtl()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var leases = new CanonicalGameplayRegionLeaseRedisOwner(ownerClient, catalog);
+    var identity =
+        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+            "game-session-service",
+            "bounded-contender",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "controlled-test-image");
+    byte[] key = ascii(original.grant.key());
+    assertThat(admin.pexpire(key, 0)).isTrue();
+    var grant =
+        leases
+            .forHandoffDeadline(CLOCK, CLOCK.millis() + 5_000L)
+            .acquire(
+                original.source, original.status.regionEpoch(), Duration.ofSeconds(30), identity);
+    assertThat(admin.pttl(key)).isPositive().isLessThanOrEqualTo(5_000L);
+    leases.renew(grant, Duration.ofSeconds(30));
+    assertThat(admin.pttl(key)).isGreaterThan(5_000L).isLessThanOrEqualTo(30_000L);
+  }
+
+  @Test
   void contenderCannotFreezeRenewingOwnerAndExpiredLeaseStillTransfers() throws Exception {
     repairAccountMember();
     bridge();
