@@ -111,8 +111,7 @@ class AccountHostingFirstInvoicePaymentServiceTest {
               return observed;
             });
     when(payments.retainSignedOutcome(event, observed))
-        .thenReturn(
-            new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, false));
+        .thenReturn(new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, null));
     var committed = new TransitionResult(lifecycleRequestId, Outcome.COMMITTED, 5, null);
     when(lifecycle.reconcile(
             lifecycleRequestId,
@@ -149,8 +148,7 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     when(payments.candidateForSignedEvent(event)).thenReturn(candidate);
     when(provider.observe(invoice)).thenReturn(observed);
     when(payments.retainSignedOutcome(event, observed))
-        .thenReturn(
-            new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, false));
+        .thenReturn(new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, null));
     when(lifecycle.reconcile(
             lifecycleRequestId,
             invoice.creationRequestId(),
@@ -194,6 +192,30 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     verify(inbox).retainOrReplay(event);
     verify(payments).candidateForSignedEvent(event);
     verifyNoInteractions(provider, lifecycle, actors, reauthentication);
+  }
+
+  @Test
+  void verifiedUnconsentedLatePaymentRecordsOnlyOperatorConflict() throws Exception {
+    var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    var invoice = mock(AccountHostingFirstInvoicePayment.class);
+    var observed = mock(StripeHostingFirstInvoicePaymentClient.Observation.class);
+    UUID cancellationId = UUID.randomUUID();
+    when(verifier.verify("signed", "header")).thenReturn(event);
+    when(payments.unconsentedCanceledInvoice(event)).thenReturn(invoice);
+    when(provider.observe(invoice)).thenReturn(observed);
+    when(payments.retainSignedOutcome(event, observed))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(null, cancellationId));
+
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(
+            new AccountHostingFirstInvoicePaymentService.Completion(
+                "OPERATOR_RECONCILIATION_REQUIRED", cancellationId));
+
+    verify(inbox).retainOrReplay(event);
+    verify(provider).observe(invoice);
+    verify(provider, times(0)).confirm(any(), any());
+    verifyNoInteractions(lifecycle, actors, reauthentication);
   }
 
   @Test
@@ -258,6 +280,8 @@ class AccountHostingFirstInvoicePaymentServiceTest {
         .thenReturn(prepared);
     when(payments.readDispatch(prepared, account)).thenReturn(dispatch);
     when(payments.claimCommand(dispatch, account)).thenReturn(null);
+    var noHandoff = mock(StripeHostingFirstInvoicePaymentClient.Handoff.class);
+    when(noHandoff.clientSecret()).thenReturn(null);
     when(provider.confirm(eq(dispatch), any()))
         .thenAnswer(
             call -> {
@@ -266,7 +290,7 @@ class AccountHostingFirstInvoicePaymentServiceTest {
                           .AccountHostingFirstInvoicePaymentRepository.CommandClaim>
                   claim = call.getArgument(1);
               assertThat(claim.get()).isNull();
-              return null;
+              return noHandoff;
             });
     service.renew("bearer", subscription, original, authorization, 3, 1, evidenceId, "tuple");
     verify(reauthentication)
@@ -276,6 +300,55 @@ class AccountHostingFirstInvoicePaymentServiceTest {
         .requireCurrentBillingEvidenceLocked(evidenceId, account, authorization);
     verify(payments).claimCommand(dispatch, account);
     verifyNoInteractions(inbox, lifecycle, verifier);
+  }
+
+  @Test
+  void secretHandoffIsBlockedWhenAuthorizationWasSupersededDuringProviderIo() throws Exception {
+    UUID account = UUID.randomUUID(),
+        subscription = UUID.randomUUID(),
+        requestId = UUID.randomUUID(),
+        evidenceId = UUID.randomUUID();
+    var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
+    when(actor.accountId()).thenReturn(account);
+    when(actors.withCurrentAccount(eq("bearer"), any()))
+        .thenAnswer(
+            call -> {
+              java.util.function.Function<
+                      AccountControlUiActorService.AccountAuthenticatedActor, Object>
+                  action = call.getArgument(1);
+              return action.apply(actor);
+            });
+    var proof = mock(AccountRecentReauthenticationEvidence.class);
+    when(proof.evidenceId()).thenReturn(evidenceId);
+    when(proof.billingContext())
+        .thenReturn(mock(AccountRecentReauthenticationEvidence.BillingContext.class));
+    when(reauthentication.requireCurrentBillingEvidenceLocked(evidenceId, account, requestId))
+        .thenReturn(proof);
+    var prepared = mock(ConfirmationDispatch.class);
+    when(prepared.reauthenticationEvidenceId()).thenReturn(evidenceId);
+    when(prepared.authorizationRequestId()).thenReturn(requestId);
+    var dispatch = mock(ConfirmationDispatch.class);
+    when(dispatch.reauthenticationEvidenceId()).thenReturn(evidenceId);
+    when(dispatch.authorizationRequestId()).thenReturn(requestId);
+    when(payments.prepareConfirmation(account, requestId, subscription, 4, "tuple", proof))
+        .thenReturn(prepared);
+    when(payments.readDispatch(prepared, account)).thenReturn(dispatch);
+    var providerHandoff = mock(StripeHostingFirstInvoicePaymentClient.Handoff.class);
+    when(providerHandoff.clientSecret()).thenReturn("pi_exact_secret_current");
+    when(provider.confirm(eq(dispatch), any())).thenReturn(providerHandoff);
+    org.mockito.Mockito.doThrow(new IllegalStateException("authorization superseded"))
+        .when(payments)
+        .validateHandoffAuthorization(dispatch, account, proof);
+
+    assertThatThrownBy(
+            () -> service.confirm("bearer", subscription, requestId, 4, evidenceId, "tuple"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("authorization superseded");
+
+    verify(provider).confirm(eq(dispatch), any());
+    verify(providerHandoff).clientSecret();
+    verify(payments).validateHandoffAuthorization(dispatch, account, proof);
+    verify(payments, times(0)).claimCommand(dispatch, account);
   }
 
   private static ConfirmationDispatch signedCandidate() {

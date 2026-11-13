@@ -1259,7 +1259,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
           new CanonicalGameplayOriginalNewCapacityExecutionOwner(
               dsl, redis, scripts, clock, tags, budget, connection));
     } finally {
-      budget.awaitAsyncClose(connection.closeAsync());
+      budget.awaitAsyncClose(
+          CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
     }
   }
 
@@ -1493,7 +1494,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         if (actual != null) Arrays.fill(actual, (byte) 0);
       }
     } finally {
-      budget.awaitAsyncClose(connection.closeAsync());
+      budget.awaitAsyncClose(
+          CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
     }
   }
 
@@ -1506,7 +1508,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       principal(commands);
       return readExecution(commands, execution, tag);
     } finally {
-      budget.awaitAsyncClose(connection.closeAsync());
+      budget.awaitAsyncClose(
+          CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
     }
   }
 
@@ -1547,10 +1550,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     try {
       CONNECTS.execute(attempt);
     } catch (java.util.concurrent.RejectedExecutionException saturated) {
-      attempt.abandonAndClose();
+      attempt.abandonAndClose(budget);
       throw unavailable();
     } catch (RuntimeException | Error submissionFailure) {
-      attempt.abandonAndClose();
+      attempt.abandonAndClose(budget);
       throw submissionFailure;
     }
     try {
@@ -1566,15 +1569,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return connection;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
-      attempt.abandonAndClose();
+      attempt.abandonAndClose(budget);
       throw unavailable();
     } catch (java.util.concurrent.ExecutionException
         | java.util.concurrent.TimeoutException
         | RuntimeException failure) {
-      attempt.abandonAndClose();
+      attempt.abandonAndClose(budget);
       throw unavailable();
     } catch (Error failure) {
-      attempt.abandonAndClose();
+      attempt.abandonAndClose(budget);
       throw failure;
     }
   }
@@ -1616,7 +1619,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       }
     }
 
-    void abandonAndClose() {
+    void abandonAndClose(CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
       boolean cancelledBeforeCompletion = false;
       try {
         cancelledBeforeCompletion = task.cancel(true);
@@ -1633,12 +1636,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       StatefulRedisConnection<byte[], byte[]> lateConnection =
           opened.handle((connection, failure) -> connection).join();
       if (lateConnection == null) return;
-      try {
-        lateConnection.closeAsync().handle((ignored, failure) -> null).join();
-      } catch (RuntimeException | Error ignored) {
-        // A failed close has uncertain disposal. Do not retry it or leak operation permits after
-        // the close attempt has returned.
-      }
+      var close =
+          CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(lateConnection);
+      budget.retainUntilAsyncClose(close);
+      close.handle((ignored, failure) -> null).join();
     }
   }
 
