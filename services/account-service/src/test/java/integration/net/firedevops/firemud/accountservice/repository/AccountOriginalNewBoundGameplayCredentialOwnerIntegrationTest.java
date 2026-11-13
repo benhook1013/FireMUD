@@ -134,8 +134,7 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
   }
 
   @Test
-  void paidSourceHeadChangeDuringObservationRefusesOriginalCredentialIssuance()
-      throws Exception {
+  void paidSourceHeadChangeDuringObservationRefusesOriginalCredentialIssuance() throws Exception {
     paidFixture = fixtureHarness.newPaidFixture(redisFixture.client());
     sourceFixture = paidFixture.caller();
     exerciseFinalConfirmation(false, true);
@@ -289,8 +288,7 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
                       .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
                       .call(() -> owner.issue(loginJwt, originalLease)))
           .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
-      assertThat(
-              dsl.fetchCount(DSL.table("account_original_new_bound_gameplay_issuances")))
+      assertThat(dsl.fetchCount(DSL.table("account_original_new_bound_gameplay_issuances")))
           .isZero();
       assertThat(finalReadCalls.get()).isZero();
       assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
@@ -612,21 +610,15 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
       var current = paidFixture.read(observed);
       UUID tenantId = paidFixture.hosting().tenantId();
       evidence =
-          serializable.execute(
-              status -> beginPendingLease(dsl, accountId, tenantId, current));
+          serializable.execute(status -> beginPendingLease(dsl, accountId, tenantId, current));
     }
 
     UUID decisionId = UUID.randomUUID();
-    var paidObservation =
-        paidFixture == null ? null : paidFixture.prepare().observeOutsideSql();
+    var paidObservation = paidFixture == null ? null : paidFixture.prepare().observeOutsideSql();
     var acknowledgement =
         new AccountGameplayAdmissionOriginalCommitExecutor(sourceFixture.dataSource)
             .executeWithCurrentSources(
-                evidence,
-                decisionId,
-                NAMESPACE,
-                sourceFixture.committedCandidate,
-                paidObservation);
+                evidence, decisionId, NAMESPACE, sourceFixture.committedCandidate, paidObservation);
     var receipt =
         new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(sourceFixture.dataSource)
             .confirm(acknowledgement);
