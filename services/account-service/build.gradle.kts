@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.spring.boot.starter.mail)
     implementation(libs.argon2)
     implementation(libs.stripe.java)
+    implementation(libs.postgresql)
 
     testFixturesImplementation(platform(libs.spring.boot.dependencies))
     testFixturesImplementation(project(":common-platform-core"))

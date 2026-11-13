@@ -5,6 +5,7 @@ import com.stripe.exception.StripeException;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost;
 import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.Handoff;
 import net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifier;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment;
@@ -223,22 +224,28 @@ public final class AccountHostingFirstInvoicePaymentService {
               return payments.readDispatch(prepared, actor.accountId());
             });
     outsideSql();
-    return provider.confirm(
-        dispatch,
-        () ->
-            actors.withCurrentAccount(
-                bearer,
-                actor -> {
-                  var evidence =
-                      reauthentication.requireCurrentBillingEvidenceLocked(
-                          dispatch.reauthenticationEvidenceId(),
-                          actor.accountId(),
-                          dispatch.authorizationRequestId());
-                  if (evidence.billingContext() == null) {
-                    throw new IllegalStateException("Exact first-invoice billing binding required");
-                  }
-                  return payments.claimCommand(dispatch, actor.accountId());
-                }));
+    try {
+      return provider.confirm(
+          dispatch,
+          () ->
+              actors.withCurrentAccount(
+                  bearer,
+                  actor -> {
+                    var evidence =
+                        reauthentication.requireCurrentBillingEvidenceLocked(
+                            dispatch.reauthenticationEvidenceId(),
+                            actor.accountId(),
+                            dispatch.authorizationRequestId());
+                    if (evidence.billingContext() == null) {
+                      throw new IllegalStateException(
+                          "Exact first-invoice billing binding required");
+                    }
+                    return payments.claimCommand(dispatch, actor.accountId());
+                  }));
+    } catch (ExpiredBeforePost observation) {
+      transaction.executeWithoutResult(status -> payments.retainExpiredBeforePost(observation));
+      throw observation;
+    }
   }
 
   /** Immutable intake commits separately. A failed fulfillment resumes this exact completion. */
@@ -275,6 +282,8 @@ public final class AccountHostingFirstInvoicePaymentService {
               candidate.expectedRowVersion(),
               candidate.invoice().providerSubscriptionId(),
               null);
+      if (transition.outcome() == Outcome.TERMINAL_FAILURE)
+        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", candidate.requestId());
       if (transition.outcome() != Outcome.COMMITTED)
         return new Completion("RECONCILING", candidate.requestId());
     }
