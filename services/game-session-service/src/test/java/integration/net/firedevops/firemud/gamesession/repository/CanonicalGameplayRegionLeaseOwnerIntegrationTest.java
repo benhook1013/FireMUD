@@ -14,11 +14,13 @@ import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -577,6 +579,49 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(statusRepository.find(qualifiedSource)).contains(ownerStatusBeforeSqlOutage);
       assertThat(redis.admin().type(redisKey)).isEqualTo("string");
       assertThat(redis.admin().pttl(redisKey)).isPositive();
+    }
+  }
+
+  @Test
+  void boundedTimelineCreationRejectsExpiryAndCapsNewLease() throws Exception {
+    try (RedisFixture redis = RedisFixture.open()) {
+      byte[] script;
+      try (InputStream input =
+          getClass()
+              .getClassLoader()
+              .getResourceAsStream("redis/lua/game-session-region-timeline-initialize-v2.lua")) {
+        assertThat(input).isNotNull();
+        script = input.readAllBytes();
+      }
+      byte[] leaseKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  ACCOUNT_ID, CHARACTER_ID, CANONICAL_REGION_ID));
+      byte[] metaKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(ACCOUNT_ID, CHARACTER_ID, CANONICAL_REGION_ID));
+      byte[][] keys = {leaseKey, metaKey};
+      byte[][] arguments = {
+        ascii("gs_region_timeline_init/v2"),
+        ascii("INITIALIZE"),
+        ascii("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        ascii("1"),
+        ascii("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+        ascii("a".repeat(64)),
+        ascii("30000"),
+        ascii("1"),
+        ascii("1")
+      };
+      Long expired = redis.admin().eval(script, ScriptOutputType.INTEGER, keys, arguments);
+      assertThat(expired).isEqualTo(-3L);
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+      assertThat(redis.admin().type(metaKey)).isEqualTo("none");
+
+      arguments[8] = ascii(Long.toString(System.currentTimeMillis() + 10_000L));
+      Long initialized = redis.admin().eval(script, ScriptOutputType.INTEGER, keys, arguments);
+      assertThat(initialized).isEqualTo(1L);
+      assertThat(redis.admin().pttl(leaseKey)).isBetween(1L, 10_000L);
+      assertThat(redis.admin().pttl(metaKey)).isEqualTo(-1L);
     }
   }
 

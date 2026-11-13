@@ -394,12 +394,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           };
       repeatableReadSource.setDriverClassName(POSTGRES.getDriverClassName());
       String url = POSTGRES.getJdbcUrl();
-      repeatableReadSource.setUrl(url + (url.contains("?") ? "&" : "?") + "currentSchema=public");
+      String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
+      repeatableReadSource.setUrl(
+          url + (url.contains("?") ? "&" : "?") + "currentSchema=" + schema);
       repeatableReadSource.setUsername(POSTGRES.getUsername());
       repeatableReadSource.setPassword(POSTGRES.getPassword());
       var repeatableReadRepository =
           new CanonicalGameplayRegionRuntimeStatusRepository(
               DSL.using(repeatableReadSource, SQLDialect.POSTGRES));
+      assertThat(repeatableReadRepository.find(proof.scope)).contains(proof.prior);
       Future<?> install =
           executor.submit(
               () ->
@@ -419,7 +422,13 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
         blocker.commit();
       }
 
-      assertThatThrownBy(install::get).hasRootCauseInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(install::get)
+          .rootCause()
+          .isInstanceOfSatisfying(
+              IllegalStateException.class,
+              failure ->
+                  assertThat(failure)
+                      .hasMessage("Canonical Game Session region ownership is unavailable"));
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       assertThat(proof.executionState(dispatched)).isEqualTo("INSTALL_DISPATCHED");
     }
