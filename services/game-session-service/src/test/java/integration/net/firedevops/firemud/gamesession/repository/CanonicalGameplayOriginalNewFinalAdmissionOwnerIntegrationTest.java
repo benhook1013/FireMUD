@@ -710,41 +710,118 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
-  void processStopAfterActualSqlAuthorizationBeforeRedisSendFencesUnknownAndActuallyHandsOff()
-      throws Exception {
+  void invalidInstallInputsRefuseBeforeCreatingSqlDispatchCustody() throws Exception {
     repairAccountMember();
     bridge(false);
-    var executionFile = directory.resolve("original-execution.json");
-    java.nio.file.Files.write(executionFile, controlledCapacity.canonicalBytes());
-    String jdbcUrl = POSTGRES.getJdbcUrl();
-    String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
-    var childOutput = directory.resolve("stop-after-authorization.log");
-    var process =
-        new ProcessBuilder(
-                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-cp",
-                childClasspath(),
-                StopAfterAuthorizationCommit.class.getName(),
-                jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema,
-                POSTGRES.getUsername(),
-                POSTGRES.getPassword(),
-                executionFile.toString())
-            .redirectErrorStream(true)
-            .redirectOutput(childOutput.toFile())
-            .start();
-    try {
-      assertThat(process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-      String output = java.nio.file.Files.readString(childOutput, StandardCharsets.UTF_8);
-      assertThat(process.exitValue()).as("Child output: %s", output).isEqualTo(72);
-      assertThat(output).contains("INDEPENDENT_INSTALL_DISPATCHED_COMMIT");
-    } finally {
-      if (process.isAlive()) {
-        process.destroyForcibly();
-        assertThat(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-      }
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
+    String sqlBefore = sqlImage();
+    Map<String, String> physicalBefore = physicalImage();
+    String capacityKey = capacityKey(assignment);
+
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .authorize(
+                        source, null, accountOpen, issuerOpen, controlledCapacity, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                    controlledCapacity.digest()))
+        .isNull();
+    assertThat(admin.type(ascii(capacityKey))).isEqualTo("none");
+    assertThat(sqlImage()).isEqualTo(sqlBefore);
+    assertThat(physicalImage()).isEqualTo(physicalBefore);
+
+    var mismatchedTemplateExecution =
+        new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
+            controlledCapacity.request(),
+            controlledCapacity.reservation(),
+            controlledCapacity.transitionId(),
+            controlledCapacity.candidateDigest(),
+            controlledCapacity.selectedOwnerId() + "-other",
+            controlledCapacity.selectedOwnerFence());
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var mismatchedTemplate = template.bindCapacityExecution(mismatchedTemplateExecution)) {
+      assertThatThrownBy(
+              () ->
+                  capacityOwner()
+                      .authorize(
+                          source,
+                          mismatchedTemplate,
+                          accountOpen,
+                          issuerOpen,
+                          controlledCapacity,
+                          deadline()))
+          .isInstanceOf(IllegalArgumentException.class);
     }
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                    controlledCapacity.digest()))
+        .isNull();
+    assertThat(admin.type(ascii(capacityKey))).isEqualTo("none");
+    assertThat(sqlImage()).isEqualTo(sqlBefore);
+    assertThat(physicalImage()).isEqualTo(physicalBefore);
+  }
+
+  @Test
+  void lostDispatchCommitReplyBeforeRedisSendFencesUnknownAndActuallyHandsOff() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
+    DriverManagerDataSource raw = new DriverManagerDataSource();
+    raw.setDriverClassName("org.postgresql.Driver");
+    String jdbcUrl = POSTGRES.getJdbcUrl();
+    raw.setUrl(jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema);
+    raw.setUsername(POSTGRES.getUsername());
+    raw.setPassword(POSTGRES.getPassword());
+    var stoppedAfterCommit = new java.util.concurrent.atomic.AtomicBoolean();
+    var stoppingDataSource =
+        new org.springframework.jdbc.datasource.DelegatingDataSource(raw) {
+          @Override
+          public java.sql.Connection getConnection() throws java.sql.SQLException {
+            return failDispatchCommitReplyAfterMarker(
+                super.getConnection(), raw, controlledCapacity.digest(), stoppedAfterCommit);
+          }
+        };
+    var stoppingDsl = org.jooq.impl.DSL.using(stoppingDataSource, org.jooq.SQLDialect.POSTGRES);
+    var stoppingOwner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            stoppingDsl, ownerClient, catalog, CLOCK, tags);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var rawTemplate = credential.template();
+        var template = rawTemplate.bindCapacityExecution(controlledCapacity)) {
+      assertThatThrownBy(
+              () ->
+                  stoppingOwner.authorize(
+                      source, template, accountOpen, issuerOpen, controlledCapacity, deadline()))
+          .isInstanceOf(RuntimeException.class);
+    }
+    assertThat(stoppedAfterCommit).isTrue();
     String originalKey = capacityKey(tags.assignmentForTransition(fixture.transitionId()));
     assertThat(admin.type(ascii(originalKey))).isEqualTo("none");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                    controlledCapacity.digest())
+                .get(0, String.class))
+        .isEqualTo("INSTALL_DISPATCHED");
     var original = regionBinding.installation();
     admin.pexpire(ascii(original.grant.key()), 0);
     var successor = actualTransferHandoff();
@@ -1960,27 +2037,50 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         .isInstanceOf(IllegalStateException.class);
   }
 
-  private static String childClasspath() throws Exception {
-    var paths = new java.util.LinkedHashSet<String>();
-    paths.addAll(List.of(System.getProperty("java.class.path").split(java.io.File.pathSeparator)));
-    for (ClassLoader loader =
-            CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.class.getClassLoader();
-        loader != null;
-        loader = loader.getParent()) {
-      if (loader instanceof java.net.URLClassLoader urls)
-        for (var url : urls.getURLs()) {
-          if ("file".equals(url.getProtocol())) paths.add(Path.of(url.toURI()).toString());
-        }
+  private static java.sql.Connection failDispatchCommitReplyAfterMarker(
+      java.sql.Connection actual,
+      javax.sql.DataSource independentDataSource,
+      String executionDigest,
+      java.util.concurrent.atomic.AtomicBoolean stopped)
+      throws java.sql.SQLException {
+    try {
+      return (java.sql.Connection)
+          java.lang.reflect.Proxy.newProxyInstance(
+              java.sql.Connection.class.getClassLoader(),
+              new Class<?>[] {java.sql.Connection.class},
+              (proxy, method, values) -> {
+                Object result;
+                try {
+                  result = method.invoke(actual, values);
+                } catch (java.lang.reflect.InvocationTargetException failure) {
+                  throw failure.getCause();
+                }
+                if (method.getName().equals("commit") && !stopped.get()) {
+                  try (var independent = independentDataSource.getConnection();
+                      var check =
+                          independent.prepareStatement(
+                              "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?")) {
+                    check.setString(1, executionDigest);
+                    try (var rows = check.executeQuery()) {
+                      if (rows.next()
+                          && "INSTALL_DISPATCHED".equals(rows.getString(1))
+                          && stopped.compareAndSet(false, true)) {
+                        throw new java.sql.SQLException(
+                            "Controlled lost INSTALL_DISPATCHED commit reply");
+                      }
+                    }
+                  }
+                }
+                return result;
+              });
+    } catch (RuntimeException | Error failure) {
+      try {
+        actual.close();
+      } catch (java.sql.SQLException closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
+      throw failure;
     }
-    paths.add(
-        Path.of(
-                CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.class
-                    .getProtectionDomain()
-                    .getCodeSource()
-                    .getLocation()
-                    .toURI())
-            .toString());
-    return String.join(java.io.File.pathSeparator, paths);
   }
 
   @Test
@@ -2163,96 +2263,6 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 throw failure.getCause();
               }
             });
-  }
-
-  /** A real child JVM halts only after independent visibility of the real owner's SQL commit. */
-  public static final class StopAfterAuthorizationCommit {
-    private StopAfterAuthorizationCommit() {}
-
-    // The returned proxy owns actual: close delegates to it, including normal jOOQ cleanup.
-    private static java.sql.Connection stopAfterCommit(
-        java.sql.Connection actual, javax.sql.DataSource raw, String executionDigest)
-        throws java.sql.SQLException {
-      try {
-        return (java.sql.Connection)
-            java.lang.reflect.Proxy.newProxyInstance(
-                java.sql.Connection.class.getClassLoader(),
-                new Class<?>[] {java.sql.Connection.class},
-                (proxy, method, values) -> {
-                  Object result;
-                  try {
-                    result = method.invoke(actual, values);
-                  } catch (java.lang.reflect.InvocationTargetException failure) {
-                    throw failure.getCause();
-                  }
-                  if (method.getName().equals("commit")) {
-                    try (var independent = raw.getConnection();
-                        var check =
-                            independent.prepareStatement(
-                                "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?")) {
-                      check.setString(1, executionDigest);
-                      try (var rows = check.executeQuery()) {
-                        if (rows.next() && "INSTALL_DISPATCHED".equals(rows.getString(1))) {
-                          System.out.println("INDEPENDENT_INSTALL_DISPATCHED_COMMIT");
-                          System.out.flush();
-                          Runtime.getRuntime().halt(72);
-                        }
-                      }
-                    }
-                  }
-                  return result;
-                });
-      } catch (RuntimeException | Error failure) {
-        try {
-          actual.close();
-        } catch (java.sql.SQLException closeFailure) {
-          failure.addSuppressed(closeFailure);
-        }
-        throw failure;
-      }
-    }
-
-    public static void main(String[] args) throws Exception {
-      var raw = new DriverManagerDataSource(args[0], args[1], args[2]);
-      var execution =
-          CanonicalGameplayRegionOwnerTransferRepository.decode(
-              java.nio.file.Files.readAllBytes(Path.of(args[3])));
-      var stopping =
-          new org.springframework.jdbc.datasource.DelegatingDataSource(raw) {
-            @Override
-            public java.sql.Connection getConnection() throws java.sql.SQLException {
-              return stopAfterCommit(raw.getConnection(), raw, execution.digest());
-            }
-          };
-      var sql = org.jooq.impl.DSL.using(stopping, org.jooq.SQLDialect.POSTGRES);
-      var candidate =
-          CanonicalGameplayOriginalNewCandidate.parseCanonical(
-              sql.fetchSingle(
-                      "SELECT original_new_candidate_bytes FROM game_session_canonical_binding_transition WHERE transition_id=?",
-                      execution.transitionId())
-                  .get(0, byte[].class));
-      var inventory = new CanonicalGameplayBindingInventoryRepository(sql);
-      var decision =
-          inventory.readAdmissionDecision(execution.transitionId(), candidate.leaseEvidence());
-      var source = inventory.readOriginalNewFinalAdmissionSource(decision);
-      try (var unused = RedisClient.create("redis://127.0.0.1:1")) {
-        var scripts =
-            RedisScriptCatalog.fromContributions(
-                List.of(
-                    new net.firedevops.firemud.gamesession.service
-                        .CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution()));
-        var owner =
-            new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                sql,
-                unused,
-                scripts,
-                Clock.systemUTC(),
-                new CanonicalGameplayTenantGameplayTagRepository(sql, "test", 1));
-        owner.authorize(source, null, null, null, execution, System.currentTimeMillis() + 5000);
-      }
-      throw new IllegalStateException(
-          "Expected committed authorization to stop the process before Redis dispatch");
-    }
   }
 
   @Test
