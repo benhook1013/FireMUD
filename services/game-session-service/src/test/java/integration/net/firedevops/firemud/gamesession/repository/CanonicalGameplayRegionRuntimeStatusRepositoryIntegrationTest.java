@@ -494,7 +494,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   @org.junit.jupiter.params.provider.CsvSource({"1,134217728", "128,1048576"})
   void chargedAbsentExecutionCanStillBeFencedWhenEitherBudgetDimensionIsFull(
       int maximumRecords, long maximumBindingBytes) throws Exception {
-    try (var proof = new TransferSqlProof(maximumRecords, maximumBindingBytes)) {
+    try (var proof = withCapacityBudget(maximumRecords, maximumBindingBytes)) {
       proof.seedUndeliveredDispatch(proof.execution);
       assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
       assertThat(
@@ -561,7 +561,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
 
   @Test
   void postgresSerializesTheLastEvidenceChargeAcrossConcurrentAttempts() throws Exception {
-    try (var proof = new TransferSqlProof(2, 2_097_152L);
+    try (var proof = withCapacityBudget(2, 2_097_152L);
         var callers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
       var first = proof.newControlledExecution();
       var second = proof.newControlledExecution();
@@ -1104,7 +1104,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
 
   @Test
   void postgresSerializesTheLastTransferParentAcrossRegionsOfTheSameTenant() throws Exception {
-    try (var proof = new TransferSqlProof(1, 2);
+    try (var proof = withTransferHistoryBudget(1, 2);
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
       proof.seedUndeliveredDispatch(proof.execution);
       var otherScope =
@@ -1186,7 +1186,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   @Test
   void fullTransferItemBudgetAllowsExistingIntentToCompleteButRefusesTheNextFreeze()
       throws Exception {
-    try (var proof = new TransferSqlProof(2, 1)) {
+    try (var proof = withTransferHistoryBudget(2, 1)) {
       proof.seedUndeliveredDispatch(proof.execution);
       String originalExecution = proof.originalImage();
       UUID id = proof.begin();
@@ -2152,6 +2152,22 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
   }
 
+  private TransferSqlProof withCapacityBudget(int maximumRecords, long maximumBindingBytes)
+      throws Exception {
+    return new TransferSqlProof(maximumRecords, maximumBindingBytes, maximumRecords);
+  }
+
+  private TransferSqlProof withTransferHistoryBudget(int maximumTransfers, int maximumItems)
+      throws Exception {
+    return new TransferSqlProof(
+        new DefaultExecuteListener(),
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+        maximumTransfers,
+        maximumItems);
+  }
+
   /**
    * Actual SQL, candidate/issuer/region and capacity/transfer owners over physical PostgreSQL and
    * Redis. Account lease/reservation/OPEN, World/Entity RPC content, grant and attestor custody are
@@ -2183,20 +2199,6 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           new DefaultExecuteListener(),
           TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
           TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
-    }
-
-    private TransferSqlProof(int maximumRecords, long maximumBindingBytes) throws Exception {
-      this(maximumRecords, maximumBindingBytes, maximumRecords);
-    }
-
-    private TransferSqlProof(int maximumTransfers, int maximumItems) throws Exception {
-      this(
-          new DefaultExecuteListener(),
-          TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
-          TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES,
-          TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
-          maximumTransfers,
-          maximumItems);
     }
 
     private TransferSqlProof(
