@@ -1678,6 +1678,74 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void interruptedFenceRetentionRecoversExactTerminalProofWithoutDispatchingAgain()
+      throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), proof.clock);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      proof
+          .capacity(proof.sql)
+          .authorize(
+              proof.admission, template, account, issuer, proof.execution, transferDeadline());
+      try (var physicalCommit =
+          new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                  proof.redis, proof.scripts, proof.clock, proof.tags)
+              .finalizeOriginalNewOnce(
+                  proof.admission,
+                  template,
+                  account,
+                  issuer,
+                  proof.execution,
+                  transferDeadline())) {
+        UUID id = proof.begin();
+        long deadline = transferDeadline();
+        var item =
+            proof.transfers.within(deadline, ignored -> proof.transfers.capture(id).getFirst());
+        proof.transfers.within(
+            deadline,
+            budget -> {
+              var before =
+                  proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+              var dispatch = proof.transfers.fenceDispatch(item, before);
+              proof
+                  .capacity(proof.sql)
+                  .forTransferBudget(budget)
+                  .fenceForTransfer(item, dispatch, deadline);
+              return null;
+            });
+        assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
+        assertThat(proof.itemImage(id)).contains("\"fence_readback\": null");
+        UUID retainedDispatch =
+            proof
+                .sql
+                .fetchSingle(
+                    "SELECT fence_dispatch_id FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+                    id)
+                .get("fence_dispatch_id", UUID.class);
+        assertThat(retainedDispatch).isNotNull();
+        String original = proof.originalImage();
+        proof.recreateTransferOwners();
+        proof.fence(item);
+        assertThat(proof.itemImage(id))
+            .contains(retainedDispatch.toString())
+            .doesNotContain("\"fence_readback\": null");
+        assertThat(proof.originalImage()).isEqualTo(original);
+        proof.verifyPage(id);
+        boolean verified =
+            proof.transfers.within(
+                transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+        assertThat(verified).isTrue();
+        assertThat(proof.install(id).executorFence()).isGreaterThan(proof.prior.executorFence());
+      }
+    }
+  }
+
+  @Test
   void recreatedRepositoryRetainsLostFenceReplyAndImmutableOriginalReceiptsAndCompletion()
       throws Exception {
     try (var proof = new TransferSqlProof()) {

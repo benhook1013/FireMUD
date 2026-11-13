@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import io.grpc.Context;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisFuture;
 import io.lettuce.core.RedisURI;
@@ -23,7 +24,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -290,15 +290,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
       if (budget != null) budget.check();
       return new PreparedTimelineInitialization(
-          connection,
-          commands,
-          loadedSha,
-          keys,
-          arguments,
-          grant,
-          preparation,
-          deadlineBound ? handoffClock : null,
-          deadlineBound ? handoffDeadlineMillis : 0L);
+          connection, commands, loadedSha, keys, arguments, grant, preparation, budget);
     } catch (RuntimeException failure) {
       if (connection != null) {
         if (budget == null) connection.close();
@@ -383,8 +375,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     private final byte[][] arguments;
     private final LeaseGrant grant;
     private final CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
-    private final Clock deadlineClock;
-    private final long deadlineMillis;
+    private final CanonicalGameplayOriginalNewCapacityExecutionBudget budget;
     private final CompletableFuture<Void> disposal = new CompletableFuture<>();
     private boolean initialized;
     private boolean closed;
@@ -399,8 +390,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         byte[][] arguments,
         LeaseGrant grant,
         CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
-        Clock deadlineClock,
-        long deadlineMillis) {
+        CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
       this.connection = connection;
       this.commands = commands;
       this.loadedSha = loadedSha;
@@ -408,8 +398,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.arguments = arguments;
       this.grant = grant;
       this.preparation = preparation;
-      this.deadlineClock = deadlineClock;
-      this.deadlineMillis = deadlineMillis;
+      this.budget = budget;
     }
 
     LeaseGrant initialize(
@@ -427,9 +416,9 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         initialized = true;
         evalArguments = arguments.clone();
         evalArguments[TIMELINE_ARGUMENTS.size() - 1] = ascii(mayCreate ? "1" : "0");
-        if (deadlineClock != null) initializationInFlight = true;
+        if (budget != null) initializationInFlight = true;
       }
-      if (deadlineClock == null) {
+      if (budget == null) {
         Long outcome;
         try {
           outcome =
@@ -441,39 +430,55 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         return grant;
       }
 
-      AtomicBoolean initializationClaimed = new AtomicBoolean();
+      // Preparation already owns the retained background permit through disposal. Do not
+      // re-enter runBackground after the durable INITIALIZING claim and request another slot.
+      Context caller = Context.current();
+      AtomicReference<RedisFuture<Long>> initialization = new AtomicReference<>();
+      Context.CancellationListener listener =
+          ignored -> {
+            RedisFuture<Long> future = initialization.get();
+            if (future != null) future.cancel(true);
+          };
+      caller.addListener(listener, Runnable::run);
+      RuntimeException initializationFailure = null;
+      Long outcome = null;
       try {
-        return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-            deadlineClock,
-            deadlineMillis,
-            budget -> {
-              if (!initializationClaimed.compareAndSet(false, true)) throw unavailable();
-              try {
-                evalArguments[evalArguments.length - 1] =
-                    ascii(Long.toString(budget.absoluteDeadlineMillis()));
-                Long outcome =
-                    await(
-                        () ->
-                            commands.evalsha(
-                                loadedSha, ScriptOutputType.INTEGER, keys, evalArguments),
-                        budget);
-                if (outcome == null || (outcome != 1L && outcome != 2L)) throw unavailable();
-                return grant;
-              } finally {
-                closeBoundedConnection().join();
-              }
-            });
+        outcome =
+            await(
+                () -> {
+                  evalArguments[evalArguments.length - 1] =
+                      ascii(Long.toString(budget.absoluteDeadlineMillis()));
+                  RedisFuture<Long> future =
+                      commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, evalArguments);
+                  initialization.set(future);
+                  if (caller.isCancelled()) future.cancel(true);
+                  return future;
+                },
+                budget);
       } catch (RuntimeException failure) {
-        if (initializationClaimed.compareAndSet(false, true)) closeBoundedConnection();
-        throw unavailable(failure);
+        initializationFailure = failure;
+      } finally {
+        try {
+          caller.removeListener(listener);
+          CompletableFuture<Void> closeAttempt = closeBoundedConnection();
+          budget.awaitAsyncClose(closeAttempt);
+          closeAttempt.join();
+        } catch (RuntimeException disposalFailure) {
+          if (initializationFailure == null) initializationFailure = disposalFailure;
+          else if (initializationFailure != disposalFailure)
+            initializationFailure.addSuppressed(disposalFailure);
+        }
       }
+      if (initializationFailure != null) throw unavailable(initializationFailure);
+      if (outcome == null || (outcome != 1L && outcome != 2L)) throw unavailable();
+      return grant;
     }
 
     @Override
     public synchronized void close() {
       if (!closed) {
         closed = true;
-        if (deadlineClock == null) connection.close();
+        if (budget == null) connection.close();
         else if (!initializationInFlight) closeBoundedConnection();
       }
     }

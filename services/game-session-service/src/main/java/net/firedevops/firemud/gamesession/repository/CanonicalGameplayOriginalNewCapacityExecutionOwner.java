@@ -460,7 +460,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return within(
           deadline, owner -> owner.bind(source, request, result, deadline, expectedOwner));
     budget.check();
-    request.requireCommittable();
+    OriginalNewCapacityExecution.requireOriginalNewRequest(request);
     result.requireBinding(request);
     CurrentOwner selected = requireRequestBinding(source, request, deadline);
     if (expectedOwner != null && !expectedOwner.equals(selected)) throw unavailable();
@@ -527,7 +527,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (budget == null)
       return within(deadline, owner -> owner.precharge(source, request, selected, deadline));
     budget.check();
-    request.requireCommittable();
+    OriginalNewCapacityExecution.requireOriginalNewRequest(request);
     if (!source.candidate().bindingDecisionId().equals(request.identity().admissionId())
         || !source.candidate().bindingIdentity().tenantId().equals(request.identity().tenantId())
         || selected.fence() != source.regionAcknowledgement().executorFence().longValueExact()) {
@@ -1254,8 +1254,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       }
     } else if (result != CAPACITY_EXECUTION_FENCED_INDETERMINATE
         && result != CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED) throw unavailable();
-    var readback = readTransferFence(item, deadline);
-    return new TransferFence(readback.executionDigest(), readback.canonicalReadback(), dispatchId);
+    return readTransferFence(item, deadline);
   }
 
   /** Read only. In particular, a lost/reset denying hash is never recreated by verification. */
@@ -1267,7 +1266,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     Map<String, byte[]> physical = readExecution(execution, item.assignment().tenantGameplayTag());
     String state = text(physical.get("state"));
     UUID dispatchId = null;
-    if ("FENCED_INDETERMINATE".equals(state)) {
+    boolean terminal = !"FENCED_INDETERMINATE".equals(state);
+    if (!terminal) {
       if (physical.containsKey("fenceDispatchId")) {
         String encoded = text(physical.get("fenceDispatchId"));
         try {
@@ -1302,7 +1302,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                 output.writeBytes(value);
               }
             });
-    return new TransferFence(execution.digest(), output.toByteArray(), dispatchId);
+    return new TransferFence(execution.digest(), output.toByteArray(), dispatchId, terminal);
   }
 
   /** Only physical inspection above constructs this future-exclusion capability. */
@@ -1310,12 +1310,17 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     private final String executionDigest;
     private final byte[] canonicalReadback;
     private final UUID completedDispatchId;
+    private final boolean terminal;
 
     private TransferFence(
-        String executionDigest, byte[] canonicalReadback, UUID completedDispatchId) {
+        String executionDigest,
+        byte[] canonicalReadback,
+        UUID completedDispatchId,
+        boolean terminal) {
       this.executionDigest = executionDigest;
       this.canonicalReadback = canonicalReadback.clone();
       this.completedDispatchId = completedDispatchId;
+      this.terminal = terminal;
     }
 
     String executionDigest() {
@@ -1327,7 +1332,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     }
 
     boolean provesDispatchEnded(UUID expectedDispatchId) {
-      return expectedDispatchId.equals(completedDispatchId);
+      return terminal || expectedDispatchId.equals(completedDispatchId);
     }
   }
 

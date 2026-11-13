@@ -21,6 +21,7 @@ import io.lettuce.core.ConnectionFuture;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisFuture;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -253,6 +254,157 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     } finally {
       if (prepared != null) prepared.close();
       close.complete(null);
+    }
+  }
+
+  @Test
+  void timelineInitializationUsesPreparedPermitWhileOtherBackgroundSlotIsOccupied()
+      throws Exception {
+    RedisClient redis = mock();
+    RedisURI uri = RedisURI.create("redis://localhost:6379");
+    var catalog =
+        RedisScriptCatalog.fromContributions(
+            List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution()));
+    var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis, uri, catalog);
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    RedisAsyncCommands<byte[], byte[]> commands = mock();
+    RedisFuture<String> principal = mock();
+    RedisFuture<String> scriptLoad = mock();
+    RedisFuture<Long> initialized = mock();
+    CompletableFuture<Void> close = new CompletableFuture<>();
+    AtomicReference<byte[][]> submittedArguments = new AtomicReference<>();
+    UUID tenantId = UUID.randomUUID();
+    UUID gameInstanceId = UUID.randomUUID();
+    UUID regionId = UUID.randomUUID();
+    var source = mock(CanonicalGameplayRegionRuntimeStatusRepository.Source.class);
+    var preparation =
+        mock(CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class);
+    UUID operationId = UUID.randomUUID();
+    String sourceDigest = "a".repeat(64);
+    when(source.tenantId()).thenReturn(tenantId);
+    when(source.gameInstanceId()).thenReturn(gameInstanceId);
+    when(source.regionId()).thenReturn(regionId);
+    when(preparation.source()).thenReturn(source);
+    when(preparation.operationId()).thenReturn(operationId);
+    when(preparation.sourceDigest()).thenReturn(sourceDigest);
+    when(preparation.regionEpoch()).thenReturn(1L);
+    when(redis.connectAsync(eq(ByteArrayCodec.INSTANCE), any(RedisURI.class)))
+        .thenReturn(
+            ConnectionFuture.from(
+                new InetSocketAddress("localhost", 6379),
+                CompletableFuture.completedFuture(connection)));
+    when(connection.async()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn(principal);
+    when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
+    when(commands.scriptLoad(any(byte[].class))).thenReturn(scriptLoad);
+    var descriptor =
+        catalog.require(
+            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_DEADLINE_ID);
+    byte[] script;
+    try (var scriptResource =
+        CanonicalGameplayRegionLeaseRedisOwner.class
+            .getClassLoader()
+            .getResourceAsStream(descriptor.resourcePath())) {
+      assertThat(scriptResource).isNotNull();
+      script = scriptResource.readAllBytes();
+    }
+    String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
+    when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
+    when(connection.closeAsync()).thenReturn(close);
+    when(commands.evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
+        .thenAnswer(
+            invocation -> {
+              submittedArguments.set((byte[][]) invocation.getRawArguments()[3]);
+              return initialized;
+            });
+    when(initialized.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
+    RuntimeIdentity identity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "controlled-instance",
+            "localhost",
+            CLOCK.instant(),
+            "controlled-test",
+            "controlled-sha",
+            "controlled-image");
+    var permitConstructor =
+        CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit.class
+            .getDeclaredConstructor(UUID.class, String.class);
+    permitConstructor.setAccessible(true);
+    var permit = permitConstructor.newInstance(operationId, sourceDigest);
+    long handoffDeadline = CLOCK.millis() + 4000;
+    Semaphore operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int operationMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    Semaphore background =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int backgroundMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+    CountDownLatch otherBackgroundStarted = new CountDownLatch(1);
+    CountDownLatch releaseOtherBackground = new CountDownLatch(1);
+
+    CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization prepared = null;
+    CompletableFuture<Boolean> otherBackground = null;
+    CompletableFuture<?> initialization = null;
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      try {
+        prepared =
+            owner
+                .forHandoffDeadline(CLOCK, handoffDeadline)
+                .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity);
+        otherBackground =
+            CompletableFuture.supplyAsync(
+                () ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                        CLOCK,
+                        handoffDeadline,
+                        budget -> {
+                          otherBackgroundStarted.countDown();
+                          awaitUninterruptibly(releaseOtherBackground);
+                          return true;
+                        }),
+                executor);
+        assertThat(otherBackgroundStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(background.availablePermits()).isZero();
+        assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 2);
+
+        var session = prepared;
+        initialization = CompletableFuture.supplyAsync(() -> session.initialize(permit), executor);
+        verify(commands, timeout(1000))
+            .evalsha(any(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
+        verify(connection, timeout(1000)).closeAsync();
+        byte[][] arguments = submittedArguments.get();
+        assertThat(arguments).isNotNull();
+        assertThat(new String(arguments[7], java.nio.charset.StandardCharsets.US_ASCII))
+            .isEqualTo("1");
+        assertThat(new String(arguments[8], java.nio.charset.StandardCharsets.US_ASCII))
+            .isEqualTo(Long.toString(handoffDeadline));
+        assertThat(initialization.isDone()).isFalse();
+        assertThat(background.availablePermits()).isZero();
+        assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 2);
+
+        close.complete(null);
+        assertThat(initialization.get(2, TimeUnit.SECONDS)).isNotNull();
+        releaseOtherBackground.countDown();
+        assertThat(otherBackground.get(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(operations.tryAcquire(operationMaximum, 2, TimeUnit.SECONDS)).isTrue();
+        operations.release(operationMaximum);
+        assertThat(background.tryAcquire(backgroundMaximum, 2, TimeUnit.SECONDS)).isTrue();
+        background.release(backgroundMaximum);
+        verify(connection).closeAsync();
+      } finally {
+        releaseOtherBackground.countDown();
+        if (prepared != null) prepared.close();
+        close.complete(null);
+      }
     }
   }
 
