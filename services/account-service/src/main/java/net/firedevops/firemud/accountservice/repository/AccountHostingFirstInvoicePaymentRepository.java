@@ -768,6 +768,22 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     return dispatch(row, invoice, false, false);
   }
 
+  /** Verifies retained first-invoice linkage without establishing consent or payment authority. */
+  public boolean hasSignedFirstInvoiceLinkage(VerifiedEvent verified) {
+    transaction();
+    if (!"payment_intent.succeeded".equals(verified.eventType())) return false;
+    String intent =
+        JSON.readTree(verified.rawPayload()).path("data").path("object").path("id").asText();
+    Record row =
+        dsl.fetchOne(
+            "SELECT subscription_id, captured_at FROM subscription_first_invoices WHERE payment_intent_id = ?",
+            intent);
+    if (row == null) return false;
+    var invoice = Objects.requireNonNull(find(row.get("subscription_id", UUID.class)));
+    requireSignedTuple(verified, instant(row, "captured_at"), invoice);
+    return true;
+  }
+
   public UUID retainedSignedConflictRequestId(VerifiedEvent verified) {
     transaction();
     return new AccountHostingFirstInvoicePaymentConflictRepository(dsl)
