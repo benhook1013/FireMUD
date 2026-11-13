@@ -457,7 +457,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
   @Test
   void actualTransferredOpenOriginClosesTheOriginalRetainedReservation() throws Exception {
-    try (Session session = session()) {
+    try (Session session = session();
+        OriginalNewCredential credential = session.issue()) {
       session.enableOriginReceiving();
       var request = session.capacityRequest;
       session.gs.prepareReceivingOrigin(request);
@@ -549,6 +550,50 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.gsReceiptImage()).isEqualTo(transitionBefore);
       assertProvisionalUnchanged(session, candidate);
       assertThat(session.gs.finalReadCalls()).isZero();
+
+      // This separate post-closure check uses the current successor custody tuple. It does not
+      // claim that the original pre-transfer custody can authorize a delayed FINAL.
+      String capacityBeforeFinal = session.capacityImage();
+      String durableBeforeFinal = session.durableImage();
+      var issuanceBeforeFinal =
+          session
+              .dsl
+              .fetch(
+                  "SELECT (to_jsonb(t) || jsonb_build_object('_original_xmin', t.xmin::text))::text AS image "
+                      + "FROM account_original_new_bound_gameplay_issuances t ORDER BY 1")
+              .getValues("image", String.class);
+      String originSqlBeforeFinal = session.gs.originSqlImage();
+      var originRedisBeforeFinal = session.gs.originPhysicalImage();
+      var executionRedisBeforeFinal =
+          session.gs.capacityExecutionPhysicalImage(request.admissionAttemptId());
+      byte[] candidateBeforeFinal = session.gs.physicalSession();
+      int finalReadCallsBefore = session.gs.finalReadCalls();
+      assertThat(
+              session.gs.refuseFinalWithSuccessorClosureCustody(
+                  credential,
+                  session.jwks,
+                  request,
+                  execution,
+                  successor.custodyOwner(),
+                  successor.custodyFence(),
+                  CLOCK.millis() + 5000L))
+          .isOne();
+      assertThat(session.capacityImage()).isEqualTo(capacityBeforeFinal);
+      assertThat(session.durableImage()).isEqualTo(durableBeforeFinal);
+      assertThat(
+              session
+                  .dsl
+                  .fetch(
+                      "SELECT (to_jsonb(t) || jsonb_build_object('_original_xmin', t.xmin::text))::text AS image "
+                          + "FROM account_original_new_bound_gameplay_issuances t ORDER BY 1")
+                  .getValues("image", String.class))
+          .isEqualTo(issuanceBeforeFinal);
+      assertThat(session.gs.originSqlImage()).isEqualTo(originSqlBeforeFinal);
+      assertThat(session.gs.originPhysicalImage()).isEqualTo(originRedisBeforeFinal);
+      assertThat(session.gs.capacityExecutionPhysicalImage(request.admissionAttemptId()))
+          .isEqualTo(executionRedisBeforeFinal);
+      assertThat(session.gs.physicalSession()).containsExactly(candidateBeforeFinal);
+      assertThat(session.gs.finalReadCalls()).isEqualTo(finalReadCallsBefore);
     }
   }
 
