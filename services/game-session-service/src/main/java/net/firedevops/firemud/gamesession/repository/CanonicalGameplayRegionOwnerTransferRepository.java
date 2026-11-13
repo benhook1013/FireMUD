@@ -136,7 +136,13 @@ final class CanonicalGameplayRegionOwnerTransferRepository
    */
   FrozenOriginal frozenOriginal(UUID transitionId) {
     noSql();
-    return readFrozenOriginal(sql(), transitionId);
+    return sql()
+        .transactionResult(
+            configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+              return readFrozenOriginal(transaction, transitionId);
+            });
   }
 
   private FrozenOriginal readFrozenOriginal(DSLContext tx, UUID transitionId) {
@@ -520,8 +526,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                 transferId,
                 PAGE_SIZE)) {
       result.add(
-          loadItem(
-              sql(),
+          readItem(
               transferId,
               row.get("target_ordinal", Long.class),
               row.get("execution_digest", String.class)));
@@ -586,8 +591,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                 afterOrdinal,
                 PAGE_SIZE)) {
       result.add(
-          loadItem(
-              sql(),
+          readItem(
               transferId,
               row.get("target_ordinal", Long.class),
               row.get("execution_digest", String.class)));
@@ -893,18 +897,25 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     if (admitted.get() == null)
       return within(deadline, ignored -> readCurrent(transferId, targetOrdinal, deadline));
     if (deadline < admitted.get().absoluteDeadlineMillis()) throw unavailable();
-    Record transfer = observationCurrent(sql(), transferId);
+    return sql()
+        .transactionResult(
+            configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+              return readCurrent(transaction, transferId, targetOrdinal);
+            });
+  }
+
+  private Context readCurrent(DSLContext transaction, UUID transferId, long targetOrdinal) {
+    Record transfer = observationCurrent(transaction, transferId);
     Record row =
-        sql()
-            .fetchOne(
-                "SELECT execution_digest FROM "
-                    + ITEM
-                    + " WHERE transfer_id=? AND target_ordinal=?",
-                transferId,
-                targetOrdinal);
+        transaction.fetchOne(
+            "SELECT execution_digest FROM " + ITEM + " WHERE transfer_id=? AND target_ordinal=?",
+            transferId,
+            targetOrdinal);
     if (row == null) throw unavailable();
     Item item =
-        loadItem(sql(), transferId, targetOrdinal, row.get("execution_digest", String.class));
+        loadItem(transaction, transferId, targetOrdinal, row.get("execution_digest", String.class));
     var binding = item.candidate().bindingIdentity();
     return new Context(
         transferId,
@@ -944,7 +955,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     if (deadline < admitted.get().absoluteDeadlineMillis()) throw unavailable();
     return sourceTags
         .withCapacityExecutionDsl(sql())
-        .assignmentForRetainedCapacityExecution(transitionId);
+        .readAssignmentForRetainedCapacityExecution(transitionId);
   }
 
   static Record observationCurrent(DSLContext tx, UUID id) {
@@ -980,6 +991,16 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                 + transfer.get("new_lease_correlation", String.class)));
   }
 
+  private Item readItem(UUID transferId, long ordinal, String executionDigest) {
+    return sql()
+        .transactionResult(
+            configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+              return loadItem(transaction, transferId, ordinal, executionDigest);
+            });
+  }
+
   private Item loadItem(DSLContext tx, UUID transferId, long ordinal, String executionDigest) {
     Record row =
         tx.fetchOne(
@@ -1000,9 +1021,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             .request()
             .admissionAttemptId()
             .equals(row.get("admission_attempt_id", UUID.class))) throw unavailable();
-    var assignment =
-        tags.withCapacityExecutionDsl(tx)
-            .assignmentForRetainedCapacityExecution(execution.transitionId());
+    var assignment = tags.readAssignmentForRetainedCapacityExecution(tx, execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();
     var binding = candidate.bindingIdentity();

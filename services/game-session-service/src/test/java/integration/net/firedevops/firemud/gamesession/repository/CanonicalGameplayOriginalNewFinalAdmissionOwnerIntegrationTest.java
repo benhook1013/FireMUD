@@ -1177,6 +1177,41 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void retainedTransferObservationDoesNotWaitOnInventoryClock() throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
+    UUID transferId = transfer.advance(original.source, original.status, deadline());
+    String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
+    try (var blocker =
+        java.sql.DriverManager.getConnection(
+            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      blocker.setSchema(schema);
+      blocker.setAutoCommit(false);
+      try (var statement = blocker.createStatement()) {
+        statement
+            .executeQuery(
+                "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
+                    + " WHERE singleton_id=1 FOR UPDATE")
+            .close();
+      }
+      try {
+        var observation = receiver.observeForRegionOwnerTransfer(transferId, 0, deadline());
+        assertThat(observation.regionOwnerTransferContext().controlState()).isEqualTo("FROZEN");
+      } finally {
+        blocker.rollback();
+      }
+    }
+  }
+
+  @Test
   void contenderAcquireUsesBoundedInitialTtlWhileOrdinaryRenewKeepsConfiguredTtl()
       throws Exception {
     repairAccountMember();
@@ -1874,6 +1909,51 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void historicalFinalReceiptWithoutCapacityEvidenceCannotMintCurrentSource() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var readback =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      inventory.commitOriginalNewFinalAdmission(readback);
+    }
+
+    fixture
+        .dsl()
+        .transaction(
+            configuration -> {
+              var historical = org.jooq.impl.DSL.using(configuration);
+              // Reproduce the retained pre-V1063 receipt shape without granting a normal writer
+              // this mutation.
+              historical.execute("SET LOCAL session_replication_role = replica");
+              assertThat(
+                      historical.execute(
+                          "UPDATE game_session_canonical_binding_transition"
+                              + " SET original_new_capacity_execution_digest = NULL WHERE transition_id = ?",
+                          fixture.transitionId()))
+                  .isEqualTo(1);
+            });
+
+    String retained = sqlImage();
+    var physical = physicalImage();
+    assertThatThrownBy(() -> inventory.readOriginalNewFinalAdmissionSource(decision))
+        .hasMessageContaining(
+            "Historical original NEW receipt lacks exact capacity execution evidence");
+    assertThat(sqlImage()).isEqualTo(retained);
+    assertThat(physicalImage()).isEqualTo(physical);
+  }
+
+  @Test
   void previouslySplitReceiptRequiresExactPhysicalProofAndRetainsIdempotently() throws Exception {
     repairAccountMember();
     bridge();
@@ -1892,6 +1972,17 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var request = controlledCapacity.request();
     var reservation = controlledCapacity.reservation();
     var owner = capacityOwner();
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "UPDATE game_session_original_new_capacity_execution"
+                            + " SET status = 'CLOSED', terminal_readback = ? WHERE execution_digest = ?",
+                        new byte[] {1},
+                        controlledCapacity.digest()))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("retained final receipt");
     assertThatThrownBy(() -> owner.readExact(request, reservation))
         .isInstanceOf(IllegalStateException.class);
     var originalPhysical = physicalImage();
