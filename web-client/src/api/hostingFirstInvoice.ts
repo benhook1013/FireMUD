@@ -95,7 +95,7 @@ export class FirstInvoiceError extends Error {
   }
 }
 
-async function authenticationErrorCode(
+export async function authenticationErrorCode(
   response: Response
 ): Promise<FirstInvoiceError['code']> {
   try {
