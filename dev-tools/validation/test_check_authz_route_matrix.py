@@ -15,6 +15,21 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "dev-tools/validation/check-authz-route-matrix.py"
 MATRIX = ROOT / "design/architecture/system-architecture-authz-route-matrix.yaml"
+EXPECTED_FIRST_INVOICE_LIVE_CHECKS = {
+    "issuer_generation",
+    "account_generation",
+    "current_subscription_owner",
+    "exact_reserved_instrument",
+}
+EXPECTED_FIRST_INVOICE_ROUTES = (
+    "GET /billing/hosting/subscriptions/{subscriptionId}/first-invoice",
+    (
+        "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/"
+        "reauthenticate"
+    ),
+    "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm",
+    "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew",
+)
 
 
 def load_validator():
@@ -138,6 +153,67 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_current_matrix_passes(self):
         self.assertEqual([], self.validator.validate(MATRIX))
+
+    def test_first_invoice_routes_require_current_owner_and_generations(self):
+        self.assertEqual(EXPECTED_FIRST_INVOICE_ROUTES, self.validator.FIRST_INVOICE_ROUTES)
+        self.assertEqual(
+            EXPECTED_FIRST_INVOICE_LIVE_CHECKS,
+            self.validator.FIRST_INVOICE_REQUIRED_LIVE_CHECKS,
+        )
+        for route_name in EXPECTED_FIRST_INVOICE_ROUTES:
+            with self.subTest(route=route_name):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(document, "account-service", route_name)
+                self.assertEqual(
+                    "target_not_currently_routable", route["route_status"]
+                )
+                self.assertTrue(
+                    EXPECTED_FIRST_INVOICE_LIVE_CHECKS.issubset(
+                        route["required_live_checks"]
+                    )
+                )
+
+    def test_first_invoice_live_checks_cannot_be_omitted_or_aliased(self):
+        for route_name in EXPECTED_FIRST_INVOICE_ROUTES:
+            for required_check in EXPECTED_FIRST_INVOICE_LIVE_CHECKS:
+                with self.subTest(route=route_name, check=required_check):
+                    document = self.validator.yaml.safe_load(
+                        MATRIX.read_text(encoding="utf-8")
+                    )
+                    route = route_for(document, "account-service", route_name)
+                    route["required_live_checks"].remove(required_check)
+                    route["required_live_checks"].append(
+                        "binding_ownership"
+                        if required_check == "current_subscription_owner"
+                        else "explicit_per_subscription_binding"
+                    )
+
+                    errors = validate_document(self.validator, document)
+
+                    self.assertTrue(
+                        any(
+                            f"account-service {route_name} is missing required "
+                            "first-invoice live checks" in error
+                            for error in errors
+                        ),
+                        errors,
+                    )
+
+    def test_first_invoice_routes_cannot_be_promoted_while_held(self):
+        for route_name in EXPECTED_FIRST_INVOICE_ROUTES:
+            with self.subTest(route=route_name):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(document, "account-service", route_name)
+                route["route_status"] = "current_openapi_operator_surface"
+
+                self.assertIn(
+                    f"account-service {route_name} must remain target_not_currently_routable",
+                    validate_document(self.validator, document),
+                )
 
     def test_moderation_root_contract_declares_receiving_redemption_and_selector(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

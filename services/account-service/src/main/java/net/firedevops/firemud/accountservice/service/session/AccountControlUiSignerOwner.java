@@ -53,8 +53,13 @@ public final class AccountControlUiSignerOwner {
   }
 
   private Capture capture(byte[] originalReceipt) {
-    var materializer = trust.current().orElseThrow(AccountControlUiSignerOwner::unavailable);
-    var publicApi = api.current();
+    var materializer = trust.current().orElseThrow(SignerSourceUnavailableException::new);
+    AccountJwtJwksApiBinding.ParsedBinding publicApi;
+    try {
+      publicApi = api.current();
+    } catch (AccountJwtJwksApiBinding.BindingRejectedException unavailable) {
+      throw new SignerSourceUnavailableException();
+    }
     if (!materializer.environmentId().equals(publicApi.environmentId())
         || !materializer.clusterId().equals(publicApi.clusterId())
         || !materializer.namespace().equals(publicApi.namespace())
@@ -197,5 +202,11 @@ public final class AccountControlUiSignerOwner {
 
   private static IllegalStateException unavailable() {
     return new IllegalStateException("Existing committed control-ui signer unavailable");
+  }
+
+  public static final class SignerSourceUnavailableException extends IllegalStateException {
+    public SignerSourceUnavailableException() {
+      super("Protected control-ui signer source is unavailable");
+    }
   }
 }

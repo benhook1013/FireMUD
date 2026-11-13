@@ -219,21 +219,19 @@ class CanonicalInitialPlayerLocationClientTest {
             });
     when(stub.readInitialPlayerLocationRegion(request)).thenReturn(region);
     var client = clientWithStub(stub);
+    Deadline callerDeadline = Deadline.after(100L, TimeUnit.MILLISECONDS);
 
     try (var executor = Executors.newSingleThreadExecutor()) {
       // TLS reload owns this monitor while it builds and publishes a replacement channel.
       synchronized (client) {
         var result =
-            executor.submit(
-                () ->
-                    client.readInitialPlayerLocationRegion(
-                        request, Deadline.after(100L, TimeUnit.MILLISECONDS)));
+            executor.submit(() -> client.readInitialPlayerLocationRegion(request, callerDeadline));
 
         assertThat(deadlineApplied.await(1L, TimeUnit.SECONDS)).isTrue();
         assertThat(result.get(1L, TimeUnit.SECONDS)).isEqualTo(region);
       }
     }
-    verify(stub).withDeadline(any(Deadline.class));
+    verify(stub).withDeadline(callerDeadline);
   }
 
   @Test

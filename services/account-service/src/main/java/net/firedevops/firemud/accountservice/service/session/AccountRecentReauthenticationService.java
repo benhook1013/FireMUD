@@ -34,8 +34,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Manually composed, unregistered Account source for recent ordinary reauthentication. It uses
- * Account's existing real primary-authentication producer and creates no token, route or session.
+ * Account source for recent ordinary reauthentication, consumed by isolated checkout receiving. It
+ * uses Account's existing real primary-authentication producer and creates no token, route or
+ * session.
  */
 public final class AccountRecentReauthenticationService {
   private final AccountServiceImpl primaryAuthentication;

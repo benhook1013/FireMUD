@@ -72,7 +72,7 @@ public final class AccountHostingFirstInvoicePaymentService {
               invoice.expiresAt(),
               confirmationRequestId,
               confirmationRequestId == null && !canceled
-                  ? payments.openingRequestId(invoice, rowVersion)
+                  ? payments.preRowOriginalRequestId(subscriptionId, actor.accountId())
                   : null,
               payments.authorizationVersion(subscriptionId));
         });
@@ -325,7 +325,7 @@ public final class AccountHostingFirstInvoicePaymentService {
       String state,
       java.time.Instant expiresAt,
       UUID confirmationRequestId,
-      UUID openingRequestId,
+      UUID preRowOriginalRequestId,
       long authorizationVersion) {}
 
   public record Completion(String state, UUID requestId) {}

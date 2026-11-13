@@ -61,6 +61,35 @@ class AccountHostingFirstInvoicePaymentServiceTest {
   }
 
   @Test
+  void authenticatedOwnerReadExposesOnlyTheVerifiedOriginalReferenceWithoutRestoringProof() {
+    var invoice = signedCandidate().invoice();
+    var original = UUID.randomUUID();
+    var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
+    when(actor.accountId()).thenReturn(invoice.ownerAccountId());
+    when(actors.withCurrentAccount(eq("bearer"), any()))
+        .thenAnswer(
+            call -> {
+              java.util.function.Function<
+                      AccountControlUiActorService.AccountAuthenticatedActor, Object>
+                  action = call.getArgument(1);
+              return action.apply(actor);
+            });
+    when(payments.requireOwner(invoice.subscriptionId(), invoice.ownerAccountId()))
+        .thenReturn(invoice);
+    when(payments.ownerRowVersion(invoice.subscriptionId(), invoice.ownerAccountId()))
+        .thenReturn(3L);
+    when(payments.preRowOriginalRequestId(invoice.subscriptionId(), invoice.ownerAccountId()))
+        .thenReturn(original);
+    var view = service.describeOwner("bearer", invoice.subscriptionId());
+    assertThat(view.preRowOriginalRequestId()).isEqualTo(original);
+    assertThat(view.confirmationRequestId()).isNull();
+    assertThat(view.authorizationVersion()).isZero();
+    assertThat(view.expectedRowVersion()).isEqualTo(3);
+    assertThat(view.tupleDigest()).isEqualTo(invoice.digest());
+    verifyNoInteractions(reauthentication, provider, lifecycle, inbox, verifier);
+  }
+
+  @Test
   void
       delayedSignedSuccessAfterAuthorizationExpiryOrAuthorityAdvanceIsReadOnlyAndAtomicallyReadBack()
           throws Exception {

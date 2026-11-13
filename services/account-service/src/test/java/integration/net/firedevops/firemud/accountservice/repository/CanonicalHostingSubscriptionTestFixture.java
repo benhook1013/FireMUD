@@ -325,6 +325,15 @@ public final class CanonicalHostingSubscriptionTestFixture {
     return fixture;
   }
 
+  /** Same isolated receiving namespace, selected before immutable tenant-source creation. */
+  public static Fixture createAwaitingPayment(
+      DataSource source, Account account, String namespace) {
+    var fixture = createInternal(source, Objects.requireNonNull(account), namespace);
+    fixture.awaitFirstInvoice();
+    fixture.providerStatus("incomplete");
+    return fixture;
+  }
+
   /** Fresh Account insert through the real identity/authority owner, with a real test password. */
   public static Account createBillingAccount(DSLContext dsl, TransactionTemplate transaction) {
     var generations = new AccountAuthorityGenerationRepository(dsl);
@@ -1111,6 +1120,43 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public AccountHostingFirstInvoicePaymentRepository firstInvoiceRepository() {
       return awaitFirstInvoice().payments();
+    }
+
+    /** Actual SDK with only the existing bounded controlled transports, never Stripe network IO. */
+    public com.stripe.StripeClient receivingClient() {
+      var checkoutTransport = awaitFirstInvoice().transport;
+      return new com.stripe.StripeClient(
+          new StripeResponseGetter() {
+            @Override
+            public <T extends StripeObject> T request(
+                BaseAddress address,
+                RequestMethod method,
+                String path,
+                Map<String, Object> params,
+                Type type,
+                RequestOptions options,
+                ApiMode mode)
+                throws StripeException {
+              StripeResponseGetter selected =
+                  path.startsWith("/v1/subscriptions/") ? transport : checkoutTransport;
+              return selected.request(address, method, path, params, type, options, mode);
+            }
+
+            @Override
+            public InputStream requestStream(
+                BaseAddress address,
+                RequestMethod method,
+                String path,
+                Map<String, Object> params,
+                RequestOptions options,
+                ApiMode mode) {
+              throw new AssertionError("No streaming provider calls in isolated receiving");
+            }
+          });
+    }
+
+    public String receivingWebhookSecret() {
+      return WEBHOOK_SECRET;
     }
 
     public StripeHostingFirstInvoicePaymentClient firstInvoiceProvider() {

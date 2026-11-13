@@ -1390,6 +1390,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                             .execute(
                                 "UPDATE subscription_provisioning_work SET phase = 'CANCELED', row_version = row_version + 1 WHERE request_id = ?",
                                 creationId)));
+    configuration(c).load().migrate();
     for (String providerState : List.of("active", "incomplete")) {
       f.transport().json = response(f, providerState);
       assertThat(
@@ -1836,6 +1837,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .isEqualTo(Outcome.COMMITTED);
     List<String> canceledImage = firstInvoiceImage(c);
 
+    f.clock().advanceToAtLeast(checkout.invoice().expiresAt().plusSeconds(1));
     checkout.status("succeeded");
     var signed = checkout.signedSuccess();
     var owner =
@@ -1853,11 +1855,13 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             checkout.verifier(),
             f.service(),
             new DataSourceTransactionManager(c.source()));
-    var conflict = owner.completeSigned(signed.payload(), signed.signature());
+    var verified = checkout.verifier().verify(signed.payload(), signed.signature());
+    in(c, () -> new StripeEventInboxRepository(c.dsl()).retainOrReplay(verified));
+    var equivalent = checkout.signWebhookPayload(" \n" + signed.payload() + "\n ");
+    var conflict = owner.completeSigned(equivalent.payload(), equivalent.signature());
     assertThat(conflict.state()).isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
     assertThat(conflict.requestId()).isEqualTo(confirmationRequestId);
     assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isOne();
-    var verified = checkout.verifier().verify(signed.payload(), signed.signature());
     var paidObservation = checkout.provider().observe(checkout.invoice());
     assertThatThrownBy(
             () -> in(c, () -> checkout.payments().retainSignedSuccess(verified, paidObservation)))
@@ -1880,6 +1884,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
     checkout.status("requires_confirmation");
     assertThat(owner.completeSigned(signed.payload(), signed.signature())).isEqualTo(conflict);
+    assertThat(owner.completeSigned(equivalent.payload(), equivalent.signature()))
+        .isEqualTo(conflict);
+    assertThat(
+            c.setup()
+                .fetchSingle(
+                    "SELECT event_payload_digest FROM subscription_first_invoice_late_paid_conflicts")
+                .get(0, String.class))
+        .isEqualTo(verified.payloadSha256());
     var unrelated =
         checkout.signWebhookPayload(
             signed
