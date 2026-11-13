@@ -1522,11 +1522,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
           opened.get(Math.min(initialRemainingMillis, remainingMillis()), TimeUnit.MILLISECONDS);
       if (!connection.isOpen()
           || connection.getOptions() == null
-          || connection.getOptions().isAutoReconnect()
-          || remainingMillis() <= 0) {
-        connection.closeAsync();
+          || connection.getOptions().isAutoReconnect()) {
         throw unavailable();
       }
+      // Failure before ownership is returned is disposed by abandonConnection.
+      remainingMillis();
       return connection;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
