@@ -183,7 +183,7 @@ class AccountControlUiAuthorityTest {
   }
 
   /** Controlled owner collaborators exercise composition only, not physical source authority. */
-  private static final class AccountCaptureContext {
+  static final class AccountCaptureContext {
     final UUID id = UUID.randomUUID();
     final UUID lockResult = UUID.randomUUID();
     final Account account = new Account();

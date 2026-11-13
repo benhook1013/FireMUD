@@ -54,9 +54,11 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.OwnerKeySource;
 import net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPki;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -112,7 +114,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * issuance, physical Coordination Redis and actor/order owners execute. No production trust,
  * deployed Pod attribution, World APPLIED, public wiring or runtime activation is established.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @SuppressWarnings("resource")
 class AccountControlUiPositiveOwnerPostgresIntegrationTest {
   private static final Network NETWORK = Network.newNetwork();
@@ -120,11 +122,33 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
 
   @Container
   static final PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
+          .withLabel("firemud.proof", "account-shared-abuse")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(60))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(512L * 1024 * 1024)
+                      .withMemorySwap(512L * 1024 * 1024)
+                      .withPidsLimit(256L));
 
   @Container
   static final GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .withNetworkAliases("positive-control-ui-primary")
           .withExposedPorts(6379)
@@ -134,6 +158,10 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -142,6 +170,17 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
   @Container
   static final GenericContainer<?> replica =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .dependsOn(redis)
           .withCommand(
@@ -150,6 +189,10 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -157,6 +200,18 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
               "--replicaof",
               "positive-control-ui-primary",
               "6379");
+
+  @Container
+  static final GenericContainer<?> credentialCache = AccountCredentialAbuseCacheFixture.container();
+
+  @org.junit.jupiter.api.AfterAll
+  static void closeOwnedNetwork() {
+    credentialCache.stop();
+    replica.stop();
+    redis.stop();
+    postgres.stop();
+    NETWORK.close();
+  }
 
   @TempDir Path temporary;
 
@@ -172,6 +227,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
   }
 
   @Test
+  @org.junit.jupiter.api.Timeout(180)
   void realSignerLifecycleIssuesAuthenticatesAndClaimsExactOriginalAccountOrder() throws Exception {
     var f =
         new AccountControlUiOwnerSourcesFixture(
@@ -188,7 +244,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         .isEqualTo(originalSigner.receipt());
     custody("encryption", "enc1", 11);
     custody("request-mac", "mac1", 29);
-    try (var connections = new RedisFixture()) {
+    try (var connections = new RedisFixture();
+        var abuse = new AccountCredentialAbuseCacheFixture(credentialCache)) {
       var admin = connections.admin;
       var accountClient = connections.account;
       try (var connection = admin.connect(ByteArrayCodec.INSTANCE)) {
@@ -255,6 +312,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
       var issuance =
           new AccountControlUiIssuanceService(
               f.primary,
+              abuse.service(),
               operations,
               f.authority,
               f.fences,
@@ -795,7 +853,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     assertThat(
             f.dsl
                 .fetchSingle(
-                    "SELECT count(*) AS count FROM account_platform_restriction_current_projections WHERE account_uuid = ?",
+                    "SELECT count(*) AS count FROM account_platform_restriction_current_projections"
+                        + " WHERE account_uuid = ?",
                     accountId)
                 .get("count", Long.class))
         .isEqualTo(2L);
@@ -807,7 +866,11 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     int beforeEnvelopes = f.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"));
     var passwordRequest =
         new AccountControlUiIssuanceService.AccountSignInRequest(
-            UUID.randomUUID(), account.getEmail(), password, UUID.randomUUID());
+            UUID.randomUUID(),
+            account.getEmail(),
+            password,
+            UUID.randomUUID(),
+            new SourceContext("192.0.2.10"));
     String passwordCompact;
     try (var peer =
             AccountControlUiOwnerSourcesFixture.withPeer(
@@ -903,7 +966,11 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     f.installGlobalOtp(account, otp);
     var otpRequest =
         new AccountControlUiIssuanceService.AccountSignInRequest(
-            UUID.randomUUID(), account.getEmail(), otp, UUID.randomUUID());
+            UUID.randomUUID(),
+            account.getEmail(),
+            otp,
+            UUID.randomUUID(),
+            new SourceContext("192.0.2.10"));
     byte[] originalCompact;
     Instant expiry, recoveryExpiry;
     try (var peer =
@@ -920,10 +987,18 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     try (var peer =
             AccountControlUiOwnerSourcesFixture.withPeer(
                 AccountControlUiOwnerSourcesFixture.CALLER);
-        var retry = issuance.issueAccount(otpRequest)) {
+        var retry =
+            issuance.issueAccount(
+                new AccountControlUiIssuanceService.AccountSignInRequest(
+                    otpRequest.requestId(),
+                    otpRequest.email(),
+                    otpRequest.secret(),
+                    otpRequest.callerContextId(),
+                    new SourceContext("198.51.100.20")))) {
       assertThat(retry.compactBytes()).isEqualTo(originalCompact);
       assertThat(retry.expiresAt()).isEqualTo(expiry);
       assertThat(retry.recoveryExpiresAt()).isEqualTo(recoveryExpiry);
+      assertThat(f.tx(() -> operations.countReplayFailures(otpOperation))).isZero();
       assertThatThrownBy(
               () ->
                   issuance.issueAccount(
@@ -931,7 +1006,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                           otpRequest.requestId(),
                           account.getEmail(),
                           "changed-secret",
-                          otpRequest.callerContextId())))
+                          otpRequest.callerContextId(),
+                          new SourceContext("192.0.2.10"))))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
       assertThatThrownBy(
@@ -941,14 +1017,19 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                           otpRequest.requestId(),
                           "changed@example.test",
                           otp,
-                          otpRequest.callerContextId())))
+                          otpRequest.callerContextId(),
+                          new SourceContext("192.0.2.10"))))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
       assertThatThrownBy(
               () ->
                   issuance.issueAccount(
                       new AccountControlUiIssuanceService.AccountSignInRequest(
-                          otpRequest.requestId(), account.getEmail(), otp, UUID.randomUUID())))
+                          otpRequest.requestId(),
+                          account.getEmail(),
+                          otp,
+                          UUID.randomUUID(),
+                          new SourceContext("192.0.2.10"))))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
       assertThatThrownBy(
@@ -963,6 +1044,40 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                       environment))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
+      // Only the two credential-bearing mismatches above count. Foreign context and scope
+      // conflicts cannot consume the original request's budget or its already-consumed OTP.
+      assertThat(f.<Integer>tx(() -> operations.countReplayFailures(otpOperation))).isEqualTo(2);
+      for (int failure = 3; failure <= 4; failure++) {
+        assertThatThrownBy(
+                () ->
+                    issuance.issueAccount(
+                        new AccountControlUiIssuanceService.AccountSignInRequest(
+                            otpRequest.requestId(),
+                            account.getEmail(),
+                            "wrong-replay-secret",
+                            otpRequest.callerContextId(),
+                            new SourceContext("192.0.2.10"))))
+            .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+      }
+      try (var afterFailures = issuance.issueAccount(otpRequest)) {
+        assertThat(afterFailures.compactBytes()).isEqualTo(originalCompact);
+        assertThat(afterFailures.expiresAt()).isEqualTo(expiry);
+        assertThat(afterFailures.recoveryExpiresAt()).isEqualTo(recoveryExpiry);
+      }
+      assertThat(f.<Integer>tx(() -> operations.countReplayFailures(otpOperation))).isEqualTo(4);
+      assertThatThrownBy(
+              () ->
+                  issuance.issueAccount(
+                      new AccountControlUiIssuanceService.AccountSignInRequest(
+                          otpRequest.requestId(),
+                          account.getEmail(),
+                          "fifth-wrong-secret",
+                          otpRequest.callerContextId(),
+                          new SourceContext("192.0.2.10"))))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+      assertThatThrownBy(() -> issuance.issueAccount(otpRequest))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+      assertThat(f.<Integer>tx(() -> operations.countReplayFailures(otpOperation))).isEqualTo(5);
     }
     assertThat(f.challenges.findByAccountId(account.getId())).isEmpty();
     var retryOperation = f.tx(() -> operations.findRequest(otpRequest.requestId()));
@@ -1055,11 +1170,12 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         fixture
             .dsl
             .fetch(
-                "SELECT category, revision::text AS revision, publication_id::text AS publication_id,"
-                    + " policy_id::text AS policy_id, closure_id::text AS closure_id, policy_rule,"
-                    + " closure_rule, source_identity, source_root, publication_digest,"
-                    + " encode(publication_bytes, 'hex') AS publication_bytes_hex"
-                    + " FROM account_fresh_enrollment_policy_publications ORDER BY category, revision")
+                "SELECT category, revision::text AS revision, publication_id::text AS"
+                    + " publication_id, policy_id::text AS policy_id, closure_id::text AS"
+                    + " closure_id, policy_rule, closure_rule, source_identity, source_root,"
+                    + " publication_digest, encode(publication_bytes, 'hex') AS"
+                    + " publication_bytes_hex FROM account_fresh_enrollment_policy_publications"
+                    + " ORDER BY category, revision")
             .stream()
             .map(record -> Arrays.toString(record.intoArray()))
             .toList();
@@ -1067,8 +1183,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         fixture
             .dsl
             .fetch(
-                "SELECT category, publication_id::text AS publication_id, revision::text AS revision"
-                    + " FROM account_fresh_enrollment_policy_current ORDER BY category")
+                "SELECT category, publication_id::text AS publication_id, revision::text AS"
+                    + " revision FROM account_fresh_enrollment_policy_current ORDER BY category")
             .stream()
             .map(record -> Arrays.toString(record.intoArray()))
             .toList();

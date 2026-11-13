@@ -7,6 +7,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.lettuce.core.ClientOptions;
@@ -14,6 +17,7 @@ import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -22,10 +26,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl.ControlUiPrimaryIdentity;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
@@ -98,6 +108,188 @@ class AccountControlUiIssuancePostgresIntegrationTest {
   }
 
   @Test
+  void replayDenialsPersistBoundedHistoryWithoutChangingRetainedIssuanceAccountOrOtp() {
+    Context c = contextAt("1043");
+    Fixture f = new Fixture(c);
+    var original = f.prepare(300_000L, AccountControlUiOwnerSourcesFixture.CALLER);
+    c.tx(
+        () ->
+            c.dsl.execute(
+                "INSERT INTO account_email_login_challenge (account_id, code_hash, expires_at,"
+                    + " resend_available_at, created_at, updated_at) SELECT id,"
+                    + " 'test-only-original-otp-hash', CURRENT_TIMESTAMP + INTERVAL '5 minutes',"
+                    + " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM accounts WHERE"
+                    + " account_uuid = ?",
+                f.actor));
+    var accountBefore =
+        Objects.requireNonNull(
+                c.dsl.fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", f.actor))
+            .intoMap();
+    var otpBefore =
+        Objects.requireNonNull(c.dsl.fetchOne("SELECT * FROM account_email_login_challenge"))
+            .intoMap();
+    migrateToLatest(c);
+    var primary = mock(AccountServiceImpl.class);
+    var cryptography = mock(AccountControlUiResponseCryptography.class);
+    when(cryptography.requestDigest(anyString(), any(byte[].class))).thenReturn("a".repeat(64));
+    var service = replayService(c, primary, cryptography);
+    var request =
+        new AccountControlUiIssuanceService.Request(
+            original.requestId,
+            "owner@example.test",
+            "wrong-secret",
+            original.tenantId,
+            original.callerContextId);
+    try (var peer = AccountControlUiOwnerSourcesFixture.withPeer(original.caller)) {
+      for (int failure = 1; failure <= 5; failure++) {
+        assertThatThrownBy(() -> service.issue(request, mock(CapturedEnvironmentBoundary.class)))
+            .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+        // A fresh transaction/repository observes the denial's committed history.
+        assertThat(
+                c.<Integer>tx(
+                    () ->
+                        new AccountControlUiIssuanceRepository(c.dsl)
+                            .countReplayFailures(original)))
+            .isEqualTo(failure);
+      }
+      // Even a now-correct secret cannot reach its MAC verifier after budget exhaustion.
+      when(cryptography.requestDigest(anyString(), any(byte[].class)))
+          .thenReturn(original.requestDigest);
+      assertThatThrownBy(() -> service.issue(request, mock(CapturedEnvironmentBoundary.class)))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+    }
+    verify(cryptography, times(5)).requestDigest(anyString(), any(byte[].class));
+    verifyNoInteractions(primary);
+    assertThat(
+            Objects.requireNonNull(
+                    c.dsl.fetchOne("SELECT * FROM accounts WHERE account_uuid = ?", f.actor))
+                .intoMap())
+        .isEqualTo(accountBefore);
+    assertThat(
+            Objects.requireNonNull(c.dsl.fetchOne("SELECT * FROM account_email_login_challenge"))
+                .intoMap())
+        .isEqualTo(otpBefore);
+    assertOriginal(original, c.tx(() -> c.operations.findRequest(original.requestId)));
+    var independent =
+        c.tx(
+            () ->
+                c.operations.prepare(
+                    UUID.randomUUID(),
+                    original.caller,
+                    UUID.randomUUID(),
+                    "test-mac1",
+                    "c".repeat(64),
+                    f.primary,
+                    f.authority,
+                    f.signer,
+                    Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS),
+                    300_000L));
+    assertThat(c.<Integer>tx(() -> c.operations.countReplayFailures(independent))).isZero();
+
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            "INSERT INTO account_control_ui_issuance_replay_failures VALUES (?, ?,"
+                                + " 1)",
+                            independent.operationId,
+                            original.requestId)))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("exact original request");
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            "INSERT INTO account_control_ui_issuance_replay_failures VALUES (?, ?,"
+                                + " 6)",
+                            original.operationId,
+                            original.requestId)))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            "UPDATE account_control_ui_issuance_replay_failures SET failure_number"
+                                + " = 1")))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("immutable");
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () -> c.dsl.execute("DELETE FROM account_control_ui_issuance_replay_failures")))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("immutable");
+    assertThatThrownBy(
+            () -> c.tx(() -> c.dsl.execute("TRUNCATE account_control_ui_issuance_replay_failures")))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("immutable");
+  }
+
+  @Test
+  void concurrentReplayGuessesShareOneFiveFailureBudget() throws Exception {
+    Context c = context();
+    Fixture f = new Fixture(c);
+    var original = f.prepare(300_000L, AccountControlUiOwnerSourcesFixture.CALLER);
+    var primary = mock(AccountServiceImpl.class);
+    var cryptography = mock(AccountControlUiResponseCryptography.class);
+    when(cryptography.requestDigest(anyString(), any(byte[].class))).thenReturn("a".repeat(64));
+    var service = replayService(c, primary, cryptography);
+    var request =
+        new AccountControlUiIssuanceService.Request(
+            original.requestId,
+            "owner@example.test",
+            "wrong-secret",
+            original.tenantId,
+            original.callerContextId);
+    var start = new CountDownLatch(1);
+    try (var workers = Executors.newFixedThreadPool(8)) {
+      var attempts = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+      for (int index = 0; index < 8; index++) {
+        attempts.add(
+            workers.submit(
+                () -> {
+                  try (var peer = AccountControlUiOwnerSourcesFixture.withPeer(original.caller)) {
+                    if (!start.await(10, TimeUnit.SECONDS))
+                      throw new AssertionError("Replay start timed out");
+                    assertThatThrownBy(
+                            () -> service.issue(request, mock(CapturedEnvironmentBoundary.class)))
+                        .isInstanceOf(
+                            AccountControlUiIssuanceService.IdempotencyConflictException.class);
+                  }
+                  return null;
+                }));
+      }
+      start.countDown();
+      for (var attempt : attempts) attempt.get(15, TimeUnit.SECONDS);
+    }
+    assertThat(c.<Integer>tx(() -> c.operations.countReplayFailures(original))).isEqualTo(5);
+    verify(cryptography, times(5)).requestDigest(anyString(), any(byte[].class));
+    verifyNoInteractions(primary);
+    assertOriginal(original, c.tx(() -> c.operations.findRequest(original.requestId)));
+  }
+
+  private static AccountControlUiIssuanceService replayService(
+      Context c, AccountServiceImpl primary, AccountControlUiResponseCryptography cryptography) {
+    return new AccountControlUiIssuanceService(
+        primary,
+        null, // No implicit shared abuse policy or admitting fallback.
+        c.operations,
+        mock(AccountControlUiAuthority.class),
+        mock(DraftAuthorizationFenceRepository.class),
+        mock(AccountControlUiSignerOwner.class),
+        cryptography,
+        mock(AccountControlUiCoordination.class),
+        mock(AccountControlUiActorService.class),
+        Objects.requireNonNull(c.transaction.getTransactionManager()),
+        Clock.systemUTC(),
+        300_000L,
+        AccountControlUiOwnerSourcesFixture.CALLER);
+  }
+
+  @Test
   void explicitlyConfiguredZeroMarginIsPresentOnNewOwnerRows() {
     Context c = context();
     var prepared = new Fixture(c).prepare(0L);
@@ -138,11 +330,12 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     c.tx(
         () ->
             c.dsl.execute(
-                "INSERT INTO account_control_ui_issuance_operations"
-                    + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
-                    + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
-                    + " issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, status)"
-                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
+                "INSERT INTO account_control_ui_issuance_operations (request_id, operation_id,"
+                    + " token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
+                    + " request_mac_key_id, request_digest, claims_payload, source_payload,"
+                    + " bundle_payload, signer_receipt, issued_at_epoch_second,"
+                    + " expires_at_epoch_second, recovery_expires_at, status) VALUES (?, ?, ?, ?,"
+                    + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
                 f.request,
                 operationId,
                 tokenJti,
@@ -244,8 +437,9 @@ class AccountControlUiIssuancePostgresIntegrationTest {
                 c.tx(
                     () ->
                         c.dsl.execute(
-                            "UPDATE account_control_ui_issuance_operations"
-                                + " SET recovery_expires_at = recovery_expires_at + INTERVAL '1 second' WHERE request_id = ?",
+                            "UPDATE account_control_ui_issuance_operations SET recovery_expires_at"
+                                + " = recovery_expires_at + INTERVAL '1 second' WHERE request_id ="
+                                + " ?",
                             prepared.requestId)))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
@@ -264,14 +458,21 @@ class AccountControlUiIssuancePostgresIntegrationTest {
                 c.tx(
                     () ->
                         c.dsl.execute(
-                            "INSERT INTO account_control_ui_issuance_operations"
-                                + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
-                                + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
-                                + " issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
-                                + " SELECT ?, ?, ?, account_uuid, tenant_uuid, caller_workload, caller_context_id, request_mac_key_id,"
-                                + " request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, issued_at_epoch_second,"
-                                + " expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, to_timestamp(issued_at_epoch_second + 61), 'PREPARED'"
-                                + " FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                            "INSERT INTO account_control_ui_issuance_operations (request_id,"
+                                + " operation_id, token_jti, account_uuid, tenant_uuid,"
+                                + " caller_workload, caller_context_id, request_mac_key_id,"
+                                + " request_digest, claims_payload, source_payload, bundle_payload,"
+                                + " signer_receipt, issued_at_epoch_second,"
+                                + " expires_at_epoch_second,"
+                                + " registry_cleanup_deadline_epoch_millis, recovery_expires_at,"
+                                + " status) SELECT ?, ?, ?, account_uuid, tenant_uuid,"
+                                + " caller_workload, caller_context_id, request_mac_key_id,"
+                                + " request_digest, claims_payload, source_payload, bundle_payload,"
+                                + " signer_receipt, issued_at_epoch_second,"
+                                + " expires_at_epoch_second,"
+                                + " registry_cleanup_deadline_epoch_millis,"
+                                + " to_timestamp(issued_at_epoch_second + 61), 'PREPARED' FROM"
+                                + " account_control_ui_issuance_operations WHERE request_id = ?",
                             UUID.randomUUID(),
                             UUID.randomUUID(),
                             UUID.randomUUID(),
@@ -307,7 +508,8 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     var revocation =
         Objects.requireNonNull(
             c.dsl.fetchOne(
-                "SELECT revocation_receipt FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                "SELECT revocation_receipt FROM account_control_ui_issuance_operations WHERE"
+                    + " request_id = ?",
                 prepared.requestId),
             "Durable non-authorizing issuance row must remain present");
     assertThat(revocation.get("revocation_receipt")).isNull();
@@ -333,6 +535,9 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     assertThat(observed.operationId).isEqualTo(original.operationId);
     assertThat(observed.requestId).isEqualTo(original.requestId);
     assertThat(observed.jti).isEqualTo(original.jti);
+    assertThat(observed.accountId).isEqualTo(original.accountId);
+    assertThat(observed.tenantId).isEqualTo(original.tenantId);
+    assertThat(observed.scopeKind).isEqualTo(original.scopeKind);
     assertThat(observed.claims).isEqualTo(original.claims);
     assertThat(observed.sources).isEqualTo(original.sources);
     assertThat(observed.bundle).isEqualTo(original.bundle);
@@ -408,10 +613,11 @@ class AccountControlUiIssuancePostgresIntegrationTest {
       c.tx(
           () ->
               c.dsl.execute(
-                  "INSERT INTO account_fresh_tenant_identity_associations"
-                      + " (schema_version, target_namespace, creation_request_id, operation_id, request_digest,"
-                      + " canonical_tenant_id, source_game_row_id, source_game_tenant_key, provenance_kind, evidence_digest)"
-                      + " VALUES (1, 'test-control', ?, ?, ?, ?, 1, ?, 'NEW_GAME_ROW', ?)",
+                  "INSERT INTO account_fresh_tenant_identity_associations (schema_version,"
+                      + " target_namespace, creation_request_id, operation_id, request_digest,"
+                      + " canonical_tenant_id, source_game_row_id, source_game_tenant_key,"
+                      + " provenance_kind, evidence_digest) VALUES (1, 'test-control', ?, ?, ?, ?,"
+                      + " 1, ?, 'NEW_GAME_ROW', ?)",
                   UUID.randomUUID(),
                   UUID.randomUUID(),
                   "sha256:" + "a".repeat(64),
@@ -463,11 +669,16 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     }
 
     AccountControlUiIssuanceRepository.Stored prepare(long sessionSafetyMarginMillis) {
+      return prepare(sessionSafetyMarginMillis, "spiffe://test-only/control-ui");
+    }
+
+    AccountControlUiIssuanceRepository.Stored prepare(
+        long sessionSafetyMarginMillis, String caller) {
       return c.tx(
           () ->
               c.operations.prepare(
                   request,
-                  "spiffe://test-only/control-ui",
+                  caller,
                   UUID.randomUUID(),
                   "test-mac1",
                   "c".repeat(64),
