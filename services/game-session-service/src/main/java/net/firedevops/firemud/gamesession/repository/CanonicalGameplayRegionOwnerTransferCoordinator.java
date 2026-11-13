@@ -29,14 +29,6 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
     this.observations = Objects.requireNonNull(observations);
   }
 
-  /**
-   * Read-only lost-completion gate; it never authorizes another generation or recreates a grant.
-   */
-  boolean alreadyCompleted(
-      CanonicalGameplayRegionRuntimeStatus prior, String requestingOwner, long deadline) {
-    return repository.completedForCurrent(prior, requestingOwner, deadline);
-  }
-
   CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal frozenOriginal(
       UUID transitionId, long deadline) {
     return repository.within(deadline, ignored -> repository.frozenOriginal(transitionId));

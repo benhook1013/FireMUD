@@ -1143,12 +1143,170 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var completedSql = sqlImage();
     assertThat(successor.resumeCompletedTransfer(failure, deadline()).status).isEqualTo(durable);
     assertThat(sqlImage()).isEqualTo(completedSql);
-    admin.pexpire(ascii(recovered.grant.key()), 0);
+    var restarted =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            catalog,
+            incarnation,
+            sources.resolver,
+            new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+                "game-session-service",
+                identity.serviceInstanceId(),
+                "localhost",
+                CLOCK.instant(),
+                "test",
+                "test",
+                "controlled-test-image"),
+            java.time.Duration.ofSeconds(30),
+            CLOCK);
+    assertThatThrownBy(() -> restarted.resumeCompletedTransfer(failure, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    byte[] leaseKey = ascii(recovered.grant.key());
+    assertThatThrownBy(
+            () ->
+                restarted.installForTransition(
+                    null, original.transitionId, original.worldRequest, transfer, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(completedSql);
+    admin.pexpire(leaseKey, 0);
     assertThatThrownBy(() -> successor.resumeCompletedTransfer(failure, deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
         .contains(durable);
+
+    assertThat(
+            admin.set(
+                leaseKey,
+                ascii(UUID.randomUUID().toString()),
+                io.lettuce.core.SetArgs.Builder.nx().px(30_000)))
+        .isEqualTo("OK");
+    assertThatThrownBy(
+            () ->
+                restarted.installForTransition(
+                    null, original.transitionId, original.worldRequest, transfer, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(completedSql);
+
+    admin.pexpire(leaseKey, 0);
+    var fresh =
+        restarted.installForTransition(
+            null, original.transitionId, original.worldRequest, transfer, deadline());
+    assertThat(fresh.status.ownerInstanceId()).isEqualTo(durable.ownerInstanceId());
+    assertThat(fresh.status.executorFence()).isGreaterThan(durable.executorFence());
+    assertThat(fresh.grant.tokenCorrelation()).isNotEqualTo(recovered.grant.tokenCorrelation());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT state, transfer_id FROM game_session_region_owner_transfer WHERE transfer_id = ?",
+                    completed.get("transfer_id", UUID.class)))
+        .isEqualTo(completed);
+    assertThat(
+            fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
+        .isEqualTo(2);
+  }
+
+  @Test
+  void completedTransferRecoversExactAbortRetainedBeforeIndependentVerification() throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var pinnedEvidence = inventory.readProvisionalCasEvidence(original.transitionId);
+    var pinnedCandidate =
+        inventory.readRegionTransferOriginalCandidate(original.transitionId, pinnedEvidence);
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var accountAbortedAfterInstall = new java.util.concurrent.atomic.AtomicBoolean();
+    var observationSource =
+        new CanonicalGameplayRegionOwnerTransferObservationSource() {
+          @Override
+          public Context readCurrent(UUID transferId, long targetOrdinal) {
+            var context = repository.readCurrent(transferId, targetOrdinal);
+            if ("COMPLETED".equals(context.controlState())
+                && accountAbortedAfterInstall.compareAndSet(false, true)) {
+              assertThat(fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+            }
+            return context;
+          }
+
+          @Override
+          public CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
+              UUID transitionId, CanonicalGameplayTenantGameplayTagRepository sourceTags) {
+            return repository.readAssignment(transitionId, sourceTags);
+          }
+        };
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(observationSource, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
+    var identity =
+        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+            "game-session-service",
+            "final-owner-handoff",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "controlled-test-image");
+    CanonicalGameplayRegionIncarnationSource incarnation =
+        scope -> {
+          assertThat(scope).isEqualTo(original.incarnation.scope());
+          return original.incarnation;
+        };
+    var successor =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            catalog,
+            incarnation,
+            sources.resolver,
+            identity,
+            java.time.Duration.ofSeconds(30),
+            CLOCK);
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var interrupted =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            CanonicalGameplayRegionLeaseOwner.TransferCompletionUnconfirmed.class,
+            () ->
+                successor.installForTransition(
+                    null, original.transitionId, original.worldRequest, transfer, deadline()));
+
+    assertThat(accountAbortedAfterInstall).isTrue();
+    var durable =
+        new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
+            .find(original.source)
+            .orElseThrow();
+    assertThat(durable.executorFence()).isGreaterThan(original.status.executorFence());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT state FROM game_session_region_owner_transfer")
+                .get(0, String.class))
+        .isEqualTo("COMPLETED");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                    original.transitionId)
+                .get(0, String.class))
+        .isEqualTo("ABORTED");
+
+    var recovered = successor.resumeCompletedTransfer(interrupted, deadline());
+    assertThat(recovered.status).isEqualTo(durable);
+    assertThat(recovered.grant.tokenCorrelation()).isEqualTo(durable.leaseTokenCorrelation());
+    assertThat(inventory.readRegionTransferAbortedCandidate(original.transitionId, pinnedCandidate))
+        .contains(pinnedCandidate);
+    assertThatThrownBy(() -> inventory.readProvisionalCasEvidence(original.transitionId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not a retryable provisional operation");
+    assertThatThrownBy(() -> successor.revalidateBeforeBridge(recovered))
+        .isInstanceOf(IllegalStateException.class);
   }
 
   @Test
