@@ -707,6 +707,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       // Successful positive reconciliation never authorizes the requested negative closure.
       throw unavailable();
     }
+    if ("CLOSED".equals(row.get("status", String.class))) {
+      Snapshot proof = readExact(request, reservation, false);
+      if (!"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(proof.disposition())) throw unavailable();
+      return;
+    }
     requireClosedTransition(transition);
     if ("ABORTED".equals(transition.get("status", String.class))) {
       var abort =
