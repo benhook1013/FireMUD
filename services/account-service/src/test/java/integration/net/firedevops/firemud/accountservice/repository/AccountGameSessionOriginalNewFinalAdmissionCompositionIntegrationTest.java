@@ -615,7 +615,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
   @Test
   void exactRetainedEvaluationOutsideOwnerWindowIsStaleWithoutOwnerMutation() throws Exception {
-    try (Session session = session(Clock.offset(CLOCK, Duration.ofSeconds(60)))) {
+    try (Session session = session()) {
+      waitForDatabaseTime(session.dsl, session.capacityRequest.evidence().expiresAt());
       assertCapacityRefusalWithoutMutation(
           session, session.capacityRequest, Status.Code.UNAVAILABLE, "CAPACITY_ADMISSION_STALE");
     }
