@@ -26,9 +26,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManagerFactory;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
-import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
-import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
-import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
@@ -76,7 +73,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     implements AutoCloseable {
   private static final Clock CLOCK = Clock.systemUTC();
   private static final int TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS = 128;
-  private static final long TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES = 128L * 1_048_576L;
+  private static final long TEST_CAPACITY_EVIDENCE_BYTES_PER_RECORD = 1_048_576L;
   private final GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
   private final AtomicInteger finalReadCalls = new AtomicInteger();
@@ -604,6 +601,16 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   }
 
   public void installActualCandidate(AccountGameplayAdmissionLeaseEvidence actualLease) {
+    installActualCandidate(
+        actualLease,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS);
+  }
+
+  public void installActualCandidate(
+      AccountGameplayAdmissionLeaseEvidence actualLease,
+      int maximumActiveRecords,
+      int maximumRetainedRecords) {
     decision =
         new CanonicalGameplayAdmissionDecision(
             binding.transitionId(),
@@ -632,11 +639,13 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         .dsl()
         .execute(
             "INSERT INTO game_session_capacity_evidence_budget"
-                + " (tenant_id,maximum_records,maximum_binding_bytes) VALUES (?,?,?)"
+                + " (tenant_id,maximum_records,maximum_binding_bytes,maximum_retained_records)"
+                + " VALUES (?,?,?,?)"
                 + " ON CONFLICT DO NOTHING",
             assignment.tenantId(),
-            TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
-            TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
+            maximumActiveRecords,
+            maximumActiveRecords * TEST_CAPACITY_EVIDENCE_BYTES_PER_RECORD,
+            maximumRetainedRecords);
   }
 
   public Receipt complete(
@@ -788,108 +797,6 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             "SELECT (to_jsonb(t) || jsonb_build_object('_original_xmin', t.xmin::text))::text "
                 + "AS image FROM game_session_original_new_capacity_origin t")
         .get("image", String.class);
-  }
-
-  /**
-   * Submits the real origin-enabled FINAL owner using the current successor's retained closure
-   * custody. This proves the post-closure script refusal; it does not replay old custody.
-   */
-  public long refuseFinalWithSuccessorClosureCustody(
-      OriginalNewCredential credential,
-      AccountPublicJwksCache jwks,
-      TenantCapacityAdmission.Request request,
-      OriginalNewCapacityExecution execution,
-      String successorCustodyOwner,
-      long successorCustodyFence,
-      long absoluteDeadlineMillis)
-      throws Exception {
-    if (!request.equals(execution.request()))
-      throw new IllegalArgumentException("Exact original capacity request is required");
-    var inventory = new CanonicalGameplayBindingInventoryRepository(binding.dsl());
-    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
-
-    var originRepository = new CanonicalGameplayCapacityOriginRepository(binding.dsl());
-    var origin = originRepository.readOrigin(request);
-    var custody = originRepository.read(origin);
-    if (custody.state() != CanonicalGameplayCapacityOrigin.State.CLOSURE_CLAIMED
-        || !successorCustodyOwner.equals(custody.ownerId())
-        || successorCustodyFence != custody.ownerFence())
-      throw new IllegalStateException("Expected current successor closure custody");
-
-    var accountResult =
-        initialOwner()
-            .verifyCurrentOpenForTarget(
-                origin.candidate().bindingIdentity().accountId(),
-                request.identity().tenantId(),
-                origin.candidate().bindingIdentity().playableStateNamespaceId());
-    if (!(accountResult
-        instanceof CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen))
-      throw new IllegalStateException("Actual INITIAL source is not OPEN");
-
-    var issuerSource = binding.currentIssuerSource();
-    var issuer =
-        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
-            coordination,
-            scripts,
-            new CanonicalGameplayIssuerAdmissionBarrierRepository(
-                binding.dsl(), tags, issuerSource),
-            issuerSource);
-    var issuerOpen = issuer.initializeAndRead(source.issuerAcknowledgement().operationId());
-    try (var rawTemplate =
-            CanonicalGameplayOriginalNewAuthenticatedSession.template(
-                source.candidate(),
-                credential,
-                new CanonicalGameplayOriginalNewBoundCredentialVerifier(jwks, CLOCK),
-                120_000L);
-        var template = rawTemplate.bindCapacityExecution(execution)) {
-      var finalOwner =
-          new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-              coordination, scripts, CLOCK, tags);
-      var exactFinalOwner =
-          originExecutionOwner(CLOCK)
-              .bindFinalOwnerToOrigin(finalOwner, origin, absoluteDeadlineMillis);
-      var beforeFinal = capacityStateImage();
-      long evalshaCallsBefore = evalshaCalls();
-      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback unexpectedReadback;
-      try {
-        // The protected origin-aware Lua admits CLOSURE_CLAIMED only for CLOSE; this production
-        // FINAL action must be refused by that retained custody gate before mutation.
-        unexpectedReadback =
-            exactFinalOwner.finalizeOriginalNewOnce(
-                source, template, accountOpen, issuerOpen, execution, absoluteDeadlineMillis);
-      } catch (RuntimeException refusal) {
-        long evalshaCallsAfter = evalshaCalls();
-        if (evalshaCallsAfter != evalshaCallsBefore + 1L)
-          throw new IllegalStateException(
-              "FINAL refusal occurred without exactly one protected Lua EVALSHA", refusal);
-        if (!beforeFinal.equals(capacityStateImage()))
-          throw new IllegalStateException(
-              "Refused FINAL changed the retained Game Session state", refusal);
-        return evalshaCallsAfter - evalshaCallsBefore;
-      }
-      try (unexpectedReadback) {
-        throw new IllegalStateException("CLOSED origin unexpectedly admitted FINAL");
-      }
-    }
-  }
-
-  private long evalshaCalls() {
-    String commandStats = administration.sync().info("commandstats");
-    return commandStats
-        .lines()
-        .filter(line -> line.startsWith("cmdstat_evalsha:"))
-        .map(
-            line -> {
-              int callsStart = line.indexOf("calls=");
-              if (callsStart < 0)
-                throw new IllegalStateException("Redis EVALSHA count unavailable");
-              int valueStart = callsStart + "calls=".length();
-              int valueEnd = line.indexOf(',', valueStart);
-              return Long.parseLong(
-                  valueEnd < 0 ? line.substring(valueStart) : line.substring(valueStart, valueEnd));
-            })
-        .findFirst()
-        .orElseThrow(() -> new IllegalStateException("Redis EVALSHA count unavailable"));
   }
 
   public void removeOriginMarkerForFault() {

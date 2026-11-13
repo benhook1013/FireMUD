@@ -519,6 +519,44 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void retainedDenialReleasesTheLastSlotAndCannotRaceAStoredDispatch() throws Exception {
+    try (var proof = new TransferSqlProof(1, 1_048_576L, 3)) {
+      var original = proof.execution;
+      var later = proof.newControlledExecution();
+      assertThatThrownBy(() -> proof.precharge(later)).isInstanceOf(IllegalStateException.class);
+      var denial = UUID.randomUUID();
+      proof.settle(original, denial);
+      proof.settle(original, denial);
+      assertThatThrownBy(() -> proof.settle(original, UUID.randomUUID()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() -> proof.insertExecution(original, "INSTALL_DISPATCHED", null))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Exact retained capacity evidence charge required");
+
+      proof.seedUndeliveredDispatch(later);
+      assertThatThrownBy(() -> proof.settle(later, UUID.randomUUID()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Execution custody prevents capacity evidence settlement");
+      assertThat(proof.executionState(later)).isEqualTo("INSTALL_DISPATCHED");
+      assertThat(proof.executionState(original)).isNull();
+      assertThat(proof.physicalExecutionExists(original)).isFalse();
+    }
+  }
+
+  @Test
+  void retainedDenialHistoryRemainsBoundedIndependentlyOfActiveSlots() throws Exception {
+    try (var proof = new TransferSqlProof(1, 1_048_576L, 2)) {
+      proof.settle(proof.execution, UUID.randomUUID());
+      var next = proof.newControlledExecution();
+      proof.precharge(next);
+      proof.settle(next, UUID.randomUUID());
+      assertThatThrownBy(() -> proof.precharge(proof.newControlledExecution()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW capacity evidence budget is unavailable");
+    }
+  }
+
+  @Test
   void postgresSerializesTheLastEvidenceChargeAcrossConcurrentAttempts() throws Exception {
     try (var proof = new TransferSqlProof(2, 2_097_152L);
         var callers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
@@ -1812,7 +1850,16 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private TransferSqlProof(int maximumRecords, long maximumBindingBytes) throws Exception {
-      this(new DefaultExecuteListener(), maximumRecords, maximumBindingBytes);
+      this(maximumRecords, maximumBindingBytes, maximumRecords);
+    }
+
+    private TransferSqlProof(
+        int maximumRecords, long maximumBindingBytes, int maximumRetainedRecords) throws Exception {
+      this(
+          new DefaultExecuteListener(),
+          maximumRecords,
+          maximumBindingBytes,
+          maximumRetainedRecords);
     }
 
     private TransferSqlProof(DefaultExecuteListener listener) throws Exception {
@@ -1824,6 +1871,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
 
     private TransferSqlProof(
         DefaultExecuteListener listener, int maximumRecords, long maximumBindingBytes)
+        throws Exception {
+      this(listener, maximumRecords, maximumBindingBytes, maximumRecords);
+    }
+
+    private TransferSqlProof(
+        DefaultExecuteListener listener,
+        int maximumRecords,
+        long maximumBindingBytes,
+        int maximumRetainedRecords)
         throws Exception {
       String password = UUID.randomUUID().toString();
       try (var administrator =
@@ -1953,11 +2009,12 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       var assignment = tags.assignmentForTransition(admission.candidate().bindingDecisionId());
       sql.execute(
           "INSERT INTO game_session_capacity_evidence_budget"
-              + " (tenant_id,maximum_records,maximum_binding_bytes) VALUES (?,?,?)"
+              + " (tenant_id,maximum_records,maximum_binding_bytes,maximum_retained_records) VALUES (?,?,?,?)"
               + " ON CONFLICT DO NOTHING",
           assignment.tenantId(),
           maximumRecords,
-          maximumBindingBytes);
+          maximumBindingBytes,
+          maximumRetainedRecords);
       execution = newControlledExecution();
       precharge(execution);
       recreateTransferOwners();
@@ -2009,6 +2066,20 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       // invented, and this is not the real authorize path exercised by the two row-lock races.
       precharge(original);
       insertExecution(original, "INSTALL_DISPATCHED", null);
+    }
+
+    private void settle(OriginalNewCapacityExecution original, UUID denial) {
+      var assignment = tags.assignmentForTransition(original.transitionId());
+      sql.transaction(
+          configuration ->
+              CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                  DSL.using(configuration),
+                  original.request(),
+                  original.candidateDigest(),
+                  new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+                      original.selectedOwnerId(), original.selectedOwnerFence()),
+                  assignment.tenantGameplayTag(),
+                  denial));
     }
 
     private void precharge(OriginalNewCapacityExecution original) {
