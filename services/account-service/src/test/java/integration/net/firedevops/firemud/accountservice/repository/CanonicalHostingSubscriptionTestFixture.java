@@ -627,7 +627,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       return signWebhookPayload(payload);
     }
 
-    SignedSuccess signWebhookPayload(String payload) {
+    public SignedSuccess signWebhookPayload(String payload) {
       String timestamp = Long.toString(clock.instant().getEpochSecond());
       try {
         Mac mac = Mac.getInstance("HmacSHA256");
