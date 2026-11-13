@@ -49,6 +49,53 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void directHttpsLoginUsesSocketPeerDespiteTrustedForwardingHeaders() {
+    GatewayHeaderTrustProperties properties = new GatewayHeaderTrustProperties();
+    properties.getForwardedClientIp().setTrustedProxyCidrs(List.of("192.0.2.0/24"));
+    var request =
+        MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+            .sslInfo(mock(SslInfo.class))
+            .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+            .header("X-Client-IP", "203.0.113.10")
+            .header("Forwarded", "for=198.51.100.10;proto=https")
+            .header("X-Forwarded-For", "198.51.100.20, 198.51.100.30")
+            .header("X-Real-IP", "198.51.100.40")
+            .header("X-Proxy-Client-IP", "198.51.100.50")
+            .build();
+    var original = MockServerWebExchange.from(request);
+    assertThat(VerifiedHttpClientOrigin.from(original)).isNull();
+
+    var canonical = filterThroughChain(legacyFilter(properties), original);
+    var origin = VerifiedHttpClientOrigin.from(canonical);
+    assertThat(canonical.getRequest().getHeaders().getFirst("X-Client-IP")).isEqualTo("192.0.2.10");
+    assertThat(origin).isNotNull();
+    assertThat(origin.sourceContext().canonicalClientAddress()).isEqualTo("192.0.2.10");
+    assertThat(origin.toString()).doesNotContain("192.0.2.10");
+  }
+
+  @Test
+  void retainsPrivateHttpOriginIndependentlyOfMutableHeadersAndRedactsIt() {
+    var request =
+        MockServerHttpRequest.post("/api/account/auth/login")
+            .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+            .header("X-Client-IP", "198.51.100.20")
+            .build();
+    var original = MockServerWebExchange.from(request);
+    assertThat(VerifiedHttpClientOrigin.from(original)).isNull();
+    var canonical = filterThroughChain(legacyFilter(new GatewayHeaderTrustProperties()), original);
+    var changed =
+        canonical
+            .mutate()
+            .request(
+                builder -> builder.headers(headers -> headers.set("X-Client-IP", "203.0.113.1")))
+            .build();
+    var origin = VerifiedHttpClientOrigin.from(changed);
+    assertThat(origin).isNotNull();
+    assertThat(origin.sourceContext().canonicalClientAddress()).isEqualTo("192.0.2.10");
+    assertThat(origin.toString()).doesNotContain("192.0.2.10");
+  }
+
+  @Test
   void stripsSpoofedRoutingBundleFromPublicGameplayIngress() {
     HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
 
@@ -272,6 +319,45 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void directLoginOverrideIsLimitedToExactPostHttpsRoute() {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getForwardedClientIp().setTrustedProxyCidrs(List.of("192.0.2.0/24"));
+    HeaderTrustFilter filter = legacyFilter(props);
+
+    for (MockServerHttpRequest request :
+        List.of(
+            MockServerHttpRequest.get("https://localhost/api/account/auth/login")
+                .sslInfo(mock(SslInfo.class))
+                .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+                .header("Forwarded", "for=198.51.100.10")
+                .build(),
+            MockServerHttpRequest.post("https://localhost/api/account/auth/login/extra")
+                .sslInfo(mock(SslInfo.class))
+                .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+                .header("Forwarded", "for=198.51.100.10")
+                .build(),
+            MockServerHttpRequest.post("https://localhost/api/account/profile")
+                .sslInfo(mock(SslInfo.class))
+                .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+                .header("Forwarded", "for=198.51.100.10")
+                .build())) {
+      ServerWebExchange canonical = filterThroughChain(filter, MockServerWebExchange.from(request));
+      assertThat(canonical.getRequest().getHeaders().getFirst("X-Client-IP"))
+          .isEqualTo("198.51.100.10");
+    }
+
+    var insecureLogin =
+        MockServerHttpRequest.post("http://localhost/api/account/auth/login")
+            .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+            .header("Forwarded", "for=198.51.100.10")
+            .build();
+    ServerWebExchange canonicalInsecure =
+        filterThroughChain(filter, MockServerWebExchange.from(insecureLogin));
+    assertThat(canonicalInsecure.getRequest().getHeaders().getFirst("X-Client-IP"))
+        .isEqualTo("198.51.100.10");
+  }
+
+  @Test
   void doesNotTrustForwardedHeadersWhenRemoteIsNotTrusted() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getForwardedClientIp().setTrustedProxyCidrs(List.of("5.6.7.8/32"));
@@ -403,6 +489,68 @@ class HeaderTrustFilterTest {
     filter.filter(untrustedListenerExchange, ignored -> Mono.empty()).block();
     assertThat(untrustedListenerExchange.getResponse().getStatusCode())
         .isEqualTo(HttpStatus.FORBIDDEN);
+  }
+
+  @Test
+  void accountLoginDoesNotReceiveDirectSourceProofOnDedicatedTcpProxyListener() throws Exception {
+    GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
+    TcpProxyTrustPolicy policy =
+        new TcpProxyTrustPolicy(
+            certificateListenerProperties(),
+            headerProperties,
+            8080,
+            TCP_PROXY_CERTIFICATE_CLOCK,
+            Set.of("test"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
+    var request =
+        MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+            .localAddress(new InetSocketAddress("127.0.0.1", 8443))
+            .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+            .sslInfo(authenticatedTcpProxyPeer())
+            .header("Forwarded", "for=198.51.100.10")
+            .header("X-Forwarded-For", "198.51.100.20")
+            .header("X-Real-IP", "198.51.100.30")
+            .build();
+
+    ServerWebExchange canonical = filterThroughChain(filter, MockServerWebExchange.from(request));
+
+    assertThat(VerifiedHttpClientOrigin.from(canonical)).isNull();
+    assertThat(canonical.getRequest().getHeaders().getFirst("X-Client-IP")).isEqualTo("127.0.0.1");
+  }
+
+  @Test
+  void rejectsUntrustedAccountLoginOnDedicatedTcpProxyListener() throws Exception {
+    GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
+    TcpProxyTrustPolicy policy =
+        new TcpProxyTrustPolicy(
+            certificateListenerProperties(),
+            headerProperties,
+            8080,
+            TCP_PROXY_CERTIFICATE_CLOCK,
+            Set.of("test"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
+    var request =
+        MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+            .localAddress(new InetSocketAddress("127.0.0.1", 8443))
+            .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+            .sslInfo(mock(SslInfo.class))
+            .header("Forwarded", "for=198.51.100.10")
+            .build();
+    var exchange = MockServerWebExchange.from(request);
+    AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
+
+    filter
+        .filter(
+            exchange,
+            candidate -> {
+              delegated.set(candidate);
+              return Mono.empty();
+            })
+        .block();
+
+    assertThat(delegated.get()).isNull();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(VerifiedHttpClientOrigin.from(exchange)).isNull();
   }
 
   @Test

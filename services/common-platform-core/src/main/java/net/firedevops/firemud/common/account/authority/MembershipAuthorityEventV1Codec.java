@@ -25,6 +25,7 @@ import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 public final class MembershipAuthorityEventV1Codec {
   public static final String SCHEMA_VERSION = "account-auth-authority-event/v1";
   public static final String EVENT_TYPE = "MEMBERSHIP_CHANGED";
+  public static final String AUTHORITY_CHECKPOINT_EVENT_TYPE = "MEMBERSHIP_AUTHORITY_CHECKPOINT";
   public static final String EVENT_STREAM_PREFIX = "account:auth-authority:v1:";
 
   private static final String EVENT_SCOPE_PREFIX = "membership/";
@@ -153,7 +154,11 @@ public final class MembershipAuthorityEventV1Codec {
   private static void validatePreimage(ObjectNode event) {
     requireExactFields(event, PREIMAGE_FIELDS, Set.of(), "event preimage");
     requireExactText(event, "schemaVersion", SCHEMA_VERSION, "event");
-    requireExactText(event, "eventType", EVENT_TYPE, "event");
+    String eventType = requireText(event, "eventType", "event");
+    boolean authorityCheckpoint = AUTHORITY_CHECKPOINT_EVENT_TYPE.equals(eventType);
+    if (!authorityCheckpoint && !EVENT_TYPE.equals(eventType)) {
+      throw invalid("event.eventType", "must be a declared membership authority event type");
+    }
     requireNonEmptyText(event, "eventId", "event");
     requireNonEmptyText(event, "requestId", "event");
 
@@ -182,7 +187,14 @@ public final class MembershipAuthorityEventV1Codec {
     if (lifecycle.equals("INACTIVE") && admission) {
       throw invalid("gameplayAdmissionAllowed", "must be false for INACTIVE membership");
     }
-    requireBoolean(event, "callerBoundAuthorityInvalidated", "event");
+    boolean callerBoundAuthorityInvalidated =
+        requireBoolean(event, "callerBoundAuthorityInvalidated", "event");
+    if (authorityCheckpoint
+        && (!lifecycle.equals("ACTIVE") || !admission || callerBoundAuthorityInvalidated)) {
+      throw invalid(
+          "event.eventType",
+          "MEMBERSHIP_AUTHORITY_CHECKPOINT requires active, admitting, non-invalidated membership");
+    }
 
     validateRoles(event.get("roles"));
     validateAuthorityTuple(event.get("authorityTuple"), accountId, tenantId, membershipGeneration);
