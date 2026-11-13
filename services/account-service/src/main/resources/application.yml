@@ -64,8 +64,8 @@ firemud:
       enabled: ${FIREMUD_ACCOUNT_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED:false}
   mail:
     from: no-reply@firemud.local
-    verification-url: http://localhost:8080/auth/verify-email?token=%s
-    reset-url: http://localhost:8080/reset-password?token=%s
+    verification-url: http://localhost:5173/verify-email#token=%s
+    reset-url: http://localhost:5173/reset-password#token=%s
   payment:
     stripe-api-key: test-key
     platform-fee-percent: 5
