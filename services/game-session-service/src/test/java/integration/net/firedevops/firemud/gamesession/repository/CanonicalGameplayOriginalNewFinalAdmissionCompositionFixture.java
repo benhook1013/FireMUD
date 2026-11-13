@@ -264,10 +264,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             trust,
             TlsServerCredentials.ClientAuth.REQUIRE,
             GrpcRequestBytePolicy.ordinary(),
-            Math.max(
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_REQUEST_WIRE_BYTES,
-                net.firedevops.firemud.common.account.capacity
-                    .OriginalNewCapacityExecutionReadGrpcCodec.MAX_REQUEST_BYTES));
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_REQUEST_WIRE_BYTES);
     var decisionGuard = new CanonicalGameplayAdmissionDecisionReadWorkloadGuard("test");
     var actualDecisionReceiver =
         new CanonicalGameplayAdmissionDecisionReadGrpcService(
@@ -365,19 +362,6 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             new GrpcPeerIdentityInterceptor(),
             finalGuard,
             new FinalReadCounter()));
-    var capacityGuard =
-        new net.firedevops.firemud.gamesession.security
-            .CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuard("test");
-    factory.addService(
-        ServerInterceptors.interceptForward(
-            new net.firedevops.firemud.gamesession.service.impl
-                .CanonicalGameplayOriginalNewCapacityExecutionReadGrpcService(
-                new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                    binding.dsl(), coordination, scripts, CLOCK, tags),
-                capacityGuard,
-                "test"),
-            new GrpcPeerIdentityInterceptor(),
-            capacityGuard));
     server = factory.createServer().start();
     return server;
   }

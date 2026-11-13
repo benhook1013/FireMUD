@@ -78,6 +78,14 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         });
   }
 
+  @Override
+  public <T> T withinObservation(
+      Clock observationClock,
+      long deadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> observation) {
+    return within(deadline, observation);
+  }
+
   DSLContext sql() {
     var budget = admitted.get();
     if (budget == null) throw unavailable();
