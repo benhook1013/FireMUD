@@ -173,21 +173,14 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     return selected;
   }
 
-  /** Retains capacity for this attempt before Account can commit a reservation. */
-  void precharge(
+  /** Returns a retained terminal denial on exact replay, otherwise reserves execution evidence. */
+  UUID precharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,
       CurrentOwner selected,
       long deadline) {
-    if (budget == null) {
-      within(
-          deadline,
-          owner -> {
-            owner.precharge(source, request, selected, deadline);
-            return null;
-          });
-      return;
-    }
+    if (budget == null)
+      return within(deadline, owner -> owner.precharge(source, request, selected, deadline));
     budget.check();
     request.requireCommittable();
     if (!source.candidate().bindingDecisionId().equals(request.identity().admissionId())
@@ -197,15 +190,40 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     }
     var candidate = source.candidate();
     var assignment = scopedTags().assignmentForTransition(candidate.bindingDecisionId());
-    sql()
+    return sql()
         .transactionResult(
             configuration -> {
               var tx = DSL.using(configuration);
               requireSelectedOwner(tx, candidate, selected);
-              CanonicalGameplayCapacityEvidenceBudget.precharge(
+              return CanonicalGameplayCapacityEvidenceBudget.precharge(
                   tx, request, source.candidateDigest(), selected, assignment.tenantGameplayTag());
-              return null;
             });
+  }
+
+  void settleDeniedCharge(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      CurrentOwner selected,
+      UUID accountDenialId,
+      long deadline) {
+    within(
+        deadline,
+        owner -> {
+          var assignment =
+              owner.scopedTags().assignmentForTransition(request.identity().admissionId());
+          owner
+              .sql()
+              .transaction(
+                  configuration ->
+                      CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                          DSL.using(configuration),
+                          request,
+                          source.candidateDigest(),
+                          selected,
+                          assignment.tenantGameplayTag(),
+                          accountDenialId));
+          return null;
+        });
   }
 
   /** Returns only after independently reading the already-installed exact execution record. */

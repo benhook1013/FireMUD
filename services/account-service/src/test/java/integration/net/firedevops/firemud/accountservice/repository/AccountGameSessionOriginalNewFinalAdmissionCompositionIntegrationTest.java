@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -43,6 +44,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountResponseEnve
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -451,23 +453,143 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
-  void freshCreationEligibleEvidenceWithZeroQuotaIsDeniedWithoutOwnerMutation() throws Exception {
+  void zeroQuotaRetainsOnlyTheExactAccountDenialAndReplaysIt() throws Exception {
     try (Session session = session()) {
+      session.provisionCapacityRefusalBudget();
       var request = session.retainControlledEvaluation(true, "0");
       assertThat(request.evidence().permitsCreation()).isTrue();
       assertThat(request.evidence().quota()).isZero();
       byte[] candidate = session.gs.physicalSession();
       assertThat(candidate).isNotNull();
       String before = session.capacityImage() + session.durableImage();
-      assertThat(
-              assertThrows(
-                      CapacityRefusedException.class,
-                      () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L))
-                  .code())
-          .isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+      UUID denialId;
+      try (var callers = Executors.newVirtualThreadPerTaskExecutor()) {
+        var start = new CountDownLatch(1);
+        java.util.concurrent.Callable<CapacityRefusedException> deny =
+            () -> {
+              if (!start.await(5, TimeUnit.SECONDS))
+                throw new IllegalStateException("Concurrent quota requests did not start");
+              return assertThrows(
+                  CapacityRefusedException.class,
+                  () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L));
+            };
+        var first = callers.submit(deny);
+        var second = callers.submit(deny);
+        start.countDown();
+        denialId = assertExactAccountQuotaDenial(session, request, first.get(6, TimeUnit.SECONDS));
+        var repeated = second.get(6, TimeUnit.SECONDS);
+        assertThat(repeated.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+        assertThat(repeated.durableDenialId()).isEqualTo(denialId);
+      }
+      String retainedDecision = session.capacityDecisionImage();
+      var replay =
+          assertThrows(
+              CapacityRefusedException.class,
+              () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L));
+      assertThat(replay.durableDenialId()).isEqualTo(denialId);
+      assertThat(session.capacityRequest.evidence().quota()).isPositive();
+      assertCapacityFailure(
+          assertThrows(
+              StatusRuntimeException.class,
+              () ->
+                  session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L)),
+          Status.Code.ALREADY_EXISTS,
+          "IDEMPOTENCY_CONFLICT");
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
+      assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
       assertProvisionalUnchanged(session, candidate);
     }
+  }
+
+  @Test
+  void actualCoordinatorSettlesTheLastActiveSlotAndReplaysTheDenialWithoutAccountCapacityRpc()
+      throws Exception {
+    try (Session session = session(CLOCK, 1, 2);
+        OriginalNewCredential credential = session.issue()) {
+      session.provisionCapacityRefusalBudget();
+      var request = session.retainControlledEvaluation(true, "0");
+      String capacityBefore = session.capacityImage();
+      String transitionBefore = session.gsReceiptImage();
+      byte[] candidate = session.gs.physicalSession();
+
+      var denial = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      UUID denialId = assertExactAccountQuotaDenial(session, request, denial);
+      String retainedDecision = session.capacityDecisionImage();
+      var charge =
+          session
+              .gs
+              .dsl()
+              .fetchSingle(
+                  "SELECT * FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                  request.admissionAttemptId());
+      assertThat(charge.get("account_denial_id", UUID.class)).isEqualTo(denialId);
+      assertThat(charge.get("tenant_id", UUID.class)).isEqualTo(request.identity().tenantId());
+      assertThat(charge.get("admission_id", UUID.class))
+          .isEqualTo(request.identity().admissionId());
+      assertThat(charge.get("mutation_digest", String.class)).isEqualTo(request.mutationDigest());
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FILTER (WHERE account_denial_id IS NULL) AS active,"
+                          + " count(*) AS retained FROM game_session_capacity_evidence_charge"
+                          + " WHERE tenant_id=?",
+                      request.identity().tenantId())
+                  .intoMap())
+          .containsEntry("active", 0L)
+          .containsEntry("retained", 1L);
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_execution")
+                  .get(0, Long.class))
+          .isZero();
+      var settledState = new java.util.TreeMap<>(session.gs.capacityStateImage());
+      // The exact current owner can renew its ordinary private region lease during replay.
+      settledState.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
+      assertThat(settledState.keySet())
+          .noneMatch(key -> key.startsWith("redis:session:game:capacity-execution:"));
+
+      session.stopCapacityServer();
+      var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      assertThat(replay.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+      assertThat(replay.durableDenialId()).isEqualTo(denialId);
+      assertThat(session.capacityImage()).isEqualTo(capacityBefore);
+      assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
+      assertThat(session.gsReceiptImage()).isEqualTo(transitionBefore);
+      var replayState = new java.util.TreeMap<>(session.gs.capacityStateImage());
+      replayState.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
+      assertThat(replayState).isEqualTo(settledState);
+      assertThat(session.gs.finalReadCalls()).isZero();
+      assertThat(session.genesis().tokenHash()).isEqualTo(credential.tokenSha256());
+      assertThat(session.genesis().confirmedAdmissionAtMillis()).isNull();
+      assertProvisionalUnchanged(session, candidate);
+    }
+  }
+
+  private static UUID assertExactAccountQuotaDenial(
+      Session session, TenantCapacityAdmission.Request request, CapacityRefusedException denial) {
+    assertThat(denial.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+    UUID denialId = denial.durableDenialId();
+    assertThat(denialId).isNotNull();
+    var decision =
+        session.dsl.fetchSingle(
+            "SELECT * FROM account_capacity_origin_decisions WHERE decision_id=?", denialId);
+    assertThat(decision.get("decision", String.class)).isEqualTo("NO_ACCEPT");
+    assertThat(decision.get("refusal_code", String.class)).isEqualTo("CAPACITY_QUOTA_EXCEEDED");
+    assertThat(decision.get("admission_attempt_id", UUID.class))
+        .isEqualTo(request.admissionAttemptId());
+    assertThat(decision.get("canonical_payload", byte[].class))
+        .containsExactly(CapacityAdmissionDigest.preimage(request));
+    assertThat(
+            session
+                .dsl
+                .fetchSingle("SELECT count(*) FROM account_tenant_capacity_reservations")
+                .get(0, Long.class))
+        .isZero();
+    return denialId;
   }
 
   @Test
@@ -505,9 +627,11 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           session, wrongScope, Status.Code.UNAVAILABLE, "ENTITLEMENT_UNAVAILABLE");
       var first = session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L);
       var changed = session.retainControlledEvaluation(false, null);
+      var quotaRefusal = session.retainControlledEvaluation(true, "0");
       byte[] candidate = session.gs.physicalSession();
       assertThat(candidate).isNotNull();
       String before = session.capacityImage() + session.durableImage();
+      String retainedDecision = session.capacityDecisionImage();
       StatusRuntimeException failure =
           assertThrows(
               StatusRuntimeException.class,
@@ -515,6 +639,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertCapacityFailure(failure, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
       assertCapacityRefusalWithoutMutation(
           session, wrongScope, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
+      assertCapacityRefusalWithoutMutation(
+          session, quotaRefusal, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
       var player = (TenantCapacityAdmission.PlayerContext) session.capacityRequest.context();
       try (var replayCaller = Executors.newVirtualThreadPerTaskExecutor()) {
         session.serializable.executeWithoutResult(
@@ -536,6 +662,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
             });
       }
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
+      assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
       assertProvisionalUnchanged(session, candidate);
     }
   }
@@ -567,8 +694,13 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   private Session session(Clock capacityClock) throws Exception {
+    return session(capacityClock, 128, 128);
+  }
+
+  private Session session(Clock capacityClock, int maximumActiveRecords, int maximumRetainedRecords)
+      throws Exception {
     accountFixtures.temporaryDirectory = temporaryDirectory;
-    return new Session(capacityClock);
+    return new Session(capacityClock, maximumActiveRecords, maximumRetainedRecords);
   }
 
   private final class Session implements AutoCloseable {
@@ -598,7 +730,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     private AccountGameplayAdmissionLeaseEvidence lease;
     private CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector targetSelector;
 
-    private Session(Clock capacityClock) throws Exception {
+    private Session(Clock capacityClock, int maximumActiveRecords, int maximumRetainedRecords)
+        throws Exception {
       try {
         account = accountFixtures.newCapacityPlayerEntitlementFixture(redis.client());
         dsl =
@@ -719,7 +852,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
             client
                 .acquire(requestId, jwt, gs.candidate(), gs.target(), gs.generation())
                 .originalLeaseEvidence();
-        gs.installActualCandidate(lease);
+        gs.installActualCandidate(lease, maximumActiveRecords, maximumRetainedRecords);
         // Actual retained PLAYER_ADMISSION evaluation, with the same original request and exact
         // GS target. Published/World captures remain the fixture's explicit controlled sources.
         var scope = account.capacityScope(gs.target());
@@ -845,8 +978,29 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture.Receipt complete() {
+      return complete(capacityRequest);
+    }
+
+    private CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture.Receipt complete(
+        TenantCapacityAdmission.Request request) {
       return gs.complete(
-          client, jwks, jwt, System.currentTimeMillis() + 10_000L, capacityClient, capacityRequest);
+          client, jwks, jwt, System.currentTimeMillis() + 10_000L, capacityClient, request);
+    }
+
+    private void provisionCapacityRefusalBudget() {
+      dsl.execute(
+          "INSERT INTO account_capacity_origin_refusal_budget (tenant_uuid,maximum_refusals) VALUES (?,?)",
+          capacityRequest.identity().tenantId(),
+          1);
+    }
+
+    private void stopCapacityServer() throws InterruptedException {
+      if (capacityServer != null) {
+        capacityServer.shutdownNow();
+        if (!capacityServer.awaitTermination(5, TimeUnit.SECONDS))
+          throw new IllegalStateException("Capacity server teardown timed out");
+        capacityServer = null;
+      }
     }
 
     private Genesis genesis() {
@@ -945,6 +1099,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       return image.toString();
     }
 
+    private String capacityDecisionImage() {
+      return dsl.fetch(
+              "SELECT (to_jsonb(t) || jsonb_build_object('_xmin', t.xmin::text))::text AS image"
+                  + " FROM account_capacity_origin_decisions t ORDER BY 1")
+          .getValues("image", String.class)
+          .toString();
+    }
+
     private String durableImage() {
       return gsReceiptImage()
           + dsl.fetch(
@@ -986,11 +1148,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     public void close() throws Exception {
       try {
         if (capacityClient != null) capacityClient.close();
-        if (capacityServer != null) {
-          capacityServer.shutdownNow();
-          if (!capacityServer.awaitTermination(5, TimeUnit.SECONDS))
-            throw new IllegalStateException("Capacity server teardown timed out");
-        }
+        stopCapacityServer();
         if (client != null) client.close();
       } finally {
         try {
