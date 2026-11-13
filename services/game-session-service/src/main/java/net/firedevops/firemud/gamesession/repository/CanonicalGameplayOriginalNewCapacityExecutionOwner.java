@@ -30,6 +30,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Re
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
@@ -155,6 +156,9 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         || !target.realmId().equals(player.realmId())
         || !(request.evidence().fields().get("target") instanceof Map<?, ?> evidenceTarget)
         || !Long.toString(target.catalogRevision()).equals(evidenceTarget.get("catalogRevision"))
+        || !Long.toString(target.pointerVersion()).equals(evidenceTarget.get("pointerVersion"))
+        || !Long.toString(target.activeWorldEpoch()).equals(evidenceTarget.get("activeWorldEpoch"))
+        || !target.canonicalVersionId().toString().equals(evidenceTarget.get("canonicalVersionId"))
         || !player
             .requestId()
             .toString()
@@ -167,6 +171,41 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (selected.fence() != source.regionAcknowledgement().executorFence().longValueExact())
       throw unavailable();
     return selected;
+  }
+
+  /** Retains capacity for this attempt before Account can commit a reservation. */
+  void precharge(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      CurrentOwner selected,
+      long deadline) {
+    if (budget == null) {
+      within(
+          deadline,
+          owner -> {
+            owner.precharge(source, request, selected, deadline);
+            return null;
+          });
+      return;
+    }
+    budget.check();
+    request.requireCommittable();
+    if (!source.candidate().bindingDecisionId().equals(request.identity().admissionId())
+        || !source.candidate().bindingIdentity().tenantId().equals(request.identity().tenantId())
+        || selected.fence() != source.regionAcknowledgement().executorFence().longValueExact()) {
+      throw unavailable();
+    }
+    var candidate = source.candidate();
+    var assignment = scopedTags().assignmentForTransition(candidate.bindingDecisionId());
+    sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireSelectedOwner(tx, candidate, selected);
+              CanonicalGameplayCapacityEvidenceBudget.precharge(
+                  tx, request, source.candidateDigest(), selected, assignment.tenantGameplayTag());
+              return null;
+            });
   }
 
   /** Returns only after independently reading the already-installed exact execution record. */
@@ -213,10 +252,18 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                   var tx = DSL.using(configuration);
                   // Serialize original effect custody with every durable region-owner replacement.
                   // This lock is released before any Redis command is submitted.
-                  requireSelectedOwner(tx, source.candidate(), execution);
+                  requireSelectedOwner(
+                      tx,
+                      source.candidate(),
+                      new CurrentOwner(
+                          execution.selectedOwnerId(), execution.selectedOwnerFence()));
                   Record row = find(tx, execution);
                   if (row != null) {
                     exact(row, execution);
+                    if (!"COMMITTED".equals(row.get("status", String.class))) {
+                      CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+                          tx, execution, assignment.tenantGameplayTag());
+                    }
                     return false;
                   }
                   if (execution.reservation().state() != State.RESERVED
@@ -349,6 +396,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             : scopedTags().assignmentForTransition(execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();
+    CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+        sql(), execution, assignment.tenantGameplayTag());
     long result =
         scopedFinalOwner()
             .closeCapacityExecutionOnce(
@@ -496,6 +545,40 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         != 1) throw unavailable();
   }
 
+  void requireRetainedCommittedOriginal(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayRegionRuntimeStatus prior) {
+    Record transition =
+        sql()
+            .fetchOne(
+                "SELECT original_new_capacity_execution_digest"
+                    + " FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                source.candidate().bindingDecisionId());
+    if (transition == null) throw unavailable();
+    String digest = transition.get(0, String.class);
+    Record row =
+        sql()
+            .fetchOne(
+                "SELECT canonical_execution FROM "
+                    + TABLE
+                    + " WHERE execution_digest=? AND status='COMMITTED'",
+                digest);
+    if (row == null) throw unavailable();
+    var execution = CanonicalGameplayRegionOwnerTransferRepository.decode(row.get(0, byte[].class));
+    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
+    var proof = readExact(execution.request(), execution.reservation(), false);
+    var receipt =
+        source
+            .finalReceipt()
+            .orElseThrow(CanonicalGameplayOriginalNewCapacityExecutionOwner::unavailable);
+    if (!"COMMITTED".equals(proof.disposition())
+        || !proof.physicalDigest().equals("sha256:" + receipt.finalSessionSha256())
+        || !prior.ownerInstanceId().equals(proof.currentOwnerId())
+        || !prior.executorFence().equals(java.math.BigInteger.valueOf(proof.currentOwnerFence()))) {
+      throw unavailable();
+    }
+  }
+
   /** Authenticated transport calls this read-only method. Absence and contradictions throw. */
   public Snapshot readExact(Request request, Result reservation) {
     noSql();
@@ -636,9 +719,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   private static void requireSelectedOwner(
-      DSLContext tx,
-      CanonicalGameplayOriginalNewCandidate candidate,
-      OriginalNewCapacityExecution execution) {
+      DSLContext tx, CanonicalGameplayOriginalNewCandidate candidate, CurrentOwner selected) {
     var binding = candidate.bindingIdentity();
     Record current =
         tx.fetchOne(
@@ -648,9 +729,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             binding.regionId());
     if (current == null
         || !"game-session-service".equals(current.get("owner_service", String.class))
-        || !execution.selectedOwnerId().equals(current.get("owner_instance_id", String.class))
-        || !Long.valueOf(execution.selectedOwnerFence())
-            .equals(current.get("executor_fence", Long.class))
+        || !selected.instanceId().equals(current.get("owner_instance_id", String.class))
+        || !Long.valueOf(selected.fence()).equals(current.get("executor_fence", Long.class))
         || !binding
             .regionEpoch()
             .equals(java.math.BigInteger.valueOf(current.get("region_epoch", Long.class)))
@@ -691,6 +771,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     Record row = find(sql(), execution);
     if (row == null) throw unavailable();
     exact(row, execution);
+    CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+        sql(), execution, item.assignment().tenantGameplayTag());
     long result =
         scopedFinalOwner()
             .fenceCapacityExecutionOnce(
