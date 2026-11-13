@@ -11,6 +11,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -50,6 +51,7 @@ import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixtu
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import org.jooq.ConnectionProvider;
@@ -59,6 +61,7 @@ import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** Controlled acquisition/driver behavior, not database or owner-evidence qualification. */
@@ -202,6 +205,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
     when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
     when(connection.closeAsync()).thenReturn(close);
+    RedisFuture<Long> probed = mock();
+    when(commands.<Long>evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
+        .thenReturn(probed);
+    when(probed.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
     RuntimeIdentity identity =
         new RuntimeIdentity(
             "game-session-service",
@@ -242,7 +249,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verify(connection, timeout(1000)).closeAsync();
       assertPermitRemainsHeld(operations, operationMaximum);
       assertPermitRemainsHeld(background, backgroundMaximum);
-      verify(commands, never()).evalsha(any(), any(), any(), any());
 
       close.complete(null);
       assertThat(operations.tryAcquire(operationMaximum, 2, TimeUnit.SECONDS)).isTrue();
@@ -250,7 +256,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       assertThat(background.tryAcquire(backgroundMaximum, 2, TimeUnit.SECONDS)).isTrue();
       background.release(backgroundMaximum);
       verify(connection, org.mockito.Mockito.times(1)).closeAsync();
-      verify(commands, never()).evalsha(any(), any(), any(), any());
+      ArgumentCaptor<byte[][]> arguments = ArgumentCaptor.forClass(byte[][].class);
+      verify(commands, times(1)).evalsha(any(), any(), any(byte[][].class), arguments.capture());
+      assertThat(arguments.getValue()[1])
+          .isEqualTo("PROBE".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
     } finally {
       if (prepared != null) prepared.close();
       close.complete(null);
@@ -314,7 +323,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     when(commands.evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
         .thenAnswer(
             invocation -> {
-              submittedArguments.set((byte[][]) invocation.getRawArguments()[3]);
+              byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
+              if ("INITIALIZE"
+                  .equals(new String(arguments[1], java.nio.charset.StandardCharsets.US_ASCII))) {
+                submittedArguments.set(arguments);
+              }
               return initialized;
             });
     when(initialized.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
@@ -378,7 +391,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
 
         var session = prepared;
         initialization = CompletableFuture.supplyAsync(() -> session.initialize(permit), executor);
-        verify(commands, timeout(1000))
+        verify(commands, timeout(1000).times(2))
             .evalsha(any(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
         verify(connection, timeout(1000)).closeAsync();
         byte[][] arguments = submittedArguments.get();
@@ -586,6 +599,77 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     } finally {
       release.countDown();
       verify(provider, timeout(2000)).release(connection);
+      verifyNoInteractions(connection);
+    }
+  }
+
+  @Test
+  void handoffStatusReadBoundsAcquisitionAndCannotExecuteAfterItsDeadline() throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+    when(provider.acquire())
+        .thenAnswer(
+            invocation -> {
+              entered.countDown();
+              awaitUninterruptibly(release);
+              return connection;
+            });
+    var dsl = source(provider);
+    var transferRepository =
+        new CanonicalGameplayRegionOwnerTransferRepository(
+            dsl, CLOCK, mock(CanonicalGameplayTenantGameplayTagRepository.class));
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            dsl,
+            CLOCK,
+            transferRepository,
+            mock(CanonicalGameplayOriginalNewCapacityExecutionOwner.class),
+            mock(CanonicalGameplayProtectedIncarnationReceiver.class));
+    UUID tenantId = UUID.randomUUID();
+    UUID gameInstanceId = UUID.randomUUID();
+    var lifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+            UUID.randomUUID(),
+            "prod",
+            tenantId,
+            "world",
+            gameInstanceId,
+            UUID.randomUUID(),
+            "SHARED",
+            true,
+            "budget-test",
+            UUID.randomUUID(),
+            "sha256:" + "a".repeat(64),
+            "sha256:" + "b".repeat(64),
+            "sha256:" + "c".repeat(64));
+    var regionSource =
+        new CanonicalGameplayRegionRuntimeStatusRepository.Source(
+            tenantId,
+            gameInstanceId,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1L,
+            0L,
+            lifecycleRequest,
+            UUID.randomUUID(),
+            "d".repeat(64),
+            "sha256:" + "e".repeat(64));
+
+    try {
+      assertThatThrownBy(
+              () ->
+                  transfer.withStatusRepository(
+                      CLOCK.millis() + 1000,
+                      statusRepository -> statusRepository.findTimelinePreparation(regionSource)))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+      verifyNoInteractions(connection);
+    } finally {
+      release.countDown();
+      verify(provider, timeout(2000)).release(connection);
+      verifyNoInteractions(connection);
     }
   }
 
@@ -767,6 +851,65 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         if (background.availablePermits() == backgroundAvailable - 1) background.release();
       }
     } finally {
+      Metrics.removeRegistry(registry);
+      registry.close();
+    }
+  }
+
+  @Test
+  void exceptionalOrCancelledRedisDisposalRetainsTheBudgetAndReportsIt() {
+    var registry = new SimpleMeterRegistry();
+    Metrics.addRegistry(registry);
+    var retained =
+        (AtomicInteger)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS"));
+    var operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    var background =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int priorOperations = operations.availablePermits();
+    int priorBackground = background.availablePermits();
+    int priorRetained = retained.get();
+    CompletableFuture<Void> cancelled = new CompletableFuture<>();
+    cancelled.cancel(false);
+    try {
+      for (var close :
+          List.of(
+              CompletableFuture.<Void>failedFuture(new IllegalStateException("close failed")),
+              cancelled)) {
+        assertThatThrownBy(
+                () ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                        CLOCK,
+                        Long.MAX_VALUE,
+                        budget -> {
+                          budget.awaitAsyncClose(close);
+                          return true;
+                        }))
+            .isInstanceOf(IllegalStateException.class);
+      }
+      assertThat(operations.availablePermits()).isEqualTo(priorOperations - 2);
+      assertThat(background.availablePermits()).isEqualTo(priorBackground - 2);
+      assertThat(
+              registry
+                  .get("original_new_capacity_redis_close_failure_retained_operations")
+                  .gauge()
+                  .value())
+          .isEqualTo(priorRetained + 2);
+    } finally {
+      operations.release(priorOperations - operations.availablePermits());
+      background.release(priorBackground - background.availablePermits());
+      retained.set(priorRetained);
       Metrics.removeRegistry(registry);
       registry.close();
     }

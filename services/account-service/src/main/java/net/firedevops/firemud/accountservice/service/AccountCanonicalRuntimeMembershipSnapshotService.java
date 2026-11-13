@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
@@ -13,6 +14,9 @@ public final class AccountCanonicalRuntimeMembershipSnapshotService {
   private final AccountCanonicalRuntimeMembershipSnapshotRepository repository;
   private final TransactionTemplate ownerTransaction;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "The private repository is an injected Account owner collaborator.")
   public AccountCanonicalRuntimeMembershipSnapshotService(
       AccountCanonicalRuntimeMembershipSnapshotRepository repository,
       PlatformTransactionManager transactionManager) {
