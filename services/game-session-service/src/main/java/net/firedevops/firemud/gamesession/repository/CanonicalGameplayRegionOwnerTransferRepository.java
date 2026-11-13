@@ -181,6 +181,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     var terminalRows =
         tx.fetch(
             "SELECT t.transfer_id,e.execution_digest,e.canonical_execution,"
+                + "e.selected_owner_id,e.selected_owner_fence,"
                 + "c.original_new_candidate_bytes,c.original_new_candidate_digest"
                 + " FROM game_session_canonical_binding_transition c"
                 + " JOIN game_session_original_new_capacity_execution e ON e.transition_id=c.transition_id"
@@ -191,8 +192,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                 + TRANSFER
                 + " t ON t.tenant_id=b.tenant_id AND t.game_instance_id=b.game_instance_id"
                 + " AND t.region_id=b.region_id AND t.region_epoch=b.region_epoch"
-                + " AND t.old_owner_id=e.selected_owner_id AND t.old_owner_fence=e.selected_owner_fence"
                 + " WHERE c.transition_id=? AND t.state='FROZEN'"
+                + " AND e.selected_owner_fence<=t.old_owner_fence"
                 + " AND c.original_new_candidate_state='READBACK_CONFIRMED'"
                 + " AND ((c.status='COMMITTED' AND e.status='COMMITTED'"
                 + " AND e.execution_digest=c.original_new_capacity_execution_digest"
@@ -222,8 +223,9 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             .requestId()
             .toString()
             .equals(candidate.leaseEvidence().carrier().get("requestId"))
-        || !execution.selectedOwnerId().equals(transfer.get("old_owner_id", String.class))
-        || execution.selectedOwnerFence() != transfer.get("old_owner_fence", Long.class)
+        || !execution.selectedOwnerId().equals(row.get("selected_owner_id", String.class))
+        || execution.selectedOwnerFence() != row.get("selected_owner_fence", Long.class)
+        || execution.selectedOwnerFence() > transfer.get("old_owner_fence", Long.class)
         || !binding.tenantId().equals(transfer.get("tenant_id", UUID.class))
         || !binding.gameInstanceId().equals(transfer.get("game_instance_id", UUID.class))
         || !binding.regionId().equals(transfer.get("region_id", UUID.class))
@@ -264,6 +266,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         .transactionResult(
             configuration -> {
               var tx = DSL.using(configuration);
+              tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
               requireOldOwner(tx, source, prior);
               Record old =
                   tx.fetchOne(

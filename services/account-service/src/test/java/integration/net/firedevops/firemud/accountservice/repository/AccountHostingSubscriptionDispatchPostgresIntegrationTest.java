@@ -41,6 +41,9 @@ import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreat
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionProvisioningService;
 import net.firedevops.firemud.accountservice.service.StripeWebhookIntakeService;
+import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService;
+import net.firedevops.firemud.accountservice.service.session.AccountHostingFirstInvoicePaymentService;
+import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
@@ -74,6 +77,53 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void signedSuccessRetriesOnlyWhenItMatchesTheRetainedFirstInvoice() throws Exception {
+    var source = unpaidCancellationDataSource(null);
+    var hosting = CanonicalHostingSubscriptionTestFixture.create(source);
+    var checkout = hosting.awaitFirstInvoice();
+    var payments =
+        new AccountHostingFirstInvoicePaymentService(
+            mock(AccountControlUiActorService.class),
+            mock(AccountRecentReauthenticationService.class),
+            hosting.firstInvoiceRepository(),
+            new StripeEventInboxRepository(hosting.dsl()),
+            checkout.provider(),
+            checkout.verifier(),
+            hosting.service(),
+            new DataSourceTransactionManager(source));
+
+    var invoicesBefore =
+        hosting.dsl().fetch("SELECT *, xmin::text FROM subscription_first_invoices");
+    var linked = checkout.signedSuccess();
+    assertThat(payments.completeSigned(linked.payload(), linked.signature()).state())
+        .isEqualTo("RECONCILING");
+
+    String unrelatedPayload =
+        linked
+            .payload()
+            .replace(checkout.invoice().paymentIntentId(), "pi_unrelated")
+            .replace("evt_" + checkout.invoice().paymentIntentId().substring(3), "evt_unrelated");
+    var unrelated = checkout.signWebhookPayload(unrelatedPayload);
+    assertThat(payments.completeSigned(unrelated.payload(), unrelated.signature()).state())
+        .isEqualTo("IGNORED");
+
+    assertThat(
+            hosting
+                .dsl()
+                .fetch("SELECT raw_payload FROM stripe_event_inbox")
+                .getValues("raw_payload", byte[].class))
+        .extracting(bytes -> new String(bytes, StandardCharsets.UTF_8))
+        .containsExactlyInAnyOrder(linked.payload(), unrelated.payload());
+    assertThat(hosting.dsl().fetch("SELECT *, xmin::text FROM subscription_first_invoices"))
+        .isEqualTo(invoicesBefore);
+    assertThat(hosting.firstInvoiceConfirmations()).isZero();
+    assertThat(hosting.dsl().fetchCount(DSL.table("subscription_first_invoice_success_evidence")))
+        .isZero();
+    assertThat(hosting.dsl().fetchCount(DSL.table("subscription_first_invoice_completions")))
+        .isZero();
+  }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
@@ -590,6 +640,70 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
+  void lostProvisionResponseReplaysRetainedInvoiceWithoutProviderIo() {
+    Fixture f = fixture("1032");
+    var provisioning = service(f);
+    var originalClaim = claim(f, 1);
+    // Treat the committed first result as lost and retry with the exact retained claim.
+    provisioning.provision(originalClaim, UUID.randomUUID(), UUID.randomUUID());
+    assertThat(
+            Objects.requireNonNull(
+                    f.dsl()
+                        .fetchOne(
+                            "SELECT phase FROM subscription_provisioning_work WHERE request_id = ?",
+                            f.creation().requestId()))
+                .get("phase", String.class))
+        .isEqualTo("AWAITING_PAYMENT");
+
+    var retainedImage =
+        f.dsl()
+            .fetchSingle(
+                "SELECT row_to_json(i)::text || ':' || xmin::text FROM subscription_first_invoices i")
+            .get(0, String.class);
+    var dispatchImage =
+        f.dsl()
+            .fetchSingle(
+                "SELECT row_to_json(c)::text || ':' || xmin::text FROM subscription_provider_dispatch_claim c")
+            .get(0, String.class);
+    var providerCalls =
+        List.of(
+            f.transport().requests,
+            f.transport().creates,
+            f.transport().searches,
+            f.transport().lists,
+            f.transport().subscriptionReads);
+
+    var replay =
+        (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
+            provisioning.provision(originalClaim, UUID.randomUUID(), UUID.randomUUID());
+
+    assertThat(replay.invoice().subscriptionId()).isEqualTo(f.creation().subscriptionId());
+    assertThat(replay.invoice().creationRequestId()).isEqualTo(f.creation().requestId());
+    assertThat(replay.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(
+            f.dsl()
+                .fetchSingle(
+                    "SELECT row_to_json(i)::text || ':' || xmin::text FROM subscription_first_invoices i")
+                .get(0, String.class))
+        .isEqualTo(retainedImage);
+    assertThat(
+            f.dsl()
+                .fetchSingle(
+                    "SELECT row_to_json(c)::text || ':' || xmin::text FROM subscription_provider_dispatch_claim c")
+                .get(0, String.class))
+        .isEqualTo(dispatchImage);
+    assertThat(
+            List.of(
+                f.transport().requests,
+                f.transport().creates,
+                f.transport().searches,
+                f.transport().lists,
+                f.transport().subscriptionReads))
+        .isEqualTo(providerCalls);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isZero();
+  }
+
+  @Test
   void liveFinalBudgetDispatchSurvivesDisplayRefreshAndCompetingClaim() {
     Fixture f = fixture("1032");
     var provisioning = service(f);
@@ -652,6 +766,12 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(f.transport().lists).isEqualTo(1);
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isOne();
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();
+    int providerRequests = f.transport().requests;
+    assertThat(provisioning.provision(second, UUID.randomUUID(), UUID.randomUUID()))
+        .isEqualTo(result);
+    assertThatThrownBy(() -> provisioning.provision(first, UUID.randomUUID(), UUID.randomUUID()))
+        .isInstanceOf(FenceRejectedException.class);
+    assertThat(f.transport().requests).isEqualTo(providerRequests);
   }
 
   @Test
@@ -730,8 +850,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
   @Test
   void displayRefreshAfterClaimRefusesDispatchButRetainedWorkReachesOperatorDeadline() {
-    Fixture f = fixture("1032", Duration.ofSeconds(5));
-    var provisioning = service(f);
+    Fixture f = fixture(null, Duration.ofSeconds(5));
+    var provisioning = migratedService(f);
     var original = claim(f, 1);
     var originalRows = f.dsl().fetch("SELECT * FROM subscription_create_operations").intoMaps();
     var reservation =
@@ -1012,6 +1132,10 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
   private static AccountHostingSubscriptionProvisioningService service(Fixture f) {
     migrate(f.source(), f.schema(), null);
+    return migratedService(f);
+  }
+
+  private static AccountHostingSubscriptionProvisioningService migratedService(Fixture f) {
     f.dsl()
         .execute(
             "INSERT INTO account_hosting_billing_policy_values (provider_price_id, policy_version, quantity, amount, currency) "
@@ -1029,8 +1153,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
             stripe, f.clock(), false, Duration.ofMillis(250), Duration.ofSeconds(1)),
         new net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient(
             stripe, f.clock(), Duration.ofMillis(250), Duration.ofSeconds(1)),
-        new net.firedevops.firemud.accountservice.repository
-            .AccountHostingFirstInvoicePaymentRepository(f.dsl(), f.intents(), f.clock()),
+        new AccountHostingFirstInvoicePaymentRepository(f.dsl(), f.intents(), f.clock()),
         new DataSourceTransactionManager(f.source()));
   }
 
@@ -1337,6 +1460,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     private int lists;
     private int creates;
     private int subscriptionReads;
+    private int requests;
 
     private Transport(
         AccountSubscriptionCreationRecord creation, String paymentMethod, Clock clock) {
@@ -1358,6 +1482,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         throws StripeException {
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
       assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+      requests++;
       String response;
       if (path.equals("/v1/customers/" + creation.providerCustomerId())) {
         response =

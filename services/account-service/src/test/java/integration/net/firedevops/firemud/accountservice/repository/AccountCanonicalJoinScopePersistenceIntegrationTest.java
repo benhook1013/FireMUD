@@ -284,7 +284,7 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
   }
 
   @Test
-  void firstInvoiceAndCapacityUpgradeFromParent1036Through1040PreservesCanonicalRowsAndHistory() {
+  void firstInvoiceAndCapacityUpgradeFromParent1036Through1041PreservesCanonicalRowsAndHistory() {
     String schema = createSchema("canonical_join_scope_");
     DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway parent = accountFlyway(dataSource, schema, "1036");
@@ -356,8 +356,10 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
         .doesNotContain(
             "V1037__canonical_join_failure_and_attempt_diagnostics.sql",
             "V1038__canonical_join_existing_membership_terminal.sql",
-            "V1041__hosting_first_invoice_completion.sql",
-            "V1040__account_tenant_capacity_owner.sql");
+            "V1040__account_tenant_capacity_owner.sql",
+            "V1040.1__account_capacity_origin_decisions.sql",
+            "V1040.2__bound_capacity_origin_refusals.sql",
+            "V1041__hosting_first_invoice_completion.sql");
 
     Flyway current = accountFlyway(dataSource, schema, "1041");
     current.migrate();

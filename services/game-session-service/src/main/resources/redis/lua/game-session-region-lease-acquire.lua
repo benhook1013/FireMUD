@@ -1,5 +1,5 @@
 -- Claims a region lease only when the canonical timeline matches the expected epoch.
--- gs_region_lease/v2 checks its fifth argument against Redis TIME. Zero omits the deadline.
+-- gs_region_lease/v2 caps the initial lease at its Redis TIME deadline. Zero omits the cap.
 local leaseKey = KEYS[1]
 local metaKey = KEYS[2]
 if #KEYS ~= 2 or #ARGV ~= 5 or ARGV[1] ~= 'gs_region_lease/v2' then return -1 end
@@ -76,9 +76,10 @@ if keyType == 'string' then
 end
 if deadline > 0 then
   local now = redis.call('TIME')
-  if tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) >= deadline then
-    return 0
-  end
+  local nowMillis = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+  local remainingMillis = deadline - nowMillis
+  if remainingMillis <= 0 then return 0 end
+  ttl = string.format('%.0f', math.min(tonumber(ttl), remainingMillis))
 end
 local result = redis.call('SET', leaseKey, token, 'PX', ttl, 'NX')
 if result and result.ok == 'OK' then return 1 end

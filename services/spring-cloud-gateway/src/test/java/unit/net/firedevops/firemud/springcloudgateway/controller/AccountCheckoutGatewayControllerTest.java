@@ -3,14 +3,23 @@ package net.firedevops.firemud.springcloudgateway.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Authenticated;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Request;
@@ -22,7 +31,10 @@ import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerP
 import net.firedevops.firemud.springcloudgateway.filter.HeaderTrustFilter;
 import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DefaultDataBufferFactory;
+import org.springframework.core.io.buffer.NettyDataBufferFactory;
+import org.springframework.core.io.buffer.PooledDataBuffer;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -33,7 +45,11 @@ import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.netty.Connection;
+import reactor.netty.http.server.HttpServerRequest;
+import reactor.test.StepVerifier;
 
 class AccountCheckoutGatewayControllerTest {
   private static final UUID REQUEST_ID = UUID.fromString("1ca7f2e5-1362-4ac8-9312-38bbf73bc33f");
@@ -111,7 +127,7 @@ class AccountCheckoutGatewayControllerTest {
   }
 
   @Test
-  void directTlsLoginUsesSocketPeerEvenInsideForwardedProxyCidr() {
+  void directTlsLoginFailsClosedWhenOnlyExchangeRemoteAddressIsAvailable() {
     for (boolean trustedForwarder : new boolean[] {false, true}) {
       var authClient = mock(AccountControlUiAuthenticationClient.class);
       var checkoutClient = mock(AccountCheckoutHttpClient.class);
@@ -136,11 +152,10 @@ class AccountCheckoutGatewayControllerTest {
       var response =
           controller.login(canonicalized(MockServerWebExchange.from(request), headers)).block();
       assertThat(response).isNotNull();
-      assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-      var captured = org.mockito.ArgumentCaptor.forClass(Request.class);
-      verify(authClient).login(captured.capture());
-      assertThat(captured.getValue().sourceContext().canonicalClientAddress())
-          .isEqualTo("192.0.2.10");
+      assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+      assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+      verify(authClient, never()).login(any());
+      verifyNoCheckoutCalls(checkoutClient);
     }
   }
 
@@ -210,6 +225,26 @@ class AccountCheckoutGatewayControllerTest {
   }
 
   @Test
+  void mapsLoginRpcTimeoutToUnavailableInsteadOfRequestBodyTimeout() throws Exception {
+    var authClient = mock(AccountControlUiAuthenticationClient.class);
+    var checkoutClient = mock(AccountCheckoutHttpClient.class);
+    var controller = new AccountCheckoutGatewayController(authClient, checkoutClient, properties());
+    var unavailableType =
+        AccountControlUiAuthenticationClient.AuthenticationUnavailableException.class;
+    var unavailableConstructor = unavailableType.getDeclaredConstructor();
+    unavailableConstructor.setAccessible(true);
+    when(authClient.login(any())).thenThrow(unavailableConstructor.newInstance());
+
+    var response = controller.login(secureExchange("/api/account/auth/login", loginJson())).block();
+
+    assertThat(response).isNotNull();
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+    verify(authClient).login(any());
+    verifyNoCheckoutCalls(checkoutClient);
+  }
+
+  @Test
   void redactsCredentialAndTokenFromTransientLoginRecordDiagnostics() throws Exception {
     Class<?> dataType =
         Class.forName(AccountCheckoutGatewayController.class.getName() + "$LoginData");
@@ -254,6 +289,43 @@ class AccountCheckoutGatewayControllerTest {
     assertThat(oversized.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
     verify(authClient, never()).login(any());
     verifyNoCheckoutCalls(checkoutClient);
+  }
+
+  @Test
+  void stalledChunkedWebhookBodyTimesOutCancelsAndReleasesWithoutForwarding() {
+    var authClient = mock(AccountControlUiAuthenticationClient.class);
+    var checkoutClient = mock(AccountCheckoutHttpClient.class);
+    var controller = new AccountCheckoutGatewayController(authClient, checkoutClient, properties());
+    var stalledBuffer =
+        new NettyDataBufferFactory(ByteBufAllocator.DEFAULT)
+            .wrap(Unpooled.copiedBuffer("{", StandardCharsets.UTF_8));
+    var sourceCancelled = new AtomicBoolean();
+    Flux<DataBuffer> stalledBody =
+        Flux.concat(Mono.just(stalledBuffer), Flux.<DataBuffer>never())
+            .doOnCancel(() -> sourceCancelled.set(true));
+    var request =
+        MockServerHttpRequest.post("https://localhost/api/account/billing/hosting/webhook")
+            .sslInfo(mock(SslInfo.class))
+            .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .header("Stripe-Signature", "t=123,v1=signature")
+            .body(stalledBody);
+    var exchange = MockServerWebExchange.from(request);
+
+    StepVerifier.withVirtualTime(() -> controller.receiveStripeWebhook(exchange))
+        .thenAwait(Duration.ofSeconds(5))
+        .assertNext(
+            response -> {
+              assertThat(response.getStatusCode()).isEqualTo(HttpStatus.REQUEST_TIMEOUT);
+              assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+              assertThat(new String(response.getBody(), StandardCharsets.UTF_8))
+                  .isEqualTo("{\"status\":\"ERROR\"}");
+            })
+        .verifyComplete();
+
+    assertThat(sourceCancelled).isTrue();
+    assertThat(((PooledDataBuffer) stalledBuffer).isAllocated()).isFalse();
+    verifyNoCheckoutCalls(checkoutClient);
+    verify(authClient, never()).login(any());
   }
 
   @Test
@@ -387,10 +459,24 @@ class AccountCheckoutGatewayControllerTest {
     var request =
         MockServerHttpRequest.method(HttpMethod.POST, URI.create("https://localhost" + path))
             .sslInfo(mock(SslInfo.class))
-            .remoteAddress(new java.net.InetSocketAddress("192.0.2.10", 443))
+            .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
             .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .body(body);
-    return canonicalized(MockServerWebExchange.from(request), new GatewayHeaderTrustProperties());
+    return canonicalized(
+        MockServerWebExchange.from(withNativeSocketPeer(request)),
+        new GatewayHeaderTrustProperties());
+  }
+
+  private static MockServerHttpRequest withNativeSocketPeer(MockServerHttpRequest request) {
+    HttpServerRequest nativeRequest =
+        mock(HttpServerRequest.class, withSettings().extraInterfaces(Connection.class));
+    Connection nativeConnection = (Connection) nativeRequest;
+    Channel channel = mock(Channel.class);
+    when(nativeConnection.channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("192.0.2.10", 443));
+    MockServerHttpRequest requestWithNativePeer = spy(request);
+    doReturn(nativeRequest).when(requestWithNativePeer).getNativeRequest();
+    return requestWithNativePeer;
   }
 
   private static ServerWebExchange canonicalized(
