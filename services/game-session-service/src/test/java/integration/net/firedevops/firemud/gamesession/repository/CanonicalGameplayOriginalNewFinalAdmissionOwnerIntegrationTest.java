@@ -1170,6 +1170,34 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void contenderAcquireUsesBoundedInitialTtlWhileOrdinaryRenewKeepsConfiguredTtl()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var leases = new CanonicalGameplayRegionLeaseRedisOwner(ownerClient, catalog);
+    var identity =
+        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+            "game-session-service",
+            "bounded-contender",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "controlled-test-image");
+    byte[] key = ascii(original.grant.key());
+    assertThat(admin.pexpire(key, 0)).isTrue();
+    var grant =
+        leases
+            .forHandoffDeadline(CLOCK, CLOCK.millis() + 5_000L)
+            .acquire(
+                original.source, original.status.regionEpoch(), Duration.ofSeconds(30), identity);
+    assertThat(admin.pttl(key)).isPositive().isLessThanOrEqualTo(5_000L);
+    leases.renew(grant, Duration.ofSeconds(30));
+    assertThat(admin.pttl(key)).isGreaterThan(5_000L).isLessThanOrEqualTo(30_000L);
+  }
+
+  @Test
   void contenderCannotFreezeRenewingOwnerAndExpiredLeaseStillTransfers() throws Exception {
     repairAccountMember();
     bridge();
@@ -1285,13 +1313,17 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
-    UUID transferId = transfer.advance(original.source, original.status, deadline());
     assertThatThrownBy(() -> replaceRegionOwner("unproved-successor"))
         .isInstanceOf(IllegalStateException.class);
     admin.pexpire(ascii(original.grant.key()), 0);
     var successor =
         CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
             fixture.dsl(), ownerClient, catalog, original, sources.resolver, transfer, deadline());
+    UUID transferId =
+        fixture
+            .dsl()
+            .fetchSingle("SELECT transfer_id FROM game_session_region_owner_transfer")
+            .get(0, UUID.class);
     var completed = receiver.observeForRegionOwnerTransfer(transferId, 0, deadline());
     assertThat(completed.regionOwnerTransferContext().controlState()).isEqualTo("COMPLETED");
     assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(candidate);
