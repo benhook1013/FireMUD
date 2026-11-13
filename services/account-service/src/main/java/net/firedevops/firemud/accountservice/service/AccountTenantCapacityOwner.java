@@ -350,10 +350,13 @@ public final class AccountTenantCapacityOwner {
   private static boolean capacityAttemptFreshnessFailure(Throwable failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
       if (cause instanceof PSQLException postgresFailure
-          && "23514".equals(postgresFailure.getSQLState())
-          && postgresFailure.getServerErrorMessage() != null
-          && CAPACITY_ATTEMPT_FRESHNESS_CONSTRAINT.equals(
-              postgresFailure.getServerErrorMessage().getConstraint())) return true;
+          && "23514".equals(postgresFailure.getSQLState())) {
+        var serverError = postgresFailure.getServerErrorMessage();
+        if (serverError != null
+            && CAPACITY_ATTEMPT_FRESHNESS_CONSTRAINT.equals(serverError.getConstraint())) {
+          return true;
+        }
+      }
     }
     return false;
   }
