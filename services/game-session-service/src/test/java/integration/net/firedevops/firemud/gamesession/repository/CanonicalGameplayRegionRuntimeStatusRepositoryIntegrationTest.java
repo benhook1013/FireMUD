@@ -34,6 +34,7 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
@@ -1387,8 +1388,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                 () ->
                     proof.receiver.observeForRegionOwnerTransfer(
                         id, captured.getFirst().ordinal(), proof.clock.millis() + 500L))
-            .isInstanceOf(
-                CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
+            .isInstanceOf(ObservationUnavailableException.class);
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(3));
       } finally {
         lock.rollback();
