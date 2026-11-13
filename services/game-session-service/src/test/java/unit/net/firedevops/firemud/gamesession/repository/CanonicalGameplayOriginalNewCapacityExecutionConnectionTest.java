@@ -67,7 +67,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     DSLContext dsl = mock();
     CanonicalGameplayTenantGameplayTagRepository tags = mock();
     StatefulRedisConnection<byte[], byte[]> late = mock();
-    when(late.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
+    var closeFinished = new CompletableFuture<Void>();
+    when(late.closeAsync()).thenReturn(closeFinished);
     CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
     when(redis.connect(ByteArrayCodec.INSTANCE))
         .thenAnswer(
@@ -98,9 +99,17 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
       verifyNoInteractions(late, dsl, tags);
       release.countDown();
       verify(late, timeout(1000)).closeAsync();
+      Semaphore operationPermits =
+          (Semaphore)
+              java.util.Objects.requireNonNull(
+                  ReflectionTestUtils.getField(
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+      assertThat(operationPermits.availablePermits())
+          .isEqualTo(CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS - 1);
       verifyNoInteractions(dsl, tags);
     } finally {
       release.countDown();
+      closeFinished.complete(null);
       scheduler.shutdownNow();
     }
   }
