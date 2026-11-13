@@ -542,9 +542,11 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
         || !provenance.equals(pair.provenance())
         || pair.membershipVersion() != 2L
         || pair.membershipAuthorityGeneration() != 1L
-        || pair.eventSequence() != 1L
-        || !event.eventId().equals(pair.eventId())
-        || !event.eventDigest().equals(pair.eventDigest())
+        || pair.eventSequence() < 1L
+        || (pair.eventSequence() == 1L
+            && (!event.eventId().equals(pair.eventId())
+                || !event.eventDigest().equals(pair.eventDigest())))
+        || (pair.eventSequence() > 1L && !"COMMITTED".equals(operation.status()))
         || pair.lastTransitionInvalidated()) {
       throw new IllegalStateException("Canonical first-JOIN pair differs from its event");
     }

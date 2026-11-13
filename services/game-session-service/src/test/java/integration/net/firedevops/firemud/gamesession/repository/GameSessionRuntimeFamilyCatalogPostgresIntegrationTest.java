@@ -4,9 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +19,10 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
+import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog;
 import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.FactKind;
 import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.FreshDisposition;
@@ -26,8 +33,10 @@ import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog
 import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.StateClass;
 import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalogCodec;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -88,7 +97,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(16);
+      assertThat(catalog.catalogEpoch()).isEqualTo(23);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -148,12 +157,14 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "gs_canonical_account_coverage_snapshot_region_obligation",
               "game_session_canonical_account_admission_fence_intent_cohort_ro",
               "game_session_canonical_account_admission_fence_intent_barrier_t",
+              "game_session_account_fence_final_observation",
               "game_instances.script_patch_version",
               "gameplay_command.declared_effects_json",
               "game_session_canonical_binding_transition.admission_request_id",
               "game_session_canonical_realm_catalog.private_preparation_request_id",
               "game_session_private_catalog_revision_history",
-              "game_session_current_private_catalog_revisions")) {
+              "game_session_current_private_catalog_revisions",
+              "game_session_original_new_admitted_logout_intent")) {
         assertThat(catalog.families()).anyMatch(family -> family.familyId().equals(name));
       }
       assertPrivateRevisionClassifications(catalog);
@@ -206,7 +217,14 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.4",
               "catalog-installation:1065.0.5",
               "catalog-installation:1065.0.6",
-              "catalog-installation:1065.0.7")
+              "catalog-installation:1065.0.7",
+              "catalog-installation:1065.0.8",
+              "catalog-installation:1065.0.9",
+              "catalog-installation:1065.0.10",
+              "catalog-installation:1065.1",
+              "catalog-installation:1065.2",
+              "catalog-installation:1066",
+              "catalog-installation:1066.1")
           .noneMatch(
               identity ->
                   identity.contains(":1057:")
@@ -224,7 +242,14 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       || identity.contains(":1065.0.4:")
                       || identity.contains(":1065.0.5:")
                       || identity.contains(":1065.0.6:")
-                      || identity.contains(":1065.0.7:"));
+                      || identity.contains(":1065.0.7:")
+                      || identity.contains(":1065.0.8:")
+                      || identity.contains(":1065.0.9:")
+                      || identity.contains(":1065.0.10:")
+                      || identity.contains(":1065.1:")
+                      || identity.contains(":1065.2:")
+                      || identity.contains(":1066:")
+                      || identity.contains(":1066.1:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -767,7 +792,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(16);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(23);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -918,7 +943,14 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.4",
             "1065.0.5",
             "1065.0.6",
-            "1065.0.7")) {
+            "1065.0.7",
+            "1065.0.8",
+            "1065.0.9",
+            "1065.0.10",
+            "1065.1",
+            "1065.2",
+            "1066",
+            "1066.1")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -941,7 +973,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           "INSERT INTO "
               + f.history
               + "(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success)"
-              + " VALUES(10000,'1066','controlled later migration','SQL','V1066__probe.sql',1,current_user,0,true)");
+              + " VALUES(10000,'1067','controlled later migration','SQL','V1067__probe.sql',1,current_user,0,true)");
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
     }
@@ -962,7 +994,14 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.4",
             "1065.0.5",
             "1065.0.6",
-            "1065.0.7")) {
+            "1065.0.7",
+            "1065.0.8",
+            "1065.0.9",
+            "1065.0.10",
+            "1065.1",
+            "1065.2",
+            "1066",
+            "1066.1")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "
@@ -982,13 +1021,16 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   void explicitNewOwnerEpochRetainsButInvalidatesOldRequestsAndRejectsReusedOrSkippedEpochs() {
     try (Fixture f = fixture(null)) {
       var original = f.owner().capture(request());
+      long currentEpoch = original.catalog().catalogEpoch();
+      long nextEpoch = currentEpoch + 1;
+      long previousEpochCount = f.count(EPOCHS);
       f.addComponent();
-      for (long invalid : new long[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18}) {
+      for (long invalid : new long[] {1, currentEpoch, nextEpoch + 1}) {
         assertThatThrownBy(() -> f.installEpoch(invalid))
             .hasMessageContaining("exact classified installed schema");
       }
       // Controlled explicit owner revision, not an exposed registry/runtime mutation API.
-      f.installEpoch(17);
+      f.installEpoch(nextEpoch);
       assertThatThrownBy(() -> f.owner().capture(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
@@ -996,9 +1038,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.evidence(original.request()))
           .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
       var revised = f.owner().capture(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(17);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(nextEpoch);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
-      assertThat(f.count(EPOCHS)).isEqualTo(17);
+      assertThat(f.count(EPOCHS)).isEqualTo(previousEpochCount + 1);
     }
   }
 
@@ -1639,6 +1681,266 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
+  void originCustodyUpgradeSealsNewFamiliesWithoutInventingPriorOriginEvidence() {
+    try (Fixture f = fixture("1065.0.4")) {
+      f.populatePredecessor();
+      var attemptedOrigin = f.populateCapacityDispatchPredecessor();
+      String executionTable = "game_session_original_new_capacity_execution";
+      assertThat(f.count(executionTable)).isOne();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(13);
+      var history = f.historyRows(false);
+      var classifications = f.classificationRows();
+      var oldEpochs =
+          f.dsl
+              .fetch(
+                  "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                      + EPOCHS
+                      + " e ORDER BY catalog_epoch")
+              .getValues(0, String.class);
+      var predecessorExecution =
+          f.rows(
+              List.of(
+                  executionTable,
+                  "game_session_canonical_gameplay_binding_inventory",
+                  "game_session_canonical_binding_transition",
+                  "game_session_canonical_binding_region_bridge_obligation",
+                  "game_session_canonical_issuer_partition_reservation",
+                  "game_session_canonical_tenant_gameplay_tag",
+                  "game_session_region_runtime_status"));
+      byte[] executionBytes =
+          f.dsl
+              .fetchSingle("SELECT canonical_execution FROM " + executionTable)
+              .get(0, byte[].class);
+
+      migration(f.source, f.schema, f.history, "1065.0.10").migrate();
+      var beforeOriginCustody = f.owner().capture(request());
+      assertThat(beforeOriginCustody.catalog().catalogEpoch()).isEqualTo(19);
+      assertThat(f.owner().readExact(beforeOriginCustody.request())).isEqualTo(beforeOriginCustody);
+      byte[] beforeOriginCustodyEvidence = f.evidence(beforeOriginCustody.request());
+
+      // Apply the immutable child only after the parent's .0.8 through .0.10 seals.
+      migration(f.source, f.schema, f.history, "1065.1").migrate();
+
+      assertThat(f.evidence(beforeOriginCustody.request())).isEqualTo(beforeOriginCustodyEvidence);
+      assertThat(f.rows(predecessorExecution.keySet())).isEqualTo(predecessorExecution);
+      assertThat(
+              f.dsl
+                  .fetchSingle("SELECT canonical_execution FROM " + executionTable)
+                  .get(0, byte[].class))
+          .isEqualTo(executionBytes);
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "UPDATE " + executionTable + " SET selected_owner_id='replacement-owner'"))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Original NEW capacity execution identity/outcome is immutable");
+      assertThatThrownBy(() -> f.tryBackfillCapacityOrigin(attemptedOrigin))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining(
+              "Historical execution cannot acquire fabricated pre-Account origin");
+      assertThat(f.rows(predecessorExecution.keySet())).isEqualTo(predecessorExecution);
+      assertThat(f.historyRows(false)).hasSize(history.size() + 7);
+      assertThat(f.historyRows(false).subList(0, history.size())).isEqualTo(history);
+      assertThat(f.classificationRows())
+          .containsAllEntriesOf(classifications)
+          .hasSize(classifications.size() + 5);
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                          + EPOCHS
+                          + " e WHERE catalog_epoch<=13 ORDER BY catalog_epoch")
+                  .getValues(0, String.class))
+          .isEqualTo(oldEpochs);
+      assertThat(f.evidence(original.request()))
+          .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(20);
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      for (String family :
+          List.of(
+              "game_session_original_new_capacity_origin",
+              "game_session_capacity_origin_transfer_item")) {
+        assertThat(current.catalog().families()).anyMatch(item -> item.familyId().equals(family));
+        assertThat(f.count(family)).isZero();
+        assertThatThrownBy(() -> f.dsl.execute("TRUNCATE " + family + " CASCADE"))
+            .hasMessageContaining("Region owner transfer custody is retained");
+      }
+      migration(f.source, f.schema, f.history, "1065.1").validate();
+    }
+  }
+
+  @Test
+  void admittedLogoutUpgradeRetainsPriorCatalogAndSealsTheNewIntentFamily() {
+    try (Fixture f = fixture("1065.2")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(21);
+      var before = f.rows(f.tables());
+      before.remove(f.history);
+      before.remove(CLASSIFICATIONS);
+      before.remove(EPOCHS);
+      var history = f.historyRows(false);
+      var classifications = f.classificationRows();
+      String priorEpochs =
+          "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+              + EPOCHS
+              + " e WHERE catalog_epoch<=21 ORDER BY catalog_epoch";
+      var epochs = f.dsl.fetch(priorEpochs).getValues(0, String.class);
+
+      migration(f.source, f.schema, f.history, "1066").migrate();
+
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.historyRows(false)).hasSize(history.size() + 1);
+      assertThat(f.historyRows(false).subList(0, history.size())).isEqualTo(history);
+      assertThat(f.classificationRows())
+          .containsAllEntriesOf(classifications)
+          .hasSize(classifications.size() + 1);
+      assertThat(f.dsl.fetch(priorEpochs).getValues(0, String.class)).isEqualTo(epochs);
+      assertThat(f.evidence(original.request()))
+          .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(22);
+      assertThat(current.catalog().families())
+          .anyMatch(
+              item -> item.familyId().equals("game_session_original_new_admitted_logout_intent"));
+      assertThat(f.count("game_session_original_new_admitted_logout_intent")).isZero();
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      migration(f.source, f.schema, f.history, "1066").validate();
+    }
+  }
+
+  @Test
+  void transferredOriginRecoveryUpgradeRetainsPopulatedCatalogAndSealsIssuingFence() {
+    try (Fixture f = fixture("1066")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(22);
+      var before = f.rows(f.tables());
+      before.remove(f.history);
+      before.remove(EPOCHS);
+      var history = f.historyRows(false);
+      String priorEpochs =
+          "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+              + EPOCHS
+              + " e WHERE catalog_epoch<=22 ORDER BY catalog_epoch";
+      var epochs = f.dsl.fetch(priorEpochs).getValues(0, String.class);
+
+      migration(f.source, f.schema, f.history, "1066.1").migrate();
+
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.historyRows(false)).hasSize(history.size() + 1);
+      assertThat(f.historyRows(false).subList(0, history.size())).isEqualTo(history);
+      assertThat(f.dsl.fetch(priorEpochs).getValues(0, String.class)).isEqualTo(epochs);
+      assertThat(f.evidence(original.request()))
+          .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(23);
+      assertThat(current.catalog().schemaFacts())
+          .anyMatch(
+              fact ->
+                  fact.kind() == FactKind.COLUMN
+                      && fact.identity()
+                          .equals(
+                              "game_session_original_new_capacity_origin.last_observation_custody_fence"));
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      migration(f.source, f.schema, f.history, "1066.1").validate();
+    }
+  }
+
+  @Test
+  void historicalFinalObservationUpgradePreservesPopulatedV1065Point1AndSealsEpoch18() {
+    try (Fixture f = fixture("1065.1")) {
+      f.populatePredecessor();
+      assertThat(f.count("gameplay_command")).isPositive();
+      assertThat(f.count("game_session_canonical_account_coverage_control")).isPositive();
+      assertThat(f.count("saga_instance")).isPositive();
+      String observationFamily = "game_session_account_fence_final_observation";
+      assertThat(f.tables()).doesNotContain(observationFamily);
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(20);
+      assertThat(f.owner().readExact(original.request())).isEqualTo(original);
+
+      Map<String, String> predecessorRows = f.rows(f.tables());
+      predecessorRows.remove(f.history);
+      predecessorRows.remove(EPOCHS);
+      predecessorRows.remove(CLASSIFICATIONS);
+      var classifications = f.classificationRows();
+      var history = f.historyRows(false);
+      byte[] snapshot = f.evidence(original.request());
+      var predecessorEpochs =
+          f.dsl
+              .fetch(
+                  "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                      + EPOCHS
+                      + " e ORDER BY catalog_epoch")
+              .getValues(0, String.class);
+
+      migration(f.source, f.schema, f.history, "1065.2").migrate();
+
+      assertThat(f.rows(predecessorRows.keySet())).isEqualTo(predecessorRows);
+      assertThat(f.classificationRows())
+          .containsAllEntriesOf(classifications)
+          .containsKey(observationFamily)
+          .hasSize(classifications.size() + 1);
+      var installedHistory = f.historyRows(false);
+      assertThat(installedHistory).hasSize(history.size() + 1);
+      assertThat(installedHistory.subList(0, history.size())).isEqualTo(history);
+      var installed =
+          f.dsl.fetchSingle(
+              "SELECT type,script,success FROM " + f.history + " WHERE version='1065.2'");
+      assertThat(installed.get("type", String.class)).isEqualTo("SQL");
+      assertThat(installed.get("script", String.class))
+          .isEqualTo("V1065.2__account_fence_historical_final_observation.sql");
+      assertThat(installed.get("success", Boolean.class)).isTrue();
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                          + EPOCHS
+                          + " e WHERE catalog_epoch<=20 ORDER BY catalog_epoch")
+                  .getValues(0, String.class))
+          .isEqualTo(predecessorEpochs);
+      assertThat(f.evidence(original.request())).isEqualTo(snapshot);
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.count(observationFamily)).isZero();
+
+      assertThat(f.count(EPOCHS)).isEqualTo(predecessorEpochs.size() + 1L);
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(21);
+      assertThat(current.catalog().families())
+          .anySatisfy(
+              family -> {
+                assertThat(family.familyId()).isEqualTo(observationFamily);
+                assertThat(family.role()).isEqualTo(Role.CONTROL);
+                assertThat(family.retentionDisposition())
+                    .isEqualTo(RetentionDisposition.OWNER_POLICY_RETAINED);
+              });
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(catalog_epoch) FROM "
+                          + EPOCHS
+                          + " WHERE catalog_epoch=21")
+                  .get(0, Boolean.class))
+          .isTrue();
+      migration(f.source, f.schema, f.history, "1065.2").validate();
+    }
+  }
+
+  @Test
   void
       genuineV1065Point0Point1ToPoint0Point2UpgradeRetainsPopulatedCatalogAndAddsFrozenInsertGuard() {
     try (Fixture f = fixture("1065.0.1")) {
@@ -1788,6 +2090,28 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           .contains("game_session_region_transfer_history_budget");
       assertThat(f.owner().readExact(current.request())).isEqualTo(current);
       migration(f.source, f.schema, f.history, "1065.0.7").validate();
+    }
+  }
+
+  @Test
+  void ownerReplacementIsolationUpgradeSealsGuardAndPreservesRetainedEvidence() {
+    try (Fixture f = fixture("1065.0.7")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(16);
+      var before = f.rows(f.tables());
+      before.remove(f.history);
+      before.remove(EPOCHS);
+      byte[] retained = f.evidence(original.request());
+
+      migration(f.source, f.schema, f.history, "1065.0.8").migrate();
+
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.evidence(original.request())).isEqualTo(retained);
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(17);
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      migration(f.source, f.schema, f.history, "1065.0.8").validate();
     }
   }
 
@@ -2329,6 +2653,293 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           .contains(allocation.snapshot());
       assertThat(allocation.snapshot().catalogRevision()).isEqualTo(1);
       assertThat(allocation.snapshot().admissionAllowed()).isFalse();
+    }
+
+    CanonicalGameplayCapacityOrigin populateCapacityDispatchPredecessor() {
+      // Controlled source rows for the real PostgreSQL insert guards. No Redis ACK, Account
+      // commitment, or owner admission is claimed by this storage fixture.
+      var target =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+                  source, UUID.randomUUID(), "test")
+              .playableTarget();
+      var binding =
+          new CanonicalGameplayBindingIdentity(
+              UUID.randomUUID(),
+              target.canonicalTenantId(),
+              target.playableStateNamespaceId(),
+              UUID.randomUUID(),
+              target.playableStateScope(),
+              target.canonicalGameInstanceId(),
+              target.gameInstanceId(),
+              UUID.randomUUID().toString(),
+              UUID.randomUUID(),
+              BigInteger.ONE,
+              GameSessionAccountDelegationProfile.ISSUER,
+              BigInteger.ONE,
+              BigInteger.ONE,
+              BigInteger.ONE,
+              BigInteger.ONE);
+      UUID transitionId = UUID.randomUUID();
+      UUID indexFence = UUID.randomUUID();
+      UUID issuerReservation = UUID.randomUUID();
+      UUID issuerReservationFence = UUID.randomUUID();
+      UUID requestId = UUID.randomUUID();
+      var ref = binding.bindingRef();
+      var candidate =
+          new CanonicalGameplayOriginalNewCandidate(
+              transitionId,
+              CanonicalGameplayIssuerTestFixtures.controlledLeaseEvidence(
+                  binding,
+                  BigInteger.ONE,
+                  target,
+                  new CanonicalGameplayIssuerTestFixtures.ControlledLeaseEvidenceIdentity(
+                      binding.issuerId(),
+                      requestId,
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID())),
+              binding,
+              target,
+              new CanonicalGameplayOriginalNewCandidate.TransitionSource(
+                  transitionId,
+                  ref,
+                  BigInteger.ONE,
+                  issuerReservation,
+                  issuerReservationFence,
+                  indexFence),
+              new CanonicalGameplayOriginalNewCandidate.ReservationSource(
+                  issuerReservation,
+                  ref,
+                  BigInteger.ONE,
+                  transitionId,
+                  BigInteger.ZERO,
+                  issuerReservationFence,
+                  UUID.randomUUID(),
+                  BigInteger.ONE,
+                  BigInteger.ONE,
+                  BigInteger.ONE));
+      byte[] candidateBytes = candidate.canonicalBytes();
+      assertThat(CanonicalGameplayOriginalNewCandidate.parseCanonical(candidateBytes))
+          .isEqualTo(candidate);
+      String candidateDigest = "sha256:" + OriginalNewCapacityExecution.sha256(candidateBytes);
+      dsl.execute(
+          """
+          INSERT INTO game_session_canonical_gameplay_binding_inventory
+              (binding_ref,account_id,tenant_id,playable_state_namespace_id,character_id,
+               playable_state_scope,game_instance_id,runtime_game_instance_id,session_id,
+               binding_generation,region_id,region_epoch,issuer_id,issuer_auth_generation,
+               issuer_index_layout_version,issuer_index_partition_count,issuer_index_partition_capacity,
+               issuer_partition_id,account_index_fence,issuer_reservation_id,transition_id,lifecycle,
+               account_index_state,issuer_index_state,inventory_revision)
+          VALUES (?,?,?,?,?,'SHARED',?,?,?,1,?,1,?,1,1,1,1,0,?,?,?,
+                  'CANDIDATE_PREPARED','REPAIR_REQUIRED','REPAIR_REQUIRED',1)
+          """,
+          ref.bytes(),
+          binding.accountId(),
+          binding.tenantId(),
+          binding.playableStateNamespaceId(),
+          binding.characterId(),
+          binding.gameInstanceId(),
+          binding.runtimeGameInstanceId(),
+          binding.sessionId(),
+          binding.regionId(),
+          binding.issuerId(),
+          indexFence,
+          issuerReservation,
+          transitionId);
+      dsl.execute(
+          """
+          INSERT INTO game_session_canonical_binding_transition
+              (transition_id,tenant_id,playable_state_namespace_id,character_id,candidate_binding_ref,
+               candidate_binding_generation,candidate_account_index_fence,issuer_reservation_id,
+               status,inventory_revision)
+          VALUES (?,?,?,?,?,1,?,?,'PREPARED',1)
+          """,
+          transitionId,
+          binding.tenantId(),
+          binding.playableStateNamespaceId(),
+          binding.characterId(),
+          ref.bytes(),
+          indexFence,
+          issuerReservation);
+      dsl.execute(
+          """
+          INSERT INTO game_session_canonical_issuer_partition_reservation
+              (reservation_id,binding_ref,account_id,tenant_id,game_instance_id,
+               runtime_game_instance_id,session_id,binding_generation,transition_id,issuer_id,
+               issuer_auth_generation,playable_state_namespace_id,character_id,playable_state_scope,
+               region_id,region_epoch,partition_id,issuer_index_layout_version,
+               issuer_index_partition_count,issuer_index_partition_capacity,lifecycle,reservation_fence,
+               issuer_coverage_operation_id,issuer_coverage_operation_fence,coverage_fence,
+               inventory_snapshot_revision,inventory_revision)
+          SELECT issuer_reservation_id,binding_ref,account_id,tenant_id,game_instance_id,
+                 runtime_game_instance_id,session_id,binding_generation,transition_id,issuer_id,
+                 issuer_auth_generation,playable_state_namespace_id,character_id,playable_state_scope,
+                 region_id,region_epoch,issuer_partition_id,issuer_index_layout_version,
+                 issuer_index_partition_count,issuer_index_partition_capacity,'RESERVED',?,?,1,1,1,1
+          FROM game_session_canonical_gameplay_binding_inventory WHERE binding_ref=?
+          """,
+          issuerReservationFence,
+          candidate.reservation().issuerCoverageOperationId(),
+          ref.bytes());
+      dsl.execute(
+          """
+          UPDATE game_session_canonical_binding_transition
+          SET original_new_candidate_bytes=?,original_new_candidate_digest=?,
+              original_new_candidate_state='DISPATCH_POSSIBLE'
+          WHERE transition_id=?
+          """,
+          candidateBytes,
+          candidateDigest,
+          transitionId);
+      dsl.execute(
+          """
+          INSERT INTO game_session_canonical_binding_region_bridge_obligation
+              (transition_id,binding_ref,binding_generation,account_id,tenant_id,game_instance_id,
+               runtime_game_instance_id,session_id,region_id,region_epoch,status,inventory_revision)
+          SELECT transition_id,binding_ref,binding_generation,account_id,tenant_id,game_instance_id,
+                 runtime_game_instance_id,session_id,region_id,region_epoch,'REQUIRED',inventory_revision
+          FROM game_session_canonical_gameplay_binding_inventory WHERE binding_ref=?
+          """,
+          ref.bytes());
+      String owner = "retained-capacity-owner";
+      String hash = "a".repeat(64);
+      long ownerFence =
+          dsl.fetchSingle(
+                  """
+                  INSERT INTO game_session_region_runtime_status
+                      (tenant_id,game_instance_id,canonical_region_id,region_id,tenant_region_tag,
+                       lifecycle_epoch,lifecycle_row_version,lifecycle_request_bytes,capture_id,
+                       graph_sha256,preparation_input_digest,region_epoch,executor_fence,
+                       lease_token_correlation,owner_service,owner_instance_id,paused,
+                       last_committed_tick_id,updated_at)
+                  VALUES (?,?,?,?,?,1,0,?,?,?,?,1,nextval('game_session_region_executor_fence_seq'),
+                          ?,'game-session-service',?,false,-1,CURRENT_TIMESTAMP)
+                  RETURNING executor_fence
+                  """,
+                  binding.tenantId(),
+                  binding.gameInstanceId(),
+                  UUID.randomUUID(),
+                  binding.regionId(),
+                  CanonicalGameplayRegionRedisKeys.tenantRegionTag(
+                      binding.tenantId(), binding.gameInstanceId(), binding.regionId()),
+                  "controlled-region-source".getBytes(StandardCharsets.UTF_8),
+                  UUID.randomUUID(),
+                  hash,
+                  "sha256:" + hash,
+                  hash,
+                  owner)
+              .get(0, Long.class);
+      var tag =
+          new CanonicalGameplayTenantGameplayTagRepository(dsl, target.targetNamespace(), 1)
+              .assignmentForTransition(transitionId)
+              .tenantGameplayTag();
+      var player =
+          new TenantCapacityAdmission.PlayerContext(
+              binding.accountId(),
+              binding.tenantId(),
+              binding.playableStateNamespaceId(),
+              binding.gameInstanceId(),
+              binding.characterId(),
+              UUID.fromString(binding.sessionId()),
+              target.realmId(),
+              requestId,
+              binding.playableStateScope());
+      var now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+      var capacityRequest =
+          CapacityAdmissionTestFixture.playerRequestFor(
+              player,
+              transitionId,
+              UUID.randomUUID(),
+              target.targetNamespace(),
+              Map.ofEntries(
+                  Map.entry("targetClass", "PUBLIC_PRODUCTION"),
+                  Map.entry("characterCreationPolicy", target.characterCreationPolicy()),
+                  Map.entry("targetNamespace", target.targetNamespace()),
+                  Map.entry("tenantId", binding.tenantId().toString()),
+                  Map.entry("tenantSlug", target.tenantSlug()),
+                  Map.entry("worldSlug", target.worldSlug()),
+                  Map.entry("realmId", target.realmId().toString()),
+                  Map.entry("realmSlug", target.realmSlug()),
+                  Map.entry(
+                      "playableStateNamespaceId", binding.playableStateNamespaceId().toString()),
+                  Map.entry("playableStateScope", binding.playableStateScope()),
+                  Map.entry("gameInstanceId", binding.gameInstanceId().toString()),
+                  Map.entry("canonicalVersionId", target.canonicalVersionId().toString()),
+                  Map.entry("catalogRevision", Long.toString(target.catalogRevision())),
+                  Map.entry("pointerVersion", Long.toString(target.pointerVersion())),
+                  Map.entry("activeWorldEpoch", Long.toString(target.activeWorldEpoch())),
+                  Map.entry("evaluatedAt", now.minusSeconds(1).toString()),
+                  Map.entry("connectScopeExpiresAt", now.plusSeconds(120).toString())),
+              now);
+      var reservation =
+          new TenantCapacityAdmission.Result(
+              capacityRequest.identity(),
+              capacityRequest.admissionAttemptId(),
+              capacityRequest.capacityRearmFence(),
+              capacityRequest.mutationDigest(),
+              UUID.randomUUID(),
+              1,
+              capacityRequest.evidence().expiresAt(),
+              TenantCapacityAdmission.State.RESERVED,
+              capacityRequest.evidence().snapshotIdentity(),
+              capacityRequest.evidence().evaluationIdentity());
+      var execution =
+          new OriginalNewCapacityExecution(
+              capacityRequest, reservation, transitionId, candidateDigest, owner, ownerFence);
+      assertThat(
+              dsl.execute(
+                  """
+                  INSERT INTO game_session_original_new_capacity_execution
+                      (tenant_id,request_id,admission_id,admission_attempt_id,transition_id,
+                       capacity_rearm_fence,reservation_id,reservation_fence,mutation_digest,
+                       execution_digest,canonical_execution,selected_owner_id,selected_owner_fence,
+                       tenant_gameplay_tag,status)
+                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'INSTALL_DISPATCHED')
+                  """,
+                  binding.tenantId(),
+                  requestId,
+                  transitionId,
+                  capacityRequest.admissionAttemptId(),
+                  transitionId,
+                  capacityRequest.capacityRearmFence(),
+                  reservation.reservationId(),
+                  reservation.reservationFence(),
+                  capacityRequest.mutationDigest(),
+                  execution.digest(),
+                  execution.canonicalBytes(),
+                  owner,
+                  ownerFence,
+                  tag))
+          .isOne();
+      return new CanonicalGameplayCapacityOrigin(
+          capacityRequest, candidate, tag, owner, ownerFence);
+    }
+
+    void tryBackfillCapacityOrigin(CanonicalGameplayCapacityOrigin origin) {
+      dsl.execute(
+          """
+          INSERT INTO game_session_original_new_capacity_origin
+              (tenant_id,request_id,admission_id,admission_attempt_id,capacity_rearm_fence,
+               transition_id,game_instance_id,region_id,mutation_digest,canonical_request,
+               canonical_candidate,canonical_origin,origin_digest,candidate_digest,tenant_gameplay_tag,
+               selected_owner_id,selected_owner_fence,custody_owner_id,custody_owner_fence,
+               recovery_deadline,recovery_max_observations,state)
+          SELECT e.tenant_id,e.request_id,e.admission_id,e.admission_attempt_id,e.capacity_rearm_fence,
+                 e.transition_id,b.game_instance_id,b.region_id,e.mutation_digest,?,
+                 t.original_new_candidate_bytes,?,?,t.original_new_candidate_digest,e.tenant_gameplay_tag,
+                 e.selected_owner_id,e.selected_owner_fence,e.selected_owner_id,e.selected_owner_fence,
+                 CURRENT_TIMESTAMP + interval '1 minute',1,'OPEN'
+          FROM game_session_original_new_capacity_execution e
+          JOIN game_session_canonical_binding_transition t ON t.transition_id=e.transition_id
+          JOIN game_session_canonical_binding_region_bridge_obligation b ON b.transition_id=e.transition_id
+          WHERE e.admission_attempt_id=?
+          """,
+          CapacityAdmissionDigest.preimage(origin.request()),
+          origin.canonicalBytes(),
+          origin.digest(),
+          origin.request().admissionAttemptId());
     }
 
     void populatePredecessor() {

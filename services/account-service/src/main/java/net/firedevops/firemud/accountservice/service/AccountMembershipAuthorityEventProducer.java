@@ -553,8 +553,30 @@ public class AccountMembershipAuthorityEventProducer {
             .readCheckpoint(streamKey)
             .orElseThrow(
                 () -> new IllegalStateException("Committed first-JOIN checkpoint is absent"));
+    Event current =
+        authorityOutboxRepository.findEvent(streamKey, checkpoint.outboxSequence()).orElseThrow();
+    requireCheckpointMatchesEvent(checkpoint, current);
+    if (checkpoint.outboxSequence() != pair.eventSequence()
+        || !current.eventId().equals(pair.eventId())
+        || !current.eventDigest().equals(pair.eventDigest())) {
+      throw new IllegalStateException("Committed first-JOIN pair head differs from the stream");
+    }
     if (checkpoint.outboxSequence() != 1L) {
-      throw new IllegalStateException("Committed first-JOIN stream has unexpected event history");
+      MembershipEvent currentEvidence =
+          MembershipAuthorityEventV1Codec.verify(
+              new String(current.payload(), StandardCharsets.UTF_8));
+      if (!MembershipAuthorityEventV1Codec.AUTHORITY_CHECKPOINT_EVENT_TYPE.equals(
+              currentEvidence.eventType())
+          || !currentEvidence.eventId().equals(current.eventId())
+          || !currentEvidence.eventDigest().equals(current.eventDigest())
+          || !currentEvidence.accountId().equals(scope.accountId().toString())
+          || !currentEvidence.tenantId().equals(scope.tenantId().toString())
+          || !currentEvidence.membershipVersion().equals(Map.of(scope.tenantId().toString(), "2"))
+          || !"1".equals(currentEvidence.membershipAuthorityGeneration())
+          || !roles.equals(currentEvidence.roles())) {
+        throw new IllegalStateException(
+            "Committed first-JOIN current membership checkpoint differs");
+      }
     }
     Event byRequest =
         authorityOutboxRepository
@@ -570,14 +592,11 @@ public class AccountMembershipAuthorityEventProducer {
     if (!byRequest.equals(bySequence)) {
       throw new IllegalStateException("Committed first-JOIN event identity is contradictory");
     }
-    requireCheckpointMatchesEvent(checkpoint, byRequest);
     MembershipEvent verified = verifyStoredEvent(byRequest, scope, membership, roles, requestId);
     CanonicalJoinTerminalProof proof =
         Objects.requireNonNull(
             operation.terminalProof(), "committed JOIN terminal proof is required");
-    if (!pair.eventId().equals(verified.eventId())
-        || !pair.eventDigest().equals(verified.eventDigest())
-        || !proof.eventStreamKey().equals(streamKey)
+    if (!proof.eventStreamKey().equals(streamKey)
         || proof.eventSequence() != byRequest.outboxSequence()
         || !proof.eventId().equals(verified.eventId())
         || !proof.eventDigest().equals(verified.eventDigest())
@@ -586,7 +605,8 @@ public class AccountMembershipAuthorityEventProducer {
         || proof.membershipAuthorityGeneration() != membership.getMembershipAuthorityGeneration()) {
       throw new IllegalStateException("Committed first-JOIN payload or pair linkage differs");
     }
-    return checkpoint;
+    return new Checkpoint(
+        streamKey, byRequest.outboxSequence(), byRequest.eventId(), byRequest.eventDigest());
   }
 
   private static Map<String, Object> membershipEventPreimage(
@@ -999,7 +1019,7 @@ public class AccountMembershipAuthorityEventProducer {
     if (!pair.membershipExists()
         || pair.membershipVersion() != 2L
         || pair.membershipAuthorityGeneration() != 1L
-        || pair.eventSequence() != 1L
+        || pair.eventSequence() < 1L
         || pair.eventId() == null
         || pair.eventDigest() == null
         || pair.lastTransitionInvalidated()
