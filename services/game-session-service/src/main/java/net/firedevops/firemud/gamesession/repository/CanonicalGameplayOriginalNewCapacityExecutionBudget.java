@@ -241,8 +241,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     remainingNanos();
   }
 
-  /** Waits for one Redis close attempt only through this operation's deadline. */
-  void awaitAsyncClose(CompletableFuture<Void> closeAttempt) {
+  /** Retains the resource permit until the registered Redis disposal attempt settles. */
+  void retainUntilAsyncClose(CompletableFuture<Void> closeAttempt) {
     Objects.requireNonNull(closeAttempt);
     synchronized (lifecycle) {
       outstandingAsyncCloses++;
@@ -254,6 +254,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
             releaseIfFinished();
           }
         });
+  }
+
+  /** Waits for one Redis close attempt only through this operation's deadline. */
+  void awaitAsyncClose(CompletableFuture<Void> closeAttempt) {
+    retainUntilAsyncClose(closeAttempt);
     try {
       closeAttempt.get(remainingNanos(), TimeUnit.NANOSECONDS);
     } catch (InterruptedException interrupted) {

@@ -204,11 +204,12 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
             budget -> {
               PreparedTimelineInitialization session =
                   prepareTimelineInitialization(preparation, leaseTtl, identity, budget);
+              budget.retainUntilAsyncClose(session.disposal);
               synchronized (handoffLock) {
                 prepared.set(session);
                 if (!callerAbandoned[0]) return session;
               }
-              session.closeBoundedConnection().join();
+              session.closeBoundedConnection();
               throw unavailable();
             });
       } catch (RuntimeException failure) {
@@ -384,6 +385,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     private final CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
     private final Clock deadlineClock;
     private final long deadlineMillis;
+    private final CompletableFuture<Void> disposal = new CompletableFuture<>();
     private boolean initialized;
     private boolean closed;
     private boolean initializationInFlight;
@@ -479,7 +481,18 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     private synchronized CompletableFuture<Void> closeBoundedConnection() {
       initializationInFlight = false;
       closed = true;
-      if (boundedClose == null) boundedClose = connection.closeAsync();
+      if (boundedClose == null) {
+        try {
+          boundedClose = connection.closeAsync();
+        } catch (RuntimeException failure) {
+          boundedClose = CompletableFuture.failedFuture(failure);
+        }
+        boundedClose.whenComplete(
+            (ignored, failure) -> {
+              if (failure == null) disposal.complete(null);
+              else disposal.completeExceptionally(failure);
+            });
+      }
       return boundedClose;
     }
   }
