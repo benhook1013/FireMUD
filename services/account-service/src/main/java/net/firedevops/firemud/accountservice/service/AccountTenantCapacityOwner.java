@@ -323,8 +323,6 @@ public final class AccountTenantCapacityOwner {
               return action.get();
             });
       } catch (RuntimeException failure) {
-        if (capacityAttemptFreshnessFailure(failure))
-          throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
         // A PostgreSQL serialization failure rolls back the whole transaction. Retry outside
         // that transaction so a concurrent original can become exact replay or conflict.
         if (attempt >= MAX_SERIALIZATION_ATTEMPTS
@@ -373,18 +371,24 @@ public final class AccountTenantCapacityOwner {
   <T> T inTransaction(Supplier<T> action) {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
-    return Objects.requireNonNull(
-        transaction.execute(
-            status -> {
-              AccountTenantCapacityRepository.transaction();
-              dsl.connection(
-                  connection -> {
-                    if (connection.getAutoCommit()
-                        || connection.isReadOnly()
-                        || connection.getTransactionIsolation()
-                            != Connection.TRANSACTION_SERIALIZABLE) throw unavailable();
-                  });
-              return action.get();
-            }));
+    try {
+      return Objects.requireNonNull(
+          transaction.execute(
+              status -> {
+                AccountTenantCapacityRepository.transaction();
+                dsl.connection(
+                    connection -> {
+                      if (connection.getAutoCommit()
+                          || connection.isReadOnly()
+                          || connection.getTransactionIsolation()
+                              != Connection.TRANSACTION_SERIALIZABLE) throw unavailable();
+                    });
+                return action.get();
+              }));
+    } catch (RuntimeException failure) {
+      if (capacityAttemptFreshnessFailure(failure))
+        throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+      throw failure;
+    }
   }
 }

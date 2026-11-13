@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -381,6 +382,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       OriginalNewCapacityExecution execution,
       CanonicalGameplayOriginalNewCandidate candidate,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      UUID dispatchId,
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
     requireAssignment(assignment, candidate);
@@ -408,7 +410,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
           ascii("{}"),
           ascii("{}"),
           absoluteDeadlineMillis,
-          ascii("transfer-fence"),
+          ascii(dispatchId.toString()),
           execution,
           "FENCE");
     } finally {

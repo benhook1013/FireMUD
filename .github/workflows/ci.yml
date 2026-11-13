@@ -464,8 +464,6 @@ jobs:
           time bash ./dev-tools/tests/pr-runtime-image-publication-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/runtime-base-image-apt-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/runtime-base-image-apt-contract.sh
-          TIMEFORMAT='bash ./dev-tools/tests/pr-required-gate-context-contract.sh: real=%3R user=%3U sys=%3S'
-          time bash ./dev-tools/tests/pr-required-gate-context-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/dev-demo-workflow-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/dev-demo-workflow-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/erd-workflow-contract.sh: real=%3R user=%3U sys=%3S'
@@ -552,8 +550,6 @@ jobs:
           time bash ./dev-tools/tests/architecture-doc-contracts.sh --defer-unit-tests
           TIMEFORMAT='bash ./dev-tools/tests/lint-yaml-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/lint-yaml-contract.sh
-          TIMEFORMAT='python3 -m unittest discover -s dev-tools/validation -p test_*.py --durations 0: real=%3R user=%3U sys=%3S'
-          time python3 -m unittest discover -s dev-tools/validation -p 'test_*.py' --durations 0
           TIMEFORMAT='python3 -m unittest discover -s dev-tools/tests -p test_*.py: real=%3R user=%3U sys=%3S'
           time python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'
 
@@ -568,6 +564,47 @@ jobs:
         run: |
           TIMEFORMAT='python3 -m unittest discover -s dev-tools/validation -p test_*.py: real=%3R user=%3U sys=%3S'
           time python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
+
+  dev-tool-validation-contracts:
+    name: Dev Tool Validation Contracts
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
+      - name: 🐍 Set Up Python
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: ci
+
+      - name: Set up Node for Python Markdown contracts
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: config/openapi/package-lock.json
+
+      - name: Install pinned Markdown contract dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix config/openapi
+
+      - name: 🧪 Validate dev tool validation contracts
+        run: |
+          set -x
+          TIMEFORMAT='bash ./dev-tools/tests/pr-required-gate-context-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/pr-required-gate-context-contract.sh
+          TIMEFORMAT='python3 -m unittest discover -s dev-tools/validation -p test_*.py --durations 0: real=%3R user=%3U sys=%3S'
+          time python3 -m unittest discover -s dev-tools/validation -p 'test_*.py' --durations 0
 
   dev-tools-readme-contract:
     name: Dev Tools README Contract
@@ -1361,13 +1398,16 @@ jobs:
       WORLD_MODULE_AFFECTED: ${{ contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'world-management-service') }}
       GAME_SESSION_COVERAGE_AGGREGATE: ${{ needs.game-session-coverage-aggregate.result }}
       WORLD_COVERAGE_AGGREGATE: ${{ needs.world-coverage-aggregate.result }}
-    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, build-and-test-account, build-and-test-game-session, build-and-test-world, account-coverage-aggregate, game-session-coverage-aggregate, world-coverage-aggregate]
+    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tool-validation-contracts, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, build-and-test-account, build-and-test-game-session, build-and-test-world, account-coverage-aggregate, game-session-coverage-aggregate, world-coverage-aggregate]
     if: ${{ always() }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
+
+      - name: Declare dev tool contract split
+        run: ':'
 
       - name: Check out required-gate action
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
@@ -1447,6 +1487,7 @@ jobs:
           SHELLCHECK: ${{ needs.shellcheck.result }}
           PYTHON_SCRIPT_VALIDATION: ${{ needs.python-script-validation.result }}
           DEV_TOOL_CONTRACT_CHECKS: ${{ needs.dev-tool-contract-checks.result }}
+          DEV_TOOL_VALIDATION_CONTRACTS: ${{ needs.dev-tool-validation-contracts.result }}
           DEV_TOOLS_README_CONTRACT: ${{ needs.dev-tools-readme-contract.result }}
           YAML_LINT: ${{ needs.yaml-lint.result }}
           METRICS_CARDINALITY_CHECK: ${{ needs.metrics-cardinality-check.result }}
@@ -1489,6 +1530,7 @@ jobs:
             "Buf Generation:$BUF_CHECK" \
             "Dockerfile Lint:$DOCKER_LINT" \
             "ShellCheck:$SHELLCHECK" \
+            "Dev Tool Validation Contracts:$DEV_TOOL_VALIDATION_CONTRACTS" \
             "YAML Lint:$YAML_LINT" \
             "Metrics Cardinality Policy Check:$METRICS_CARDINALITY_CHECK" \
             "Flyway Migration Sanity Checks:$FLYWAY_MIGRATION_SANITY_CHECKS" \
