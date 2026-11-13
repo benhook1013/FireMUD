@@ -373,16 +373,23 @@ final class CanonicalGameplayRegionLeaseOwner {
         }
       } else {
         requireReusableRegionGrant(
-            existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
+            existingRegionInstallation,
+            source,
+            incarnation,
+            prior,
+            expectedRegionEpoch,
+            transferOwner,
+            handoffDeadline,
+            handoffRedisOwner);
         grant = existingRegionInstallation.grant;
         reusingRegionGrant = true;
       }
     }
     if (reusingRegionGrant) {
-      redisOwner.requireGrantScope(
+      handoffRedisOwner.requireGrantScope(
           grant, existingRegionInstallation.source, expectedRegionEpoch, runtimeIdentity);
     } else {
-      redisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
+      handoffRedisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
     }
     CanonicalGameplayRegionRuntimeStatusRepository.Source afterAcquire =
         resolveCurrentInstallationSource(
@@ -619,6 +626,26 @@ final class CanonicalGameplayRegionLeaseOwner {
       CanonicalGameplayRegionIncarnationSource.StableEvidence currentIncarnation,
       CanonicalGameplayRegionRuntimeStatus currentStatus,
       long expectedRegionEpoch) {
+    requireReusableRegionGrant(
+        existing,
+        candidateSource,
+        currentIncarnation,
+        currentStatus,
+        expectedRegionEpoch,
+        null,
+        Long.MAX_VALUE,
+        redisOwner);
+  }
+
+  private void requireReusableRegionGrant(
+      Installation existing,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source candidateSource,
+      CanonicalGameplayRegionIncarnationSource.StableEvidence currentIncarnation,
+      CanonicalGameplayRegionRuntimeStatus currentStatus,
+      long expectedRegionEpoch,
+      CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
+      long handoffDeadline,
+      CanonicalGameplayRegionLeaseRedisOwner grantOwner) {
     if (existing == null
         || !existing.owner.equals(this)
         || !CanonicalGameplayRegionRuntimeStatusRepository.sameRegionSource(
@@ -631,8 +658,10 @@ final class CanonicalGameplayRegionLeaseOwner {
     }
     requireSameIncarnation(existing.incarnation, currentIncarnation);
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation persistedPreparation =
-        statusRepository
-            .findTimelinePreparation(existing.preparation.source())
+        withTransferStatusRepository(
+                transferOwner,
+                handoffDeadline,
+                repository -> repository.findTimelinePreparation(existing.preparation.source()))
             .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
     if (!statusRepository.matchesCurrentInstalledTimelineInitialization(
         existing.preparation,
@@ -642,10 +671,10 @@ final class CanonicalGameplayRegionLeaseOwner {
         currentStatus)) {
       throw unavailable();
     }
-    redisOwner.requireGrantScope(
+    grantOwner.requireGrantScope(
         existing.grant, existing.source, expectedRegionEpoch, runtimeIdentity);
-    redisOwner.requireCurrent(existing.grant);
-    redisOwner.verifyInitializedTimeline(existing.grant, persistedPreparation);
+    grantOwner.requireCurrent(existing.grant);
+    grantOwner.verifyInitializedTimeline(existing.grant, persistedPreparation);
   }
 
   /**
