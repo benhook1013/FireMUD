@@ -1708,7 +1708,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   "FOR SHARE OF e",
                   "e.status IN ('INSTALL_DISPATCHED','AUTHORIZED')",
                   "Transfer item differs from unresolved original region execution")),
-          "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt");
+          "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt",
+          "reject_gs_capacity_close_after_final_receipt()");
     }
   }
 
