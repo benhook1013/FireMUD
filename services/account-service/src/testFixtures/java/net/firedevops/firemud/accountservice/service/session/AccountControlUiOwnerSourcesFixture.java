@@ -60,6 +60,7 @@ import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvid
 import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -186,6 +187,34 @@ final class AccountControlUiOwnerSourcesFixture {
       String migrationTarget,
       boolean ownedCompositionConnections,
       FreshTenantCreationEvidence creationEvidence)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        root,
+        installNegativeIssuer,
+        tenant,
+        migrationTarget,
+        ownedCompositionConnections,
+        creationEvidence,
+        null);
+  }
+
+  /**
+   * Supplies an explicit shared abuse policy only for a proof that must reach credential owners.
+   */
+  AccountControlUiOwnerSourcesFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      Path root,
+      boolean installNegativeIssuer,
+      UUID tenant,
+      String migrationTarget,
+      boolean ownedCompositionConnections,
+      FreshTenantCreationEvidence creationEvidence,
+      AccountCredentialAbuseService credentialAbuse)
       throws Exception {
     this.creationEvidence = Objects.requireNonNull(creationEvidence, "creationEvidence");
     if (!creationEvidence.canonicalTenantId().equals(tenant)) {
@@ -475,7 +504,7 @@ final class AccountControlUiOwnerSourcesFixture {
       service =
           new AccountControlUiIssuanceService(
               primary,
-              null, // No implicit shared abuse policy or admitting fallback.
+              credentialAbuse,
               operations,
               authority,
               fences,
