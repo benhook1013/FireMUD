@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
@@ -110,7 +111,8 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void mismatchedTypedRefusalDoesNotBecomeAnAccountDecision() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    Server server = server("account", calls, true);
+    AtomicReference<Throwable> serverFailure = new AtomicReference<>();
+    Server server = server("account", calls, true, serverFailure);
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest(false);
@@ -119,6 +121,7 @@ class AccountTenantCapacityClientMtlsTest {
               StatusRuntimeException.class,
               failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN));
       assertThat(calls).hasValue(1);
+      assertThat(serverFailure.get()).isNull();
     } finally {
       stop(server);
     }
@@ -142,7 +145,8 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void changedResponseFenceLeavesTheOriginalCommitmentIndeterminate() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    Server server = server("account", calls, true);
+    AtomicReference<Throwable> serverFailure = new AtomicReference<>();
+    Server server = server("account", calls, true, serverFailure);
     try (var client = client(server)) {
       client.init();
       assertThatThrownBy(
@@ -153,6 +157,7 @@ class AccountTenantCapacityClientMtlsTest {
                   assertThat(Status.fromThrowable(failure).getCode())
                       .isEqualTo(Status.Code.UNKNOWN));
       assertThat(calls).hasValue(1);
+      assertThat(serverFailure.get()).isNull();
     } finally {
       stop(server);
     }
@@ -347,8 +352,29 @@ class AccountTenantCapacityClientMtlsTest {
       String identity,
       AtomicInteger calls,
       boolean wrongFence,
+      AtomicReference<Throwable> serverFailure)
+      throws Exception {
+    return server(
+        identity, calls, wrongFence, new AtomicLong(), new AtomicBoolean(true), serverFailure);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
       AtomicLong observedNanos,
       AtomicBoolean respond)
+      throws Exception {
+    return server(identity, calls, wrongFence, observedNanos, respond, null);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
+      AtomicLong observedNanos,
+      AtomicBoolean respond,
+      AtomicReference<Throwable> serverFailure)
       throws Exception {
     UUID reservationId = UUID.randomUUID();
     var service =
@@ -362,11 +388,18 @@ class AccountTenantCapacityClientMtlsTest {
                 Objects.requireNonNull(Context.current().getDeadline())
                     .timeRemaining(TimeUnit.NANOSECONDS));
             if (!respond.get()) return;
-            assertThat(GrpcPeerIdentity.current().uri())
-                .isEqualTo("spiffe://firemud/ns/prod/sa/game-session-service");
+            assertServerSide(
+                serverFailure,
+                () ->
+                    assertThat(GrpcPeerIdentity.current().uri())
+                        .isEqualTo("spiffe://firemud/ns/prod/sa/game-session-service"));
             var request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
             if (!request.evidence().permitsCreation()) {
-              assertThat(request).isEqualTo(CapacityAdmissionTestFixture.playerRequest(false));
+              assertServerSide(
+                  serverFailure,
+                  () ->
+                      assertThat(request)
+                          .isEqualTo(CapacityAdmissionTestFixture.playerRequest(false)));
               var response =
                   TenantCapacityAdmissionGrpcCodec.toRefusal(
                       request, TenantCapacityAdmissionGrpcCodec.Failure.TENANT_BILLING_BLOCKED);
@@ -414,6 +447,16 @@ class AccountTenantCapacityClientMtlsTest {
         .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
         .build()
         .start();
+  }
+
+  private static void assertServerSide(
+      AtomicReference<Throwable> serverFailure, Runnable assertion) {
+    try {
+      assertion.run();
+    } catch (AssertionError failure) {
+      if (serverFailure != null) serverFailure.compareAndSet(null, failure);
+      throw failure;
+    }
   }
 
   private static void stop(Server server) throws InterruptedException {

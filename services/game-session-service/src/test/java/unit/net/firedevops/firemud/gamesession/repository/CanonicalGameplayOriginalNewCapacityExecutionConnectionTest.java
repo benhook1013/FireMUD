@@ -236,19 +236,39 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
   @Test
   void failedConnectionAttemptDoesNotRetainAConnectorSlot() {
     RedisClient redis = mock();
+    int maximum = CanonicalGameplayOriginalNewCapacityExecutionOwner.MAX_IN_FLIGHT_CONNECTS;
     StatefulRedisConnection<byte[], byte[]> connection = mock();
+    var failedAttempts = new java.util.concurrent.atomic.AtomicInteger();
     when(redis.connect(ByteArrayCodec.INSTANCE))
-        .thenThrow(new IllegalStateException("Controlled connect failure"))
-        .thenReturn(connection);
+        .thenAnswer(
+            invocation -> {
+              if (failedAttempts.getAndIncrement() < maximum)
+                throw new IllegalStateException("Controlled connect failure");
+              return connection;
+            });
     when(connection.isOpen()).thenReturn(true);
     when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
     when(connection.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
     var owner = owner(mock(), redis, mock());
+    ThreadPoolExecutor connectors =
+        (ThreadPoolExecutor)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionOwner.class, "CONNECTS"));
+    long completedBefore = connectors.getCompletedTaskCount();
 
-    assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+    for (int attempt = 0; attempt < maximum; attempt++)
+      assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+    Awaitility.await()
+        .atMost(2, TimeUnit.SECONDS)
+        .untilAsserted(
+            () -> {
+              assertThat(connectors.getActiveCount()).isZero();
+              assertThat(connectors.getCompletedTaskCount()).isEqualTo(completedBefore + maximum);
+            });
     assertThat(owner.connectForRead()).isSameAs(connection);
     connection.closeAsync();
-    verify(redis, org.mockito.Mockito.times(2)).connect(ByteArrayCodec.INSTANCE);
+    verify(redis, org.mockito.Mockito.times(maximum + 1)).connect(ByteArrayCodec.INSTANCE);
   }
 
   private static CanonicalGameplayOriginalNewCapacityExecutionOwner owner(
