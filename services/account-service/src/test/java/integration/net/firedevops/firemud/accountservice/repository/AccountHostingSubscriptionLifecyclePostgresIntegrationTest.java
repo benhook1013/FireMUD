@@ -193,11 +193,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @ParameterizedTest
   @ValueSource(strings = {"1046", "latest"})
   void confirmedWorkRejectsMissingOrMismatchedFirstInvoiceCompletionAndRollsBackFulfillment(
-      String migrationTarget) {
+      String migrationTarget) throws StripeException {
     for (String fault : List.of("missing", "tuple", "receipt", "transaction")) {
       Context c = context(migrationTarget);
       Fixture f = fixture(c);
-      var claim = paidClaim(f);
+      var claim = migrationTarget.equals("1046") ? paidClaimAt1046(f) : paidClaim(f);
       var prepared =
           in(
               c,
@@ -1608,19 +1608,23 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     for (boolean providerCanceled : new boolean[] {true, false}) {
       Context c = context("latest");
       Fixture f = fixture(c);
-      f.transport().json =
+      String canceledFacts =
           providerCanceled
               ? response(f, "canceled")
               : response(f, "active")
                   .replace(
                       "\"cancel_at\":null",
                       "\"cancel_at\":" + f.clock().instant().getEpochSecond());
-      String originalFacts = f.transport().json;
+      f.transport().json = providerCanceled ? canceledFacts : response(f, "active");
       activate(f);
+      f.transport().json = canceledFacts;
+      if (!providerCanceled) refresh(f);
+      long expectedSequence = providerCanceled ? 1L : 2L;
       var receipt =
           one(
               c,
-              "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r");
+              "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r WHERE entitlement_version = ?",
+              expectedSequence);
       var authority =
           one(
               c,
@@ -1634,7 +1638,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         assertThat(canceled.allowNewGameplayBindings()).isFalse();
         assertThat(canceled.allowNewInstanceStarts()).isFalse();
         assertThat(canceled.validUntil()).isEqualTo(f.clock().instant().plusSeconds(15));
-        assertThat(canceled.tenantBillingSequence()).isOne();
+        assertThat(canceled.tenantBillingSequence()).isEqualTo(expectedSequence);
       }
       // An aged terminal receipt is not permission to turn unknown or changed facts into denial.
       f.transport().duringRead = () -> f.clock().advance(Duration.ofSeconds(15));
@@ -1645,21 +1649,22 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
           .isInstanceOf(
               AccountHostingSubscriptionLifecycleService.EntitlementUnavailableException.class);
-      f.transport().json = originalFacts;
+      f.transport().json = canceledFacts;
       assertThat(f.service().readCurrent(f.creation().tenantId()).gameplayAvailable()).isFalse();
       assertThat(
               one(
                   c,
-                  "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r"))
+                  "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r WHERE entitlement_version = ?",
+                  expectedSequence))
           .isEqualTo(receipt);
       assertThat(
               one(
                   c,
                   "SELECT row_to_json(a)::text AS value, xmin::text AS xmin FROM account_tenant_authority_source_records a"))
           .isEqualTo(authority);
-      assertThat(count(c, "account_tenant_entitlement_outbox_events")).isOne();
-      assertThat(count(c, "account_authority_outbox_events")).isOne();
-      assertThat(count(c, "subscription_lifecycle_receipts")).isOne();
+      assertThat(count(c, "account_tenant_entitlement_outbox_events")).isEqualTo(expectedSequence);
+      assertThat(count(c, "account_authority_outbox_events")).isEqualTo(expectedSequence);
+      assertThat(count(c, "subscription_lifecycle_receipts")).isEqualTo(expectedSequence);
       assertThat(count(c, "subscription_provider_terminal_resolutions"))
           .isEqualTo(providerCanceled ? 1 : 0);
     }
@@ -2032,6 +2037,48 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         checkout.authorizeAndRetainSuccess(
             CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
     assertThat(checkout.confirmations()).isOne();
+    assertThat(count(f.context(), "subscription_first_invoice_completions")).isZero();
+    return authorized;
+  }
+
+  private static AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch paidClaimAt1046(
+      Fixture f) throws StripeException {
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            f.context().source(),
+            f.context().dsl(),
+            f.context().tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var authorized = checkout.authorize(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    assertThat(checkout.confirmations()).isOne();
+    var signed = checkout.signedSuccess();
+    var verified = checkout.verifier().verify(signed.payload(), signed.signature());
+    var observation = checkout.provider().observe(checkout.invoice());
+    // The pre-V1046.3 frontier has no late-payment conflict table. Retain its verified success
+    // evidence directly so this historical proof does not invoke the later conflict lookup.
+    in(
+        f.context(),
+        () -> {
+          new StripeEventInboxRepository(f.context().dsl()).retainOrReplay(verified);
+          f.context()
+              .dsl()
+              .execute(
+                  "INSERT INTO subscription_first_invoice_success_evidence "
+                      + "(request_id, subscription_id, provider_event_id, event_payload_digest, tuple_digest, observed_at) "
+                      + "VALUES (?, ?, ?, ?, ?, ?::timestamptz)",
+                  authorized.requestId(),
+                  checkout.invoice().subscriptionId(),
+                  verified.providerEventId(),
+                  verified.payloadSha256(),
+                  checkout.invoice().digest(),
+                  java.time.OffsetDateTime.ofInstant(
+                      observation.observedAt(), java.time.ZoneOffset.UTC));
+          return Boolean.TRUE;
+        });
     assertThat(count(f.context(), "subscription_first_invoice_completions")).isZero();
     return authorized;
   }
