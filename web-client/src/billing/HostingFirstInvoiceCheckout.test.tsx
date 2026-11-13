@@ -628,7 +628,7 @@ describe('owner first-invoice checkout', () => {
   });
 
   it.each(['same operation', 'different operation', 'changed charge'] as const)(
-    'moves a dispatched attempt with a changed Account fence to read-only recovery only for the %s',
+    'keeps a dispatched attempt status-only after a row-version change for the %s',
     async (operation) => {
       const { client, setCurrent } = setup();
       client.confirm.mockResolvedValue({
@@ -661,18 +661,12 @@ describe('owner first-invoice checkout', () => {
       expect(client.confirm).toHaveBeenCalledOnce();
       expect(client.renew).not.toHaveBeenCalled();
       expect(screen.queryByRole('checkbox')).toBeNull();
-      if (operation === 'same operation') {
-        expect(
-          screen.getByRole('button', { name: 'Renew exact authorization' })
-        ).toBeTruthy();
-      } else {
-        expect(
-          screen.queryByRole('button', { name: 'Renew exact authorization' })
-        ).toBeNull();
-        expect(
-          screen.getByText(/Only status recovery is available/)
-        ).toBeTruthy();
-      }
+      expect(
+        screen.queryByRole('button', { name: 'Renew exact authorization' })
+      ).toBeNull();
+      expect(
+        screen.getByText(/Only status recovery is available/)
+      ).toBeTruthy();
     }
   );
 
