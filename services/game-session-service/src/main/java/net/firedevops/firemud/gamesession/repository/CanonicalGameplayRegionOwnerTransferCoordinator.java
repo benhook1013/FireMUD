@@ -184,7 +184,8 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
     var owner = capacity.forTransferBudget(budget);
     for (var item : repository.capture(transfer)) {
       var before = observe(item, budget);
-      var physical = owner.fenceForTransfer(item, budget.absoluteDeadlineMillis());
+      var dispatch = repository.fenceDispatch(item, before);
+      var physical = owner.fenceForTransfer(item, dispatch, budget.absoluteDeadlineMillis());
       var after = observe(item, budget);
       repository.retainFence(item, physical, before, after);
     }

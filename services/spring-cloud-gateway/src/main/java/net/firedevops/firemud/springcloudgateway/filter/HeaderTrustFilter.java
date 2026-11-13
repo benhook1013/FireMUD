@@ -13,12 +13,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.PathContainer;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
+import org.springframework.web.util.pattern.PathPattern;
+import org.springframework.web.util.pattern.PathPatternParser;
 import reactor.core.publisher.Mono;
 
 /**
@@ -45,6 +48,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_PROXY_GAME_INSTANCE_ID = "X-Proxy-Game-Instance-Id";
   private static final String HDR_PROXY_TENANT_ID = "X-Proxy-Tenant-Id";
   private static final String HDR_FIREMUD_LOCALE = "X-Firemud-Locale";
+  private static final PathPattern ACCOUNT_LOGIN_PATH =
+      PathPatternParser.defaultInstance.parse("/api/account/auth/login");
 
   private final CidrSet trustedForwardedProxies;
   private final TcpProxyTrustPolicy tcpProxyTrustPolicy;
@@ -60,6 +65,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
+    VerifiedHttpClientOrigin.clear(exchange);
     PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
     boolean isGameplayRoute = GameplayRouteClassifier.classify(path).gameplayRoute();
     boolean isSessionRoute = isGameplayRoute || GameplayRouteClassifier.sessionApiRoute(path);
@@ -76,15 +82,25 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     }
 
     String incomingProxyClientIp = exchange.getRequest().getHeaders().getFirst(HDR_PROXY_CLIENT_IP);
-    String canonicalClientIp =
-        trustedTcpProxy && isSessionRoute
-            ? CidrBlock.normalizeIpLiteral(incomingProxyClientIp)
-            : deriveClientIpFromForwardedHeaders(exchange.getRequest().getHeaders(), remoteAddress);
+    boolean directAccountLogin = isDirectAccountLogin(exchange, dedicatedTcpProxyListener);
+    String canonicalClientIp;
+    if (directAccountLogin) {
+      canonicalClientIp = canonicalSocketPeer(remoteAddress);
+    } else if (trustedTcpProxy && isSessionRoute) {
+      canonicalClientIp = CidrBlock.normalizeIpLiteral(incomingProxyClientIp);
+    } else {
+      canonicalClientIp =
+          deriveClientIpFromForwardedHeaders(exchange.getRequest().getHeaders(), remoteAddress);
+    }
 
     if (trustedTcpProxy && isSessionRoute && canonicalClientIp == null) {
       LOG.debug("Rejecting session route: missing or invalid trusted proxy client IP");
       exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
       return exchange.getResponse().setComplete();
+    }
+
+    if (!dedicatedTcpProxyListener && !isGameplayRoute) {
+      VerifiedHttpClientOrigin.retain(exchange, canonicalClientIp);
     }
 
     String incomingProxyConnectionId =
@@ -166,6 +182,21 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
             .build();
 
     return chain.filter(mutated);
+  }
+
+  private static boolean isDirectAccountLogin(
+      ServerWebExchange exchange, boolean dedicatedTcpProxyListener) {
+    return !dedicatedTcpProxyListener
+        && HttpMethod.POST.equals(exchange.getRequest().getMethod())
+        && ACCOUNT_LOGIN_PATH.matches(exchange.getRequest().getPath().pathWithinApplication())
+        && exchange.getRequest().getSslInfo() != null
+        && "https".equalsIgnoreCase(exchange.getRequest().getURI().getScheme());
+  }
+
+  private static String canonicalSocketPeer(InetAddress remoteAddress) {
+    return remoteAddress == null
+        ? null
+        : CidrBlock.normalizeIpLiteral(remoteAddress.getHostAddress());
   }
 
   private static RoutingBundle validateRoutingBundle(HttpHeaders headers) {
