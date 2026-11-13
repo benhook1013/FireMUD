@@ -146,21 +146,61 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
             + "FROM subscription s "
             + "JOIN subscription_provisioning_work work ON work.request_id = ? AND work.subscription_id = s.subscription_id "
             + "JOIN subscription_first_invoices first_invoice ON first_invoice.subscription_id = s.subscription_id "
-            + "JOIN subscription_lifecycle_operations operation ON operation.request_id = s.current_receipt_request_id "
-            + "AND operation.subscription_id = s.subscription_id "
-            + "JOIN subscription_lifecycle_receipts receipt ON receipt.request_id = operation.request_id "
-            + "AND receipt.subscription_id = operation.subscription_id "
+            + "JOIN subscription_provider_terminal_resolutions terminal ON terminal.resolution_id = s.terminal_resolution_id "
+            + "AND terminal.subscription_id = s.subscription_id "
+            + "JOIN subscription_lifecycle_observations observation ON observation.evidence_digest = terminal.evidence_digest "
+            + "JOIN subscription_lifecycle_receipts receipt ON receipt.request_id = observation.request_id "
+            + "AND receipt.attempt_id = observation.attempt_id AND receipt.observation_digest = observation.evidence_digest "
+            + "JOIN subscription_lifecycle_operations operation ON operation.request_id = receipt.request_id "
+            + "AND operation.subscription_id = receipt.subscription_id "
             + "WHERE s.subscription_id = ? AND s.status = 'canceled' "
-            + "AND s.current_receipt_request_id = operation.request_id "
+            + "AND (first_invoice.creation_request_id, first_invoice.tenant_id, first_invoice.tuple_digest, "
+            + "first_invoice.invoice_id, first_invoice.payment_intent_id, first_invoice.provider_subscription_id, "
+            + "first_invoice.provider_customer_id, first_invoice.provider_payment_method_id, first_invoice.provider_price_id, "
+            + "first_invoice.provider_quantity, first_invoice.amount, first_invoice.currency, first_invoice.quote_digest, first_invoice.livemode) "
+            + "= (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             + "AND operation.state = 'COMMITTED' AND operation.provisioning_attempt_id IS NULL "
             + "AND operation.creation_request_id = first_invoice.creation_request_id "
+            + "AND operation.tenant_id = first_invoice.tenant_id "
             + "AND operation.provider_subscription_id = first_invoice.provider_subscription_id "
             + "AND receipt.status = 'canceled' AND receipt.provider_subscription_id = first_invoice.provider_subscription_id "
+            + "AND receipt.subscription_row_version <= s.row_version "
+            + "AND EXISTS (SELECT 1 FROM subscription_lifecycle_operations current_operation "
+            + "JOIN subscription_lifecycle_receipts current_receipt ON current_receipt.request_id = current_operation.request_id "
+            + "AND current_receipt.subscription_id = current_operation.subscription_id "
+            + "WHERE current_operation.request_id = s.current_receipt_request_id "
+            + "AND current_operation.subscription_id = s.subscription_id AND current_operation.state = 'COMMITTED' "
+            + "AND current_operation.provider_subscription_id = first_invoice.provider_subscription_id "
+            + "AND current_receipt.status = 'canceled' AND current_receipt.provider_subscription_id = first_invoice.provider_subscription_id "
+            + "AND current_receipt.subscription_row_version >= receipt.subscription_row_version "
+            + "AND current_receipt.subscription_row_version <= s.row_version "
+            + "AND (s.superseded_at IS NOT NULL OR current_receipt.subscription_row_version = s.row_version) "
+            + "AND current_receipt.committed_transaction_id <> txid_current()) "
             + "AND work.phase = 'CANCELED' AND work.last_attempt_id IS NOT NULL "
+            + "AND terminal.request_id = first_invoice.creation_request_id AND terminal.outcome = 'CANCELED' "
+            + "AND terminal.provider_subscription_id = first_invoice.provider_subscription_id "
+            + "AND observation.raw_status IN ('canceled', 'incomplete_expired') "
+            + "AND EXISTS (SELECT 1 FROM subscription_instrument_reservations reservation "
+            + "WHERE reservation.subscription_id = s.subscription_id AND reservation.request_id = first_invoice.creation_request_id "
+            + "AND reservation.terminal_resolution_id = terminal.resolution_id AND reservation.released_at IS NOT NULL) "
             + "AND convert_from(operation.request_payload, 'UTF8')::jsonb->>'schemaVersion' = ? "
             + "AND receipt.committed_transaction_id <> txid_current()",
         invoice.creationRequestId(),
         invoice.subscriptionId(),
+        invoice.creationRequestId(),
+        invoice.tenantId(),
+        invoice.digest(),
+        invoice.invoiceId(),
+        invoice.paymentIntentId(),
+        invoice.providerSubscriptionId(),
+        invoice.providerCustomerId(),
+        invoice.providerPaymentMethodId(),
+        invoice.providerPriceId(),
+        invoice.providerQuantity(),
+        invoice.amount(),
+        invoice.currency(),
+        invoice.quoteDigest(),
+        invoice.livemode(),
         "account-hosting-unpaid-first-invoice-cancellation/v1");
   }
 

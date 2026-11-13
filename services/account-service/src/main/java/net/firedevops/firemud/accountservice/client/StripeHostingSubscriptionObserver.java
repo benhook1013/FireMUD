@@ -170,11 +170,11 @@ public final class StripeHostingSubscriptionObserver {
     require(quantity > 0, InvalidReason.ITEM_QUANTITY_INVALID);
     require(quantity == expected.expectedQuantity(), InvalidReason.ITEM_QUANTITY_MISMATCH);
 
-    boolean canceled = "canceled".equals(status);
+    boolean terminal = "canceled".equals(status) || "incomplete_expired".equals(status);
     Instant periodStart =
         providerInstant(item.getCurrentPeriodStart(), InvalidReason.PERIOD_INVALID);
     Instant periodEnd = providerInstant(item.getCurrentPeriodEnd(), InvalidReason.PERIOD_INVALID);
-    if (!canceled) {
+    if (!terminal) {
       require(periodStart != null && periodEnd != null, InvalidReason.PERIOD_MISSING);
     }
     if (periodStart != null && periodEnd != null) {
@@ -423,6 +423,11 @@ public final class StripeHostingSubscriptionObserver {
     /** True only as a description of the raw provider value, not an Account terminal commit. */
     public boolean providerStatusIsCanceled() {
       return "canceled".equals(providerStatus);
+    }
+
+    /** True only for Stripe's distinct incomplete first-invoice expiry status. */
+    public boolean providerStatusIsIncompleteExpired() {
+      return "incomplete_expired".equals(providerStatus);
     }
 
     public SubscriptionCorrelation correlation() {
