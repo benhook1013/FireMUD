@@ -1,6 +1,5 @@
 package net.firedevops.firemud.accountservice.service.auth;
 
-import io.lettuce.core.RedisCommandExecutionException;
 import io.lettuce.core.RedisFuture;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -12,7 +11,6 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -256,12 +254,12 @@ public final class AccountCredentialAbuseRedisStore
     return await(dispatch, attempt, false);
   }
 
-  /** A server error reply proves completion only for commands that cannot change bucket state. */
+  /** Preparation commands cannot change bucket state, even when their result is uncertain. */
   private static <T> T await(
       Supplier<RedisFuture<T>> dispatch, Attempt attempt, boolean nonMutating) throws Exception {
     // Defer command dispatch until this check; the async accessor is checked separately.
     attempt.remainingNanos();
-    attempt.inFlight = true;
+    attempt.inFlight = !nonMutating;
     RedisFuture<T> future = dispatch.get();
     try {
       T result = future.get(attempt.remainingNanos(), TimeUnit.NANOSECONDS);
@@ -270,7 +268,6 @@ public final class AccountCredentialAbuseRedisStore
       attempt.inFlight = false;
       return result;
     } catch (Exception failure) {
-      if (nonMutating && isCompletedRedisError(future, failure)) attempt.inFlight = false;
       try {
         future.cancel(false);
       } catch (RuntimeException cancellationFailure) {
@@ -278,12 +275,6 @@ public final class AccountCredentialAbuseRedisStore
       }
       throw failure;
     }
-  }
-
-  private static boolean isCompletedRedisError(RedisFuture<?> future, Exception failure) {
-    return failure instanceof ExecutionException executionFailure
-        && executionFailure.getCause() instanceof RedisCommandExecutionException
-        && future.isDone();
   }
 
   private final class Attempt {

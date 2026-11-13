@@ -298,6 +298,28 @@ class AccountCredentialAbuseRedisStoreTest {
   }
 
   @Test
+  void timedOutNonMutatingPreparationCommandsDoNotFenceLaterAttempts() {
+    for (String failedCommand : List.of("WHOAMI", "LOAD")) {
+      var fixture = new AsyncFixture();
+      var store = fixture.store();
+      var failOnce = new AtomicBoolean(true);
+      fixture.completion =
+          (command, evaluation, reply, timeout, unit) -> {
+            if (command.equals(failedCommand) && failOnce.getAndSet(false))
+              throw new TimeoutException("Fixture preparation timeout");
+            return reply;
+          };
+
+      assertThat(store.admit(fixture.policy, fixture.buckets, fixture.now)).isNull();
+      assertThat(fixture.calls).hasSize(failedCommand.equals("WHOAMI") ? 1 : 2);
+      assertThat(fixture.cancellations.get()).isEqualTo(1);
+      fixture.completion = AsyncFixture.IMMEDIATE;
+      assertThat(store.admit(fixture.policy, fixture.buckets, fixture.now)).isNotNull();
+      assertThat(fixture.calls).hasSize(failedCommand.equals("WHOAMI") ? 8 : 9);
+    }
+  }
+
+  @Test
   void completedRedisErrorFromScriptEvaluationKeepsTheConnectionFenced() {
     var fixture = new AsyncFixture();
     var store = fixture.store();
