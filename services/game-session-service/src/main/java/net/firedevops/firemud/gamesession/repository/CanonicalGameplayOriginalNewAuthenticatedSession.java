@@ -455,6 +455,33 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       }
     }
 
+    void requireCapacityExecutionBinding(
+        CanonicalGameplayOriginalNewCandidate candidate,
+        net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution execution) {
+      if (canonicalTemplateBytes == null) throw invalid();
+      byte[] candidateBytes = null;
+      byte[] templateCandidateBytes = null;
+      try {
+        ObjectNode root = (ObjectNode) JSON.readTree(canonicalTemplateBytes);
+        requireExactFields(root, SESSION_FIELDS);
+        requireSchemaAndAcknowledgements(root);
+        requireTemplateOnlyHasTimePlaceholders(canonicalTemplateBytes);
+        candidateBytes = candidate.canonicalBytes();
+        templateCandidateBytes = canonicalNode(root.get("originalCandidate"));
+        if (!Arrays.equals(candidateBytes, templateCandidateBytes)
+            || !execution.digest().equals(requiredText(root, "capacityExecutionDigest"))
+            || !Long.toString(canonicalSessionDurationMillis)
+                .equals(requiredText(root, "canonicalSessionDurationMillis"))) {
+          throw invalid();
+        }
+      } catch (IOException | RuntimeException malformed) {
+        throw invalid();
+      } finally {
+        wipe(candidateBytes);
+        wipe(templateCandidateBytes);
+      }
+    }
+
     public long canonicalSessionDurationMillis() {
       return canonicalSessionDurationMillis;
     }
