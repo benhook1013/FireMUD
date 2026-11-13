@@ -2081,6 +2081,154 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void secondFrozenHandoffResumesOlderOriginalAbortedBeforeCapture() throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var originalCandidate = inventory.readOriginalNewFinalAdmissionSource(decision).candidate();
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
+
+    UUID firstTransferId = transfer.advance(original.source, original.status, deadline());
+    assertThat(firstTransferId).isNotNull();
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var firstSuccessor =
+        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            catalog,
+            original,
+            sources.resolver,
+            transfer,
+            deadline());
+    assertThat(firstSuccessor.status.executorFence())
+        .isGreaterThan(original.status.executorFence());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                    firstTransferId)
+                .get(0, String.class))
+        .isEqualTo("COMPLETED");
+
+    UUID secondTransferId =
+        repository.within(
+            deadline(), ignored -> repository.begin(firstSuccessor.source, firstSuccessor.status));
+    // Leave the committed second freeze without capture, as after an interrupted process.
+    assertThat(secondTransferId).isNotNull().isNotEqualTo(firstTransferId);
+    var secondFrozen =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT old_owner_id,old_owner_fence,state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                secondTransferId);
+    assertThat(secondFrozen.get("old_owner_id", String.class))
+        .isEqualTo(firstSuccessor.status.ownerInstanceId())
+        .isNotEqualTo(controlledCapacity.selectedOwnerId());
+    assertThat(secondFrozen.get("old_owner_fence", Long.class))
+        .isGreaterThan(controlledCapacity.selectedOwnerFence());
+    assertThat(secondFrozen.get("state", String.class)).isEqualTo("FROZEN");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+                    secondTransferId)
+                .get(0, Long.class))
+        .isZero();
+    assertThat(fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+
+    var frozenOriginal =
+        repository.within(deadline(), ignored -> repository.frozenOriginal(fixture.transitionId()));
+    assertThat(frozenOriginal).isNotNull();
+    assertThat(frozenOriginal.transferId()).isEqualTo(secondTransferId);
+    assertThat(frozenOriginal.executionDigest()).isEqualTo(controlledCapacity.digest());
+    assertThat(frozenOriginal.candidate().canonicalBytes())
+        .containsExactly(originalCandidate.canonicalBytes());
+
+    byte[] candidateBytes = admin.get(ascii(installation.sessionKey()));
+    var thirdIdentity =
+        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+            "game-session-service",
+            "third-owner-handoff",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "controlled-test-image");
+    CanonicalGameplayRegionIncarnationSource thirdIncarnation =
+        scope -> {
+          assertThat(scope).isEqualTo(firstSuccessor.incarnation.scope());
+          return firstSuccessor.incarnation;
+        };
+    var thirdOwner =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            catalog,
+            thirdIncarnation,
+            sources.resolver,
+            thirdIdentity,
+            Duration.ofSeconds(30),
+            CLOCK);
+    admin.pexpire(ascii(firstSuccessor.grant.key()), 0);
+    var secondSuccessor =
+        thirdOwner.installForTransition(
+            null, firstSuccessor.transitionId, firstSuccessor.worldRequest, transfer, deadline());
+    assertThat(secondSuccessor.status.ownerInstanceId()).isEqualTo("third-owner-handoff");
+    assertThat(secondSuccessor.status.executorFence())
+        .isGreaterThan(firstSuccessor.status.executorFence());
+    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(candidateBytes);
+    var retainedExecution =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT selected_owner_id,selected_owner_fence,status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                controlledCapacity.digest());
+    assertThat(retainedExecution.get("selected_owner_id", String.class))
+        .isEqualTo(controlledCapacity.selectedOwnerId());
+    assertThat(retainedExecution.get("selected_owner_fence", Long.class))
+        .isEqualTo(controlledCapacity.selectedOwnerFence());
+    assertThat(retainedExecution.get("status", String.class)).isEqualTo("AUTHORIZED");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT old_owner_id,old_owner_fence,new_owner_id,new_owner_fence,state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                    secondTransferId)
+                .get("state", String.class))
+        .isEqualTo("COMPLETED");
+    var completedSecondTransfer =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT old_owner_id,old_owner_fence,new_owner_id,new_owner_fence FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                secondTransferId);
+    assertThat(completedSecondTransfer.get("old_owner_id", String.class))
+        .isEqualTo(firstSuccessor.status.ownerInstanceId());
+    assertThat(completedSecondTransfer.get("new_owner_id", String.class))
+        .isEqualTo("third-owner-handoff");
+    assertThat(completedSecondTransfer.get("new_owner_fence", Long.class))
+        .isGreaterThan(completedSecondTransfer.get("old_owner_fence", Long.class));
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                    fixture.transitionId())
+                .get(0, String.class))
+        .isEqualTo("ABORTED");
+  }
+
+  @Test
   void frozenTransferResumesSameCommittedOriginalAfterFenceRetentionFailure() throws Exception {
     repairAccountMember();
     bridge();

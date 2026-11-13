@@ -224,37 +224,44 @@ final class CanonicalGameplayRegionLeaseOwner {
       }
       try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
           handoffRedisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
-        CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
-            readInstallationInventory(
-                transferOwner,
-                handoffDeadline,
-                inventory -> readCurrentProvisionalEvidence(inventory, transitionId));
-        bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
-        ResolvedBridgeSource beforeClaimWorld =
-            resolveExactBridgeSource(
-                worldRequest, beforeClaimEvidence.candidate().identity(), worldDeadline);
-        requireSameSource(source, beforeClaimWorld.source);
-        CanonicalGameplayRegionIncarnationSource.StableEvidence beforeClaimIncarnation =
-            readInstallationIncarnation(transferOwner, handoffDeadline, source);
-        requireSameIncarnation(incarnation, beforeClaimIncarnation);
-        if (!statusRepository.matchesTimelinePreparation(
-            preparation,
-            beforeClaimEvidence,
-            worldRequest,
-            beforeClaimWorld.resolvedRegion,
-            source,
-            beforeClaimIncarnation)) {
-          throw unavailable();
-        }
         var initializationPreparation = preparation;
         Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
             permit =
-                withTransferStatusRepository(
-                    transferOwner,
-                    handoffDeadline,
-                    repository ->
-                        repository.beginInitialTimeline(
-                            initializationPreparation, clock.instant()));
+                session.runWithinRetainedPermit(
+                    budget -> {
+                      CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
+                          readInstallationInventory(
+                              transferOwner,
+                              handoffDeadline,
+                              budget,
+                              inventory -> readCurrentProvisionalEvidence(inventory, transitionId));
+                      bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
+                      ResolvedBridgeSource beforeClaimWorld =
+                          resolveExactBridgeSource(
+                              worldRequest,
+                              beforeClaimEvidence.candidate().identity(),
+                              worldDeadline);
+                      requireSameSource(source, beforeClaimWorld.source);
+                      CanonicalGameplayRegionIncarnationSource.StableEvidence
+                          beforeClaimIncarnation = readCurrentIncarnation(source);
+                      requireSameIncarnation(incarnation, beforeClaimIncarnation);
+                      if (!statusRepository.matchesTimelinePreparation(
+                          initializationPreparation,
+                          beforeClaimEvidence,
+                          worldRequest,
+                          beforeClaimWorld.resolvedRegion,
+                          source,
+                          beforeClaimIncarnation)) {
+                        throw unavailable();
+                      }
+                      return withTransferStatusRepository(
+                          transferOwner,
+                          handoffDeadline,
+                          budget,
+                          repository ->
+                              repository.beginInitialTimeline(
+                                  initializationPreparation, clock.instant()));
+                    });
         grant = session.initialize(permit.orElse(null));
       }
       handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
@@ -1120,6 +1127,17 @@ final class CanonicalGameplayRegionLeaseOwner {
         : bindingInventory.withinTransferRead(clock, handoffDeadline, read);
   }
 
+  private <T> T readInstallationInventory(
+      CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
+      long handoffDeadline,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
+      java.util.function.Function<CanonicalGameplayBindingInventoryRepository, T> read) {
+    if (transferOwner == null) return read.apply(bindingInventory);
+    return retainedBudget == null
+        ? bindingInventory.withinTransferRead(clock, handoffDeadline, read)
+        : bindingInventory.withinTransferRead(retainedBudget, read);
+  }
+
   private <T> T withTransferStatusRepository(
       CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
       long handoffDeadline,
@@ -1127,6 +1145,17 @@ final class CanonicalGameplayRegionLeaseOwner {
     return transferOwner == null
         ? operation.apply(statusRepository)
         : transferOwner.withStatusRepository(handoffDeadline, operation);
+  }
+
+  private <T> T withTransferStatusRepository(
+      CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
+      long handoffDeadline,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
+      java.util.function.Function<CanonicalGameplayRegionRuntimeStatusRepository, T> operation) {
+    if (transferOwner == null) return operation.apply(statusRepository);
+    return retainedBudget == null
+        ? transferOwner.withStatusRepository(handoffDeadline, operation)
+        : transferOwner.withStatusRepository(retainedBudget, operation);
   }
 
   private ResolvedBridgeSource resolveExactBridgeSource(
