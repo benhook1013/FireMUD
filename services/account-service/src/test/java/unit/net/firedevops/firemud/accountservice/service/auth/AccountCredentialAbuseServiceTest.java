@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService.Backend;
 import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService.Buckets;
 import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService.CredentialSourceContext;
@@ -54,6 +55,28 @@ class AccountCredentialAbuseServiceTest {
       assertThat(owner.isUsable(permit)).isFalse();
       assertThat(backend.buckets).hasSize(1);
       assertThat(backend.failures).isEqualTo(1);
+    }
+  }
+
+  @Test
+  void localPermitRecheckRejectsSignalsPastTheirMaximumAgeWithoutBackendWork() {
+    var monotonicNanos = new AtomicLong();
+    var backend = new FakeBackend();
+    try (var key = key()) {
+      var owner =
+          new AccountCredentialAbuseService(
+              AccountCredentialAbusePolicySource.controlled(policy(), key),
+              backend,
+              CLOCK,
+              monotonicNanos::get);
+      var permit = owner.admit(source(Transport.HTTP), "player@example.test").permit();
+
+      monotonicNanos.set(policy().maximumSignalSkew().toNanos());
+      assertThat(owner.isUsable(permit)).isTrue();
+      monotonicNanos.incrementAndGet();
+      assertThat(owner.isUsable(permit)).isFalse();
+      assertThat(backend.buckets).hasSize(1);
+      assertThat(backend.failures).isZero();
     }
   }
 
