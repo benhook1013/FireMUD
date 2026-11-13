@@ -78,6 +78,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
   private final AccountGameplayDelegationTokenRegistry tokenRegistry;
   private final AccountResponseEnvelopeCryptography responseCryptography;
   private final AccountOriginalNewFinalAdmissionReadClient finalAdmissionReadClient;
+  private final AccountGameplayAdmissionPaidSource paidSource;
   private final Clock clock;
   private final SecureRandom secureRandom;
 
@@ -97,6 +98,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         tokenRegistry,
         responseCryptography,
         clock,
+        null,
         null,
         new SecureRandom());
   }
@@ -120,6 +122,31 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         responseCryptography,
         clock,
         Objects.requireNonNull(finalAdmissionReadClient),
+        null,
+        new SecureRandom());
+  }
+
+  /** Explicit paid-source observation composition; absent final reader keeps confirmation held. */
+  public AccountOriginalNewBoundGameplayCredentialOwner(
+      DataSource dataSource,
+      String workloadNamespace,
+      AccountGameplayAdmissionCallerVerifier callerVerifier,
+      AccountGameplayDelegationSigner signer,
+      AccountGameplayDelegationTokenRegistry tokenRegistry,
+      AccountResponseEnvelopeCryptography responseCryptography,
+      Clock clock,
+      AccountOriginalNewFinalAdmissionReadClient finalAdmissionReadClient,
+      AccountGameplayAdmissionPaidSource paidSource) {
+    this(
+        dataSource,
+        workloadNamespace,
+        callerVerifier,
+        signer,
+        tokenRegistry,
+        responseCryptography,
+        clock,
+        finalAdmissionReadClient,
+        Objects.requireNonNull(paidSource),
         new SecureRandom());
   }
 
@@ -141,6 +168,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         responseCryptography,
         clock,
         null,
+        null,
         secureRandom);
   }
 
@@ -153,6 +181,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       AccountResponseEnvelopeCryptography responseCryptography,
       Clock clock,
       AccountOriginalNewFinalAdmissionReadClient finalAdmissionReadClient,
+      AccountGameplayAdmissionPaidSource paidSource,
       SecureRandom secureRandom) {
     this.dataSource = Objects.requireNonNull(dataSource, "Account DataSource is required");
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -165,6 +194,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     this.tokenRegistry = Objects.requireNonNull(tokenRegistry);
     this.responseCryptography = Objects.requireNonNull(responseCryptography);
     this.finalAdmissionReadClient = finalAdmissionReadClient;
+    this.paidSource = paidSource;
     this.clock = Objects.requireNonNull(clock);
     this.secureRandom = Objects.requireNonNull(secureRandom);
   }
@@ -244,10 +274,13 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       throw unavailable();
     }
     final Genesis exactGenesisForCommit = genesis;
+    AccountGameplayAdmissionCurrentSources.Observed currentObservation =
+        prepareCurrentOriginalSource(currentCaller, requestedLease);
     Genesis committed =
         inWritableSerializableTransaction(
             dsl -> {
-              SourceRead current = readCurrentOriginalSource(dsl, currentCaller, requestedLease);
+              SourceRead current =
+                  readCurrentOriginalSource(dsl, currentCaller, requestedLease, currentObservation);
               requireSameOriginalOperation(initial.operation(), current.operation());
               AccountOriginalNewBoundGameplayIssuanceRepository issuance =
                   new AccountOriginalNewBoundGameplayIssuanceRepository(dsl);
@@ -349,10 +382,13 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     AccountGameplayAdmissionOriginalAckReceipt receipt =
         receiptExecutor.read(requestedLease, beforeRead.operation().bindingDecisionId());
     requireExactReceipt(receipt, beforeRead.operation(), requestedLease);
+    AccountGameplayAdmissionCurrentSources.Observed beforeGenesisObservation =
+        prepareCurrentOriginalSource(caller, requestedLease);
     Genesis beforeGenesis =
         inWritableSerializableTransaction(
             dsl -> {
-              SourceRead current = readCurrentOriginalSource(dsl, caller, requestedLease);
+              SourceRead current =
+                  readCurrentOriginalSource(dsl, caller, requestedLease, beforeGenesisObservation);
               requireSameOriginalOperation(beforeRead.operation(), current.operation());
               Genesis stored =
                   new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
@@ -397,10 +433,14 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
           .hasSameOwnerEvidence(caller.currentCandidate(), currentCaller.currentCandidate())) {
         throw unavailable();
       }
+      AccountGameplayAdmissionCurrentSources.Observed recoveryObservation =
+          prepareCurrentOriginalSource(currentCaller, requestedLease);
       Genesis recovered =
           inWritableSerializableTransaction(
               dsl -> {
-                SourceRead current = readCurrentOriginalSource(dsl, currentCaller, requestedLease);
+                SourceRead current =
+                    readCurrentOriginalSource(
+                        dsl, currentCaller, requestedLease, recoveryObservation);
                 requireSameOriginalOperation(beforeRead.operation(), current.operation());
                 AccountGameplayAdmissionOriginalAckReceipt durableReceipt =
                     new AccountGameplayAdmissionOriginalAckReceiptRepository(
@@ -477,10 +517,14 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         stringObjectMap(beforeGenesis.authorityTupleCanonicalBytes()),
         stringStringMap(beforeGenesis.membershipVersionCanonicalBytes()));
     String confirmationDigest = confirmationDigest(finalReadback, activation);
+    AccountGameplayAdmissionCurrentSources.Observed confirmationObservation =
+        prepareCurrentOriginalSource(currentCaller, requestedLease);
     Genesis confirmed =
         inWritableSerializableTransaction(
             dsl -> {
-              SourceRead current = readCurrentOriginalSource(dsl, currentCaller, requestedLease);
+              SourceRead current =
+                  readCurrentOriginalSource(
+                      dsl, currentCaller, requestedLease, confirmationObservation);
               requireSameOriginalOperation(beforeRead.operation(), current.operation());
               AccountGameplayAdmissionOriginalAckReceipt durableReceipt =
                   new AccountGameplayAdmissionOriginalAckReceiptRepository(
@@ -622,9 +666,12 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         byte[] exactRecord = recordBytes.clone();
         byte[] exactEnvelope = envelopeBytes.clone();
         try {
+          AccountGameplayAdmissionCurrentSources.Observed currentObservation =
+              prepareCurrentOriginalSource(caller, lease);
           return inWritableSerializableTransaction(
               dsl -> {
-                SourceRead current = readCurrentOriginalSource(dsl, caller, lease);
+                SourceRead current =
+                    readCurrentOriginalSource(dsl, caller, lease, currentObservation);
                 if (current.operation().state() != State.COMMITTED
                     || !current
                         .operation()
@@ -668,10 +715,13 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       Genesis expectedGenesis) {
     SourceRead source = readCurrentOriginalSource(caller, lease);
     requireExactReceipt(receipt, source.operation(), lease);
+    AccountGameplayAdmissionCurrentSources.Observed currentObservation =
+        prepareCurrentOriginalSource(caller, lease);
     Genesis committed =
         inWritableSerializableTransaction(
             dsl -> {
-              SourceRead current = readCurrentOriginalSource(dsl, caller, lease);
+              SourceRead current =
+                  readCurrentOriginalSource(dsl, caller, lease, currentObservation);
               requireSameOriginalOperation(source.operation(), current.operation());
               var issuance = new AccountOriginalNewBoundGameplayIssuanceRepository(dsl);
               Genesis exact = issuance.readByLease(leaseId(lease));
@@ -714,10 +764,13 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       Genesis expectedGenesis) {
     SourceRead source = readCurrentOriginalSource(caller, lease);
     requireExactReceipt(receipt, source.operation(), lease);
+    AccountGameplayAdmissionCurrentSources.Observed currentObservation =
+        prepareCurrentOriginalSource(caller, lease);
     Genesis committed =
         inWritableSerializableTransaction(
             dsl -> {
-              SourceRead current = readCurrentOriginalSource(dsl, caller, lease);
+              SourceRead current =
+                  readCurrentOriginalSource(dsl, caller, lease, currentObservation);
               requireSameOriginalOperation(source.operation(), current.operation());
               var issuance = new AccountOriginalNewBoundGameplayIssuanceRepository(dsl);
               Genesis exact = issuance.readByLease(leaseId(lease));
@@ -788,17 +841,39 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
 
   private SourceRead readCurrentOriginalSource(
       VerifiedCaller caller, AccountGameplayAdmissionLeaseEvidence lease) {
-    return inWritableSerializableTransaction(dsl -> readCurrentOriginalSource(dsl, caller, lease));
+    AccountGameplayAdmissionCurrentSources.Observed observed =
+        prepareCurrentOriginalSource(caller, lease);
+    return inWritableSerializableTransaction(
+        dsl -> readCurrentOriginalSource(dsl, caller, lease, observed));
+  }
+
+  private AccountGameplayAdmissionCurrentSources.Observed prepareCurrentOriginalSource(
+      VerifiedCaller caller, AccountGameplayAdmissionLeaseEvidence lease) {
+    UUID targetTenantId = tenantId(lease);
+    AccountGameplayAdmissionCurrentSources.Prepared prepared =
+        inWritableSerializableTransaction(
+            dsl ->
+                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace)
+                    .prepareCurrentPublicProductionNew(
+                        targetTenantId,
+                        caller.identity().tokenJti(),
+                        caller.currentCandidate(),
+                        paidSource));
+    requireNoAmbientSql();
+    return prepared.observeOutsideSql();
   }
 
   private SourceRead readCurrentOriginalSource(
-      DSLContext dsl, VerifiedCaller caller, AccountGameplayAdmissionLeaseEvidence lease) {
+      DSLContext dsl,
+      VerifiedCaller caller,
+      AccountGameplayAdmissionLeaseEvidence lease,
+      AccountGameplayAdmissionCurrentSources.Observed observed) {
     UUID tenantId = tenantId(lease);
     AccountGameplayAdmissionCurrentSources sourceReader =
         AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
     var current =
         sourceReader.readCurrentPublicProductionNew(
-            tenantId, caller.identity().tokenJti(), caller.currentCandidate());
+            tenantId, caller.identity().tokenJti(), caller.currentCandidate(), observed);
     current.requireMatchesOriginalLease(lease);
     AccountGameplayAdmissionLeaseOperation operation =
         new AccountGameplayAdmissionLeaseRepository(dsl)
