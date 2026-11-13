@@ -522,6 +522,39 @@ class WorldLifecycleCommandServiceImplTest {
     assertTerminationConflictWithoutEffects(instance, retainedRequestId, requestId);
   }
 
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = "term-1")
+  void terminatingWorldInstanceCannotResumeWithoutTheOriginalRetainedRequestId(
+      String retainedRequestId) {
+    WorldInstance instance = activeWorldInstance();
+    instance.setStatus("TERMINATING");
+    instance.setTerminationRequestId(retainedRequestId);
+    instance.setFailureReason("original shutdown");
+    instance.setLifecycleEpoch(3L);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(instance));
+
+    IllegalArgumentException conflict =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 3L, "term-2", "replacement shutdown"));
+
+    assertTrue(conflict.getMessage().startsWith("INVALID_WORLD_INSTANCE_STATE:"));
+    assertEquals("TERMINATING", instance.getStatus());
+    assertEquals(3L, instance.getLifecycleEpoch());
+    assertEquals(retainedRequestId, instance.getTerminationRequestId());
+    assertEquals("original shutdown", instance.getFailureReason());
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verifyNoInteractions(
+        entityManagementClient,
+        worldEventRepository,
+        roomInstanceExitRepository,
+        roomInstanceRepository,
+        zoneInstanceRepository,
+        regionInstanceRepository);
+  }
+
   private void assertTerminationConflictWithoutEffects(
       WorldInstance instance, String retainedRequestId, String requestId) {
     IllegalArgumentException conflict =

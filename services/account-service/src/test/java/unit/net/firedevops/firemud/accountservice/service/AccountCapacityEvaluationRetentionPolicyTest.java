@@ -186,6 +186,7 @@ class AccountCapacityEvaluationRetentionPolicyTest {
     when(row.get("expires_at", OffsetDateTime.class)).thenReturn(EXPIRES.atOffset(ZoneOffset.UTC));
     when(row.get("evidence_bytes", Long.class)).thenReturn(12L);
     when(row.get("scope_referenced", Boolean.class)).thenReturn(referenced);
+    when(row.get("directly_referenced", Boolean.class)).thenReturn(referenced);
     return row;
   }
 

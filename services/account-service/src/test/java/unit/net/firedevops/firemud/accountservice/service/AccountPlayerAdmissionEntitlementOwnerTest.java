@@ -115,6 +115,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class AccountPlayerAdmissionEntitlementOwnerTest {
   private static final UUID ACCOUNT = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID TENANT = UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID BILLING_OWNER = UUID.fromString("00000000-0000-4000-8000-000000000001");
   private static final String ISSUER = "firemud-account-service";
   private static final String PEER = "spiffe://firemud/ns/prod/sa/game-session-service";
   private static final String PREFIX = "account:auth-authority:v1:";
@@ -125,6 +126,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
   void clearTransactionFlags() {
     TransactionSynchronizationManager.setActualTransactionActive(false);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+    TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(null);
   }
 
   @Test
@@ -166,7 +168,8 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(binding.get("playableStateScope")).isEqualTo("SHARED");
     assertThat(binding.get("characterCreationPolicy")).isEqualTo("PRESEEDED_ONLY");
     assertThat(value.toString()).doesNotContain("controlled-token", f.scope.connectScopeId());
-    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
+    assertThat(f.transactions.events)
+        .containsExactly("begin", "commit", "begin", "commit", "begin", "commit");
     verifyNoInteractions(f.hosting, f.observer);
   }
 
@@ -249,12 +252,14 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .thenAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(f.accountLocks).isEmpty();
               return observed;
             });
     when(f.hosting.readCurrent(fence, observed))
         .thenAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(f.accountLocks).containsExactly(BILLING_OWNER, ACCOUNT);
               return f.receipt(status);
             });
     var value = f.owner.evaluate(f.request, "controlled-token");
@@ -270,12 +275,15 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .containsEntry("allowNewGameplayBindings", available && status != Status.GRACE)
         .containsEntry("allowNewInstanceStarts", available && status != Status.GRACE);
     assertThat(f.transactions.events)
-        .containsExactly("begin", "commit", "begin", "commit", "begin", "commit");
-    var order = inOrder(f.observer, f.accounts, f.hosting);
+        .containsExactly(
+            "begin", "commit", "begin", "commit", "begin", "commit", "begin", "commit");
+    var order = inOrder(f.hosting, f.observer, f.accounts, f.issuances, f.memberships);
     order.verify(f.hosting).prepareCurrentRead(TENANT);
     order.verify(f.observer).observe(fence.binding());
-    order.verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
     order.verify(f.hosting).readCurrent(fence, observed);
+    order.verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
+    order.verify(f.issuances).readCurrentCommittedCandidateByJti(f.identity.tokenJti());
+    order.verify(f.memberships).readCurrent(ACCOUNT, TENANT);
   }
 
   @ParameterizedTest
@@ -964,6 +972,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
 
   private static final class Fixture {
     private final AccountRepository accounts = mock(AccountRepository.class);
+    private final DSLContext dsl = mock(DSLContext.class);
     private final AccountGameplayAdmissionCallerVerifier callers =
         mock(AccountGameplayAdmissionCallerVerifier.class);
     private final AccountGameplayDelegationIssuanceRepository issuances =
@@ -982,6 +991,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     private final CanonicalGameplayAdmissionDecisionReadClient targets =
         mock(CanonicalGameplayAdmissionDecisionReadClient.class);
     private final RecordingTransactions transactions = new RecordingTransactions();
+    private final List<UUID> accountLocks = new ArrayList<>();
     private final Map<String, org.jooq.Record> retainedCapacity = new LinkedHashMap<>();
     private boolean refuseCapacityRetention;
     private boolean missingCapacityRetentionReadback;
@@ -1073,7 +1083,6 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
               scope.connectScopeId(),
               PEER);
       controlledTarget(targets);
-      var dsl = mock(DSLContext.class);
       // Controlled retention content, not physical atomicity or Account source authentication.
       when(dsl.execute(anyString(), any(Object[].class)))
           .thenAnswer(
@@ -1107,6 +1116,20 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
           .thenAnswer(
               invocation -> {
                 String sql = invocation.getArgument(0, String.class);
+                if (sql.startsWith(
+                    "SELECT owner_account_uuid FROM account_tenant_billing_owners ")) {
+                  var owner = mock(org.jooq.Record.class);
+                  when(owner.get("owner_account_uuid", UUID.class)).thenReturn(BILLING_OWNER);
+                  return owner;
+                }
+                if (sql.startsWith("SELECT account_uuid FROM accounts WHERE account_uuid = ?")) {
+                  Object[] values = (Object[]) invocation.getRawArguments()[1];
+                  UUID accountId = (UUID) values[0];
+                  accountLocks.add(accountId);
+                  var accountLock = mock(org.jooq.Record.class);
+                  when(accountLock.get("account_uuid", UUID.class)).thenReturn(accountId);
+                  return accountLock;
+                }
                 if (!sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
                   throw new AssertionError(sql);
                 Object[] values = (Object[]) invocation.getRawArguments()[1];
@@ -1395,6 +1418,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
       }
       events.add("begin");
       TransactionSynchronizationManager.setActualTransactionActive(true);
+      if (definition != null) {
+        TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(
+            definition.getIsolationLevel());
+      }
       return new SimpleTransactionStatus();
     }
 
@@ -1402,6 +1429,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     public void commit(TransactionStatus status) {
       events.add("commit");
       TransactionSynchronizationManager.setActualTransactionActive(false);
+      TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(null);
       if (events.size() == 4) afterSecondCommit.run();
       if (failCommit && events.size() == 4)
         throw new IllegalStateException("controlled commit failure");
@@ -1411,6 +1439,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     public void rollback(TransactionStatus status) {
       events.add("rollback");
       TransactionSynchronizationManager.setActualTransactionActive(false);
+      TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(null);
     }
   }
 }

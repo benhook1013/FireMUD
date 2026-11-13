@@ -668,9 +668,14 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
 
   /** Retains the existing controlled upstream lease before any provisional publication. */
   CanonicalGameplayAdmissionDecision originalPreparedDecisionWithControlledAccountLease() {
+    return originalPreparedDecisionWithControlledAccountLease(false);
+  }
+
+  CanonicalGameplayAdmissionDecision originalPreparedDecisionWithControlledAccountLease(
+      boolean capacityAuthority) {
     return new CanonicalGameplayAdmissionDecision(
         transitionId,
-        controlledLeaseEvidence(identity, generation, target),
+        controlledLeaseEvidence(identity, generation, target, capacityAuthority),
         identity,
         generation,
         null,
@@ -1158,13 +1163,6 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   public UUID prepareOtherControllerNew(String seed) {
-    return prepareOtherControllerNew(
-        seed,
-        UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)),
-        UUID.nameUUIDFromBytes((seed + "-transition").getBytes(StandardCharsets.UTF_8)));
-  }
-
-  UUID prepareOtherControllerNew(String seed, UUID requestId, UUID transitionId) {
     CanonicalGameplayBindingIdentity other;
     do {
       other =
@@ -1192,7 +1190,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
             .beginOrResumeOrdinaryNew(
                 new CanonicalGameplayIssuerBindingLocalOperation.Request(
-                    requestId, transitionId, other, null, null));
+                    UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)),
+                    UUID.nameUUIDFromBytes((seed + "-transition").getBytes(StandardCharsets.UTF_8)),
+                    other,
+                    null,
+                    null));
     otherOperations.put(seed, operation);
     return operation.operationId();
   }
@@ -1298,8 +1300,24 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     }
   }
 
-  /** Publishes a controlled Account lease through the actual SQL and Redis provisional owners. */
+  /** Publishes a controlled Account lease and projects the issuer member through real owners. */
   public void publishOtherControllerNew(String seed) {
+    var operation = otherOperation(seed);
+    var decision = otherControllerDecision(seed);
+    repository.markProvisional(
+        repository.readProvisionalCasEvidence(decision.bindingDecisionId()), decision);
+    new CanonicalGameplayIssuerBindingLocalRedisOwner(
+            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
+        .projectAndRead(operation);
+  }
+
+  /** Supplies the controlled Account decision without advancing its prepared transition. */
+  CanonicalGameplayAdmissionDecision otherControllerDecision(String seed) {
+    return otherControllerDecision(seed, false);
+  }
+
+  CanonicalGameplayAdmissionDecision otherControllerDecision(
+      String seed, boolean capacityAuthority) {
     var operation = otherOperation(seed);
     var transitionId = operation.request().transitionId();
     var evidence = repository.readProvisionalCasEvidence(transitionId);
@@ -1310,19 +1328,27 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
                 controlledLeaseEvidence(
                     operation.request().candidate(),
                     evidence.transition().bindingGeneration(),
-                    target));
-    repository.markProvisional(
-        evidence,
-        new CanonicalGameplayAdmissionDecision(
-            transitionId,
-            lease,
-            operation.request().candidate(),
-            evidence.transition().bindingGeneration(),
-            null,
-            target));
-    new CanonicalGameplayIssuerBindingLocalRedisOwner(
-            issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
-        .projectAndRead(operation);
+                    target,
+                    capacityAuthority));
+    return new CanonicalGameplayAdmissionDecision(
+        transitionId,
+        lease,
+        operation.request().candidate(),
+        evidence.transition().bindingGeneration(),
+        null,
+        target);
+  }
+
+  /** Persists the exact projected issuer ACK for an independently retained NEW operation. */
+  public CanonicalGameplayIssuerBindingLocalAcknowledgement acknowledgeOtherControllerNew(
+      String seed) {
+    var operation = otherOperation(seed);
+    var physicalReadback =
+        new CanonicalGameplayIssuerBindingLocalRedisOwner(
+                issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
+            .projectAndRead(operation);
+    return new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(dsl, issuerSource)
+        .acknowledge(physicalReadback);
   }
 
   /** Records a controlled Account abort through the actual Game Session SQL abort owner. */
@@ -1789,6 +1815,14 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       CanonicalGameplayBindingIdentity candidate,
       BigInteger bindingGeneration,
       CanonicalPlayableTarget target) {
+    return controlledLeaseEvidence(candidate, bindingGeneration, target, false);
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence controlledLeaseEvidence(
+      CanonicalGameplayBindingIdentity candidate,
+      BigInteger bindingGeneration,
+      CanonicalPlayableTarget target,
+      boolean capacityAuthority) {
     long now = System.currentTimeMillis();
     String nowSeconds = Long.toString(now / 1000L);
     Map<String, Object> carrier = new LinkedHashMap<>();
@@ -1820,14 +1854,25 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     scope.put("regionId", candidate.regionId().toString());
     scope.put("regionEpoch", candidate.regionEpoch().toString());
     carrier.put("bindingScope", scope);
-    carrier.put(
-        "authorityTuple",
-        Map.of(
-            "issuerAuthGeneration", candidate.issuerAuthGeneration().toString(),
-            "accountAuthorityGeneration", "1",
-            "tenantAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
-            "membershipAuthorityGeneration", Map.of(candidate.tenantId().toString(), "1"),
-            "privateRealmGrantVersions", List.of()));
+    String tenant = candidate.tenantId().toString();
+    Map<String, Object> authority = new LinkedHashMap<>();
+    authority.put("issuerAuthGeneration", candidate.issuerAuthGeneration().toString());
+    authority.put("accountAuthorityGeneration", "1");
+    authority.put("tenantAuthorityGeneration", Map.of(tenant, capacityAuthority ? "2" : "1"));
+    authority.put("membershipAuthorityGeneration", Map.of(tenant, "1"));
+    authority.put("privateRealmGrantVersions", List.of());
+    if (capacityAuthority) {
+      authority.put(
+          "tenantBillingCutoff",
+          Map.of(
+              tenant,
+              Map.of(
+                  "tenantAuthorityGeneration", "2",
+                  "tenantBillingSequence", "1",
+                  "outboxStreamKey", "account:auth-authority:v1:tenant/" + tenant,
+                  "outboxSequence", "1")));
+    }
+    carrier.put("authorityTuple", authority);
     carrier.put("issuanceFence", "1");
     carrier.put(
         "membershipBaseline",
