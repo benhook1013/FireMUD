@@ -298,13 +298,8 @@ final class CanonicalGameplayRegionLeaseOwner {
         throw unavailable();
       }
       if (existingRegionInstallation == null) {
-        if (transferOwner != null) {
-          // Preserve ordinary timeline/incarnation qualification before any transfer effect.
-          // A lost completion reply is not permission to freeze/advance its successor again.
-          if (transferOwner.alreadyCompleted(
-              prior, runtimeIdentity.serviceInstanceId(), handoffDeadline)) throw unavailable();
-        }
-        // A contender must not freeze a healthy incumbent whose lease is still renewing.
+        // A stable instance ID can survive a restart. The fresh-token acquire establishes
+        // scoped lease absence atomically and refuses every live incumbent or competing grant.
         grant = handoffRedisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
         if (transferOwner != null) {
           transferContinuation =
