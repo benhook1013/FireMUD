@@ -342,8 +342,6 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
   static final int TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS = 128;
   static final long TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES = 128L * 1_048_576L;
 
-
-
   @TempDir Path directory;
 
   DSLContext dsl;
