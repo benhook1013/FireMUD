@@ -1708,7 +1708,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   "FOR SHARE OF e",
                   "e.status IN ('INSTALL_DISPATCHED','AUTHORIZED')",
                   "Transfer item differs from unresolved original region execution")),
-          "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt");
+          "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt",
+          "reject_gs_capacity_close_after_final_receipt()");
     }
   }
 
@@ -1849,7 +1850,10 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     if (addedTrigger != null) {
       assertThat(f.guards()).containsKey(addedTrigger);
       assertThat(f.guards().get(addedTrigger))
-          .contains("BEFORE INSERT")
+          .contains(
+              "reject_gs_capacity_close_after_final_receipt()".equals(addedTriggerRoutine)
+                  ? "BEFORE UPDATE"
+                  : "BEFORE INSERT")
           .contains("EXECUTE FUNCTION")
           .contains(addedTriggerRoutine.substring(0, addedTriggerRoutine.indexOf('(')));
     }
