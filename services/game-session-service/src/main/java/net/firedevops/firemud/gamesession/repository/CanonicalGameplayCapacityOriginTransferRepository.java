@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -550,7 +551,7 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
 
   static CanonicalGameplayCapacityOrigin decodeOrigin(Record row) {
     var request =
-        net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.decodeCommittable(
+        CapacityAdmissionDigest.decodeCommittable(
             row.get("canonical_request", byte[].class), row.get("mutation_digest", String.class));
     var candidate =
         CanonicalGameplayOriginalNewCandidate.parseCanonical(
