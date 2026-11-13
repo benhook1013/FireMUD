@@ -28,6 +28,8 @@ import java.nio.file.Path;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -201,6 +203,37 @@ class CanonicalInitialPlayerLocationClientTest {
     assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("incomplete or stale");
+  }
+
+  @Test
+  void deadlineBoundRegionReadDoesNotWaitForStalledTlsReload() throws Exception {
+    var request = request();
+    var stub = mockStub();
+    var region = regionResponse(request);
+    var deadlineApplied = new CountDownLatch(1);
+    when(stub.withDeadline(any(Deadline.class)))
+        .thenAnswer(
+            invocation -> {
+              deadlineApplied.countDown();
+              return stub;
+            });
+    when(stub.readInitialPlayerLocationRegion(request)).thenReturn(region);
+    var client = clientWithStub(stub);
+
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      // TLS reload owns this monitor while it builds and publishes a replacement channel.
+      synchronized (client) {
+        var result =
+            executor.submit(
+                () ->
+                    client.readInitialPlayerLocationRegion(
+                        request, Deadline.after(100L, TimeUnit.MILLISECONDS)));
+
+        assertThat(deadlineApplied.await(1L, TimeUnit.SECONDS)).isTrue();
+        assertThat(result.get(1L, TimeUnit.SECONDS)).isEqualTo(region);
+      }
+    }
+    verify(stub).withDeadline(any(Deadline.class));
   }
 
   @Test
@@ -613,6 +646,7 @@ class CanonicalInitialPlayerLocationClientTest {
             CanonicalInitialPlayerLocationServiceGrpc
                 .CanonicalInitialPlayerLocationServiceBlockingStub.class);
     when(stub.withDeadlineAfter(20L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.withDeadline(any(Deadline.class))).thenReturn(stub);
     when(stub.withMaxInboundMessageSize(8 * 1024)).thenReturn(stub);
     when(stub.withMaxOutboundMessageSize(16 * 1024)).thenReturn(stub);
     return stub;
