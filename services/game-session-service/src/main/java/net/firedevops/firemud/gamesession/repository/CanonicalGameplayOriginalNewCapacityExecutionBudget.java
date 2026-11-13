@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import io.grpc.Context;
 import io.grpc.Deadline;
+import io.lettuce.core.api.StatefulConnection;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.Metrics;
 import java.lang.reflect.InvocationTargetException;
@@ -37,6 +38,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   static final int MAX_BACKGROUND_OPERATIONS = 2;
   private static final Semaphore BACKGROUND_OPERATIONS = new Semaphore(MAX_BACKGROUND_OPERATIONS);
   private static final AtomicInteger RELEASE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
+  private static final AtomicInteger REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
 
   static {
     Gauge.builder(
@@ -45,11 +47,18 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
             AtomicInteger::get)
         .description("Capacity SQL operation permits retained after an uncertain provider release")
         .register(Metrics.globalRegistry);
+    Gauge.builder(
+            "original_new_capacity_redis_close_failure_retained_operations",
+            REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS,
+            AtomicInteger::get)
+        .description("Capacity operation permits retained after unproved Redis disposal")
+        .register(Metrics.globalRegistry);
   }
 
   private final ThreadFactory cancellationThreads;
   private final boolean background;
   private final AtomicBoolean releaseFailureRecorded = new AtomicBoolean();
+  private boolean redisCloseFailureRecorded;
   private final AtomicInteger outstandingConnections = new AtomicInteger();
   private final Context caller;
   private final Clock clock;
@@ -241,7 +250,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     remainingNanos();
   }
 
-  /** Retains the resource permit until the registered Redis disposal attempt settles. */
+  /** Releases the resource permit only after the registered Redis disposal succeeds. */
   void retainUntilAsyncClose(CompletableFuture<Void> closeAttempt) {
     Objects.requireNonNull(closeAttempt);
     synchronized (lifecycle) {
@@ -250,6 +259,13 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     closeAttempt.whenComplete(
         (ignored, failure) -> {
           synchronized (lifecycle) {
+            if (failure != null) {
+              if (!redisCloseFailureRecorded) {
+                redisCloseFailureRecorded = true;
+                REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
+              }
+              return;
+            }
             outstandingAsyncCloses--;
             releaseIfFinished();
           }
@@ -266,9 +282,17 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       throw unavailable();
     } catch (java.util.concurrent.ExecutionException
         | java.util.concurrent.CancellationException failedClose) {
-      // An exceptional close ends the one attempt but leaves disposal unproved.
+      throw unavailable();
     } catch (java.util.concurrent.TimeoutException expired) {
       throw unavailable();
+    }
+  }
+
+  static CompletableFuture<Void> startRedisClose(StatefulConnection<?, ?> connection) {
+    try {
+      return Objects.requireNonNull(connection.closeAsync());
+    } catch (RuntimeException | Error failure) {
+      return CompletableFuture.failedFuture(failure);
     }
   }
 

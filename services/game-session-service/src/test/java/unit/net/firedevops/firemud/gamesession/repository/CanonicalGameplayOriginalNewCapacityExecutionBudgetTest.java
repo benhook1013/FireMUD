@@ -202,6 +202,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
     when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
     when(connection.closeAsync()).thenReturn(close);
+    RedisFuture<Long> probed = mock();
+    when(commands.<Long>evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
+        .thenReturn(probed);
+    when(probed.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
     RuntimeIdentity identity =
         new RuntimeIdentity(
             "game-session-service",
@@ -314,7 +318,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     when(commands.evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
         .thenAnswer(
             invocation -> {
-              submittedArguments.set((byte[][]) invocation.getRawArguments()[3]);
+              byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
+              if ("INITIALIZE"
+                  .equals(new String(arguments[1], java.nio.charset.StandardCharsets.US_ASCII))) {
+                submittedArguments.set(arguments);
+              }
               return initialized;
             });
     when(initialized.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
@@ -378,7 +386,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
 
         var session = prepared;
         initialization = CompletableFuture.supplyAsync(() -> session.initialize(permit), executor);
-        verify(commands, timeout(1000))
+        verify(commands, timeout(1000).times(2))
             .evalsha(any(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
         verify(connection, timeout(1000)).closeAsync();
         byte[][] arguments = submittedArguments.get();
@@ -763,6 +771,65 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         if (background.availablePermits() == backgroundAvailable - 1) background.release();
       }
     } finally {
+      Metrics.removeRegistry(registry);
+      registry.close();
+    }
+  }
+
+  @Test
+  void exceptionalOrCancelledRedisDisposalRetainsTheBudgetAndReportsIt() {
+    var registry = new SimpleMeterRegistry();
+    Metrics.addRegistry(registry);
+    var retained =
+        (AtomicInteger)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS"));
+    var operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    var background =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int priorOperations = operations.availablePermits();
+    int priorBackground = background.availablePermits();
+    int priorRetained = retained.get();
+    CompletableFuture<Void> cancelled = new CompletableFuture<>();
+    cancelled.cancel(false);
+    try {
+      for (var close :
+          List.of(
+              CompletableFuture.<Void>failedFuture(new IllegalStateException("close failed")),
+              cancelled)) {
+        assertThatThrownBy(
+                () ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                        CLOCK,
+                        Long.MAX_VALUE,
+                        budget -> {
+                          budget.awaitAsyncClose(close);
+                          return true;
+                        }))
+            .isInstanceOf(IllegalStateException.class);
+      }
+      assertThat(operations.availablePermits()).isEqualTo(priorOperations - 2);
+      assertThat(background.availablePermits()).isEqualTo(priorBackground - 2);
+      assertThat(
+              registry
+                  .get("original_new_capacity_redis_close_failure_retained_operations")
+                  .gauge()
+                  .value())
+          .isEqualTo(priorRetained + 2);
+    } finally {
+      operations.release(priorOperations - operations.availablePermits());
+      background.release(priorBackground - background.availablePermits());
+      retained.set(priorRetained);
       Metrics.removeRegistry(registry);
       registry.close();
     }
