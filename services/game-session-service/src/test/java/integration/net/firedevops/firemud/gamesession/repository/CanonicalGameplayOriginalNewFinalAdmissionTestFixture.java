@@ -277,13 +277,14 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
   /** Real authenticated client decoding over controlled World/Entity response DTOs and test PKI. */
   static final class ControlledRegionSources implements AutoCloseable {
     enum WorldRead {
+      NONE,
       PLACEMENT,
       LIFECYCLE
     }
 
     final java.util.concurrent.CountDownLatch withheldReadEntered =
         new java.util.concurrent.CountDownLatch(1);
-    volatile WorldRead withholdWorldRead;
+    volatile WorldRead withholdWorldRead = WorldRead.NONE;
     final CanonicalInitialPlayerLocationRequest request;
     private final Map<String, Placement> placements = new ConcurrentHashMap<>();
     private final Placement originalPlacement;
