@@ -1051,9 +1051,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       "INSERT INTO "
                           + EPOCHS
                           + "(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 16,catalog_bytes,catalog_digest FROM "
+                          + " SELECT catalog_epoch+1,catalog_bytes,catalog_digest FROM "
                           + EPOCHS
-                          + " WHERE catalog_epoch=17"))
+                          + " ORDER BY catalog_epoch DESC LIMIT 1"))
           .hasMessageContaining("exact classified installed schema");
       assertThatThrownBy(
               () ->
