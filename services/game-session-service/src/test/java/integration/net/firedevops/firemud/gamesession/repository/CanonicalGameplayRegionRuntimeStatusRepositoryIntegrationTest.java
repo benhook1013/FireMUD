@@ -34,6 +34,7 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
@@ -71,6 +72,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   private static final String PREPARATION_DIGEST = "sha256:" + "b".repeat(64);
   private static final String FIRST_LEASE_CORRELATION = "c".repeat(64);
   private static final String SECOND_LEASE_CORRELATION = "d".repeat(64);
+  private static final int TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS = 128;
+  private static final long TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES = 128L * 1_048_576L;
 
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
@@ -481,6 +484,96 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           .extracting(item -> item.execution().digest())
           .containsExactly(proof.execution.digest());
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({"1,134217728", "128,1048576"})
+  void chargedAbsentExecutionCanStillBeFencedWhenEitherBudgetDimensionIsFull(
+      int maximumRecords, long maximumBindingBytes) throws Exception {
+    try (var proof = new TransferSqlProof(maximumRecords, maximumBindingBytes)) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id=?",
+                      proof.admission.candidate().bindingIdentity().tenantId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+
+      UUID transferId = proof.begin();
+      assertThat(proof.captureAndFence(transferId)).hasSize(1);
+      assertThat(proof.physicalExecutionExists(proof.execution)).isTrue();
+      assertThat(proof.executionState(proof.execution)).isEqualTo("INSTALL_DISPATCHED");
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id=?",
+                      proof.admission.candidate().bindingIdentity().tenantId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void postgresSerializesTheLastEvidenceChargeAcrossConcurrentAttempts() throws Exception {
+    try (var proof = new TransferSqlProof(2, 2_097_152L);
+        var callers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+      var first = proof.newControlledExecution();
+      var second = proof.newControlledExecution();
+      var ready = new java.util.concurrent.CountDownLatch(2);
+      var start = new java.util.concurrent.CountDownLatch(1);
+      var assignment =
+          proof.tags.assignmentForTransition(proof.admission.candidate().bindingDecisionId());
+      var selected =
+          new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+              proof.execution.selectedOwnerId(), proof.execution.selectedOwnerFence());
+      java.util.function.Function<
+              OriginalNewCapacityExecution, java.util.concurrent.Future<Boolean>>
+          compete =
+              attempt ->
+                  callers.submit(
+                      () -> {
+                        ready.countDown();
+                        if (!start.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                          throw new IllegalStateException("Concurrent proof start unavailable");
+                        }
+                        try {
+                          proof.sql.transaction(
+                              configuration ->
+                                  CanonicalGameplayCapacityEvidenceBudget.precharge(
+                                      DSL.using(configuration),
+                                      attempt.request(),
+                                      attempt.candidateDigest(),
+                                      selected,
+                                      assignment.tenantGameplayTag()));
+                          return true;
+                        } catch (IllegalStateException refused) {
+                          assertThat(refused)
+                              .hasMessage("Original NEW capacity evidence budget is unavailable");
+                          return false;
+                        }
+                      });
+      var firstResult = compete.apply(first);
+      var secondResult = compete.apply(second);
+      assertThat(ready.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      assertThat(
+              List.of(
+                  firstResult.get(5, java.util.concurrent.TimeUnit.SECONDS),
+                  secondResult.get(5, java.util.concurrent.TimeUnit.SECONDS)))
+          .containsExactlyInAnyOrder(true, false);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id=?",
+                      assignment.tenantId())
+                  .get(0, Long.class))
+          .isEqualTo(2L);
     }
   }
 
@@ -1294,7 +1387,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                 () ->
                     proof.receiver.observeForRegionOwnerTransfer(
                         id, captured.getFirst().ordinal(), proof.clock.millis() + 500L))
-            .isInstanceOf(IllegalStateException.class);
+            .isInstanceOf(ObservationUnavailableException.class);
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(3));
       } finally {
         lock.rollback();
@@ -1422,7 +1515,9 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       var installed = proof.install(id);
       String completed = proof.transferImage(id);
       assertSqlGuard(() -> proof.rawReplaceOwner("different-successor", "f".repeat(64)));
-      assertThatThrownBy(() -> proof.seedUndeliveredDispatch(proof.newControlledExecution()))
+      var lateExecution = proof.newControlledExecution();
+      proof.retainExactChargeForControlledSeed(lateExecution);
+      assertThatThrownBy(() -> proof.seedUndeliveredDispatch(lateExecution))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("Region dispatch requires the exact current selected owner");
       assertThat(proof.currentOwner()).isEqualTo(installed);
@@ -1709,10 +1804,26 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private CanonicalGameplayRegionOwnerTransferCoordinator coordinator;
 
     private TransferSqlProof() throws Exception {
-      this(new DefaultExecuteListener());
+      this(
+          new DefaultExecuteListener(),
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
+    }
+
+    private TransferSqlProof(int maximumRecords, long maximumBindingBytes) throws Exception {
+      this(new DefaultExecuteListener(), maximumRecords, maximumBindingBytes);
     }
 
     private TransferSqlProof(DefaultExecuteListener listener) throws Exception {
+      this(
+          listener,
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
+    }
+
+    private TransferSqlProof(
+        DefaultExecuteListener listener, int maximumRecords, long maximumBindingBytes)
+        throws Exception {
       String password = UUID.randomUUID().toString();
       try (var administrator =
               RedisClient.create(RedisURI.create(REDIS.getHost(), REDIS.getMappedPort(6379)));
@@ -1838,7 +1949,16 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       admission = inventory.readOriginalNewFinalAdmissionSource(decision);
       scope = region.installation().source;
       prior = new CanonicalGameplayRegionRuntimeStatusRepository(sql).find(scope).orElseThrow();
+      var assignment = tags.assignmentForTransition(admission.candidate().bindingDecisionId());
+      sql.execute(
+          "INSERT INTO game_session_capacity_evidence_budget"
+              + " (tenant_id,maximum_records,maximum_binding_bytes) VALUES (?,?,?)"
+              + " ON CONFLICT DO NOTHING",
+          assignment.tenantId(),
+          maximumRecords,
+          maximumBindingBytes);
       execution = newControlledExecution();
+      precharge(execution);
       recreateTransferOwners();
     }
 
@@ -1886,7 +2006,52 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private void seedUndeliveredDispatch(OriginalNewCapacityExecution original) {
       // Controlled crash-window storage seed only. No guard is disabled, no AUTHORIZED result is
       // invented, and this is not the real authorize path exercised by the two row-lock races.
+      precharge(original);
       insertExecution(original, "INSTALL_DISPATCHED", null);
+    }
+
+    private void precharge(OriginalNewCapacityExecution original) {
+      if (sql.fetchOne(
+              "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+              original.request().admissionAttemptId())
+          != null) return;
+      capacity(sql)
+          .precharge(
+              admission,
+              original.request(),
+              new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+                  original.selectedOwnerId(), original.selectedOwnerFence()),
+              transferDeadline());
+    }
+
+    /**
+     * Exact test charge for the post-transfer raw INSERT refusal case, after source is retained.
+     */
+    private void retainExactChargeForControlledSeed(OriginalNewCapacityExecution original) {
+      if (!admission.candidateDigest().equals(original.candidateDigest())
+          || !admission.candidate().bindingDecisionId().equals(original.transitionId()))
+        throw new IllegalStateException("Exact candidate is required for a controlled charge");
+      if (sql.fetchOne(
+              "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+              original.request().admissionAttemptId())
+          != null) return;
+      var request = original.request();
+      var identity = request.identity();
+      var assignment = tags.assignmentForTransition(original.transitionId());
+      sql.execute(
+          "INSERT INTO game_session_capacity_evidence_charge"
+              + " (admission_attempt_id,tenant_id,request_id,admission_id,capacity_rearm_fence,"
+              + " mutation_digest,candidate_digest,selected_owner_id,selected_owner_fence,reserved_binding_bytes)"
+              + " VALUES (?,?,?,?,?,?,?,?,?,1048576)",
+          request.admissionAttemptId(),
+          identity.tenantId(),
+          identity.requestId(),
+          identity.admissionId(),
+          request.capacityRearmFence(),
+          request.mutationDigest(),
+          original.candidateDigest(),
+          original.selectedOwnerId(),
+          original.selectedOwnerFence());
     }
 
     private void insertExecution(

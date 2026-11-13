@@ -113,15 +113,23 @@ final class CanonicalGameplayRegionLeaseOwner {
                             transitionId, frozenOriginal.candidate()))
                 .orElse(null);
     var retainedOriginal =
-        frozenOriginal == null || transferTopologyCandidate != null
+        transferOwner == null || existingRegionInstallation != null
             ? null
-            : readInstallationInventory(
-                    transferOwner,
-                    handoffDeadline,
-                    inventory ->
-                        inventory.readRegionTransferCommittedSource(
-                            transitionId, frozenOriginal.candidate()))
-                .orElse(null);
+            : frozenOriginal == null
+                ? readInstallationInventory(
+                        transferOwner,
+                        handoffDeadline,
+                        inventory -> inventory.readRegionTransferCommittedSource(transitionId))
+                    .orElse(null)
+                : transferTopologyCandidate != null
+                    ? null
+                    : readInstallationInventory(
+                            transferOwner,
+                            handoffDeadline,
+                            inventory ->
+                                inventory.readRegionTransferCommittedSource(
+                                    transitionId, frozenOriginal.candidate()))
+                        .orElse(null);
     CanonicalGameplayBindingProvisionalCasEvidence evidence =
         retainedOriginal != null || transferTopologyCandidate != null
             ? null
@@ -152,8 +160,14 @@ final class CanonicalGameplayRegionLeaseOwner {
         withTransferStatusRepository(
                 transferOwner, handoffDeadline, repository -> repository.find(source))
             .orElse(null);
+    // A committed source is topology evidence only. It cannot create an initial timeline or
+    // establish a region owner where no predecessor owner exists.
+    if (retainedOriginal != null && prior == null) throw unavailable();
     if (prior == null && expectedRegionEpoch != 1L) throw unavailable();
     if (prior != null && prior.regionEpoch() != expectedRegionEpoch) throw unavailable();
+    if (retainedOriginal != null && frozenOriginal == null) {
+      transferOwner.requireRetainedCommittedOriginal(retainedOriginal, prior, handoffDeadline);
+    }
     if (frozenOriginal != null) {
       if (prior == null || retainedOriginal != null && retainedOriginal.finalReceipt().isEmpty()) {
         throw unavailable();
