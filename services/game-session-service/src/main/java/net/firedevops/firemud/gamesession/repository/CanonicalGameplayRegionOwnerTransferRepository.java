@@ -231,25 +231,6 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             });
   }
 
-  boolean completedForCurrent(
-      CanonicalGameplayRegionRuntimeStatus prior, String requestingOwner, long deadline) {
-    return within(
-        deadline,
-        ignored ->
-            exists(
-                sql(),
-                "SELECT 1 FROM "
-                    + TRANSFER
-                    + " WHERE tenant_id=? AND game_instance_id=? AND region_id=? AND state='COMPLETED' AND new_owner_id=? AND new_owner_id=? AND new_owner_fence=? AND new_lease_correlation=?",
-                prior.tenantId(),
-                prior.gameInstanceId(),
-                prior.regionId(),
-                prior.ownerInstanceId(),
-                requestingOwner,
-                prior.executorFence().longValueExact(),
-                prior.leaseTokenCorrelation()));
-  }
-
   /**
    * One bounded enrollment step. The final anti-join, not a cursor or page size, proves
    * completeness.

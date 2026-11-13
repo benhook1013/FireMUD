@@ -165,6 +165,8 @@ final class CanonicalGameplayRegionLeaseOwner {
     UUID transferId = null;
     CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource =
         retainedOriginal;
+    CanonicalGameplayOriginalNewCandidate transferCandidate =
+        retainedOriginal != null ? retainedOriginal.candidate() : transferTopologyCandidate;
 
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
     CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant;
@@ -301,13 +303,8 @@ final class CanonicalGameplayRegionLeaseOwner {
         throw unavailable();
       }
       if (existingRegionInstallation == null) {
-        if (transferOwner != null) {
-          // Preserve ordinary timeline/incarnation qualification before any transfer effect.
-          // A lost completion reply is not permission to freeze/advance its successor again.
-          if (transferOwner.alreadyCompleted(
-              prior, runtimeIdentity.serviceInstanceId(), handoffDeadline)) throw unavailable();
-        }
-        // A contender must not freeze a healthy incumbent whose lease is still renewing.
+        // A stable instance ID can survive a restart. The fresh-token acquire establishes
+        // scoped lease absence atomically and refuses every live incumbent or competing grant.
         grant = handoffRedisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
         if (transferOwner != null) {
           redisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
@@ -323,17 +320,15 @@ final class CanonicalGameplayRegionLeaseOwner {
                   worldDeadline));
           requireSameIncarnation(incarnation, readCurrentIncarnation(source));
           handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
-          var transferCandidate =
-              retainedOriginal != null
-                  ? retainedOriginal.candidate()
-                  : transferTopologyCandidate != null
-                      ? transferTopologyCandidate
-                      : readInstallationInventory(
-                          transferOwner,
-                          handoffDeadline,
-                          inventory ->
-                              inventory.readRegionTransferOriginalCandidate(
-                                  transitionId, evidence));
+          if (transferCandidate == null) {
+            transferCandidate =
+                readInstallationInventory(
+                    transferOwner,
+                    handoffDeadline,
+                    inventory ->
+                        inventory.readRegionTransferOriginalCandidate(transitionId, evidence));
+          }
+          CanonicalGameplayOriginalNewCandidate pinnedTransferCandidate = transferCandidate;
           handoffRedisOwner.requireCurrent(grant);
           transferId =
               frozenOriginal == null
@@ -347,7 +342,7 @@ final class CanonicalGameplayRegionLeaseOwner {
                       handoffDeadline,
                       inventory ->
                           inventory.readRegionTransferAbortedCandidate(
-                              transitionId, transferCandidate))
+                              transitionId, pinnedTransferCandidate))
                   .orElse(null);
           transferSource =
               transferTopologyCandidate != null
@@ -357,7 +352,7 @@ final class CanonicalGameplayRegionLeaseOwner {
                           handoffDeadline,
                           inventory ->
                               inventory.readRegionTransferCommittedSource(
-                                  transitionId, transferCandidate))
+                                  transitionId, pinnedTransferCandidate))
                       .orElse(null);
         }
       } else {
@@ -431,6 +426,7 @@ final class CanonicalGameplayRegionLeaseOwner {
             preparation,
             expectedRegionEpoch,
             grant,
+            transferCandidate,
             transferSource,
             transferTopologyCandidate);
     try {
@@ -490,17 +486,43 @@ final class CanonicalGameplayRegionLeaseOwner {
                 pending.grant().tokenCorrelation(),
                 deadline);
     if (clock.millis() >= deadline) throw unavailable();
+    var transferSource = pending.transferSource();
+    var transferTopologyCandidate = pending.transferTopologyCandidate();
+    if (transferSource == null && transferTopologyCandidate == null) {
+      // Account may have retained its definitive abort after transfer installation committed but
+      // before independent verification. Resolve that exact pinned original as topology only;
+      // neither the abort row nor its candidate restores provisional admission authority.
+      var pinnedCandidate = pending.transferCandidate();
+      transferTopologyCandidate =
+          readInstallationInventory(
+                  pending.transferOwner(),
+                  deadline,
+                  inventory ->
+                      inventory.readRegionTransferAbortedCandidate(
+                          pending.transitionId(), pinnedCandidate))
+              .orElse(null);
+      if (transferTopologyCandidate == null) {
+        transferSource =
+            readInstallationInventory(
+                    pending.transferOwner(),
+                    deadline,
+                    inventory ->
+                        inventory.readRegionTransferCommittedSource(
+                            pending.transitionId(), pinnedCandidate))
+                .orElse(null);
+      }
+    }
     return verifyInstallation(
         pending.transitionId(),
         pending.worldRequest(),
-        pending.evidence(),
+        transferTopologyCandidate == null && transferSource == null ? pending.evidence() : null,
         pending.source(),
         pending.incarnation(),
         pending.preparation(),
         pending.grant(),
         installed,
-        pending.transferSource(),
-        pending.transferTopologyCandidate(),
+        transferSource,
+        transferTopologyCandidate,
         pending.transferOwner(),
         deadline,
         worldDeadline);
@@ -1181,6 +1203,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
       long expectedRegionEpoch,
       CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant,
+      CanonicalGameplayOriginalNewCandidate transferCandidate,
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource,
       CanonicalGameplayOriginalNewCandidate transferTopologyCandidate) {}
 
