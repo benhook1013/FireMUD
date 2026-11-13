@@ -480,9 +480,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     var observed = prepared.observeOutsideSql();
     var before = paid.caller().sourceAndIssuanceImage();
     assertThatThrownBy(() -> paid.read(observed))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage(
-            "membership source tenantAuthorityGeneration current equality does not match its bound evidence");
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+        .hasMessage("Pending claim owner/customer/instrument/subscription fence rejected");
     assertThatThrownBy(
             () ->
                 new AccountGameplayAdmissionOriginalCommitExecutor(paid.caller().dataSource)
