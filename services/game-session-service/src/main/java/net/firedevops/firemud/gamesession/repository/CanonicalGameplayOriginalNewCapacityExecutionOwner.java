@@ -20,7 +20,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
@@ -1280,8 +1282,9 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   /**
    * Bound connection establishment itself, including DNS/TLS/auth, to the incoming deadline. A late
-   * connection can never escape cancellation into a read and is asynchronously closed. No shared
-   * Redis client's options or connection identity are changed.
+   * connection cannot escape cancellation into a read; its resource worker retains admission until
+   * physical connect and one asynchronous close attempt finish. No shared Redis client's options or
+   * connection identity are changed.
    */
   StatefulRedisConnection<byte[], byte[]> connectForRead() {
     if (budget == null)
@@ -1290,21 +1293,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     var opened =
         new java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>>();
     long initialRemainingMillis = remainingMillis();
-    final java.util.concurrent.Future<?> connector;
+    var attempt = new ConnectAttempt(redis, opened);
     try {
-      connector =
-          CONNECTS.submit(
-              () -> {
-                try {
-                  var connection = redis.connect(ByteArrayCodec.INSTANCE);
-                  if (!opened.complete(connection)) connection.closeAsync();
-                } catch (RuntimeException failure) {
-                  opened.completeExceptionally(failure);
-                }
-              });
+      CONNECTS.execute(attempt);
     } catch (java.util.concurrent.RejectedExecutionException saturated) {
-      opened.cancel(false);
+      attempt.abandonAndClose();
       throw unavailable();
+    } catch (RuntimeException | Error submissionFailure) {
+      attempt.abandonAndClose();
+      throw submissionFailure;
     }
     try {
       var connection =
@@ -1314,30 +1311,85 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
           || connection.getOptions().isAutoReconnect()) {
         throw unavailable();
       }
-      // Failure before ownership is returned is disposed by abandonConnection.
+      // Failure before ownership is returned is disposed by the attempt's connection handoff.
       remainingMillis();
       return connection;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
-      abandonConnection(opened, connector);
+      attempt.abandonAndClose();
       throw unavailable();
     } catch (java.util.concurrent.ExecutionException
         | java.util.concurrent.TimeoutException
         | RuntimeException failure) {
-      abandonConnection(opened, connector);
+      attempt.abandonAndClose();
       throw unavailable();
+    } catch (Error failure) {
+      attempt.abandonAndClose();
+      throw failure;
     }
   }
 
-  private static void abandonConnection(
-      java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>> opened,
-      java.util.concurrent.Future<?> connector) {
-    opened.whenComplete(
-        (connection, failure) -> {
-          if (connection != null) connection.closeAsync();
-        });
-    opened.cancel(false);
-    connector.cancel(true);
+  private static final class ConnectAttempt implements Runnable {
+    private final java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>>
+        opened;
+    private final FutureTask<Void> task;
+    private final AtomicBoolean runStarted = new AtomicBoolean();
+    private final java.util.concurrent.CompletableFuture<Void> physicalFinished =
+        new java.util.concurrent.CompletableFuture<>();
+
+    ConnectAttempt(
+        RedisClient redis,
+        java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>> opened) {
+      this.opened = opened;
+      task =
+          new FutureTask<>(
+              () -> {
+                try {
+                  opened.complete(redis.connect(ByteArrayCodec.INSTANCE));
+                } catch (RuntimeException failure) {
+                  opened.completeExceptionally(failure);
+                } catch (Error failure) {
+                  opened.completeExceptionally(failure);
+                  throw failure;
+                }
+                return null;
+              });
+    }
+
+    @Override
+    public void run() {
+      if (!runStarted.compareAndSet(false, true)) return;
+      try {
+        task.run();
+      } finally {
+        physicalFinished.complete(null);
+      }
+    }
+
+    void abandonAndClose() {
+      boolean cancelledBeforeCompletion = false;
+      try {
+        cancelledBeforeCompletion = task.cancel(true);
+      } catch (RuntimeException | Error ignored) {
+        // Keep waiting for the independent execution signal if interruption itself fails.
+      }
+      if (cancelledBeforeCompletion && !runStarted.get()) {
+        physicalFinished.complete(null);
+      }
+      physicalFinished.join();
+      // FutureTask cancellation can finish before its connector Runnable starts. Resolving the
+      // uncancelled handoff then gives the resource worker sole ownership of any late connection.
+      opened.complete(null);
+      StatefulRedisConnection<byte[], byte[]> lateConnection =
+          opened.handle((connection, failure) -> connection).join();
+      if (lateConnection == null) return;
+      try {
+        lateConnection.closeAsync().handle((ignored, failure) -> null).join();
+      } catch (RuntimeException | Error ignored) {
+        // A failed close has uncertain disposal. Do not retry it or leak operation permits after
+        // the close attempt has returned.
+      }
+    }
   }
 
   private long remainingMillis() {
