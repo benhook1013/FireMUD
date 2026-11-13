@@ -2072,9 +2072,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     retainedTransferTamperBlocks("binding");
   }
 
+  @Test
+  void chargedTransferRefusesAnOlderRestoredRedisExecutionAtCapacity() throws Exception {
+    retainedTransferTamperBlocks("restored-authorization");
+  }
+
   private void retainedTransferTamperBlocks(String fault) throws Exception {
     repairAccountMember();
-    bridge();
+    bridge(true, 1, 1_048_576L);
     var original = regionBinding.installation();
     var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
     var receiver =
@@ -2083,16 +2088,24 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
-    transfer.advance(original.source, original.status, deadline());
     byte[] key = ascii(capacityKey(tags.assignmentForTransition(fixture.transitionId())));
+    byte[] beforeFence = admin.dump(key);
+    transfer.advance(original.source, original.status, deadline());
     if (fault.equals("ttl")) admin.pexpire(key, 10000);
     else if (fault.equals("type")) {
       byte[][] keysToDelete = {key};
       admin.del(keysToDelete);
       admin.set(key, ascii("wrong-type"));
+    } else if (fault.equals("restored-authorization")) {
+      assertThat(beforeFence).isNotNull();
+      assertThat(admin.hget(key, ascii("state"))).containsExactly(ascii("FENCED_INDETERMINATE"));
+      admin.del(new byte[][] {key});
+      admin.restore(key, 0L, beforeFence);
+      assertThat(admin.hget(key, ascii("state"))).containsExactly(ascii("AUTHORIZED"));
     } else admin.hset(key, ascii("binding"), ascii("{}"));
     byte[] physical =
         CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key);
+    String retained = sqlImage();
     admin.pexpire(ascii(original.grant.key()), 0);
     assertThatThrownBy(
             () ->
@@ -2108,6 +2121,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         .isInstanceOf(IllegalStateException.class);
     assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
         .containsExactly(physical);
+    assertThat(sqlImage()).isEqualTo(retained);
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
                 .find(original.source)
@@ -5358,6 +5372,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             "game_session_canonical_issuer_admission_initializer",
             "game_session_canonical_issuer_admission_initializer_receipt",
             "game_session_original_new_capacity_execution",
+            "game_session_capacity_evidence_budget",
+            "game_session_capacity_evidence_charge",
             "game_session_region_owner_transfer",
             "game_session_region_owner_transfer_item")) {
       rows.put(
