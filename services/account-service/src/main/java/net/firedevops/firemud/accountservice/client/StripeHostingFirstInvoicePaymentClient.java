@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository.CommandClaim;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch;
@@ -135,7 +136,10 @@ public final class StripeHostingFirstInvoicePaymentClient {
       outsideSql();
       if (claim == null || !claim.takePermission(dispatch))
         return new Handoff("AUTHORIZED_NOT_CONFIRMED", null);
-      require(clock.instant().isBefore(dispatch.validUntil()));
+      Instant beforePost = clock.instant();
+      if (!beforePost.isBefore(dispatch.validUntil())) {
+        throw new ExpiredBeforePost(dispatch.requestId(), beforePost);
+      }
       intent =
           stripe
               .paymentIntents()
@@ -312,6 +316,27 @@ public final class StripeHostingFirstInvoicePaymentClient {
 
   private static IllegalStateException refused() {
     return new IllegalStateException("Exact existing first-invoice provider binding refused");
+  }
+
+  /** The winning committed claim was consumed locally, before entry to the Stripe confirm call. */
+  public static final class ExpiredBeforePost extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+    private final UUID requestId;
+    private final Instant observedAt;
+
+    private ExpiredBeforePost(UUID requestId, Instant observedAt) {
+      super("Exact existing first-invoice provider binding refused");
+      this.requestId = requestId;
+      this.observedAt = observedAt;
+    }
+
+    public UUID requestId() {
+      return requestId;
+    }
+
+    public Instant observedAt() {
+      return observedAt;
+    }
   }
 
   /** Contains no client secret, and is not payment or entitlement authority. */

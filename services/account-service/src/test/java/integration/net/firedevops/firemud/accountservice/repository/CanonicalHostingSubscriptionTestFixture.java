@@ -354,7 +354,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       AccountSubscriptionCreationRecord creation,
       AccountPaymentInstrumentRecord instrument,
       String providerId,
-      Clock clock,
+      MutableClock clock,
       AccountHostingSubscriptionLifecycleRepository lifecycle) {
     in(
         transaction,
@@ -373,6 +373,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
         });
     var claim =
         in(transaction, () -> lifecycle.claim(creation.requestId(), 1, UUID.randomUUID()).claim());
+    clock.advanceToAtLeast(claim.claimedAt());
     var prepared =
         in(transaction, () -> lifecycle.prepareProviderDispatch(claim, UUID.randomUUID()));
     var dispatch = in(transaction, () -> lifecycle.readProviderDispatch(prepared));
@@ -556,6 +557,11 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch
         prepareConfirmationDispatch(String password) {
+      return prepareConfirmationDispatch(password, () -> {});
+    }
+
+    public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch
+        prepareConfirmationDispatch(String password, Runnable beforeConsent) {
       UUID requestId = UUID.randomUUID();
       Account account =
           in(
@@ -587,6 +593,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
                   billingContext,
                   account.getEmail(),
                   password));
+      beforeConsent.run();
       var prepared =
           in(
               transaction,
@@ -1065,12 +1072,16 @@ public final class CanonicalHostingSubscriptionTestFixture {
   public static final class MutableClock extends Clock {
     private volatile Instant current;
 
-    private MutableClock(Instant current) {
+    public MutableClock(Instant current) {
       this.current = current;
     }
 
     public void advance(Duration duration) {
       current = current.plus(duration);
+    }
+
+    public void advanceToAtLeast(Instant instant) {
+      if (instant.isAfter(current)) current = instant;
     }
 
     @Override

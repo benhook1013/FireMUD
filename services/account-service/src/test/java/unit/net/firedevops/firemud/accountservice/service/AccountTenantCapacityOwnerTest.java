@@ -43,6 +43,8 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -133,6 +135,34 @@ class AccountTenantCapacityOwnerTest {
     assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload())).isEqualTo(result);
     verifyNoInteractions(f.accounts, f.memberships, f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void onlyTheNamedDeferredFreshnessViolationMapsToStaleAdmission() throws Exception {
+    for (String constraint :
+        new String[] {"account_tenant_capacity_attempt_freshness", "unrelated_constraint"}) {
+      var f = new Fixture(true);
+      var violation = mock(PSQLException.class);
+      var diagnostic = mock(ServerErrorMessage.class);
+      when(violation.getSQLState()).thenReturn("23514");
+      when(violation.getServerErrorMessage()).thenReturn(diagnostic);
+      when(diagnostic.getConstraint()).thenReturn(constraint);
+      var commitFailure =
+          new org.springframework.transaction.TransactionSystemException(
+              "Commit refused", violation);
+      f.transactions.commitFailure = commitFailure;
+
+      var result =
+          assertThatThrownBy(
+              () -> f.owner.commit(f.request, f.request.evidence().callerWorkload()));
+      if ("account_tenant_capacity_attempt_freshness".equals(constraint)) {
+        result.isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
+      } else {
+        result.isSameAs(commitFailure);
+      }
+    }
   }
 
   @Test
@@ -454,6 +484,8 @@ class AccountTenantCapacityOwnerTest {
     private boolean existing = true;
     private boolean retained;
 
+    private final ControlledTransactions transactions = new ControlledTransactions();
+
     private Fixture(boolean expired) throws Exception {
       this(expired, CapacityAdmissionTestFixture.playerRequest());
     }
@@ -537,7 +569,7 @@ class AccountTenantCapacityOwnerTest {
               memberships,
               issuances,
               scopes,
-              new ControlledTransactions(),
+              transactions,
               Clock.fixed(
                   CapacityAdmissionTestFixture.NOW.plusSeconds(expired ? 60 : 1), ZoneOffset.UTC),
               namespace);
@@ -545,6 +577,8 @@ class AccountTenantCapacityOwnerTest {
   }
 
   private static final class ControlledTransactions implements PlatformTransactionManager {
+    private RuntimeException commitFailure;
+
     @Override
     public TransactionStatus getTransaction(
         @org.jspecify.annotations.Nullable TransactionDefinition definition) {
@@ -562,6 +596,7 @@ class AccountTenantCapacityOwnerTest {
     @Override
     public void commit(TransactionStatus status) {
       TransactionSynchronizationManager.setActualTransactionActive(false);
+      if (commitFailure != null) throw commitFailure;
     }
 
     @Override
