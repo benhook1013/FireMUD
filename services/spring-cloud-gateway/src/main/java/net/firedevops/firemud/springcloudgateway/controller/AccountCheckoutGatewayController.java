@@ -1,6 +1,7 @@
 package net.firedevops.firemud.springcloudgateway.controller;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -50,6 +51,7 @@ import tools.jackson.databind.json.JsonMapper;
     havingValue = "true")
 public final class AccountCheckoutGatewayController {
   private static final int MAX_LOGIN_BODY_BYTES = 8 * 1024;
+  private static final Duration REQUEST_BODY_TIMEOUT = Duration.ofSeconds(5);
   private static final JsonMapper JSON =
       JsonMapper.builder()
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -178,7 +180,10 @@ public final class AccountCheckoutGatewayController {
             })
         .onErrorResume(
             DataBufferLimitException.class,
-            oversized -> Mono.just(jsonResponse(HttpStatus.PAYLOAD_TOO_LARGE, errorJson("ERROR"))));
+            oversized -> Mono.just(jsonResponse(HttpStatus.PAYLOAD_TOO_LARGE, errorJson("ERROR"))))
+        .onErrorResume(
+            RequestBodyTimeoutException.class,
+            timedOut -> Mono.just(jsonResponse(HttpStatus.REQUEST_TIMEOUT, errorJson("ERROR"))));
   }
 
   @GetMapping("/billing/hosting/subscriptions/{subscriptionId}/first-invoice")
@@ -222,7 +227,10 @@ public final class AccountCheckoutGatewayController {
         .flatMap(body -> forwardBytes(exchange, HttpMethod.POST, "/billing/hosting/webhook", body))
         .onErrorResume(
             DataBufferLimitException.class,
-            oversized -> Mono.just(jsonResponse(HttpStatus.PAYLOAD_TOO_LARGE, errorJson("ERROR"))));
+            oversized -> Mono.just(jsonResponse(HttpStatus.PAYLOAD_TOO_LARGE, errorJson("ERROR"))))
+        .onErrorResume(
+            RequestBodyTimeoutException.class,
+            timedOut -> Mono.just(jsonResponse(HttpStatus.REQUEST_TIMEOUT, errorJson("ERROR"))));
   }
 
   private Mono<ResponseEntity<byte[]>> postSubscriptionAction(
@@ -248,7 +256,10 @@ public final class AccountCheckoutGatewayController {
         .flatMap(body -> forwardBytes(exchange, method, path, body))
         .onErrorResume(
             DataBufferLimitException.class,
-            oversized -> Mono.just(jsonResponse(HttpStatus.PAYLOAD_TOO_LARGE, errorJson("ERROR"))));
+            oversized -> Mono.just(jsonResponse(HttpStatus.PAYLOAD_TOO_LARGE, errorJson("ERROR"))))
+        .onErrorResume(
+            RequestBodyTimeoutException.class,
+            timedOut -> Mono.just(jsonResponse(HttpStatus.REQUEST_TIMEOUT, errorJson("ERROR"))));
   }
 
   private Mono<ResponseEntity<byte[]>> forwardBytes(
@@ -264,8 +275,16 @@ public final class AccountCheckoutGatewayController {
       return Mono.error(new DataBufferLimitException("Request body exceeds the route limit"));
     }
     return DataBufferUtils.join(exchange.getRequest().getBody(), maximumBytes)
+        .timeout(
+            REQUEST_BODY_TIMEOUT, Mono.defer(() -> Mono.error(new RequestBodyTimeoutException())))
         .map(AccountCheckoutGatewayController::readAndRelease)
         .defaultIfEmpty(new byte[0]);
+  }
+
+  private static final class RequestBodyTimeoutException extends RuntimeException {
+    private RequestBodyTimeoutException() {
+      super("Request body exceeded its deadline");
+    }
   }
 
   private static byte[] readAndRelease(DataBuffer buffer) {
