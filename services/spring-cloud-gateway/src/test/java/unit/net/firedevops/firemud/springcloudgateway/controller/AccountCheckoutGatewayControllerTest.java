@@ -8,9 +8,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.Unpooled;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Authenticated;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Request;
@@ -22,7 +26,10 @@ import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerP
 import net.firedevops.firemud.springcloudgateway.filter.HeaderTrustFilter;
 import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DefaultDataBufferFactory;
+import org.springframework.core.io.buffer.NettyDataBufferFactory;
+import org.springframework.core.io.buffer.PooledDataBuffer;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -33,7 +40,9 @@ import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
 class AccountCheckoutGatewayControllerTest {
   private static final UUID REQUEST_ID = UUID.fromString("1ca7f2e5-1362-4ac8-9312-38bbf73bc33f");
@@ -210,6 +219,26 @@ class AccountCheckoutGatewayControllerTest {
   }
 
   @Test
+  void mapsLoginRpcTimeoutToUnavailableInsteadOfRequestBodyTimeout() throws Exception {
+    var authClient = mock(AccountControlUiAuthenticationClient.class);
+    var checkoutClient = mock(AccountCheckoutHttpClient.class);
+    var controller = new AccountCheckoutGatewayController(authClient, checkoutClient, properties());
+    var unavailableType =
+        AccountControlUiAuthenticationClient.AuthenticationUnavailableException.class;
+    var unavailableConstructor = unavailableType.getDeclaredConstructor();
+    unavailableConstructor.setAccessible(true);
+    when(authClient.login(any())).thenThrow(unavailableConstructor.newInstance());
+
+    var response = controller.login(secureExchange("/api/account/auth/login", loginJson())).block();
+
+    assertThat(response).isNotNull();
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+    verify(authClient).login(any());
+    verifyNoCheckoutCalls(checkoutClient);
+  }
+
+  @Test
   void redactsCredentialAndTokenFromTransientLoginRecordDiagnostics() throws Exception {
     Class<?> dataType =
         Class.forName(AccountCheckoutGatewayController.class.getName() + "$LoginData");
@@ -254,6 +283,43 @@ class AccountCheckoutGatewayControllerTest {
     assertThat(oversized.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
     verify(authClient, never()).login(any());
     verifyNoCheckoutCalls(checkoutClient);
+  }
+
+  @Test
+  void stalledChunkedWebhookBodyTimesOutCancelsAndReleasesWithoutForwarding() {
+    var authClient = mock(AccountControlUiAuthenticationClient.class);
+    var checkoutClient = mock(AccountCheckoutHttpClient.class);
+    var controller = new AccountCheckoutGatewayController(authClient, checkoutClient, properties());
+    var stalledBuffer =
+        new NettyDataBufferFactory(ByteBufAllocator.DEFAULT)
+            .wrap(Unpooled.copiedBuffer("{", StandardCharsets.UTF_8));
+    var sourceCancelled = new AtomicBoolean();
+    Flux<DataBuffer> stalledBody =
+        Flux.concat(Mono.just(stalledBuffer), Flux.<DataBuffer>never())
+            .doOnCancel(() -> sourceCancelled.set(true));
+    var request =
+        MockServerHttpRequest.post("https://localhost/api/account/billing/hosting/webhook")
+            .sslInfo(mock(SslInfo.class))
+            .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .header("Stripe-Signature", "t=123,v1=signature")
+            .body(stalledBody);
+    var exchange = MockServerWebExchange.from(request);
+
+    StepVerifier.withVirtualTime(() -> controller.receiveStripeWebhook(exchange))
+        .thenAwait(Duration.ofSeconds(5))
+        .assertNext(
+            response -> {
+              assertThat(response.getStatusCode()).isEqualTo(HttpStatus.REQUEST_TIMEOUT);
+              assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+              assertThat(new String(response.getBody(), StandardCharsets.UTF_8))
+                  .isEqualTo("{\"status\":\"ERROR\"}");
+            })
+        .verifyComplete();
+
+    assertThat(sourceCancelled).isTrue();
+    assertThat(((PooledDataBuffer) stalledBuffer).isAllocated()).isFalse();
+    verifyNoCheckoutCalls(checkoutClient);
+    verify(authClient, never()).login(any());
   }
 
   @Test

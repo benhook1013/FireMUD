@@ -52,7 +52,16 @@ public final class AccountHostingFirstInvoiceController {
       @RequestBody ReauthenticationRequest request) {
     String token = bearer(transport, authorization);
     if (request.billingBinding() == null) {
-      throw new IllegalStateException("Exact first-invoice billing binding required");
+      // Pre-binding evidence has no invoice context. Account permits only its exact retained,
+      // credential-bound replay; the result cannot authorize payment or write an invoice fence.
+      return noStore(
+          new ReauthenticationResponse(
+              payments.replayHistoricalUnboundReauthentication(
+                  token,
+                  request.requestId(),
+                  request.confirmationRequestId(),
+                  request.email(),
+                  request.secret())));
     }
     var binding = request.billingBinding();
     return noStore(

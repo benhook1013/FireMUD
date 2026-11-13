@@ -419,6 +419,12 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                     .path("state")
                     .asText())
             .isEqualTo("AWAITING_PAYMENT");
+        // The current renewal can no longer redisclose the pending SCA secret after expiry.
+        hosting.clock().advance(Duration.ofMinutes(6));
+        var expired = https.request("POST", path + "/renew", issued.compact(), renewal);
+        assertThat(expired.statusCode()).isEqualTo(409);
+        assertThat(expired.body()).doesNotContain("clientSecret", "secret_");
+        assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
         // Even provider success/browser return remains pending until exact signed completion.
         hosting.firstInvoiceStatus("succeeded");
         hosting.providerStatus("active");
@@ -428,12 +434,6 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                     .asText())
             .isEqualTo("AWAITING_PAYMENT");
         assertNoReceipt(hosting);
-        // Expired authorization cannot redisclose the secret or issue another payment command.
-        hosting.clock().advance(Duration.ofMinutes(6));
-        var expired = https.request("POST", path + "/confirm", issued.compact(), consent);
-        assertThat(expired.statusCode()).isEqualTo(409);
-        assertThat(expired.body()).doesNotContain("clientSecret", "secret_");
-        assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
         String signedPayload = hosting.signedSuccessPayload();
         String signedHeader = hosting.signedSuccessHeader();
         long auditBefore =
