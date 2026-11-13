@@ -626,6 +626,85 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void preparedTimelineIncarnationReadReusesPermitWhenBothBackgroundSlotsAreHeld()
+      throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try {
+      try (RedisFixture redis = RedisFixture.open()) {
+        var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+        var redisOwner =
+            new CanonicalGameplayRegionLeaseRedisOwner(
+                redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+        WorldFixture world = WorldFixture.open();
+        var incarnationSource = new ControlledStableIncarnationSource();
+        var bindingEvidence = provisionalEvidence(world.request());
+        var source = source(world.originalEvidence());
+        var incarnation =
+            incarnationSource.readCurrent(
+                CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+        var preparation =
+            statusRepository.prepareInitialTimeline(
+                bindingEvidence,
+                world.request(),
+                world.resolver().resolve(world.request()),
+                source,
+                incarnation,
+                redisOwner.requireTimelineAbsent(source, incarnation),
+                NOW);
+        long deadline = System.currentTimeMillis() + 10_000L;
+        var deadlineBoundRedisOwner = redisOwner.forHandoffDeadline(Clock.systemUTC(), deadline);
+        RuntimeIdentity identity =
+            new RuntimeIdentity(
+                "game-session-service",
+                "overlapping-timeline-preparation",
+                "localhost",
+                NOW,
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image");
+        var bindingInventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+
+        try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization first =
+                deadlineBoundRedisOwner.prepareTimelineInitialization(
+                    preparation, Duration.ofSeconds(30), identity);
+            CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization second =
+                deadlineBoundRedisOwner.prepareTimelineInitialization(
+                    preparation, Duration.ofSeconds(30), identity)) {
+          var claim =
+              first.runWithinRetainedPermit(
+                  retainedBudget -> {
+                    assertThatThrownBy(
+                            () ->
+                                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                                    Clock.systemUTC(), deadline, ignored -> true))
+                        .isInstanceOf(IllegalStateException.class);
+                    assertThatThrownBy(() -> first.runWithinRetainedPermit(ignored -> null))
+                        .isInstanceOf(IllegalStateException.class);
+                    assertThat(
+                            bindingInventory.withinTransferRead(
+                                retainedBudget,
+                                CanonicalGameplayBindingInventoryRepository::readSnapshot))
+                        .isNotNull();
+                    assertThat(
+                            incarnationSource.readCurrent(
+                                CanonicalGameplayRegionIncarnationSource.RegionScope.from(source)))
+                        .isEqualTo(incarnation);
+                    return new CanonicalGameplayRegionRuntimeStatusRepository(
+                            retainedBudget.sql(testSchema.dsl()))
+                        .beginInitialTimeline(preparation, NOW);
+                  });
+          assertThat(claim)
+              .hasValueSatisfying(
+                  permit -> assertThat(permit.operationId()).isEqualTo(preparation.operationId()));
+        }
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void timelinePreflightFailuresLeavePreparedPermissionAndAllowLaterFirstClaim() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
