@@ -104,15 +104,21 @@ final class CanonicalGameplayRegionLeaseOwner {
             ? transferOwner.frozenOriginal(transitionId, handoffDeadline)
             : null;
     RegionTransferTerminalSource retainedTerminalSource =
-        frozenOriginal == null
+        transferOwner == null || existingRegionInstallation != null
             ? null
-            : readInstallationInventory(
-                    transferOwner,
-                    handoffDeadline,
-                    inventory ->
-                        inventory.readRegionTransferTerminalSource(
-                            transitionId, frozenOriginal.candidate()))
-                .orElse(null);
+            : frozenOriginal == null
+                ? readInstallationInventory(
+                        transferOwner,
+                        handoffDeadline,
+                        inventory -> inventory.readRegionTransferCommittedSource(transitionId))
+                    .orElse(null)
+                : readInstallationInventory(
+                        transferOwner,
+                        handoffDeadline,
+                        inventory ->
+                            inventory.readRegionTransferTerminalSource(
+                                transitionId, frozenOriginal.candidate()))
+                    .orElse(null);
     OriginalNewFinalAdmissionSource retainedOriginal =
         retainedTerminalSource instanceof OriginalNewFinalAdmissionSource committed
             ? committed
@@ -147,6 +153,8 @@ final class CanonicalGameplayRegionLeaseOwner {
       if (prior == null || retainedOriginal != null && retainedOriginal.finalReceipt().isEmpty()) {
         throw unavailable();
       }
+    }
+    if (frozenOriginal != null) {
       transferOwner.requireFrozenOriginal(frozenOriginal, source, prior, handoffDeadline);
       transferOwner.requireUnreservedFrozenIntent(
           frozenOriginal.transferId(), source, prior, handoffDeadline);
@@ -154,6 +162,9 @@ final class CanonicalGameplayRegionLeaseOwner {
         && prior != null
         && transferOwner.hasFrozenIntent(source, prior, handoffDeadline)) {
       throw unavailable();
+    }
+    if (frozenOriginal == null && retainedOriginal != null) {
+      transferOwner.requireRetainedCommittedOriginal(retainedOriginal, prior, handoffDeadline);
     }
     CanonicalGameplayRegionLeaseRedisOwner handoffRedisOwner =
         transferOwner == null ? redisOwner : redisOwner.forHandoffDeadline(clock, handoffDeadline);
