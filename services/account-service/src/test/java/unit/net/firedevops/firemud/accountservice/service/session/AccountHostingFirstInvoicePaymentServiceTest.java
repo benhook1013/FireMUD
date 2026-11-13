@@ -110,6 +110,34 @@ class AccountHostingFirstInvoicePaymentServiceTest {
   }
 
   @Test
+  void paidTerminalReconciliationReturnsOperatorState() throws Exception {
+    var candidate = signedCandidate();
+    var invoice = candidate.invoice();
+    UUID lifecycleRequestId = candidate.lifecycleRequestId();
+    var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    var observed = mock(StripeHostingFirstInvoicePaymentClient.Observation.class);
+    when(verifier.verify("signed", "header")).thenReturn(event);
+    when(payments.candidateForSignedEvent(event)).thenReturn(candidate);
+    when(provider.observe(invoice)).thenReturn(observed);
+    when(payments.retainSignedOutcome(event, observed))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, false));
+    when(lifecycle.reconcile(
+            lifecycleRequestId,
+            invoice.creationRequestId(),
+            candidate.expectedRowVersion(),
+            invoice.providerSubscriptionId(),
+            null))
+        .thenReturn(new TransitionResult(lifecycleRequestId, Outcome.TERMINAL_FAILURE, 0, null));
+
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(
+            new AccountHostingFirstInvoicePaymentService.Completion(
+                "OPERATOR_RECONCILIATION_REQUIRED", candidate.requestId()));
+    verify(lifecycle, times(0)).readCurrent(invoice.tenantId());
+  }
+
+  @Test
   void exactLatePaidConflictReplayNeverReadsProviderOrChangesLifecycle() throws Exception {
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
     UUID requestId = UUID.randomUUID();

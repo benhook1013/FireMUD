@@ -149,7 +149,11 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(migrationHistoryImage(dsl))
           .startsWith(before1041.migrationHistoryImage().toArray(String[]::new));
       assertThat(capacityTableImages(dsl)).isEqualTo(before1041.tableImages());
-      assertThat(otherCapacityTriggerImages(dsl)).isEqualTo(before1041.otherTriggerImages());
+      List<String> after1041Triggers = otherCapacityTriggerImages(dsl);
+      assertThat(after1041Triggers).containsAll(before1041.otherTriggerImages());
+      assertThat(after1041Triggers).hasSize(before1041.otherTriggerImages().size() + 1);
+      assertThat(after1041Triggers)
+          .anyMatch(image -> image.contains(":account_capacity_origin_reservation_guard:"));
       assertThat(exactUsageFunctionImage(dsl)).isEqualTo(before1041.exactUsageFunctionImage());
       assertThat(migrationChecksum(dsl)).isEqualTo(before1041.migrationChecksum());
       assertThat(
@@ -326,6 +330,18 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     transaction.executeWithoutResult(
         status -> {
           new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
+          UUID attemptId = UUID.randomUUID();
+          String mutationDigest = hex('c');
+          byte[] canonicalPayload = new byte[] {8};
+          insertOriginDecisionIfPresent(
+              dsl,
+              tenant.canonicalTenantId(),
+              requestId,
+              admissionId,
+              1,
+              attemptId,
+              mutationDigest,
+              canonicalPayload);
           dsl.execute(
               "INSERT INTO account_tenant_creation_bootstrap_operations "
                   + "(request_id, schema_version, initiating_account_uuid, tenant_uuid, "
@@ -398,9 +414,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               admissionId,
               UUID.randomUUID(),
               callerWorkload,
-              UUID.randomUUID(),
-              hex('c'),
-              new byte[] {8},
+              attemptId,
+              mutationDigest,
+              canonicalPayload,
               evaluationIdentity);
           dsl.execute(
               "UPDATE account_tenant_capacity_usage SET held_units = 3, usage_revision = 2 "
@@ -483,6 +499,20 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
             () ->
                 transaction.executeWithoutResult(
                     status -> {
+                      UUID requestId = UUID.randomUUID();
+                      UUID admissionId = UUID.randomUUID();
+                      UUID attemptId = UUID.randomUUID();
+                      String mutationDigest = hex('4');
+                      byte[] canonicalPayload = new byte[] {9};
+                      insertOriginDecisionIfPresent(
+                          dsl,
+                          capacity.tenantUuid(),
+                          requestId,
+                          admissionId,
+                          1,
+                          attemptId,
+                          mutationDigest,
+                          canonicalPayload);
                       dsl.execute(
                           "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, "
                               + "usage_revision = usage_revision + 1 "
@@ -498,18 +528,45 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                               + "CURRENT_TIMESTAMP + INTERVAL '5 minutes', 'RESERVED', "
                               + "'OWNER_EXECUTION_PENDING', CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
                           capacity.tenantUuid(),
-                          UUID.randomUUID(),
-                          UUID.randomUUID(),
+                          requestId,
+                          admissionId,
                           UUID.randomUUID(),
                           capacity.callerWorkload(),
-                          UUID.randomUUID(),
-                          hex('4'),
-                          new byte[] {9},
+                          attemptId,
+                          mutationDigest,
+                          canonicalPayload,
                           capacity.evaluationIdentity());
                       dsl.execute(
                           "SET CONSTRAINTS account_tenant_capacity_reservation_complete_insert IMMEDIATE");
                     }))
         .satisfies(AccountTenantCapacityMigrationPostgresIntegrationTest::assertInventoryRefusal);
+  }
+
+  private static void insertOriginDecisionIfPresent(
+      DSLContext dsl,
+      UUID tenantUuid,
+      UUID requestId,
+      UUID admissionId,
+      long rearmFence,
+      UUID attemptId,
+      String mutationDigest,
+      byte[] canonicalPayload) {
+    if (dsl.fetchSingle("SELECT to_regclass('account_capacity_origin_decisions') IS NOT NULL")
+        .get(0, Boolean.class)) {
+      dsl.execute(
+          "INSERT INTO account_capacity_origin_decisions "
+              + "(tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, "
+              + "mutation_digest, canonical_payload, decision, decision_id) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', ?)",
+          tenantUuid,
+          requestId,
+          admissionId,
+          rearmFence,
+          attemptId,
+          mutationDigest,
+          canonicalPayload,
+          UUID.randomUUID());
+    }
   }
 
   private static void assertReservationStateChangeMismatchRefused(

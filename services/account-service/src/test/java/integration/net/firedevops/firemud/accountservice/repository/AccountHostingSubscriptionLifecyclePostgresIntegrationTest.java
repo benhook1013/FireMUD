@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 
 import com.stripe.exception.StripeException;
@@ -13,6 +14,7 @@ import com.stripe.net.RequestOptions;
 import com.stripe.net.StripeResponseGetter;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
+import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture.MutableClock;
 import java.io.InputStream;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
@@ -20,7 +22,6 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -410,6 +411,145 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(checkout.confirmations()).isOne();
     assertThat(count(c, "subscription_first_invoice_dispatches")).isOne();
     assertThat(count(c, "subscription_first_invoice_completions")).isOne();
+  }
+
+  @Test
+  void firstInvoiceConsentHonorsTheConfiguredIssuingClockSkew() {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    f.clock().advance(Duration.ofSeconds(30));
+    var dispatch =
+        checkout.prepareConfirmationDispatch(
+            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD,
+            () -> f.clock().advance(Duration.ofSeconds(-30)));
+    var retained =
+        one(
+            c,
+            "SELECT consent.consented_at, auth.consented_at, auth.valid_until, "
+                + "proof.issued_at FROM subscription_first_invoice_confirmations consent "
+                + "JOIN subscription_first_invoice_authorizations auth USING (request_id) "
+                + "JOIN account_recent_reauthentication_evidence proof "
+                + "ON proof.evidence_id = auth.reauthentication_evidence_id "
+                + "WHERE consent.request_id = ?",
+            dispatch.requestId());
+    var issuedAt = retained.get(3, java.time.OffsetDateTime.class).toInstant();
+    assertThat(retained.get(0, java.time.OffsetDateTime.class).toInstant())
+        .isEqualTo(issuedAt.minusSeconds(30));
+    assertThat(retained.get(1, java.time.OffsetDateTime.class).toInstant())
+        .isEqualTo(issuedAt.minusSeconds(30));
+    assertThat(retained.get(2, java.time.OffsetDateTime.class).toInstant())
+        .isEqualTo(issuedAt.plusSeconds(270));
+    assertThat(checkout.confirmations()).isZero();
+  }
+
+  @Test
+  void authorizationExpiryAfterCommittedCommandClaimRetainsImmutableNoSendEvidence() {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var dispatch =
+        checkout.prepareConfirmationDispatch(
+            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    var observation =
+        assertThrows(
+            net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient
+                .ExpiredBeforePost.class,
+            () ->
+                checkout
+                    .provider()
+                    .confirm(
+                        dispatch,
+                        () -> {
+                          var claim =
+                              in(
+                                  c,
+                                  () ->
+                                      checkout
+                                          .payments()
+                                          .claimCommand(
+                                              dispatch, checkout.invoice().ownerAccountId()));
+                          assertThat(claim).isNotNull();
+                          f.clock().advanceToAtLeast(dispatch.validUntil());
+                          assertThat(f.clock().instant()).isEqualTo(dispatch.validUntil());
+                          return claim;
+                        }));
+    assertThat(observation.requestId()).isEqualTo(dispatch.requestId());
+    assertThat(observation.observedAt()).isEqualTo(dispatch.validUntil());
+    assertThat(checkout.confirmations()).isZero();
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isOne();
+
+    // Mirrors the production owner's independent REQUIRES_NEW retention transaction.
+    in(
+        c,
+        () -> {
+          checkout.payments().retainExpiredBeforePost(observation);
+          return true;
+        });
+    in(
+        c,
+        () -> {
+          checkout.payments().retainExpiredBeforePost(observation);
+          return true;
+        });
+    var retained =
+        one(
+            c,
+            "SELECT evidence.request_id, evidence.observed_at, claim.claimed_at, auth.valid_until "
+                + "FROM subscription_first_invoice_expired_before_post evidence "
+                + "JOIN subscription_first_invoice_command_claims claim USING (request_id) "
+                + "JOIN subscription_first_invoice_authorizations auth "
+                + "USING (authorization_request_id) WHERE evidence.request_id = ?",
+            observation.requestId());
+    assertThat(retained.get("request_id", UUID.class)).isEqualTo(dispatch.requestId());
+    assertThat(retained.get(1, java.time.OffsetDateTime.class).toInstant())
+        .isEqualTo(observation.observedAt());
+    assertThat(retained.get(2, java.time.OffsetDateTime.class).toInstant())
+        .isBefore(observation.observedAt());
+    assertThat(retained.get(3, java.time.OffsetDateTime.class).toInstant())
+        .isEqualTo(observation.observedAt());
+    assertThat(count(c, "subscription_first_invoice_expired_before_post")).isOne();
+    assertThat(checkout.confirmations()).isZero();
+    assertThat(
+            one(
+                    c,
+                    "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                    f.creation().requestId())
+                .get("released_at"))
+        .isNull();
+    assertThat(
+            one(
+                    c,
+                    "SELECT phase FROM subscription_provisioning_work WHERE request_id = ?",
+                    f.creation().requestId())
+                .get("phase", String.class))
+        .isEqualTo("AWAITING_PAYMENT");
+
+    for (String sql :
+        List.of(
+            "UPDATE subscription_first_invoice_expired_before_post SET observed_at = observed_at",
+            "DELETE FROM subscription_first_invoice_expired_before_post",
+            "TRUNCATE subscription_first_invoice_expired_before_post")) {
+      assertSqlState("23514", () -> c.setup().execute(sql));
+    }
   }
 
   @Test
@@ -2921,33 +3061,6 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       AccountHostingSubscriptionLifecycleRepository owner,
       StripeHostingSubscriptionObserver observer,
       AccountHostingSubscriptionLifecycleService service) {}
-
-  private static final class MutableClock extends Clock {
-    private Instant current;
-
-    MutableClock(Instant current) {
-      this.current = current;
-    }
-
-    void advance(Duration amount) {
-      current = current.plus(amount);
-    }
-
-    @Override
-    public ZoneId getZone() {
-      return ZoneOffset.UTC;
-    }
-
-    @Override
-    public Clock withZone(ZoneId zone) {
-      return this;
-    }
-
-    @Override
-    public Instant instant() {
-      return current;
-    }
-  }
 
   private static final class ControlledTransport implements StripeResponseGetter {
     private String json;

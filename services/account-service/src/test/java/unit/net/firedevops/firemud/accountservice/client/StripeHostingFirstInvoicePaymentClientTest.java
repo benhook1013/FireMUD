@@ -214,6 +214,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
     when(clock.instant()).thenReturn(NOW);
     var provider = client(transport, clock);
     var original = dispatch();
+    when(original.requestId()).thenReturn(UUID.randomUUID());
     Instant expiredAt = original.validUntil().plusSeconds(1);
     var originalClaim = claim();
     var held = new AtomicBoolean();
@@ -225,8 +226,13 @@ class StripeHostingFirstInvoicePaymentClientTest {
         };
 
     assertThatThrownBy(() -> provider.confirm(original, claimCommand))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Exact existing first-invoice provider binding refused");
+        .hasMessage("Exact existing first-invoice provider binding refused")
+        .isInstanceOfSatisfying(
+            StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost.class,
+            observation -> {
+              assertThat(observation.requestId()).isEqualTo(original.requestId());
+              assertThat(observation.observedAt()).isEqualTo(expiredAt);
+            });
     verify(originalClaim).takePermission(original);
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
 
