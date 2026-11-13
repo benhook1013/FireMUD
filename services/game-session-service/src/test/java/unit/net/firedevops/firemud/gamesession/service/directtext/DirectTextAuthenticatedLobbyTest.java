@@ -91,6 +91,65 @@ class DirectTextAuthenticatedLobbyTest {
 
   @ParameterizedTest
   @ValueSource(
+      strings = {
+        "123",
+        "00000000-0000-0000-0000-000000000000",
+        "1-1-4111-8111-111111111111",
+        "11111111-1111-4111-8111-111111111111 "
+      })
+  void historicalScopeRejectsNumericNilAbbreviatedAndPaddedAccountAliases(String accountAlias) {
+    var f = new Fixture();
+    String original = new String(f.scope.encode(), StandardCharsets.UTF_8);
+    String changed = original.replace(ACCOUNT.toString(), accountAlias);
+    assertThat(changed).isNotEqualTo(original);
+    assertThatThrownBy(
+            () ->
+                DirectTextAuthenticatedLobbyScope.decode(changed.getBytes(StandardCharsets.UTF_8)))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(f.repository, f.account, f.selection);
+  }
+
+  @Test
+  void sameAccountCannotSubstituteRequestCallerOrFenceInRetainedScope() {
+    var f = new Fixture();
+    for (var other :
+        List.of(
+            new InitialGameplayLoginAttemptCoordinates(
+                UUID.randomUUID(), f.original.callerContextId(), 7),
+            new InitialGameplayLoginAttemptCoordinates(
+                f.original.requestId(), UUID.randomUUID(), 7),
+            new InitialGameplayLoginAttemptCoordinates(
+                f.original.requestId(), f.original.callerContextId(), 8))) {
+      assertThatThrownBy(() -> f.scope.requireCurrent(other, f.result, f.transport, CLOCK))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    // A new private result for the same account and original request has a different token JTI.
+    var replacement = mock(CanonicalGameplayLoginResult.class);
+    when(replacement.evidence()).thenReturn(evidence(f.original));
+    assertThatThrownBy(() -> f.scope.requireCurrent(f.original, replacement, f.transport, CLOCK))
+        .isInstanceOf(IllegalArgumentException.class);
+    verify(replacement, never()).compactJwtBytes();
+    verifyNoInteractions(f.repository, f.account, f.selection);
+  }
+
+  @Test
+  void copiedNonsecretEvidenceDoesNotReplaceBorrowedPrivateResultCustody() {
+    var f = new Fixture();
+    var observationOnly = mock(CanonicalGameplayLoginResult.class);
+    var copiedEvidence = f.result.evidence();
+    when(observationOnly.evidence()).thenReturn(copiedEvidence);
+    byte[] untrustedBytes = "untrusted-copy".getBytes(StandardCharsets.US_ASCII);
+    when(observationOnly.compactJwtBytes()).thenReturn(untrustedBytes);
+    assertThatThrownBy(() -> f.owner.join(f.original, observationOnly, f.custody))
+        .isInstanceOf(IllegalStateException.class);
+    verify(observationOnly, times(1)).compactJwtBytes();
+    assertThat(untrustedBytes).containsOnly((byte) 0);
+    verifyNoInteractions(f.repository, f.account, f.selection);
+    assertThat(f.events).isEmpty();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
       strings = {"duplicate", "unknown", "trailing", "coerced", "missing", "malformed", "oversize"})
   void codecRefusesNoncanonicalOrUnboundedState(String change) {
     var f = new Fixture();
