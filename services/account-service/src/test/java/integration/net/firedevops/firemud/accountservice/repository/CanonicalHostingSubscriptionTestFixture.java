@@ -552,6 +552,8 @@ public final class CanonicalHostingSubscriptionTestFixture {
                     .status())
             .isEqualTo("succeeded");
         assertThat(transport.confirmations).isOne();
+        assertThat(transport.lastConfirmationIdempotencyKey)
+            .isEqualTo(dispatch.providerIdempotencyId().toString());
         return dispatch;
       } catch (StripeException failure) {
         throw new IllegalStateException("Controlled confirmation failed", failure);

@@ -84,6 +84,35 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
   }
 
   @Test
+  void invoiceDigestUsesPostgresTimestampPrecision() {
+    var invoice = invoice("in_exact", "pi_exact", 2400, "usd");
+    var subMicrosecond =
+        invoice(
+            invoice.invoiceId(),
+            invoice.paymentIntentId(),
+            invoice.amount(),
+            invoice.currency(),
+            invoice.paymentInstrumentId(),
+            invoice.billingPolicyDigest(),
+            invoice.capturedAt().plusNanos(900),
+            invoice.expiresAt().plusNanos(900));
+    assertThat(subMicrosecond).isEqualTo(invoice);
+    assertThat(subMicrosecond.digest()).isEqualTo(invoice.digest());
+    assertThatThrownBy(
+            () ->
+                invoice(
+                    invoice.invoiceId(),
+                    invoice.paymentIntentId(),
+                    invoice.amount(),
+                    invoice.currency(),
+                    invoice.paymentInstrumentId(),
+                    invoice.billingPolicyDigest(),
+                    invoice.capturedAt(),
+                    invoice.capturedAt().plusNanos(900)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void missingAndReadonlyTransactionsCannotReadOrMutateCheckout() {
     for (boolean readOnly : new boolean[] {false, true}) {
       TransactionSynchronizationManager.setActualTransactionActive(readOnly);
@@ -479,6 +508,26 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
       UUID instrument,
       String billingPolicyDigest,
       Instant expiresAt) {
+    return invoice(
+        invoice,
+        intent,
+        amount,
+        currency,
+        instrument,
+        billingPolicyDigest,
+        Instant.parse("2026-11-07T00:00:00Z"),
+        expiresAt);
+  }
+
+  private static AccountHostingFirstInvoicePayment invoice(
+      String invoice,
+      String intent,
+      long amount,
+      String currency,
+      UUID instrument,
+      String billingPolicyDigest,
+      Instant capturedAt,
+      Instant expiresAt) {
     UUID id = UUID.fromString("d4bc0143-4bf9-48ac-86a7-88f422146cfa");
     return new AccountHostingFirstInvoicePayment(
         id,
@@ -500,7 +549,7 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
         1,
         billingPolicyDigest,
         false,
-        Instant.parse("2026-11-07T00:00:00Z"),
+        capturedAt,
         expiresAt);
   }
 }
