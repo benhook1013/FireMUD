@@ -286,7 +286,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
       }
       verify(redis, org.mockito.Mockito.times(backgroundMaximum + 2))
           .connect(ByteArrayCodec.INSTANCE);
-      assertThat(connectors.getActiveCount()).isEqualTo(backgroundMaximum);
+      Awaitility.await()
+          .atMost(2, TimeUnit.SECONDS)
+          .untilAsserted(
+              () -> assertThat(connectors.getActiveCount()).isEqualTo(backgroundMaximum));
       assertThat(connectors.getQueue()).isEmpty();
       assertThat(connectors.getTaskCount()).isEqualTo(completedBefore + backgroundMaximum + 2);
       assertThat(operationPermits.availablePermits())

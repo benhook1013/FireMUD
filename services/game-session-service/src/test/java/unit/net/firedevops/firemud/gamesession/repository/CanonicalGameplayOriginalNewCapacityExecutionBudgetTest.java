@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -15,10 +16,13 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.lettuce.core.ClientOptions;
 import io.lettuce.core.ConnectionFuture;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisFuture;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -138,6 +142,75 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       }
       assertThat(permits.tryAcquire(maximum, 2, TimeUnit.SECONDS)).isTrue();
       permits.release(maximum);
+    }
+  }
+
+  @Test
+  void successfulTransferReadbackRetainsAdmissionUntilAsyncRedisCloseCompletes() throws Exception {
+    RedisClient redis = mock();
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    ClientOptions options = ClientOptions.builder().autoReconnect(false).build();
+    RedisAsyncCommands<byte[], byte[]> commands = mock();
+    RedisFuture<String> principal = mock();
+    CompletableFuture<Void> close = new CompletableFuture<>();
+    when(redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(connection);
+    when(connection.isOpen()).thenReturn(true);
+    when(connection.getOptions()).thenReturn(options);
+    when(connection.async()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn(principal);
+    when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
+    when(connection.closeAsync()).thenReturn(close);
+    DSLContext dsl = source(mock());
+    var owner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            dsl,
+            redis,
+            RedisScriptCatalog.fromContributions(
+                List.of(new CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution())),
+            CLOCK,
+            new CanonicalGameplayTenantGameplayTagRepository(dsl, "prod", 1));
+    CountDownLatch readbackReturned = new CountDownLatch(1);
+    Semaphore operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int operationMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    Semaphore background =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int backgroundMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                      CLOCK,
+                      CLOCK.millis() + 4000,
+                      budget -> {
+                        owner
+                            .forTransferBudget(budget)
+                            .withTransferReadback(ignored -> readbackReturned.countDown());
+                        return true;
+                      }));
+      try {
+        assertThat(readbackReturned.await(2, TimeUnit.SECONDS)).isTrue();
+        verify(connection, timeout(1000)).closeAsync();
+        assertPermitRemainsHeld(operations, operationMaximum);
+        assertPermitRemainsHeld(background, backgroundMaximum);
+        assertThat(caller.isDone()).isFalse();
+
+        close.complete(null);
+        assertThat(caller.get(2, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        close.complete(null);
+      }
     }
   }
 
