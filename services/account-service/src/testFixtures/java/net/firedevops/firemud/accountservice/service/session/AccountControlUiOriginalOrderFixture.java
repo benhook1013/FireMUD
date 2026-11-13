@@ -19,6 +19,7 @@ import net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalRec
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -43,6 +44,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   private final AccountControlUiIssuanceRepository operations;
   private final AccountControlUiCoordination coordination;
   private final RedisClient accountClient;
+  private final RedisURI receivingCoordinationUri;
   private final Path temporary;
   private IssuedCreator originalCreator;
 
@@ -278,11 +280,11 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       custody("request-mac", "mac1", 29);
       String PASSWORD = UUID.randomUUID().toString();
       var admin = RedisClient.create(RedisURI.Builder.redis(redisHost, redisPort).build());
-      accountClient =
-          RedisClient.create(
-              RedisURI.Builder.redis(redisHost, redisPort)
-                  .withAuthentication("account_coord_app", PASSWORD)
-                  .build());
+      receivingCoordinationUri =
+          RedisURI.Builder.redis(redisHost, redisPort)
+              .withAuthentication("account_coord_app", PASSWORD)
+              .build();
+      accountClient = RedisClient.create(receivingCoordinationUri);
       allocatedClient = accountClient;
       accountClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
       try (var connection = admin.connect(ByteArrayCodec.INSTANCE)) {
@@ -361,6 +363,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       issuance =
           new AccountControlUiIssuanceService(
               f.primary,
+              null, // No implicit shared abuse policy or admitting fallback.
               operations,
               f.authority,
               f.fences,
@@ -464,12 +467,30 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       CapturedEnvironmentBoundary environment,
       AccountControlUiOwnerSourcesFixture sources) {}
 
+  /** Returns the fixture's authenticated Account Coordination Redis URI. */
+  RedisURI receivingCoordinationUri() {
+    return receivingCoordinationUri;
+  }
+
+  AccountControlUiOwnerSourcesFixture receivingSources() {
+    return f;
+  }
+
+  /** The new HTTP/mTLS proof starts before login; no synthetic peer or token is supplied. */
+  net.firedevops.firemud.accountservice.entity.Account prepareReceivingAccount(String password) {
+    return f.createCertifiedGlobalAccount(password);
+  }
+
   /** Same-package reuse of genuine certified ACCOUNT issuance, separate from tenant creation. */
   IssuedAccount issueCertifiedAccount(String password) {
     var account = f.createCertifiedGlobalAccount(password);
     var request =
         new AccountControlUiIssuanceService.AccountSignInRequest(
-            UUID.randomUUID(), account.getEmail(), password, UUID.randomUUID());
+            UUID.randomUUID(),
+            account.getEmail(),
+            password,
+            UUID.randomUUID(),
+            new SourceContext("192.0.2.10"));
     String compact;
     try (var peer =
             AccountControlUiOwnerSourcesFixture.withPeer(

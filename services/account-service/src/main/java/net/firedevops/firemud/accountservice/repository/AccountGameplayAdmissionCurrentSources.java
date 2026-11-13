@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,6 +11,8 @@ import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceKind;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
@@ -28,11 +31,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * admission.
  *
  * <p>The caller enlists the exact supplied DSLContext in its writable SERIALIZABLE transaction.
- * This component creates no transaction, performs no writes or network calls, and owns no lease. It
- * reads current Account membership, tenant entitlement, and the active SQL token fence under the
- * canonical Account-first lock order. The caller verifier remains responsible for JWT/JWKS and
- * exact Redis currentness outside SQL; this source cannot re-prove either remote registry state or
- * a published gameplay target.
+ * This component creates no transaction, performs no writes, and owns no lease. Its SQL phases read
+ * current Account membership, tenant entitlement, and the active SQL token fence under the
+ * canonical Account-first lock order; its prepared handle observes the provider only outside SQL.
+ * The caller verifier remains responsible for JWT/JWKS and exact Redis currentness outside SQL;
+ * this source cannot re-prove either remote registry state or a published gameplay target.
  *
  * <p>The returned membership snapshot is complete current Account evidence. The Current result can
  * produce the five unchanged Account source subtrees for a lease and compare them against an
@@ -42,11 +45,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * global issuer/account authority and ACTIVE token checks but deliberately does not require the
  * original tenant membership or entitlement baseline to remain unchanged.
  *
- * <p>The NEW lease projection currently supports explicit DEMO entitlements only. Paid current
- * tenant authority remains readable by the generic membership source, but this DEMO-shaped lease
- * projection refuses paid hosting rather than decoding it as DEMO or consulting a provider in SQL.
+ * <p>Paid sources require an opaque preparation and actual provider observation from the concrete
+ * hosting owner composition. Its receipt is revalidated on this exact SQL connection. A missing
+ * paid composition or changed selected head never falls back to DEMO.
  */
-final class AccountGameplayAdmissionCurrentSources {
+public final class AccountGameplayAdmissionCurrentSources {
   private static final String ACCOUNT_ISSUER = GameSessionAccountDelegationProfile.ISSUER;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Set<String> LEASE_SOURCE_FIELDS =
@@ -62,18 +65,21 @@ final class AccountGameplayAdmissionCurrentSources {
   private final AccountTenantAuthorityEventRepository tenantAuthorityEvents;
   private final AccountTenantEntitlementOutboxRepository tenantEntitlementOutbox;
   private final AccountGameplayDelegationIssuanceRepository issuance;
+  private final String workloadNamespace;
 
   private AccountGameplayAdmissionCurrentSources(
       DSLContext dsl,
       AccountCanonicalRuntimeMembershipSnapshotRepository membershipSnapshots,
       AccountTenantAuthorityEventRepository tenantAuthorityEvents,
       AccountTenantEntitlementOutboxRepository tenantEntitlementOutbox,
-      AccountGameplayDelegationIssuanceRepository issuance) {
+      AccountGameplayDelegationIssuanceRepository issuance,
+      String workloadNamespace) {
     this.dsl = Objects.requireNonNull(dsl);
     this.membershipSnapshots = Objects.requireNonNull(membershipSnapshots);
     this.tenantAuthorityEvents = Objects.requireNonNull(tenantAuthorityEvents);
     this.tenantEntitlementOutbox = Objects.requireNonNull(tenantEntitlementOutbox);
     this.issuance = Objects.requireNonNull(issuance);
+    this.workloadNamespace = workloadNamespace;
   }
 
   /**
@@ -126,7 +132,59 @@ final class AccountGameplayAdmissionCurrentSources {
         new AccountGameplayDelegationIssuanceRepository(exactDsl, sourceEvidence, evidenceBundles);
 
     return new AccountGameplayAdmissionCurrentSources(
-        exactDsl, membershipSnapshots, tenantAuthorityEvents, tenantEntitlementOutbox, issuance);
+        exactDsl,
+        membershipSnapshots,
+        tenantAuthorityEvents,
+        tenantEntitlementOutbox,
+        issuance,
+        configuredWorkloadNamespace);
+  }
+
+  /** Captures only Account-owned selectors/fences; the provider read follows outside SQL. */
+  Prepared prepareCurrentPublicProductionNew(
+      UUID tenantId,
+      UUID originalTokenJti,
+      CommittedCandidateVerificationData candidate,
+      AccountGameplayAdmissionPaidSource paidSource) {
+    return prepareCurrentPublicProductionNew(
+        tenantId, originalTokenJti, candidate, paidSource, false);
+  }
+
+  Prepared prepareCurrentPublicProductionNew(
+      UUID tenantId,
+      UUID originalTokenJti,
+      CommittedCandidateVerificationData candidate,
+      AccountGameplayAdmissionPaidSource paidSource,
+      boolean requalifyPaidMembership) {
+    UUID accountId = verifiedCallerAccountId(tenantId, originalTokenJti, candidate);
+    requireWritableSerializableAccountTransaction();
+
+    // The hosting lifecycle's lock order is Account -> customer -> instrument -> tenant owner ->
+    // subscription -> tenant generation. Complete its SQL preparation before membership/source
+    // reads lock tenant generations, avoiding a reverse edge when a joiner differs from the payer.
+    AccountGameplayAdmissionPaidSource.Preparation paidPreparation = null;
+    if (paidSource != null
+        && paidSource.hasCurrentPaidSourceCandidate(dsl, workloadNamespace, tenantId)) {
+      lockRequiredAccountsBeforeTenantSources(dsl, tenantId, accountId);
+      paidPreparation = paidSource.prepare(dsl, workloadNamespace, tenantId);
+      if (requalifyPaidMembership) {
+        var selected = tenantAuthorityEvents.readCurrentSourceSelection(tenantId);
+        if (selected.kind() != SourceKind.PAID_HOSTING) throw unavailable();
+        readCommittedCandidate(originalTokenJti, candidate);
+        return new Prepared(selected, paidSource, paidPreparation);
+      }
+    } else {
+      lockExactAccountFirst(accountId);
+    }
+    CallerSources caller = readCallerSources(tenantId, originalTokenJti, candidate, accountId);
+    SourceSelection selected = caller.selection();
+    if (selected.kind() == SourceKind.PAID_HOSTING) {
+      if (paidPreparation == null) throw unavailable();
+    } else {
+      if (paidPreparation != null) throw unavailable();
+      requireCurrentDemo(caller.snapshot(), tenantId, selected.checkpoint());
+    }
+    return new Prepared(selected, paidSource, paidPreparation);
   }
 
   /**
@@ -140,8 +198,124 @@ final class AccountGameplayAdmissionCurrentSources {
       UUID targetTenantId,
       UUID expectedOriginalTokenJti,
       CommittedCandidateVerificationData expectedCommittedCandidate) {
+    return readCurrentPublicProductionNew(
+        targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate, null);
+  }
+
+  Current readCurrentPublicProductionNew(
+      UUID targetTenantId,
+      UUID expectedOriginalTokenJti,
+      CommittedCandidateVerificationData expectedCommittedCandidate,
+      Observed observed) {
+    return readCurrentPublicProductionNew(
+        targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate, observed, false);
+  }
+
+  Current readCurrentPublicProductionNew(
+      UUID targetTenantId,
+      UUID expectedOriginalTokenJti,
+      CommittedCandidateVerificationData expectedCommittedCandidate,
+      Observed observed,
+      boolean requalifyPaidMembership) {
+    UUID accountId =
+        verifiedCallerAccountId(
+            targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate);
+    requireWritableSerializableAccountTransaction();
+
+    // Reacquire the complete hosting lifecycle lock set before taking membership/tenant source
+    // generations. The post-lock source selector below still verifies that this receipt is the
+    // exact current paid source for the requested tenant.
+    AccountHostingSubscriptionCurrentReceipt paidReceipt = null;
+    if (observed != null && observed.paidSource != null && observed.paidObservation != null) {
+      lockRequiredAccountsBeforeTenantSources(dsl, targetTenantId, accountId);
+      paidReceipt =
+          observed.paidSource.readCurrent(dsl, workloadNamespace, observed.paidObservation);
+    } else {
+      lockExactAccountFirst(accountId);
+    }
+    SourceSelection selected = tenantAuthorityEvents.readCurrentSourceSelection(targetTenantId);
+    if (observed != null
+        && (selected.kind() != observed.selected.kind()
+            || !observed.selected.matches(selected.checkpoint()))) throw unavailable();
+    CommittedCandidateVerificationData candidate =
+        readCommittedCandidate(expectedOriginalTokenJti, expectedCommittedCandidate);
+    Snapshot snapshot;
+    Long sourceValidUntilMs = null;
+    if (selected.kind() == SourceKind.PAID_HOSTING) {
+      if (paidReceipt == null) throw unavailable();
+      var receipt = paidReceipt;
+      TenantAuthorityEventV1Codec.Event event = receipt.tenantAuthorityEvent();
+      if (!targetTenantId.equals(receipt.current().tenantId())
+          || !selected.matches(event)
+          || !receipt.receiptRequestId().equals(event.requestId())
+          || !receipt.billingEventId().equals(event.tenantBillingEventId())
+          || !receipt.billingEventDigest().equals(event.tenantBillingEventDigest())
+          || receipt.tenantBillingSequence() != event.tenantBillingSequence()
+          || !receipt.gameplayAvailable()
+          || !receipt.allowNewGameplayBindings()) {
+        throw unavailable();
+      }
+      snapshot =
+          requalifyPaidMembership
+              ? membershipSnapshots.requalifyPaidAcquisition(accountId, targetTenantId, receipt)
+              : membershipSnapshots.readCurrent(accountId, targetTenantId);
+      requireSupportedPublicTenantTuple(
+          snapshot, targetTenantId, event, receipt.tenantBillingSequence());
+      sourceValidUntilMs = receipt.validUntil().toEpochMilli();
+    } else {
+      if (paidReceipt != null) throw unavailable();
+      snapshot = membershipSnapshots.readCurrent(accountId, targetTenantId);
+      requireCurrentDemo(snapshot, targetTenantId, selected.checkpoint());
+    }
+    requireCurrentActiveMembership(snapshot, accountId, targetTenantId);
+    requireCandidateAuthorityMatchesSnapshot(candidate, snapshot, accountId);
+    return new Current(snapshot, candidate, sourceValidUntilMs);
+  }
+
+  private void requireCurrentDemo(
+      Snapshot snapshot, UUID tenantId, TenantAuthorityEventV1Codec.Event authorityEvent) {
+    DemoTenantEntitlementEventV1Codec.Event event =
+        readExactCurrentTenantEntitlement(tenantId, authorityEvent);
+    requireSupportedPublicTenantTuple(
+        snapshot, tenantId, authorityEvent, event.tenantBillingSequence());
+    if (!event.gameplayAvailable() || !event.allowNewGameplayBindings()) throw unavailable();
+  }
+
+  private CallerSources readCallerSources(
+      UUID targetTenantId,
+      UUID expectedOriginalTokenJti,
+      CommittedCandidateVerificationData expectedCommittedCandidate,
+      UUID accountId) {
+    Snapshot snapshot = membershipSnapshots.readCurrent(accountId, targetTenantId);
+    var selected = tenantAuthorityEvents.readCurrentSourceSelection(targetTenantId);
+    requireCurrentActiveMembership(snapshot, accountId, targetTenantId);
+
+    CommittedCandidateVerificationData currentCommittedCandidate =
+        readCommittedCandidate(expectedOriginalTokenJti, expectedCommittedCandidate);
+    requireCandidateAuthorityMatchesSnapshot(currentCommittedCandidate, snapshot, accountId);
+    return new CallerSources(snapshot, selected, currentCommittedCandidate);
+  }
+
+  private CommittedCandidateVerificationData readCommittedCandidate(
+      UUID expectedOriginalTokenJti,
+      CommittedCandidateVerificationData expectedCommittedCandidate) {
+    CommittedCandidateVerificationData currentCommittedCandidate =
+        issuance
+            .readCurrentCommittedCandidateByJti(expectedOriginalTokenJti)
+            .orElseThrow(AccountGameplayAdmissionCurrentSources::unavailable);
+    if (!CommittedCandidateVerificationData.hasSameOwnerEvidence(
+        expectedCommittedCandidate, currentCommittedCandidate)) {
+      throw unavailable();
+    }
+    return currentCommittedCandidate;
+  }
+
+  private UUID verifiedCallerAccountId(
+      UUID tenantId,
+      UUID expectedOriginalTokenJti,
+      CommittedCandidateVerificationData expectedCommittedCandidate) {
     Objects.requireNonNull(expectedCommittedCandidate, "Verified caller candidate is required");
-    requireNonNilUuid(targetTenantId, "Canonical target tenant UUID");
+    requireNonNilUuid(tenantId, "Canonical target tenant UUID");
     requireV4Uuid(expectedOriginalTokenJti, "Expected original token JTI");
 
     var expectedIdentity = expectedCommittedCandidate.identity();
@@ -151,36 +325,41 @@ final class AccountGameplayAdmissionCurrentSources {
         || !accountId.equals(expectedCommittedCandidate.authoritySnapshot().accountId())) {
       throw unavailable();
     }
+    return accountId;
+  }
 
-    requireWritableSerializableAccountTransaction();
-    lockExactAccountFirst(accountId);
+  /**
+   * Locks the exact caller and current tenant billing-owner Account rows in deterministic order.
+   *
+   * <p>Call inside the caller's writable SERIALIZABLE transaction, before hosting-wallet or tenant
+   * source locks. This shared lock step keeps paid admission readers on the same Account-first
+   * order even when the caller is not the billing owner.
+   */
+  public static void lockRequiredAccountsBeforeTenantSources(
+      DSLContext exactDsl, UUID tenantId, UUID callerAccountId) {
+    Objects.requireNonNull(exactDsl, "The caller-enlisted DSLContext is required");
+    requireNonNilUuid(tenantId, "Canonical tenant UUID");
+    requireNonNilUuid(callerAccountId, "Verified caller Account UUID");
+    requireWritableSerializableAccountTransaction(exactDsl);
 
-    Snapshot snapshot = membershipSnapshots.readCurrent(accountId, targetTenantId);
-    var selected = tenantAuthorityEvents.readCurrentSourceSelection(targetTenantId);
-    if (selected.kind() != AccountTenantAuthorityEventRepository.SourceKind.NON_PAID_DEMO) {
-      throw unavailable();
+    Record owner =
+        exactDsl.fetchOne(
+            "SELECT owner_account_uuid FROM account_tenant_billing_owners WHERE tenant_uuid = ?",
+            tenantId);
+    UUID billingOwnerAccountId = owner == null ? null : owner.get("owner_account_uuid", UUID.class);
+    if (billingOwnerAccountId != null) {
+      requireNonNilUuid(billingOwnerAccountId, "Tenant billing-owner Account UUID");
     }
-    TenantAuthorityEventV1Codec.Event authorityEvent = selected.checkpoint();
-    DemoTenantEntitlementEventV1Codec.Event typedTenantEvent =
-        readExactCurrentTenantEntitlement(targetTenantId, authorityEvent);
 
-    requireCurrentActiveMembership(snapshot, accountId, targetTenantId);
-    requireSupportedPublicTenantTuple(snapshot, targetTenantId, authorityEvent, typedTenantEvent);
-    if (!typedTenantEvent.gameplayAvailable() || !typedTenantEvent.allowNewGameplayBindings()) {
-      throw unavailable();
+    List<UUID> requiredAccounts = new ArrayList<>(2);
+    requiredAccounts.add(callerAccountId);
+    if (billingOwnerAccountId != null && !billingOwnerAccountId.equals(callerAccountId)) {
+      requiredAccounts.add(billingOwnerAccountId);
     }
-
-    CommittedCandidateVerificationData currentCommittedCandidate =
-        issuance
-            .readCurrentCommittedCandidateByJti(expectedOriginalTokenJti)
-            .orElseThrow(AccountGameplayAdmissionCurrentSources::unavailable);
-    if (!CommittedCandidateVerificationData.hasSameOwnerEvidence(
-        expectedCommittedCandidate, currentCommittedCandidate)) {
-      throw unavailable();
+    requiredAccounts.sort(UUID::compareTo);
+    for (UUID accountId : requiredAccounts) {
+      lockExactAccountFirst(exactDsl, accountId);
     }
-    requireCandidateAuthorityMatchesSnapshot(currentCommittedCandidate, snapshot, accountId);
-
-    return new Current(snapshot, typedTenantEvent, currentCommittedCandidate);
   }
 
   /**
@@ -277,7 +456,7 @@ final class AccountGameplayAdmissionCurrentSources {
         "tokenIdentityEvidence", currentTokenIdentityEvidence(snapshot, currentCommittedCandidate));
   }
 
-  private static Map<String, Object> currentAuthorityTuple(Snapshot snapshot) {
+  static Map<String, Object> currentAuthorityTuple(Snapshot snapshot) {
     AuthorityTuple current = snapshot.authorityTuple();
     Optional<AccountSecurityCutoff> accountCutoff =
         current
@@ -343,7 +522,7 @@ final class AccountGameplayAdmissionCurrentSources {
       Snapshot snapshot,
       UUID tenantId,
       TenantAuthorityEventV1Codec.Event authorityEvent,
-      DemoTenantEntitlementEventV1Codec.Event typedTenantEvent) {
+      long tenantBillingSequence) {
     String tenantKey = tenantId.toString();
     AuthorityTuple tuple = snapshot.authorityTuple();
     Map<String, String> expectedTenantGeneration =
@@ -353,7 +532,7 @@ final class AccountGameplayAdmissionCurrentSources {
     TenantBillingCutoff expectedBillingCutoff =
         new TenantBillingCutoff(
             Long.toString(authorityEvent.tenantAuthorityGeneration()),
-            Long.toString(typedTenantEvent.tenantBillingSequence()),
+            Long.toString(tenantBillingSequence),
             authorityEvent.outboxStreamKey(),
             Long.toString(authorityEvent.outboxSequence()));
     Map<String, TenantBillingCutoff> expectedBillingCutoffs =
@@ -423,6 +602,10 @@ final class AccountGameplayAdmissionCurrentSources {
   }
 
   private void requireWritableSerializableAccountTransaction() {
+    requireWritableSerializableAccountTransaction(dsl);
+  }
+
+  private static void requireWritableSerializableAccountTransaction(DSLContext dsl) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw unavailable();
@@ -443,6 +626,10 @@ final class AccountGameplayAdmissionCurrentSources {
   }
 
   private void lockExactAccountFirst(UUID accountId) {
+    lockExactAccountFirst(dsl, accountId);
+  }
+
+  private static void lockExactAccountFirst(DSLContext dsl, UUID accountId) {
     Record locked =
         dsl.fetchOne(
             "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", accountId);
@@ -475,12 +662,12 @@ final class AccountGameplayAdmissionCurrentSources {
   /** Complete, immutable source result; it contains neither a JWT nor registry bytes. */
   record Current(
       Snapshot snapshot,
-      DemoTenantEntitlementEventV1Codec.Event typedTenantEvent,
-      CommittedCandidateVerificationData currentCommittedCandidate) {
+      CommittedCandidateVerificationData currentCommittedCandidate,
+      Long sourceValidUntilMs) {
     Current {
       Objects.requireNonNull(snapshot);
-      Objects.requireNonNull(typedTenantEvent);
       Objects.requireNonNull(currentCommittedCandidate);
+      if (sourceValidUntilMs != null && sourceValidUntilMs <= 0L) throw unavailable();
     }
 
     /** Returns exactly the five immutable, current-source subtrees used by lease capture. */
@@ -495,6 +682,9 @@ final class AccountGameplayAdmissionCurrentSources {
               != AccountGameplayAdmissionLeaseEvidence.LeaseKind.NEW_BINDING) {
         throw unavailable();
       }
+      if (sourceValidUntilMs != null
+          && Long.parseLong((String) originalLease.carrier().get("expiresAt")) > sourceValidUntilMs)
+        throw unavailable();
       Map<String, Object> carrier = originalLease.carrier();
       Object scopeValue = carrier.get("bindingScope");
       if (!(scopeValue instanceof Map<?, ?> bindingScope)
@@ -507,6 +697,48 @@ final class AccountGameplayAdmissionCurrentSources {
       for (String field : LEASE_SOURCE_FIELDS) {
         if (!Objects.equals(expected.get(field), carrier.get(field))) throw unavailable();
       }
+    }
+  }
+
+  private record CallerSources(
+      Snapshot snapshot, SourceSelection selection, CommittedCandidateVerificationData candidate) {}
+
+  static final class Prepared {
+    private final SourceSelection selected;
+    private final AccountGameplayAdmissionPaidSource paidSource;
+    private final AccountGameplayAdmissionPaidSource.Preparation paidPreparation;
+
+    private Prepared(
+        SourceSelection selected,
+        AccountGameplayAdmissionPaidSource paidSource,
+        AccountGameplayAdmissionPaidSource.Preparation paidPreparation) {
+      this.selected = selected;
+      this.paidSource = paidSource;
+      this.paidPreparation = paidPreparation;
+    }
+
+    Observed observeOutsideSql() {
+      if (TransactionSynchronizationManager.isActualTransactionActive()
+          || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
+      return new Observed(
+          selected,
+          paidSource,
+          paidPreparation == null ? null : paidSource.observe(paidPreparation));
+    }
+  }
+
+  static final class Observed {
+    private final SourceSelection selected;
+    private final AccountGameplayAdmissionPaidSource paidSource;
+    private final AccountGameplayAdmissionPaidSource.Observation paidObservation;
+
+    private Observed(
+        SourceSelection selected,
+        AccountGameplayAdmissionPaidSource paidSource,
+        AccountGameplayAdmissionPaidSource.Observation paidObservation) {
+      this.selected = selected;
+      this.paidSource = paidSource;
+      this.paidObservation = paidObservation;
     }
   }
 }

@@ -30,6 +30,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 @AutoConfigureBefore(
     name = {
       "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+      "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration",
+      "org.springframework.boot.data.redis.autoconfigure.DataRedisReactiveAutoConfiguration",
       "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
       "org.springframework.boot.sql.autoconfigure.flyway.FlywayAutoConfiguration"
     })
@@ -86,7 +88,7 @@ public final class DatabaseAutoConfiguration {
       havingValue = "true",
       matchIfMissing = true)
   @ConditionalOnMissingBean(RedisConnectionFactory.class)
-  public RedisConnectionFactory redisConnectionFactory(ClientResources resources) {
+  public LettuceConnectionFactory redisConnectionFactory(ClientResources resources) {
     RedisStandaloneConfiguration standalone = redisStandaloneConfiguration();
     LettuceClientConfiguration clientConfiguration = lettuceClientConfiguration(resources);
     return new LettuceConnectionFactory(standalone, clientConfiguration);

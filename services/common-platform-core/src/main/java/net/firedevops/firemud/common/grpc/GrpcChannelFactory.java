@@ -25,6 +25,24 @@ public class GrpcChannelFactory {
       boolean keepAlive,
       ResolvedGrpcTlsMaterial tlsMaterial)
       throws SSLException {
+    return buildChannel(target, defaultPort, properties, keepAlive, tlsMaterial, false);
+  }
+
+  /** Builds a channel with retry disabled for calls whose body must never be replayed. */
+  public ManagedChannel buildNonRetryingChannel(
+      String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+      throws SSLException {
+    return buildChannel(target, defaultPort, properties, keepAlive, null, true);
+  }
+
+  private ManagedChannel buildChannel(
+      String target,
+      int defaultPort,
+      CommonGrpcClientProperties properties,
+      boolean keepAlive,
+      ResolvedGrpcTlsMaterial tlsMaterial,
+      boolean disableRetries)
+      throws SSLException {
     String resolved = target;
     if (resolved == null || resolved.isBlank()) {
       resolved = "localhost:" + defaultPort;
@@ -32,6 +50,7 @@ public class GrpcChannelFactory {
 
     if (properties.isPlaintext()) {
       ManagedChannelBuilder<?> builder = createPlaintextBuilder(resolved, defaultPort);
+      if (disableRetries) builder.disableRetry();
       configureKeepAlive(builder, keepAlive);
       return builder.build();
     }
@@ -61,11 +80,12 @@ public class GrpcChannelFactory {
       }
       builder = builder.sslContext(sslBuilder.build());
     }
+    if (disableRetries) builder.disableRetry();
     configureKeepAlive(builder, keepAlive);
     return builder.build();
   }
 
-  private ManagedChannelBuilder<?> createPlaintextBuilder(String resolved, int defaultPort) {
+  protected ManagedChannelBuilder<?> createPlaintextBuilder(String resolved, int defaultPort) {
     if (resolved.contains("://")) {
       return ManagedChannelBuilder.forTarget(resolved).usePlaintext();
     }
@@ -75,7 +95,7 @@ public class GrpcChannelFactory {
     return ManagedChannelBuilder.forAddress(host, port).usePlaintext();
   }
 
-  private NettyChannelBuilder createTlsBuilder(String resolved, int defaultPort) {
+  protected NettyChannelBuilder createTlsBuilder(String resolved, int defaultPort) {
     if (resolved.contains("://")) {
       return NettyChannelBuilder.forTarget(resolved);
     }
