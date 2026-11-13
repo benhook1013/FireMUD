@@ -219,6 +219,12 @@ public class AccountConnectScopeRepository {
     }
   }
 
+  /** Uses the same database clock as the consumer of an issued scope. */
+  public Instant canonicalIssuanceTime() {
+    requireWritableOwnerTransaction();
+    return AccountTenantCapacityRepository.databaseNow(dsl);
+  }
+
   /** Resolves v2 only from a bearer whose exact immutable owner evidence is persisted. */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<CanonicalJoinScopeV2> findCanonical(String connectScopeId) {

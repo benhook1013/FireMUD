@@ -6,9 +6,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
@@ -92,6 +90,50 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     var budget = admitted.get();
     if (budget == null) throw unavailable();
     return budget.sql(dsl);
+  }
+
+  long nowMillis() {
+    return clock.millis();
+  }
+
+  CanonicalGameplayTenantGameplayTagRepository.Assignment assignmentForOrigin(
+      DSLContext tx, UUID transitionId) {
+    return tags.withCapacityExecutionDsl(tx).assignmentForRetainedCapacityExecution(transitionId);
+  }
+
+  /** Reserve the actual successor once. An uncertain Redis CAS cannot be retargeted on retry. */
+  void prepareSuccessor(UUID transferId, String owner, String lease) {
+    if (owner == null
+        || !owner.matches("[A-Za-z0-9._:-]{1,120}")
+        || lease == null
+        || !lease.matches("[0-9a-f]{64}")) throw unavailable();
+    sql()
+        .transaction(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              Record transfer = current(tx, transferId, true);
+              String retainedOwner = transfer.get("successor_owner_id", String.class);
+              if (retainedOwner != null) {
+                if (!owner.equals(retainedOwner)
+                    || !lease.equals(transfer.get("successor_lease_correlation", String.class)))
+                  throw unavailable();
+                return;
+              }
+              long fence =
+                  tx.fetchSingle("SELECT nextval('game_session_region_executor_fence_seq')")
+                      .get(0, Long.class);
+              if (fence <= transfer.get("old_owner_fence", Long.class)) throw unavailable();
+              if (tx.execute(
+                      "UPDATE "
+                          + TRANSFER
+                          + " SET successor_owner_id=?,successor_owner_fence=?,successor_lease_correlation=?"
+                          + " WHERE transfer_id=? AND successor_owner_id IS NULL",
+                      owner,
+                      fence,
+                      lease,
+                      transferId)
+                  != 1) throw unavailable();
+            });
   }
 
   /**
@@ -233,11 +275,14 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                 return old.get("transfer_id", UUID.class);
               }
               if (!exists(
-                  tx,
-                  "SELECT 1" + PENDING,
-                  source.tenantId(),
-                  source.gameInstanceId(),
-                  source.regionId())) return null;
+                      tx,
+                      "SELECT 1" + PENDING,
+                      source.tenantId(),
+                      source.gameInstanceId(),
+                      source.regionId())
+                  && !CanonicalGameplayCapacityOriginTransferRepository.pending(
+                      tx, source.tenantId(), source.gameInstanceId(), source.regionId()))
+                return null;
               UUID id = UUID.randomUUID();
               String intentDigest =
                   digest(bytes("region-owner-transfer/v1/" + id + "/" + sourceDigest));
@@ -258,6 +303,164 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                   != 1) throw unavailable();
               return id;
             });
+  }
+
+  /** Inserts only a new intent; a prior FROZEN row must use its process-private continuation. */
+  UUID beginNew(
+      UUID transferId,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior) {
+    noSql();
+    Objects.requireNonNull(transferId, "transferId");
+    String sourceDigest = sourceDigest(source, prior);
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record old =
+                  tx.fetchOne(
+                      "SELECT transfer_id FROM " + TRANSFER + " WHERE old_owner_fence=?",
+                      prior.executorFence().longValueExact());
+              if (old != null) throw unavailable();
+              if (!exists(
+                      tx,
+                      "SELECT 1" + PENDING,
+                      source.tenantId(),
+                      source.gameInstanceId(),
+                      source.regionId())
+                  && !CanonicalGameplayCapacityOriginTransferRepository.pending(
+                      tx, source.tenantId(), source.gameInstanceId(), source.regionId()))
+                return null;
+              String intentDigest =
+                  digest(bytes("region-owner-transfer/v1/" + transferId + "/" + sourceDigest));
+              if (tx.execute(
+                      "INSERT INTO "
+                          + TRANSFER
+                          + " (transfer_id,tenant_id,game_instance_id,region_id,region_epoch,old_owner_id,old_owner_fence,old_lease_correlation,source_digest,intent_digest,state) VALUES (?,?,?,?,?,?,?,?,?,?,'FROZEN')",
+                      transferId,
+                      source.tenantId(),
+                      source.gameInstanceId(),
+                      source.regionId(),
+                      prior.regionEpoch(),
+                      prior.ownerInstanceId(),
+                      prior.executorFence().longValueExact(),
+                      prior.leaseTokenCorrelation(),
+                      sourceDigest,
+                      intentDigest)
+                  != 1) throw unavailable();
+              return transferId;
+            });
+  }
+
+  /**
+   * Finds only the exact current frozen intent; unlike begin, this path never inserts one.
+   * Protected-incarnation identity is requalified from physical reads during advance; the lease
+   * owner's stable-evidence digest uses a different canonical domain from that retained digest.
+   */
+  UUID frozenIntent(
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String expectedSuccessorOwner,
+      String expectedSuccessorLeaseCorrelation) {
+    noSql();
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record candidate =
+                  tx.fetchOne(
+                      "SELECT transfer_id FROM " + TRANSFER + " WHERE old_owner_fence=?",
+                      prior.executorFence().longValueExact());
+              if (candidate == null) throw unavailable();
+              UUID transferId = candidate.get("transfer_id", UUID.class);
+              Record frozen = current(tx, transferId, true);
+              if (!matchesFrozenIntent(
+                  frozen, source, prior, expectedSuccessorOwner, expectedSuccessorLeaseCorrelation))
+                throw unavailable();
+              return transferId;
+            });
+  }
+
+  /** Read-only fresh-entry guard: an existing frozen intent cannot be adopted by a new grant. */
+  boolean hasFrozenIntent(
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior) {
+    noSql();
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record candidate =
+                  tx.fetchOne(
+                      "SELECT transfer_id FROM " + TRANSFER + " WHERE old_owner_fence=?",
+                      prior.executorFence().longValueExact());
+              if (candidate == null) return false;
+              UUID transferId = candidate.get("transfer_id", UUID.class);
+              Record frozen = current(tx, transferId, true);
+              if (!matchesFrozenIntent(frozen, source, prior, null, null)) throw unavailable();
+              return true;
+            });
+  }
+
+  /** Allows the legacy exact-original continuation only while no successor has been reserved. */
+  void requireUnreservedFrozenIntent(
+      UUID transferId,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior) {
+    noSql();
+    sql()
+        .transaction(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record frozen = current(tx, transferId, true);
+              if (!matchesFrozenIntent(frozen, source, prior, null, null)
+                  || frozen.get("successor_owner_id", String.class) != null
+                  || frozen.get("successor_owner_fence", Long.class) != null
+                  || frozen.get("successor_lease_correlation", String.class) != null)
+                throw unavailable();
+            });
+  }
+
+  /**
+   * Rechecks a known intent against the unchanged predecessor and exact frozen source. The
+   * subsequent advance/install path performs protected-incarnation requalification.
+   */
+  void requireFrozenIntent(
+      UUID transferId,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String expectedSuccessorOwner,
+      String expectedSuccessorLeaseCorrelation) {
+    noSql();
+    sql()
+        .transaction(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record frozen = current(tx, transferId, true);
+              if (!matchesFrozenIntent(
+                  frozen, source, prior, expectedSuccessorOwner, expectedSuccessorLeaseCorrelation))
+                throw unavailable();
+            });
+  }
+
+  private static boolean matchesFrozenIntent(
+      Record frozen,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String expectedSuccessorOwner,
+      String expectedSuccessorLeaseCorrelation) {
+    String retainedSuccessorOwner = frozen.get("successor_owner_id", String.class);
+    String retainedSuccessorLease = frozen.get("successor_lease_correlation", String.class);
+    return sourceDigest(source, prior).equals(frozen.get("source_digest", String.class))
+        && (retainedSuccessorOwner == null
+            || expectedSuccessorOwner == null && expectedSuccessorLeaseCorrelation == null
+            || Objects.equals(expectedSuccessorOwner, retainedSuccessorOwner)
+                && Objects.equals(expectedSuccessorLeaseCorrelation, retainedSuccessorLease));
   }
 
   /**
@@ -402,6 +605,52 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     return List.copyOf(result);
   }
 
+  FenceDispatch fenceDispatch(
+      Item item, CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before) {
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              Record transfer = current(tx, item.transferId(), true);
+              requireObservation(readCurrent(tx, item.transferId(), item.ordinal()), before);
+              String incarnation = transfer.get("incarnation_digest", String.class);
+              if (incarnation != null && !incarnation.equals(before.incarnationDigest()))
+                throw unavailable();
+              Record dispatched =
+                  tx.fetchOne(
+                      "SELECT fence_dispatch_incarnation FROM "
+                          + ITEM
+                          + " WHERE execution_digest=? AND fence_dispatch_id IS NOT NULL",
+                      item.execution().digest());
+              if (dispatched != null
+                  && !before
+                      .incarnationDigest()
+                      .equals(dispatched.get("fence_dispatch_incarnation"))) throw unavailable();
+              if (dispatched != null
+                  || exists(
+                      tx,
+                      "SELECT 1 FROM "
+                          + ITEM
+                          + " WHERE execution_digest=? AND fence_readback IS NOT NULL",
+                      item.execution().digest())) return new FenceDispatch(item, null);
+              if (clock.millis() >= before.expiresAtEpochMillis()) throw unavailable();
+              UUID dispatchId = UUID.randomUUID();
+              if (tx.execute(
+                      "UPDATE "
+                          + ITEM
+                          + " SET fence_dispatch_id=?,fence_dispatch_incarnation=?"
+                          + " WHERE transfer_id=? AND target_ordinal=?"
+                          + " AND execution_digest=? AND fence_readback IS NULL AND fence_dispatch_id IS NULL",
+                      dispatchId,
+                      before.incarnationDigest(),
+                      item.transferId(),
+                      item.ordinal(),
+                      item.execution().digest())
+                  != 1) throw unavailable();
+              return new FenceDispatch(item, dispatchId);
+            });
+  }
+
   void retainFence(
       Item item,
       CanonicalGameplayOriginalNewCapacityExecutionOwner.TransferFence actual,
@@ -436,6 +685,20 @@ final class CanonicalGameplayRegionOwnerTransferRepository
               byte[] prior = row.get("fence_readback", byte[].class);
               if (prior != null && !Arrays.equals(prior, actual.canonicalReadback()))
                 throw unavailable();
+              UUID dispatchId = row.get("fence_dispatch_id", UUID.class);
+              if (dispatchId != null
+                  && (!actual.provesDispatchEnded(dispatchId)
+                      || !before.incarnationDigest().equals(row.get("fence_dispatch_incarnation"))))
+                throw unavailable();
+              if (exists(
+                  tx,
+                  "SELECT 1 FROM "
+                      + ITEM
+                      + " WHERE execution_digest=? AND fence_readback IS NOT NULL"
+                      + " AND (fence_readback IS DISTINCT FROM ? OR incarnation_digest IS DISTINCT FROM ?)",
+                  item.execution().digest(),
+                  actual.canonicalReadback(),
+                  after.incarnationDigest())) throw unavailable();
               tx.execute(
                   "UPDATE "
                       + ITEM
@@ -449,18 +712,42 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             });
   }
 
-  /** Private capability is minted only after a complete current physical verification pass. */
+  /** Private capability follows a complete current physical pass over both custody families. */
   Completion qualify(
       UUID transferId,
       CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before,
       CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after,
+      UUID originRound,
+      String successorOwner,
+      String successorLease,
       long deadline) {
     if (clock.millis() >= deadline
-        || !before.incarnationDigest().equals(after.incarnationDigest())
-        || !"FROZEN".equals(before.regionOwnerTransferContext().controlState())
-        || !"FROZEN".equals(after.regionOwnerTransferContext().controlState())) throw unavailable();
-    requireObservation(readCurrent(transferId, before.targetOrdinal()), before);
-    requireObservation(readCurrent(transferId, after.targetOrdinal()), after);
+        || before == null
+        || after == null
+        || !before.incarnationDigest().equals(after.incarnationDigest())) throw unavailable();
+    if (before.ownerKind()
+        == CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.REGION_OWNER_TRANSFER) {
+      requireObservation(readCurrent(transferId, before.targetOrdinal(), deadline), before);
+      requireObservation(readCurrent(transferId, after.targetOrdinal(), deadline), after);
+      if (!"FROZEN".equals(before.regionOwnerTransferContext().controlState())
+          || !"FROZEN".equals(after.regionOwnerTransferContext().controlState()))
+        throw unavailable();
+    } else if (before.ownerKind()
+            == CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.ORIGIN_OWNER_TRANSFER
+        && after.ownerKind()
+            == CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.ORIGIN_OWNER_TRANSFER) {
+      var origins = new CanonicalGameplayCapacityOriginTransferRepository(this);
+      if (!origins
+              .readCurrent(transferId, before.targetOrdinal(), deadline)
+              .equals(before.originTransferContext())
+          || !origins
+              .readCurrent(transferId, after.targetOrdinal(), deadline)
+              .equals(after.originTransferContext())
+          || !"FROZEN".equals(before.originTransferContext().controlState())
+          || !"FROZEN".equals(after.originTransferContext().controlState())
+          || clock.millis() >= before.expiresAtEpochMillis()
+          || clock.millis() >= after.expiresAtEpochMillis()) throw unavailable();
+    } else throw unavailable();
     Record transfer = current(sql(), transferId, false);
     if (!before.incarnationDigest().equals(transfer.get("incarnation_digest", String.class)))
       throw unavailable();
@@ -473,14 +760,30 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             transferId,
             round)) throw unavailable();
     requireComplete(sql(), transferId);
+    CanonicalGameplayCapacityOriginTransferRepository.requireVerified(
+        sql(), transferId, originRound);
     long evidenceDeadline =
         Math.min(deadline, Math.min(before.expiresAtEpochMillis(), after.expiresAtEpochMillis()));
     if (clock.millis() >= evidenceDeadline) throw unavailable();
+    if (originRound == null) {
+      // With no origin custody CAS, reserve the successor only after the read-only proof succeeds.
+      prepareSuccessor(transferId, successorOwner, successorLease);
+    }
+    Record successor = current(sql(), transferId, false);
+    Long successorFence = successor.get("successor_owner_fence", Long.class);
+    if (successorFence == null
+        || successorFence <= successor.get("old_owner_fence", Long.class)
+        || !Objects.equals(successorOwner, successor.get("successor_owner_id", String.class))
+        || !Objects.equals(
+            successorLease, successor.get("successor_lease_correlation", String.class))
+        || clock.millis() >= evidenceDeadline) throw unavailable();
     return new Completion(
         transferId,
         transfer.get("source_digest", String.class),
         after.incarnationDigest(),
         round,
+        originRound,
+        successorFence,
         evidenceDeadline,
         clock);
   }
@@ -592,6 +895,14 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || !Boolean.TRUE.equals(transfer.get("verification_complete", Boolean.class)))
       throw unavailable();
     requireComplete(tx, proof.transferId);
+    if (newFence != proof.reservedFence
+        || !newOwner.equals(transfer.get("successor_owner_id", String.class))
+        || newFence != transfer.get("successor_owner_fence", Long.class)
+        || !newLease.equals(transfer.get("successor_lease_correlation", String.class)))
+      throw unavailable();
+    proof.requireFresh();
+    CanonicalGameplayCapacityOriginTransferRepository.promote(
+        tx, proof.transferId, proof.originRound, newOwner, newFence);
     proof.requireFresh();
     if (tx.execute(
             "UPDATE "
@@ -621,9 +932,9 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       String newOwner,
       long newFence,
       String newLease) {
-    if (exists(
-        tx, "SELECT 1" + PENDING, prior.tenantId(), prior.gameInstanceId(), prior.regionId()))
-      throw unavailable();
+    if (exists(tx, "SELECT 1" + PENDING, prior.tenantId(), prior.gameInstanceId(), prior.regionId())
+        || CanonicalGameplayCapacityOriginTransferRepository.pending(
+            tx, prior.tenantId(), prior.gameInstanceId(), prior.regionId())) throw unavailable();
     if (tx.execute(
             "UPDATE "
                 + TRANSFER
@@ -713,7 +1024,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         .readAssignmentForRetainedCapacityExecution(transitionId);
   }
 
-  private static Record observationCurrent(DSLContext tx, UUID id) {
+  static Record observationCurrent(DSLContext tx, UUID id) {
     Record row =
         tx.fetchOne(
             CURRENT_PROJECTION
@@ -817,7 +1128,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || !binding.sessionId().equals(player.sessionId().toString())) throw unavailable();
   }
 
-  private static Record current(DSLContext tx, UUID id, boolean lock) {
+  static Record current(DSLContext tx, UUID id, boolean lock) {
+    if (lock) CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(tx);
     Record row =
         tx.fetchOne(
             CURRENT_PROJECTION
@@ -853,6 +1165,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       DSLContext tx,
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior) {
+    CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(tx);
     Record row =
         tx.fetchOne(
             "SELECT * FROM game_session_region_runtime_status WHERE tenant_id=? AND game_instance_id=? AND region_id=? FOR UPDATE",
@@ -949,43 +1262,10 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         throw unavailable();
       JsonNode node = JSON.readTree(canonical);
       byte[] payload = Base64.getDecoder().decode(node.get("canonicalAttemptPayload").textValue());
-      var parser = new Frame(payload);
-      if (!"mutationDigest/v1".equals(parser.segment())) throw unavailable();
-      Map<String, Object> fields = parser.fields(7, 0);
-      var scope = object(fields, "scope");
-      var target = object(fields, "target");
-      var player = object(target, "ownerContext");
-      var expected = object(fields, "expectedVersion");
-      var mutation = object(fields, "mutation");
-      var identity =
-          new TenantCapacityAdmission.Identity(
-              uuid(scope, "tenantId"), uuid(scope, "requestId"), uuid(scope, "admissionId"));
       var request =
-          new TenantCapacityAdmission.Request(
-              identity,
-              uuid(expected, "admissionAttemptId"),
-              number(expected, "capacityRearmFence"),
-              text(target, "targetNamespace"),
-              new TenantCapacityAdmission.PlayerContext(
-                  uuid(player, "accountId"),
-                  uuid(player, "tenantId"),
-                  uuid(player, "playableStateNamespaceId"),
-                  uuid(player, "gameInstanceId"),
-                  uuid(player, "characterId"),
-                  uuid(player, "sessionId"),
-                  uuid(player, "realmId"),
-                  uuid(player, "requestId"),
-                  text(player, "playableStateScope")),
-              TenantCapacityAdmission.Operation.valueOf(text(mutation, "operation")),
-              shape(object(mutation, "priorShape")),
-              shape(object(mutation, "requestedShape")),
-              TenantCapacityAdmission.Evidence.parse(
-                  Base64.getDecoder().decode(text(mutation, "accountEvidence")),
-                  TenantCapacityAdmission.Owner.GAME_SESSION),
-              number(mutation, "capacityDelta"),
-              node.get("mutationDigest").textValue());
-      if (!parser.done() || !Arrays.equals(payload, CapacityAdmissionDigest.preimage(request)))
-        throw unavailable();
+          CapacityAdmissionDigest.decodeCommittable(
+              payload, node.get("mutationDigest").textValue());
+      var identity = request.identity();
       var reservation =
           new TenantCapacityAdmission.Result(
               identity,
@@ -1013,33 +1293,6 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     }
   }
 
-  private static TenantCapacityAdmission.Shape shape(Map<String, Object> value) {
-    return new TenantCapacityAdmission.Shape(
-        number(value, "activeSessions"),
-        number(value, "concurrentGameInstances"),
-        number(value, "storageBytes"));
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Map<String, Object> object(Map<String, Object> value, String key) {
-    if (!(value.get(key) instanceof Map<?, ?>)) throw unavailable();
-    return (Map<String, Object>) value.get(key);
-  }
-
-  private static String text(Map<String, Object> value, String key) {
-    if (!(value.get(key) instanceof String text)) throw unavailable();
-    return text;
-  }
-
-  private static long number(Map<String, Object> value, String key) {
-    if (!(value.get(key) instanceof Long number)) throw unavailable();
-    return number;
-  }
-
-  private static UUID uuid(Map<String, Object> value, String key) {
-    return UUID.fromString(text(value, key));
-  }
-
   private static byte[] bytes(String text) {
     return text.getBytes(StandardCharsets.UTF_8);
   }
@@ -1062,56 +1315,6 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     return new IllegalStateException("Normal region owner transfer is held");
   }
 
-  private static final class Frame {
-    private final byte[] data;
-    private int offset;
-
-    private Frame(byte[] data) {
-      if (data.length > CapacityAdmissionDigest.MAX_PREIMAGE_BYTES) throw unavailable();
-      this.data = data;
-    }
-
-    private String segment() {
-      int start = offset;
-      while (offset < data.length && data[offset] >= '0' && data[offset] <= '9') offset++;
-      if (offset == start || offset >= data.length || data[offset++] != ':' || offset - start > 8)
-        throw unavailable();
-      int size =
-          Integer.parseInt(new String(data, start, offset - start - 1, StandardCharsets.US_ASCII));
-      if (size < 0
-          || size > CapacityAdmissionDigest.MAX_SEGMENT_BYTES
-          || size > data.length - offset) throw unavailable();
-      String result = new String(data, offset, size, StandardCharsets.UTF_8);
-      offset += size;
-      return result;
-    }
-
-    private Map<String, Object> fields(int count, int depth) {
-      if (count < 0 || count > 16 || depth > 8) throw unavailable();
-      Map<String, Object> result = new LinkedHashMap<>();
-      for (int index = 0; index < count; index++) {
-        String name = segment(), type = segment();
-        if (offset >= data.length || data[offset++] != '1') throw unavailable();
-        String payload = segment();
-        Object value;
-        if (type.equals("object")) {
-          Frame nested = new Frame(bytes(payload));
-          value = nested.fields(Integer.parseInt(nested.segment()), depth + 1);
-          if (!nested.done()) throw unavailable();
-        } else if (type.equals("string")) value = payload;
-        else if (type.equals("number") && payload.matches("0|[1-9][0-9]{0,18}"))
-          value = Long.parseLong(payload);
-        else throw unavailable();
-        if (result.put(name, value) != null) throw unavailable();
-      }
-      return result;
-    }
-
-    private boolean done() {
-      return offset == data.length;
-    }
-  }
-
   record FrozenOriginal(
       UUID transferId, String executionDigest, CanonicalGameplayOriginalNewCandidate candidate) {}
 
@@ -1122,25 +1325,53 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       CanonicalGameplayOriginalNewCandidate candidate,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment) {}
 
+  static final class FenceDispatch {
+    private final Item item;
+    private final UUID id;
+    private boolean submitted;
+
+    private FenceDispatch(Item item, UUID id) {
+      this.item = item;
+      this.id = id;
+    }
+
+    synchronized UUID takeSubmission(Item expected) {
+      if (item != expected) throw unavailable();
+      if (submitted) return null;
+      submitted = true;
+      return id;
+    }
+  }
+
   static final class Completion {
     private final UUID transferId;
     private final String sourceDigest;
     private final String incarnationDigest;
     private final UUID round;
+    private final UUID originRound;
+    private final long reservedFence;
     private final long deadline;
     private final Clock clock;
+
+    long reservedFence() {
+      return reservedFence;
+    }
 
     private Completion(
         UUID transferId,
         String sourceDigest,
         String incarnationDigest,
         UUID round,
+        UUID originRound,
+        long reservedFence,
         long deadline,
         Clock clock) {
       this.transferId = transferId;
       this.sourceDigest = sourceDigest;
       this.incarnationDigest = incarnationDigest;
       this.round = round;
+      this.originRound = originRound;
+      this.reservedFence = reservedFence;
       this.deadline = deadline;
       this.clock = clock;
     }

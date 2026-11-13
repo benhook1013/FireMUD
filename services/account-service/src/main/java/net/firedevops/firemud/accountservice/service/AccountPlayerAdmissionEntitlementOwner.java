@@ -19,6 +19,7 @@ import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeM
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository.CanonicalConnectScopeEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionCurrentSources;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionCurrentReceipt;
@@ -144,7 +145,8 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     // same PostgreSQL clock that stamped the retained bundle.
     requireCurrentTimes(prepared.player(), now());
     try {
-      evidence.requireCurrentAt(AccountTenantCapacityRepository.databaseNow(dsl));
+      evidence.requireCurrentAt(
+          inSourceTransaction(() -> AccountTenantCapacityRepository.databaseNow(dsl)));
     } catch (IllegalArgumentException expired) {
       // This final post-commit check only rejects an expired or future source observation.
       throw unavailable();
@@ -168,15 +170,17 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     PublishedRealmEvidence target = readProtectedTarget(request, prepared.player().scope());
     return inSourceTransaction(
         () -> {
-          CurrentPlayer player = readCurrentPlayer(request, caller);
-          if (!prepared.player().scope().equals(player.scope())) throw unavailable();
-          requireSameHead(request, prepared.selection());
+          AccountGameplayAdmissionCurrentSources.lockRequiredAccountsBeforeTenantSources(
+              dsl, request.tenantId(), caller.identity().accountId());
           final AccountHostingSubscriptionCurrentReceipt receipt;
           try {
             receipt = hosting.readCurrent(fence, observation);
           } catch (FenceRejectedException rejected) {
             throw unavailable();
           }
+          CurrentPlayer player = readCurrentPlayer(request, caller);
+          if (!prepared.player().scope().equals(player.scope())) throw unavailable();
+          requireSameHead(request, prepared.selection());
           Instant evaluatedAt = now();
           requireFreshReceipt(request, receipt, evaluatedAt);
           var event = receipt.tenantAuthorityEvent();
@@ -640,6 +644,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     // Keep all source checks on the injected Account clock, but stamp this new evaluation from the
     // same database clock so a small application/database skew cannot future-date its evidence.
     Instant capacityEvaluatedAt = AccountTenantCapacityRepository.databaseNow(dsl);
+    if (capacityEvaluatedAt.isBefore(Instant.parse(scope.evaluatedAt()))) throw unavailable();
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
             request.requestId(),

@@ -307,6 +307,61 @@ public class AccountMembershipPairAuthorityRepository {
     return actual;
   }
 
+  /** Advances only the stream checkpoint for the exact retained membership facts. */
+  PairAuthority commitPaidAuthorityCheckpoint(
+      PairAuthority expected, AccountAuthorityOutboxRepository.Event event) {
+    requireOwnerWriteTransaction();
+    requireFreshProvenance(expected.provenance());
+    long sequence = increment(expected.eventSequence(), "membership event sequence");
+    if (!expected.membershipExists()
+        || expected.eventSequence() <= 0
+        || event.outboxSequence() != sequence
+        || !expected.equals(
+            readForUpdate(expected.accountUuid(), expected.tenantUuid()).orElseThrow())) {
+      throw new IllegalStateException("Paid authority checkpoint requires the exact positive pair");
+    }
+    int changed =
+        dsl.execute(
+            "UPDATE "
+                + TABLE
+                + " SET last_event_sequence = ?, last_event_id = ?, last_event_digest = ?,"
+                + " last_transition_invalidated = FALSE"
+                + " WHERE account_uuid = ? AND tenant_uuid = ? AND membership_exists IS TRUE"
+                + " AND membership_version = ? AND membership_authority_generation = ?"
+                + " AND last_event_sequence = ? AND last_event_id = ? AND last_event_digest = ?"
+                + " AND last_transition_invalidated = ?",
+            sequence,
+            event.eventId(),
+            event.eventDigest(),
+            expected.accountUuid(),
+            expected.tenantUuid(),
+            expected.membershipVersion(),
+            expected.membershipAuthorityGeneration(),
+            expected.eventSequence(),
+            expected.eventId(),
+            expected.eventDigest(),
+            expected.lastTransitionInvalidated());
+    if (changed != 1)
+      throw new IllegalStateException("Paid authority checkpoint compare-and-advance failed");
+    PairAuthority actual =
+        readForUpdate(expected.accountUuid(), expected.tenantUuid()).orElseThrow();
+    PairAuthority required =
+        new PairAuthority(
+            expected.accountUuid(),
+            expected.tenantUuid(),
+            expected.provenance(),
+            true,
+            expected.membershipVersion(),
+            expected.membershipAuthorityGeneration(),
+            sequence,
+            event.eventId(),
+            event.eventDigest(),
+            false);
+    if (!required.equals(actual))
+      throw new IllegalStateException("Paid authority checkpoint readback differs");
+    return actual;
+  }
+
   private static void requireScope(UUID accountUuid, UUID tenantUuid) {
     if (accountUuid == null || tenantUuid == null || isNil(accountUuid) || isNil(tenantUuid)) {
       throw new IllegalArgumentException("Canonical non-nil Account and tenant UUIDs are required");
