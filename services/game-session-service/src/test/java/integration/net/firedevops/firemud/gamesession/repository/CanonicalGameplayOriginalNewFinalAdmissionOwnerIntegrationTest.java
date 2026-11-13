@@ -739,6 +739,24 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   private net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus
+      resumeAbortedOriginalWithLeaseOwner(
+          CanonicalGameplayRegionOwnerTransferCoordinator transfer,
+          CanonicalGameplayRegionLeaseOwner.Installation original) {
+    var resumed =
+        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            catalog,
+            original,
+            sources.resolver,
+            transfer,
+            deadline());
+    assertThat(resumed.evidence).isNull();
+    return resumed.status;
+  }
+
+  private net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus
       installAbortedTransferSuccessor(
           CanonicalGameplayRegionOwnerTransferCoordinator transfer,
           CanonicalGameplayRegionLeaseOwner.Installation original,
