@@ -1212,6 +1212,152 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void unclaimedFirstInvoiceCancellationKeepsAmbiguityHeldThenReleasesExactReservation() {
+    Context c = context("1046.1");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    UUID subscriptionId = checkout.invoice().subscriptionId();
+    UUID creationId = checkout.invoice().creationRequestId();
+    UUID cancellationId = UUID.randomUUID();
+    long version =
+        in(
+            c,
+            () ->
+                checkout
+                    .payments()
+                    .ownerRowVersion(subscriptionId, checkout.invoice().ownerAccountId()));
+    List<String> beforeUpgrade = firstInvoiceImage(c);
+    configuration(c).target("1046.2").load().migrate();
+    assertThat(firstInvoiceImage(c)).isEqualTo(beforeUpgrade);
+
+    assertSqlState(
+        "23514",
+        "Canceled first-invoice provisioning requires exact unclaimed terminal release",
+        () ->
+            c.tx()
+                .executeWithoutResult(
+                    ignored ->
+                        c.dsl()
+                            .execute(
+                                "UPDATE subscription_provisioning_work SET phase = 'CANCELED', row_version = row_version + 1 WHERE request_id = ?",
+                                creationId)));
+    for (String providerState : List.of("active", "incomplete")) {
+      f.transport().json = response(f, providerState);
+      assertThat(
+              f.service()
+                  .reconcileUnpaidFirstInvoiceCancellation(
+                      cancellationId, creationId, version, f.providerId())
+                  .outcome())
+          .isEqualTo(Outcome.RECONCILING);
+      assertThat(count(c, "subscription_lifecycle_operations")).isZero();
+      assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+      assertThat(
+              one(
+                      c,
+                      "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                      creationId)
+                  .get("released_at"))
+          .isNull();
+      assertThat(
+              one(
+                      c,
+                      "SELECT row_version FROM subscription WHERE subscription_id = ?",
+                      subscriptionId)
+                  .get("row_version", Long.class))
+          .isEqualTo(version);
+    }
+
+    f.transport().json = response(f, "canceled");
+    var committed =
+        f.service()
+            .reconcileUnpaidFirstInvoiceCancellation(
+                cancellationId, creationId, version, f.providerId());
+    assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
+    var settled =
+        one(
+            c,
+            "SELECT w.phase, s.status, s.current_receipt_request_id, r.released_at, t.outcome, "
+                + "t.evidence_digest, receipt.observation_digest "
+                + "FROM subscription s JOIN subscription_provisioning_work w USING (subscription_id) "
+                + "JOIN subscription_instrument_reservations r ON r.subscription_id = s.subscription_id "
+                + "JOIN subscription_provider_terminal_resolutions t ON t.resolution_id = s.terminal_resolution_id "
+                + "AND r.terminal_resolution_id = t.resolution_id "
+                + "JOIN subscription_lifecycle_receipts receipt ON receipt.request_id = s.current_receipt_request_id "
+                + "WHERE s.subscription_id = ?",
+            subscriptionId);
+    assertThat(settled.get("phase", String.class)).isEqualTo("CANCELED");
+    assertThat(settled.get("status", String.class)).isEqualTo("canceled");
+    assertThat(settled.get("current_receipt_request_id", UUID.class)).isEqualTo(cancellationId);
+    assertThat(settled.get("released_at")).isNotNull();
+    assertThat(settled.get("outcome", String.class)).isEqualTo("CANCELED");
+    assertThat(settled.get("evidence_digest", String.class))
+        .isEqualTo(settled.get("observation_digest", String.class));
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isZero();
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(checkout.confirmations()).isZero();
+    var current = f.service().readCurrent(f.creation().tenantId());
+    assertThat(current.subscriptionStatus()).isEqualTo(Status.CANCELED);
+    assertThat(current.gameplayAvailable()).isFalse();
+    int providerReads = f.transport().reads;
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    cancellationId, creationId, version, f.providerId()))
+        .isEqualTo(committed);
+    assertThat(f.transport().reads).isEqualTo(providerReads);
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isOne();
+  }
+
+  @Test
+  void claimedFirstInvoiceCannotReleaseThroughUnpaidCancellation() {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var claimed = checkout.authorize(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isOne();
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
+    f.transport().json = response(f, "canceled");
+    assertThatThrownBy(
+            () ->
+                f.service()
+                    .reconcileUnpaidFirstInvoiceCancellation(
+                        UUID.randomUUID(),
+                        f.creation().requestId(),
+                        claimed.expectedRowVersion(),
+                        f.providerId()))
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+        .hasMessageContaining("unclaimed unpaid");
+    assertThat(f.transport().reads).isZero();
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+    assertThat(
+            one(
+                    c,
+                    "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                    f.creation().requestId())
+                .get("released_at"))
+        .isNull();
+  }
+
+  @Test
   void freshReadsBeyondObservationAgePreserveCommittedReceiptAndAuthorityUntilRealPeriodEnd() {
     for (String status : List.of("active", "trialing")) {
       Context c = context("latest");

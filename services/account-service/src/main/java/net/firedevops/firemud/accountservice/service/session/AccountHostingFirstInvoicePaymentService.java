@@ -61,6 +61,10 @@ public final class AccountHostingFirstInvoicePaymentService {
         bearer,
         actor -> {
           var invoice = payments.requireOwner(subscriptionId, actor.accountId());
+          long rowVersion = payments.ownerRowVersion(subscriptionId, actor.accountId());
+          UUID confirmationRequestId = payments.confirmationRequestId(subscriptionId);
+          boolean completed = payments.hasCompleted(subscriptionId);
+          boolean canceled = !completed && payments.hasCanceledCheckout(invoice);
           return new OwnerView(
               invoice.subscriptionId(),
               invoice.invoiceId(),
@@ -69,10 +73,13 @@ public final class AccountHostingFirstInvoicePaymentService {
               Long.toString(invoice.amount()),
               invoice.currency(),
               invoice.digest(),
-              payments.ownerRowVersion(subscriptionId, actor.accountId()),
-              payments.hasCompleted(subscriptionId) ? "COMMITTED" : "AWAITING_PAYMENT",
+              rowVersion,
+              completed ? "COMMITTED" : canceled ? "CANCELED" : "AWAITING_PAYMENT",
               invoice.expiresAt(),
-              payments.confirmationRequestId(subscriptionId),
+              confirmationRequestId,
+              confirmationRequestId == null && !canceled
+                  ? payments.openingRequestId(invoice, rowVersion)
+                  : null,
               payments.authorizationVersion(subscriptionId));
         });
   }
@@ -141,7 +148,7 @@ public final class AccountHostingFirstInvoicePaymentService {
             expectedAuthorizationVersion,
             authorizationPurpose);
     var evidence =
-        reauthentication.reauthenticate(
+        reauthentication.reauthenticateAndBindBilling(
             new AccountRecentReauthenticationService.Request(
                 reauthenticationRequestId,
                 snapshot.accountId(),
@@ -149,19 +156,13 @@ public final class AccountHostingFirstInvoicePaymentService {
                 authorizationRequestId,
                 context,
                 email,
-                secret));
-    return actors.withCurrentAccount(
-        bearer,
-        actor -> {
-          var current =
-              reauthentication.requireCurrentBillingEvidenceLocked(
-                  evidence.evidenceId(), actor.accountId(), authorizationRequestId);
-          if (!context.equals(current.billingContext())) {
-            throw new IllegalStateException("Exact billing evidence context refused");
-          }
-          payments.bindReauthenticationContext(actor.accountId(), subscriptionId, context, current);
-          return current.evidenceId();
-        });
+                secret),
+            actors,
+            bearer,
+            current ->
+                payments.bindReauthenticationContext(
+                    snapshot.accountId(), subscriptionId, context, current));
+    return evidence.evidenceId();
   }
 
   /**
@@ -333,6 +334,7 @@ public final class AccountHostingFirstInvoicePaymentService {
       String state,
       java.time.Instant expiresAt,
       UUID confirmationRequestId,
+      UUID openingRequestId,
       long authorizationVersion) {}
 
   public record Completion(String state, UUID requestId) {}

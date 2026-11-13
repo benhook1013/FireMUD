@@ -20,6 +20,7 @@ const invoice: FirstInvoice = {
   state: 'AWAITING_PAYMENT',
   expiresAt: '2099-01-01T00:00:00Z',
   confirmationRequestId: null,
+  openingRequestId: null,
   authorizationVersion: 0,
 };
 

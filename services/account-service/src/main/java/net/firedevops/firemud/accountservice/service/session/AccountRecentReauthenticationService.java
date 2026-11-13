@@ -13,6 +13,9 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
@@ -74,6 +77,36 @@ public final class AccountRecentReauthenticationService {
    * exact Account/action/creation-operation evidence in the same writable owner transaction.
    */
   public AccountRecentReauthenticationEvidence reauthenticate(Request request) {
+    return reauthenticate(request, action -> transaction.execute(ignored -> action.get()));
+  }
+
+  AccountRecentReauthenticationEvidence reauthenticateAndBindBilling(
+      Request request,
+      AccountControlUiActorService actors,
+      String bearer,
+      Consumer<AccountRecentReauthenticationEvidence> bind) {
+    return reauthenticate(
+        request,
+        action ->
+            actors.withCurrentAccount(
+                bearer,
+                actor -> {
+                  if (!request.accountId.equals(actor.accountId())) throw conflict();
+                  Attempt attempt = action.get();
+                  if (attempt.denial == null) {
+                    var evidence =
+                        requireCurrentBillingEvidenceLocked(
+                            attempt.evidence.evidenceId(),
+                            actor.accountId(),
+                            request.creationOperationId);
+                    bind.accept(evidence);
+                  }
+                  return attempt;
+                }));
+  }
+
+  private AccountRecentReauthenticationEvidence reauthenticate(
+      Request request, Function<Supplier<Attempt>, Attempt> retainInOwnerTransaction) {
     Objects.requireNonNull(request, "Account reauthentication request is required");
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("Recent reauthentication must own its Account transaction");
@@ -98,8 +131,8 @@ public final class AccountRecentReauthenticationService {
     Attempt attempt;
     try {
       attempt =
-          transaction.execute(
-              ignored -> {
+          retainInOwnerTransaction.apply(
+              () -> {
                 evidenceRepository.lockRequest(request.requestId);
                 Optional<AccountRecentReauthenticationEvidence> existingRequest =
                     evidenceRepository.findByRequest(request.requestId);
