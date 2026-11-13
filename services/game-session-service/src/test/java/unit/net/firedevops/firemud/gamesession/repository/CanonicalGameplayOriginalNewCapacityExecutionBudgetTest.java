@@ -11,6 +11,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -60,6 +61,7 @@ import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** Controlled acquisition/driver behavior, not database or owner-evidence qualification. */
@@ -247,7 +249,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verify(connection, timeout(1000)).closeAsync();
       assertPermitRemainsHeld(operations, operationMaximum);
       assertPermitRemainsHeld(background, backgroundMaximum);
-      verify(commands, never()).evalsha(any(), any(), any(), any());
 
       close.complete(null);
       assertThat(operations.tryAcquire(operationMaximum, 2, TimeUnit.SECONDS)).isTrue();
@@ -255,7 +256,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       assertThat(background.tryAcquire(backgroundMaximum, 2, TimeUnit.SECONDS)).isTrue();
       background.release(backgroundMaximum);
       verify(connection, org.mockito.Mockito.times(1)).closeAsync();
-      verify(commands, never()).evalsha(any(), any(), any(), any());
+      ArgumentCaptor<byte[][]> arguments = ArgumentCaptor.forClass(byte[][].class);
+      verify(commands, times(1)).evalsha(any(), any(), any(byte[][].class), arguments.capture());
+      assertThat(arguments.getValue()[1])
+          .isEqualTo("PROBE".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
     } finally {
       if (prepared != null) prepared.close();
       close.complete(null);
