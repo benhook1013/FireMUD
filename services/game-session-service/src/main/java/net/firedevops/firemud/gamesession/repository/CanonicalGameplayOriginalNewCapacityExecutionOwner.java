@@ -20,8 +20,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
@@ -30,6 +33,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Re
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
+import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
@@ -139,7 +143,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       }
     } else if (retained.state() == CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED) {
       requireResumableOriginReplay(source, origin, retained);
-    } else {
+    } else if (retained.state() != CanonicalGameplayCapacityOrigin.State.DENIED) {
       throw unavailable();
     }
     var after = repository.read(origin);
@@ -248,6 +252,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                             origin.candidateDigest(),
                             origin.selectedOwnerId(),
                             origin.selectedOwnerFence());
+                    CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+                        tx, execution, origin.tenantGameplayTag());
                     Record existing = find(tx, execution);
                     if (existing != null) {
                       exact(existing, execution);
@@ -296,7 +302,21 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             retained.ownerFence(),
             retained.state(),
             physicalDeadline);
-    if (denied) return; // Exact denial retires origin custody only; never releases an Account hold.
+    if (denied) {
+      // Retire the origin marker before returning the active execution reserve. A lost reply can
+      // replay the retained denial through this same owner without freeing uncertain attempts.
+      sql()
+          .transaction(
+              configuration ->
+                  CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                      DSL.using(configuration),
+                      origin.request(),
+                      origin.candidateDigest(),
+                      new CurrentOwner(origin.selectedOwnerId(), origin.selectedOwnerFence()),
+                      origin.tenantGameplayTag(),
+                      resolution.denialId()));
+      return;
+    }
     var execution =
         new OriginalNewCapacityExecution(
             resolution.request(),
@@ -481,6 +501,9 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         || !target.realmId().equals(player.realmId())
         || !(request.evidence().fields().get("target") instanceof Map<?, ?> evidenceTarget)
         || !Long.toString(target.catalogRevision()).equals(evidenceTarget.get("catalogRevision"))
+        || !Long.toString(target.pointerVersion()).equals(evidenceTarget.get("pointerVersion"))
+        || !Long.toString(target.activeWorldEpoch()).equals(evidenceTarget.get("activeWorldEpoch"))
+        || !target.canonicalVersionId().toString().equals(evidenceTarget.get("canonicalVersionId"))
         || !player
             .requestId()
             .toString()
@@ -493,6 +516,112 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (selected.fence() != source.regionAcknowledgement().executorFence().longValueExact())
       throw unavailable();
     return selected;
+  }
+
+  /** Returns a retained terminal denial on exact replay, otherwise reserves execution evidence. */
+  UUID precharge(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      CurrentOwner selected,
+      long deadline) {
+    if (budget == null)
+      return within(deadline, owner -> owner.precharge(source, request, selected, deadline));
+    budget.check();
+    request.requireCommittable();
+    if (!source.candidate().bindingDecisionId().equals(request.identity().admissionId())
+        || !source.candidate().bindingIdentity().tenantId().equals(request.identity().tenantId())
+        || selected.fence() != source.regionAcknowledgement().executorFence().longValueExact()) {
+      throw unavailable();
+    }
+    var candidate = source.candidate();
+    var assignment = scopedTags().assignmentForTransition(candidate.bindingDecisionId());
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireSelectedOwner(tx, candidate, selected);
+              return CanonicalGameplayCapacityEvidenceBudget.precharge(
+                  tx, request, source.candidateDigest(), selected, assignment.tenantGameplayTag());
+            });
+  }
+
+  void retireQuotaDeniedOrigin(
+      CanonicalGameplayCapacityOrigin origin, UUID accountDenialId, long deadline) {
+    within(
+        deadline,
+        owner -> {
+          var resolution =
+              new AccountCapacityOriginResolution(
+                  origin.request(),
+                  AccountCapacityOriginResolution.Status.NO_ACCEPT_RETAINED,
+                  null,
+                  accountDenialId);
+          var repository = new CanonicalGameplayCapacityOriginRepository(owner.sql());
+          var before = repository.read(origin);
+          if (!origin.selectedOwnerId().equals(before.ownerId())
+              || origin.selectedOwnerFence() != before.ownerFence()) throw unavailable();
+          var retained =
+              owner
+                  .sql()
+                  .transactionResult(
+                      configuration ->
+                          CanonicalGameplayCapacityOriginRepository.claimInTransaction(
+                              DSL.using(configuration),
+                              origin,
+                              before.ownerId(),
+                              before.ownerFence(),
+                              CanonicalGameplayCapacityOrigin.State.DENIED,
+                              resolution));
+          owner
+              .originRedis()
+              .apply(
+                  origin,
+                  CanonicalGameplayCapacityOriginRedisOwner.Action.DENY,
+                  retained.ownerId(),
+                  retained.ownerFence(),
+                  retained.ownerId(),
+                  retained.ownerFence(),
+                  retained.state(),
+                  owner.budget.absoluteDeadlineMillis());
+          owner
+              .sql()
+              .transaction(
+                  configuration ->
+                      CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                          DSL.using(configuration),
+                          origin.request(),
+                          origin.candidateDigest(),
+                          new CurrentOwner(origin.selectedOwnerId(), origin.selectedOwnerFence()),
+                          origin.tenantGameplayTag(),
+                          accountDenialId));
+          return null;
+        });
+  }
+
+  void settleDeniedCharge(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      CurrentOwner selected,
+      UUID accountDenialId,
+      long deadline) {
+    within(
+        deadline,
+        owner -> {
+          var assignment =
+              owner.scopedTags().assignmentForTransition(request.identity().admissionId());
+          owner
+              .sql()
+              .transaction(
+                  configuration ->
+                      CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                          DSL.using(configuration),
+                          request,
+                          source.candidateDigest(),
+                          selected,
+                          assignment.tenantGameplayTag(),
+                          accountDenialId));
+          return null;
+        });
   }
 
   /** Returns only after independently reading the already-installed exact execution record. */
@@ -528,6 +657,22 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     budget.check();
     CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
     var assignment = scopedTags().assignmentForTransition(execution.transitionId());
+    Record retained = find(sql(), execution);
+    if (retained != null) {
+      // Preserve exact retry/recovery behavior: an existing dispatch never needs fresh inputs.
+      exact(retained, execution);
+    } else {
+      try {
+        scopedFinalOwner()
+            .validateInstallInputs(source, template, accountOpen, issuerOpen, execution, deadline);
+      } catch (RuntimeException invalidInputs) {
+        // A concurrent exact dispatcher may have committed while local validation ran. Only
+        // that retained row can turn this into the existing read-only recovery path.
+        Record concurrentlyRetained = find(sql(), execution);
+        if (concurrentlyRetained == null) throw invalidInputs;
+        exact(concurrentlyRetained, execution);
+      }
+    }
     boolean dispatch =
         sql()
             .transactionResult(
@@ -537,7 +682,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                   // This lock is released before any Redis command is submitted.
                   if (origin != null)
                     CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(tx);
-                  requireSelectedOwner(tx, source.candidate(), execution);
+                  requireSelectedOwner(
+                      tx,
+                      source.candidate(),
+                      new CurrentOwner(
+                          execution.selectedOwnerId(), execution.selectedOwnerFence()));
                   if (origin == null) {
                     // Origin preparation locks the same region before inserting custody. Recheck
                     // under that lock before an ordinary dispatch or an existing-row replay.
@@ -550,6 +699,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                   Record row = find(tx, execution);
                   if (row != null) {
                     exact(row, execution);
+                    if (!"COMMITTED".equals(row.get("status", String.class))) {
+                      CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+                          tx, execution, assignment.tenantGameplayTag());
+                    }
                     return false;
                   }
                   if (execution.reservation().state() != State.RESERVED
@@ -681,6 +834,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       // Successful positive reconciliation never authorizes the requested negative closure.
       throw unavailable();
     }
+    if ("CLOSED".equals(row.get("status", String.class))) {
+      Snapshot proof = readExact(request, reservation, false);
+      if (!"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(proof.disposition())) throw unavailable();
+      return;
+    }
     requireClosedTransition(transition);
     if ("ABORTED".equals(transition.get("status", String.class))) {
       var abort =
@@ -698,6 +856,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             : scopedTags().assignmentForTransition(execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();
+    CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+        sql(), execution, assignment.tenantGameplayTag());
     long result =
         scopedFinalOwner()
             .closeCapacityExecutionOnce(
@@ -824,7 +984,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   private static void retainTerminal(
       DSLContext tx, OriginalNewCapacityExecution execution, String status, byte[] proof) {
-    Record row = find(tx, execution);
+    Record row =
+        tx.fetchOne(
+            "SELECT * FROM " + TABLE + " WHERE execution_digest = ? FOR UPDATE",
+            execution.digest());
     if (row == null) throw unavailable();
     exact(row, execution);
     String current = row.get("status", String.class);
@@ -845,6 +1008,40 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             execution.digest(),
             current)
         != 1) throw unavailable();
+  }
+
+  void requireRetainedCommittedOriginal(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayRegionRuntimeStatus prior) {
+    Record transition =
+        sql()
+            .fetchOne(
+                "SELECT original_new_capacity_execution_digest"
+                    + " FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                source.candidate().bindingDecisionId());
+    if (transition == null) throw unavailable();
+    String digest = transition.get(0, String.class);
+    Record row =
+        sql()
+            .fetchOne(
+                "SELECT canonical_execution FROM "
+                    + TABLE
+                    + " WHERE execution_digest=? AND status='COMMITTED'",
+                digest);
+    if (row == null) throw unavailable();
+    var execution = CanonicalGameplayRegionOwnerTransferRepository.decode(row.get(0, byte[].class));
+    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
+    var proof = readExact(execution.request(), execution.reservation(), false);
+    var receipt =
+        source
+            .finalReceipt()
+            .orElseThrow(CanonicalGameplayOriginalNewCapacityExecutionOwner::unavailable);
+    if (!"COMMITTED".equals(proof.disposition())
+        || !proof.physicalDigest().equals("sha256:" + receipt.finalSessionSha256())
+        || !prior.ownerInstanceId().equals(proof.currentOwnerId())
+        || !prior.executorFence().equals(java.math.BigInteger.valueOf(proof.currentOwnerFence()))) {
+      throw unavailable();
+    }
   }
 
   /** Authenticated transport calls this read-only method. Absence and contradictions throw. */
@@ -979,9 +1176,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   private static void requireSelectedOwner(
-      DSLContext tx,
-      CanonicalGameplayOriginalNewCandidate candidate,
-      OriginalNewCapacityExecution execution) {
+      DSLContext tx, CanonicalGameplayOriginalNewCandidate candidate, CurrentOwner selected) {
     var binding = candidate.bindingIdentity();
     Record current =
         tx.fetchOne(
@@ -991,9 +1186,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             binding.regionId());
     if (current == null
         || !"game-session-service".equals(current.get("owner_service", String.class))
-        || !execution.selectedOwnerId().equals(current.get("owner_instance_id", String.class))
-        || !Long.valueOf(execution.selectedOwnerFence())
-            .equals(current.get("executor_fence", Long.class))
+        || !selected.instanceId().equals(current.get("owner_instance_id", String.class))
+        || !Long.valueOf(selected.fence()).equals(current.get("executor_fence", Long.class))
         || !binding
             .regionEpoch()
             .equals(java.math.BigInteger.valueOf(current.get("region_epoch", Long.class)))
@@ -1021,7 +1215,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
           new CanonicalGameplayOriginalNewCapacityExecutionOwner(
               dsl, redis, scripts, clock, tags, budget, connection));
     } finally {
-      connection.closeAsync();
+      budget.awaitAsyncClose(connection.closeAsync());
     }
   }
 
@@ -1034,6 +1228,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     Record row = find(sql(), execution);
     if (row == null) throw unavailable();
     exact(row, execution);
+    CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+        sql(), execution, item.assignment().tenantGameplayTag());
     long result =
         scopedFinalOwner()
             .fenceCapacityExecutionOnce(
@@ -1220,7 +1416,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         if (actual != null) Arrays.fill(actual, (byte) 0);
       }
     } finally {
-      connection.closeAsync();
+      budget.awaitAsyncClose(connection.closeAsync());
     }
   }
 
@@ -1233,7 +1429,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       principal(commands);
       return readExecution(commands, execution, tag);
     } finally {
-      connection.closeAsync();
+      budget.awaitAsyncClose(connection.closeAsync());
     }
   }
 
@@ -1259,8 +1455,9 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   /**
    * Bound connection establishment itself, including DNS/TLS/auth, to the incoming deadline. A late
-   * connection can never escape cancellation into a read and is asynchronously closed. No shared
-   * Redis client's options or connection identity are changed.
+   * connection cannot escape cancellation into a read; its resource worker retains admission until
+   * physical connect and one asynchronous close attempt finish. No shared Redis client's options or
+   * connection identity are changed.
    */
   StatefulRedisConnection<byte[], byte[]> connectForRead() {
     if (budget == null)
@@ -1269,21 +1466,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     var opened =
         new java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>>();
     long initialRemainingMillis = remainingMillis();
-    final java.util.concurrent.Future<?> connector;
+    var attempt = new ConnectAttempt(redis, opened);
     try {
-      connector =
-          CONNECTS.submit(
-              () -> {
-                try {
-                  var connection = redis.connect(ByteArrayCodec.INSTANCE);
-                  if (!opened.complete(connection)) connection.closeAsync();
-                } catch (RuntimeException failure) {
-                  opened.completeExceptionally(failure);
-                }
-              });
+      CONNECTS.execute(attempt);
     } catch (java.util.concurrent.RejectedExecutionException saturated) {
-      opened.cancel(false);
+      attempt.abandonAndClose();
       throw unavailable();
+    } catch (RuntimeException | Error submissionFailure) {
+      attempt.abandonAndClose();
+      throw submissionFailure;
     }
     try {
       var connection =
@@ -1293,30 +1484,85 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
           || connection.getOptions().isAutoReconnect()) {
         throw unavailable();
       }
-      // Failure before ownership is returned is disposed by abandonConnection.
+      // Failure before ownership is returned is disposed by the attempt's connection handoff.
       remainingMillis();
       return connection;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
-      abandonConnection(opened, connector);
+      attempt.abandonAndClose();
       throw unavailable();
     } catch (java.util.concurrent.ExecutionException
         | java.util.concurrent.TimeoutException
         | RuntimeException failure) {
-      abandonConnection(opened, connector);
+      attempt.abandonAndClose();
       throw unavailable();
+    } catch (Error failure) {
+      attempt.abandonAndClose();
+      throw failure;
     }
   }
 
-  private static void abandonConnection(
-      java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>> opened,
-      java.util.concurrent.Future<?> connector) {
-    opened.whenComplete(
-        (connection, failure) -> {
-          if (connection != null) connection.closeAsync();
-        });
-    opened.cancel(false);
-    connector.cancel(true);
+  private static final class ConnectAttempt implements Runnable {
+    private final java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>>
+        opened;
+    private final FutureTask<Void> task;
+    private final AtomicBoolean runStarted = new AtomicBoolean();
+    private final java.util.concurrent.CompletableFuture<Void> physicalFinished =
+        new java.util.concurrent.CompletableFuture<>();
+
+    ConnectAttempt(
+        RedisClient redis,
+        java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>> opened) {
+      this.opened = opened;
+      task =
+          new FutureTask<>(
+              () -> {
+                try {
+                  opened.complete(redis.connect(ByteArrayCodec.INSTANCE));
+                } catch (RuntimeException failure) {
+                  opened.completeExceptionally(failure);
+                } catch (Error failure) {
+                  opened.completeExceptionally(failure);
+                  throw failure;
+                }
+                return null;
+              });
+    }
+
+    @Override
+    public void run() {
+      if (!runStarted.compareAndSet(false, true)) return;
+      try {
+        task.run();
+      } finally {
+        physicalFinished.complete(null);
+      }
+    }
+
+    void abandonAndClose() {
+      boolean cancelledBeforeCompletion = false;
+      try {
+        cancelledBeforeCompletion = task.cancel(true);
+      } catch (RuntimeException | Error ignored) {
+        // Keep waiting for the independent execution signal if interruption itself fails.
+      }
+      if (cancelledBeforeCompletion && !runStarted.get()) {
+        physicalFinished.complete(null);
+      }
+      physicalFinished.join();
+      // FutureTask cancellation can finish before its connector Runnable starts. Resolving the
+      // uncancelled handoff then gives the resource worker sole ownership of any late connection.
+      opened.complete(null);
+      StatefulRedisConnection<byte[], byte[]> lateConnection =
+          opened.handle((connection, failure) -> connection).join();
+      if (lateConnection == null) return;
+      try {
+        lateConnection.closeAsync().handle((ignored, failure) -> null).join();
+      } catch (RuntimeException | Error ignored) {
+        // A failed close has uncertain disposal. Do not retry it or leak operation permits after
+        // the close attempt has returned.
+      }
+    }
   }
 
   private long remainingMillis() {
@@ -1333,7 +1579,13 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner scopedFinalOwner() {
     return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-        redis, scripts, clock, scopedTags(), this::connectForRead, budget::remainingMillis);
+        redis,
+        scripts,
+        clock,
+        scopedTags(),
+        this::connectForRead,
+        budget::remainingMillis,
+        budget::awaitAsyncClose);
   }
 
   private <T> T within(

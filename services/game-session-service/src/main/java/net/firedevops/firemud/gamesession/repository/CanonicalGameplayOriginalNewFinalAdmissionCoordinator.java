@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegion
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
 import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient;
+import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.CapacityRefusedException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -181,11 +182,38 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
           if (!selectedOwner.equals(
               capacityExecution.requireRequestBinding(
                   source, capacityRequest, absoluteDeadlineMillis))) throw unavailable();
+          boolean precharge =
+              capacityRequest.evidence().permitsCreation()
+                  && source.transitionStatus()
+                      != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED;
+          if (precharge) {
+            var retainedDenial =
+                capacityExecution.precharge(
+                    source, capacityRequest, selectedOwner, absoluteDeadlineMillis);
+            if (retainedDenial != null)
+              throw CapacityRefusedException.retainedQuotaDenial(retainedDenial);
+          }
           var origin =
               originReceiving
                   ? capacityExecution.prepareOrigin(source, capacityRequest, absoluteDeadlineMillis)
                   : null;
-          var reservation = capacityClient.commit(capacityRequest, absoluteDeadlineMillis);
+          final TenantCapacityAdmission.Result reservation;
+          try {
+            reservation = capacityClient.commit(capacityRequest, absoluteDeadlineMillis);
+          } catch (CapacityRefusedException refusal) {
+            if (origin != null && refusal.durableDenialId() != null) {
+              capacityExecution.retireQuotaDeniedOrigin(
+                  origin, refusal.durableDenialId(), absoluteDeadlineMillis);
+            } else if (precharge && refusal.durableDenialId() != null) {
+              capacityExecution.settleDeniedCharge(
+                  source,
+                  capacityRequest,
+                  selectedOwner,
+                  refusal.durableDenialId(),
+                  absoluteDeadlineMillis);
+            }
+            throw refusal;
+          }
           var execution =
               capacityExecution.bind(
                   source, capacityRequest, reservation, absoluteDeadlineMillis, selectedOwner);

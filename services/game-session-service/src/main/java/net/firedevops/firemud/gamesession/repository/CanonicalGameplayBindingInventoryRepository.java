@@ -903,6 +903,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (!committed && !"PROVISIONAL".equals(status)) {
             throw conflict("Only a provisional or committed original NEW can be a final source");
           }
+          if (committed
+              && row.get("original_new_capacity_execution_digest", String.class) == null) {
+            throw conflict(
+                "Historical original NEW receipt lacks exact capacity execution evidence");
+          }
           Record inventoryRow =
               transaction.fetchOne(
                   "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ? FOR UPDATE",
@@ -1075,6 +1080,49 @@ public final class CanonicalGameplayBindingInventoryRepository {
                 toAdmissionDecision(
                     readTransition(DSL.using(configuration), transitionId), expectedOriginal));
     return CanonicalGameplayOriginalNewCandidate.fromOriginalSources(expectedOriginal, decision);
+  }
+
+  /**
+   * Selects an already-retained committed original as topology evidence for a first handoff. This
+   * source is terminal-only and never reconstructs provisional CAS authority.
+   */
+  Optional<OriginalNewFinalAdmissionSource> readRegionTransferCommittedSource(UUID transitionId) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(transitionId, "transitionId");
+    CanonicalGameplayOriginalNewCandidate candidate =
+        dsl.transactionResult(
+            configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+              Record row = readTransition(transaction, transitionId);
+              if (row == null) throw conflict("Region transfer original transition is missing");
+              String status = row.get("status", String.class);
+              if ("PROVISIONAL".equals(status)) return null;
+              if (!"COMMITTED".equals(status)) {
+                throw conflict("Region transfer original has no committed topology source");
+              }
+              byte[] candidateBytes = row.get("original_new_candidate_bytes", byte[].class);
+              try {
+                if (candidateBytes == null
+                    || candidateBytes.length == 0
+                    || candidateBytes.length
+                        > CanonicalGameplayOriginalNewCandidateCodec.MAX_CANDIDATE_BYTES) {
+                  throw conflict("Committed original has no bounded retained candidate");
+                }
+                try {
+                  return CanonicalGameplayOriginalNewCandidate.parseCanonical(candidateBytes);
+                } catch (RuntimeException malformed) {
+                  throw conflict("Committed original candidate bytes are not canonical");
+                }
+              } finally {
+                if (candidateBytes != null) Arrays.fill(candidateBytes, (byte) 0);
+              }
+            });
+    if (candidate == null) return Optional.empty();
+    return Optional.of(
+        readRegionTransferCommittedSource(transitionId, candidate)
+            .orElseThrow(
+                () -> conflict("Committed topology source changed during exact revalidation")));
   }
 
   /** Only an explicitly observed COMMITTED original selects the strict terminal source path. */
@@ -2982,6 +3030,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
           requireOriginalNewFinalRegionAcknowledgement(transaction, candidate, transition, entry);
           if (committed) {
             requireOriginalNewFinalReceipt(row, verified, decision);
+            CanonicalGameplayOriginalNewCapacityExecutionOwner.retainCommittedInTransaction(
+                transaction, verified.execution(), receipt);
             return transition;
           }
           requireNoOriginalNewFinalAdmissionReceipt(row);

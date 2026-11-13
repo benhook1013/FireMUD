@@ -103,44 +103,58 @@ final class CanonicalGameplayRegionLeaseOwner {
         transferOwner != null && existingRegionInstallation == null
             ? transferOwner.frozenOriginal(transitionId, handoffDeadline)
             : null;
-    var retainedOriginal =
-        frozenOriginal == null
+    RegionTransferTerminalSource retainedTerminalSource =
+        transferOwner == null || existingRegionInstallation != null
             ? null
-            : readInstallationInventory(
-                    transferOwner,
-                    handoffDeadline,
-                    inventory ->
-                        inventory.readRegionTransferCommittedSource(
-                            transitionId, frozenOriginal.candidate()))
-                .orElse(null);
+            : frozenOriginal == null
+                ? readInstallationInventory(
+                        transferOwner,
+                        handoffDeadline,
+                        inventory -> inventory.readRegionTransferCommittedSource(transitionId))
+                    .orElse(null)
+                : readInstallationInventory(
+                        transferOwner,
+                        handoffDeadline,
+                        inventory ->
+                            inventory.readRegionTransferTerminalSource(
+                                transitionId, frozenOriginal.candidate()))
+                    .orElse(null);
+    OriginalNewFinalAdmissionSource retainedOriginal =
+        retainedTerminalSource instanceof OriginalNewFinalAdmissionSource committed
+            ? committed
+            : null;
     CanonicalGameplayBindingProvisionalCasEvidence evidence =
-        retainedOriginal == null
+        retainedTerminalSource == null
             ? readInstallationInventory(
                 transferOwner,
                 handoffDeadline,
                 inventory -> readCurrentProvisionalEvidence(inventory, transitionId))
             : null;
     ResolvedBridgeSource initialResolved =
-        retainedOriginal == null
+        retainedTerminalSource == null
             ? resolveExactBridgeSource(worldRequest, evidence.candidate().identity(), worldDeadline)
             : resolveExactBridgeSource(
-                worldRequest, retainedOriginal.candidate().bindingIdentity(), worldDeadline);
+                worldRequest, retainedTerminalSource.candidate().bindingIdentity(), worldDeadline);
     CanonicalGameplayRegionRuntimeStatusRepository.Source source = initialResolved.source;
     CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation =
-        readCurrentIncarnation(source);
+        readInstallationIncarnation(transferOwner, handoffDeadline, source);
     long expectedRegionEpoch =
         exactExpectedRegionEpoch(
-            retainedOriginal == null
+            retainedTerminalSource == null
                 ? evidence.candidate().identity().regionEpoch()
-                : retainedOriginal.candidate().bindingIdentity().regionEpoch());
+                : retainedTerminalSource.candidate().bindingIdentity().regionEpoch());
     CanonicalGameplayRegionRuntimeStatus prior =
         withTransferStatusRepository(
                 transferOwner, handoffDeadline, repository -> repository.find(source))
             .orElse(null);
     if (prior == null && expectedRegionEpoch != 1L) throw unavailable();
     if (prior != null && prior.regionEpoch() != expectedRegionEpoch) throw unavailable();
-    if (retainedOriginal != null) {
-      if (prior == null || retainedOriginal.finalReceipt().isEmpty()) throw unavailable();
+    if (retainedTerminalSource != null) {
+      if (prior == null || retainedOriginal != null && retainedOriginal.finalReceipt().isEmpty()) {
+        throw unavailable();
+      }
+    }
+    if (frozenOriginal != null) {
       transferOwner.requireFrozenOriginal(frozenOriginal, source, prior, handoffDeadline);
       transferOwner.requireUnreservedFrozenIntent(
           frozenOriginal.transferId(), source, prior, handoffDeadline);
@@ -149,12 +163,15 @@ final class CanonicalGameplayRegionLeaseOwner {
         && transferOwner.hasFrozenIntent(source, prior, handoffDeadline)) {
       throw unavailable();
     }
+    if (frozenOriginal == null && retainedOriginal != null) {
+      transferOwner.requireRetainedCommittedOriginal(retainedOriginal, prior, handoffDeadline);
+    }
     CanonicalGameplayRegionLeaseRedisOwner handoffRedisOwner =
         transferOwner == null ? redisOwner : redisOwner.forHandoffDeadline(clock, handoffDeadline);
     UUID transferId = null;
-    RegionTransferTerminalSource transferSource = retainedOriginal;
+    RegionTransferTerminalSource transferSource = retainedTerminalSource;
     CanonicalGameplayOriginalNewCandidate transferCandidate =
-        retainedOriginal == null ? null : retainedOriginal.candidate();
+        retainedTerminalSource == null ? null : retainedTerminalSource.candidate();
     PendingTransfer transferContinuation = null;
 
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
@@ -170,7 +187,7 @@ final class CanonicalGameplayRegionLeaseOwner {
               .orElse(null);
       if (preparation == null) {
         CanonicalGameplayRegionLeaseRedisOwner.TimelineAbsenceProof absenceProof =
-            redisOwner.requireTimelineAbsent(source, incarnation);
+            handoffRedisOwner.requireTimelineAbsent(source, incarnation);
         preparation =
             withTransferStatusRepository(
                 transferOwner,
@@ -198,7 +215,7 @@ final class CanonicalGameplayRegionLeaseOwner {
         throw unavailable();
       }
       try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
-          redisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
+          handoffRedisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
         CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
             readInstallationInventory(
                 transferOwner,
@@ -210,7 +227,7 @@ final class CanonicalGameplayRegionLeaseOwner {
                 worldRequest, beforeClaimEvidence.candidate().identity(), worldDeadline);
         requireSameSource(source, beforeClaimWorld.source);
         CanonicalGameplayRegionIncarnationSource.StableEvidence beforeClaimIncarnation =
-            readCurrentIncarnation(source);
+            readInstallationIncarnation(transferOwner, handoffDeadline, source);
         requireSameIncarnation(incarnation, beforeClaimIncarnation);
         if (!statusRepository.matchesTimelinePreparation(
             preparation,
@@ -232,8 +249,9 @@ final class CanonicalGameplayRegionLeaseOwner {
                             initializationPreparation, clock.instant()));
         grant = session.initialize(permit.orElse(null));
       }
-      redisOwner.verifyInitializedTimeline(grant, preparation);
-      requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+      handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
+      requireSameIncarnation(
+          incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
       ResolvedBridgeSource afterInitWorld =
           resolveExactBridgeSource(worldRequest, evidence.candidate().identity(), worldDeadline);
       requireSameSource(source, afterInitWorld.source);
@@ -292,13 +310,8 @@ final class CanonicalGameplayRegionLeaseOwner {
         throw unavailable();
       }
       if (existingRegionInstallation == null) {
-        if (transferOwner != null) {
-          // Preserve ordinary timeline/incarnation qualification before any transfer effect.
-          // A lost completion reply is not permission to freeze/advance its successor again.
-          if (transferOwner.alreadyCompleted(
-              prior, runtimeIdentity.serviceInstanceId(), handoffDeadline)) throw unavailable();
-        }
-        // A contender must not freeze a healthy incumbent whose lease is still renewing.
+        // A stable instance ID can survive a restart. The fresh-token acquire establishes
+        // scoped lease absence atomically and refuses every live incumbent or competing grant.
         grant = handoffRedisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
         if (transferOwner != null) {
           transferContinuation =
@@ -328,7 +341,8 @@ final class CanonicalGameplayRegionLeaseOwner {
                     transferOwner,
                     handoffDeadline,
                     worldDeadline));
-            requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+            requireSameIncarnation(
+                incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
             handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
             handoffRedisOwner.requireCurrent(grant);
             if (transferCandidate == null) {
@@ -403,7 +417,8 @@ final class CanonicalGameplayRegionLeaseOwner {
       requireSameSource(source, afterAcquire);
       handoffRedisOwner.renew(grant, leaseTtl);
       handoffRedisOwner.requireCurrent(grant);
-      requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+      requireSameIncarnation(
+          incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
       handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
       if (transferOwner != null && clock.millis() >= handoffDeadline) throw unavailable();
     } catch (RuntimeException failure) {
@@ -500,7 +515,9 @@ final class CanonicalGameplayRegionLeaseOwner {
           pending.grant(), pending.source(), pending.expectedRegionEpoch(), runtimeIdentity);
       handoffRedisOwner.requireCurrent(pending.grant());
       handoffRedisOwner.verifyInitializedTimeline(pending.grant(), pending.preparation());
-      requireSameIncarnation(pending.incarnation(), readCurrentIncarnation(pending.source()));
+      requireSameIncarnation(
+          pending.incarnation(),
+          readInstallationIncarnation(pending.transferOwner(), deadline, pending.source()));
 
       var currentPrior =
           withTransferStatusRepository(
@@ -541,7 +558,9 @@ final class CanonicalGameplayRegionLeaseOwner {
       handoffRedisOwner.renew(pending.grant(), leaseTtl);
       handoffRedisOwner.requireCurrent(pending.grant());
       handoffRedisOwner.verifyInitializedTimeline(pending.grant(), pending.preparation());
-      requireSameIncarnation(pending.incarnation(), readCurrentIncarnation(pending.source()));
+      requireSameIncarnation(
+          pending.incarnation(),
+          readInstallationIncarnation(pending.transferOwner(), deadline, pending.source()));
       // The lease owner's stable-evidence digest and the transfer receiver's protected-observation
       // digest have different canonical domains. Current stable evidence is checked above and
       // below; advance/install revalidate the retained physical incarnation against fresh reads.
@@ -572,7 +591,9 @@ final class CanonicalGameplayRegionLeaseOwner {
       handoffRedisOwner.renew(pending.grant(), leaseTtl);
       handoffRedisOwner.requireCurrent(pending.grant());
       handoffRedisOwner.verifyInitializedTimeline(pending.grant(), pending.preparation());
-      requireSameIncarnation(pending.incarnation(), readCurrentIncarnation(pending.source()));
+      requireSameIncarnation(
+          pending.incarnation(),
+          readInstallationIncarnation(pending.transferOwner(), deadline, pending.source()));
       if (clock.millis() >= deadline) throw unavailable();
     } catch (RuntimeException failure) {
       throw new FrozenTransferUnconfirmed(continuation, failure);
@@ -654,7 +675,9 @@ final class CanonicalGameplayRegionLeaseOwner {
         pending.grant(), pending.source(), pending.expectedRegionEpoch(), runtimeIdentity);
     handoffRedisOwner.requireCurrent(pending.grant());
     handoffRedisOwner.verifyInitializedTimeline(pending.grant(), pending.preparation());
-    requireSameIncarnation(pending.incarnation(), readCurrentIncarnation(pending.source()));
+    requireSameIncarnation(
+        pending.incarnation(),
+        readInstallationIncarnation(pending.transferOwner(), deadline, pending.source()));
     var installed =
         pending
             .transferOwner()
@@ -707,7 +730,8 @@ final class CanonicalGameplayRegionLeaseOwner {
             worldRequest, evidence, transferSource, transferOwner, handoffDeadline, worldDeadline);
     requireSameSource(source, afterInstall);
     handoffRedisOwner.requireCurrent(grant);
-    requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+    requireSameIncarnation(
+        incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
     handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
     withTransferStatusRepository(
         transferOwner,
@@ -715,7 +739,8 @@ final class CanonicalGameplayRegionLeaseOwner {
         repository -> repository.markTimelineInstalled(preparation, installed, clock.instant()));
     handoffRedisOwner.requireCurrent(grant);
     handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
-    requireSameIncarnation(incarnation, readCurrentIncarnation(source));
+    requireSameIncarnation(
+        incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
     requireSameSource(
         source,
         resolveCurrentInstallationSource(
@@ -1280,6 +1305,20 @@ final class CanonicalGameplayRegionLeaseOwner {
       throw unavailable();
     }
     return current;
+  }
+
+  CanonicalGameplayRegionIncarnationSource.StableEvidence readInstallationIncarnation(
+      CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
+      long handoffDeadline,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source) {
+    if (transferOwner == null) return readCurrentIncarnation(source);
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+        clock,
+        handoffDeadline,
+        budget -> {
+          budget.check();
+          return readCurrentIncarnation(source);
+        });
   }
 
   private static void requireSameIncarnation(

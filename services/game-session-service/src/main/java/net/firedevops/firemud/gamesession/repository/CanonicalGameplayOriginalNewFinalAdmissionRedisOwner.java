@@ -155,13 +155,15 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       scopedConnection;
   private final java.util.function.LongSupplier remainingCommandMillis;
   private final OriginCustody originCustody;
+  private final java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>>
+      scopedClose;
 
   CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
       io.lettuce.core.RedisClient redisClient,
       RedisScriptCatalog catalog,
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tenantTags) {
-    this(redisClient, catalog, clock, tenantTags, null, null);
+    this(redisClient, catalog, clock, tenantTags, null, null, null, null);
   }
 
   CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
@@ -170,8 +172,17 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tenantTags,
       java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>> scopedConnection,
-      java.util.function.LongSupplier remainingCommandMillis) {
-    this(redisClient, catalog, clock, tenantTags, scopedConnection, remainingCommandMillis, null);
+      java.util.function.LongSupplier remainingCommandMillis,
+      java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>> scopedClose) {
+    this(
+        redisClient,
+        catalog,
+        clock,
+        tenantTags,
+        scopedConnection,
+        remainingCommandMillis,
+        scopedClose,
+        null);
   }
 
   private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
@@ -181,13 +192,16 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       CanonicalGameplayTenantGameplayTagRepository tenantTags,
       java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>> scopedConnection,
       java.util.function.LongSupplier remainingCommandMillis,
+      java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>> scopedClose,
       OriginCustody originCustody) {
     this.originCustody = originCustody;
-    if ((scopedConnection == null) != (remainingCommandMillis == null))
+    if ((scopedConnection == null) != (remainingCommandMillis == null)
+        || (scopedConnection == null) != (scopedClose == null))
       throw new IllegalArgumentException(
-          "Scoped connection and command budget must be supplied together");
+          "Scoped connection, command budget and close must be supplied together");
     this.scopedConnection = scopedConnection;
     this.remainingCommandMillis = remainingCommandMillis;
+    this.scopedClose = scopedClose;
     this.redisClient = Objects.requireNonNull(redisClient, "Configured Redis client is required");
     this.catalog = Objects.requireNonNull(catalog, "Manual Redis script catalog is required");
     this.clock = Objects.requireNonNull(clock, "Clock is required");
@@ -210,6 +224,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
         tenantTags,
         scopedConnection,
         remainingCommandMillis,
+        scopedClose,
         new OriginCustody(origin, custody));
   }
 
@@ -494,30 +509,22 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       OriginalNewCapacityExecution execution,
       String action,
       long deadline) {
-    requireNoAmbientTransaction();
-    if (!"INSTALL".equals(action)) throw unavailable();
-    var candidate = requireSource(source);
-    requireExecutionBinding(source, execution);
-    var assignment = tenantTags.assignmentForTransition(candidate.transition().transitionId());
-    requireAssignment(assignment, candidate);
-    Keys keys = requireKeys(candidate, assignment, accountOpen.key(), execution);
-    requireAccountOpen(accountOpen, candidate, assignment, keys.accountAdmissionBarrier());
-    var issuer =
-        requireIssuerOpen(issuerOpen, candidate, assignment, keys.issuerAdmissionBarrier());
+    PreparedInstall prepared =
+        prepareInstall(source, template, accountOpen, issuerOpen, execution, action, deadline);
     byte[] script = scriptSource(requireDescriptor());
     byte[] bytes = template.finalCasTemplateBytes();
     try {
       return execute(
           script,
-          keys,
-          candidate,
-          assignment,
-          candidate.canonicalBytes(),
-          characterProjection(candidate),
+          prepared.keys(),
+          prepared.candidate(),
+          prepared.assignment(),
+          prepared.candidate().canonicalBytes(),
+          characterProjection(prepared.candidate()),
           bytes,
           template.canonicalSessionDurationMillis(),
           canonicalJson(accountOpen.exactFields()),
-          issuerMetadataJson(issuer),
+          issuerMetadataJson(prepared.issuerValue()),
           deadline,
           issuerOpen.exactPhysicalPayload(),
           execution,
@@ -526,6 +533,47 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(script);
       wipe(bytes);
     }
+  }
+
+  /** Checks deterministic INSTALL inputs without reading or mutating Redis. */
+  void validateInstallInputs(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
+      OriginalNewCapacityExecution execution,
+      long deadline) {
+    prepareInstall(source, template, accountOpen, issuerOpen, execution, "INSTALL", deadline);
+    byte[] script = scriptSource(requireDescriptor());
+    wipe(script);
+  }
+
+  private PreparedInstall prepareInstall(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
+      OriginalNewCapacityExecution execution,
+      String action,
+      long deadline) {
+    requireNoAmbientTransaction();
+    if (!"INSTALL".equals(action)
+        || template == null
+        || accountOpen == null
+        || issuerOpen == null
+        || execution == null) throw unavailable();
+    requireDeadline(clock.millis(), deadline);
+    var candidate = requireSource(source);
+    requireExecutionBinding(source, execution);
+    var assignment = tenantTags.assignmentForTransition(candidate.transition().transitionId());
+    requireAssignment(assignment, candidate);
+    Keys keys = requireKeys(candidate, assignment, accountOpen.key(), execution);
+    requireAccountOpen(accountOpen, candidate, assignment, keys.accountAdmissionBarrier());
+    requireCurrentOpenWindow(accountOpen, clock.millis());
+    CanonicalGameplayIssuerAdmissionBarrierValue issuerValue =
+        requireIssuerOpen(issuerOpen, candidate, assignment, keys.issuerAdmissionBarrier());
+    template.requireCapacityExecutionBinding(candidate, execution);
+    return new PreparedInstall(candidate, assignment, keys, issuerValue);
   }
 
   static void requireExecutionBinding(
@@ -918,7 +966,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       if (connection != null) {
         try {
           if (scopedConnection == null) connection.close();
-          else connection.closeAsync();
+          else scopedClose.accept(connection.closeAsync());
         } catch (RuntimeException cleanupFailure) {
           throw unavailable();
         }
@@ -1035,7 +1083,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(issuerBarrierKey);
       if (connection != null) {
         if (scopedConnection == null) connection.close();
-        else connection.closeAsync();
+        else scopedClose.accept(connection.closeAsync());
       }
     }
   }
@@ -1193,6 +1241,12 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       String accountAdmissionBarrier,
       String issuerAdmissionBarrier,
       String capacityExecution) {}
+
+  private record PreparedInstall(
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      Keys keys,
+      CanonicalGameplayIssuerAdmissionBarrierValue issuerValue) {}
 
   /**
    * Private-constructor capability tied to this owner's exact seven-key physical readback. Closing

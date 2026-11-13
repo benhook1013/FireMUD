@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
@@ -16,7 +17,11 @@ import net.firedevops.firemud.gamesession.v1.ReadOriginalNewCapacityExecutionRes
 public final class CanonicalGameplayOriginalNewCapacityExecutionReadGrpcService
     extends OriginalNewCapacityExecutionReadServiceGrpc
         .OriginalNewCapacityExecutionReadServiceImplBase {
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Shares the injected custody owner without exposing it")
   private final CanonicalGameplayOriginalNewCapacityExecutionOwner owner;
+
   private final CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuard guard;
   private final String namespace;
 

@@ -14,11 +14,13 @@ import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -34,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -137,6 +140,49 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             "Region member order test CA",
             new LoopbackMtlsTestPki.IdentitySpec("client", ENTITY_CLIENT_PEER, false),
             new LoopbackMtlsTestPki.IdentitySpec("entity-server", ENTITY_SERVER_PEER, true));
+  }
+
+  @Test
+  void transferInstallationIncarnationReadReturnsByFrozenDeadlineWhenSourceStalls()
+      throws Exception {
+    WorldFixture world = WorldFixture.open();
+    var blockedSource = new BlockingStableIncarnationSource();
+    var owner =
+        new CanonicalGameplayRegionLeaseOwner(
+            mock(CanonicalGameplayBindingInventoryRepository.class),
+            mock(CanonicalGameplayRegionRuntimeStatusRepository.class),
+            mock(CanonicalGameplayRegionLeaseRedisOwner.class),
+            blockedSource,
+            world.resolver(),
+            new RuntimeIdentity(
+                "game-session-service",
+                "stalled-incarnation",
+                "localhost",
+                Instant.now(),
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image"),
+            Duration.ofSeconds(30),
+            Clock.systemUTC());
+    var source = source(world.originalEvidence());
+    long deadline = System.currentTimeMillis() + 300L;
+    var transferOwner = mock(CanonicalGameplayRegionOwnerTransferCoordinator.class);
+    long startedAt = System.nanoTime();
+    CompletableFuture<CanonicalGameplayRegionIncarnationSource.StableEvidence> read =
+        CompletableFuture.supplyAsync(
+            () -> owner.readInstallationIncarnation(transferOwner, deadline, source));
+
+    try {
+      assertThat(blockedSource.entered.await(2, TimeUnit.SECONDS)).isTrue();
+      Throwable failure = catchThrowable(() -> read.get(2, TimeUnit.SECONDS));
+      long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+      assertThat(failure).isInstanceOf(java.util.concurrent.ExecutionException.class);
+      assertThat(failure.getCause())
+          .hasMessage("Original NEW capacity execution budget is unavailable");
+      assertThat(elapsedMillis).isLessThan(2_000L);
+    } finally {
+      blockedSource.release.countDown();
+    }
   }
 
   @Test
@@ -533,6 +579,49 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(statusRepository.find(qualifiedSource)).contains(ownerStatusBeforeSqlOutage);
       assertThat(redis.admin().type(redisKey)).isEqualTo("string");
       assertThat(redis.admin().pttl(redisKey)).isPositive();
+    }
+  }
+
+  @Test
+  void boundedTimelineCreationRejectsExpiryAndCapsNewLease() throws Exception {
+    try (RedisFixture redis = RedisFixture.open()) {
+      byte[] script;
+      try (InputStream input =
+          getClass()
+              .getClassLoader()
+              .getResourceAsStream("redis/lua/game-session-region-timeline-initialize-v2.lua")) {
+        assertThat(input).isNotNull();
+        script = input.readAllBytes();
+      }
+      byte[] leaseKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  ACCOUNT_ID, CHARACTER_ID, CANONICAL_REGION_ID));
+      byte[] metaKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(ACCOUNT_ID, CHARACTER_ID, CANONICAL_REGION_ID));
+      byte[][] keys = {leaseKey, metaKey};
+      byte[][] arguments = {
+        ascii("gs_region_timeline_init/v2"),
+        ascii("INITIALIZE"),
+        ascii("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        ascii("1"),
+        ascii("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+        ascii("a".repeat(64)),
+        ascii("30000"),
+        ascii("1"),
+        ascii("1")
+      };
+      Long expired = redis.admin().eval(script, ScriptOutputType.INTEGER, keys, arguments);
+      assertThat(expired).isEqualTo(-3L);
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+      assertThat(redis.admin().type(metaKey)).isEqualTo("none");
+
+      arguments[8] = ascii(Long.toString(System.currentTimeMillis() + 10_000L));
+      Long initialized = redis.admin().eval(script, ScriptOutputType.INTEGER, keys, arguments);
+      assertThat(initialized).isEqualTo(1L);
+      assertThat(redis.admin().pttl(leaseKey)).isBetween(1L, 10_000L);
+      assertThat(redis.admin().pttl(metaKey)).isEqualTo(-1L);
     }
   }
 
@@ -1615,6 +1704,25 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
 
     synchronized void restoreRecoveryEvidence() {
       current = stableIncarnation(current.scope(), "storage-generation-1");
+    }
+  }
+
+  private static final class BlockingStableIncarnationSource
+      implements CanonicalGameplayRegionIncarnationSource {
+    private final CountDownLatch entered = new CountDownLatch(1);
+    private final CountDownLatch release = new CountDownLatch(1);
+
+    @Override
+    public CanonicalGameplayRegionIncarnationSource.StableEvidence readCurrent(
+        CanonicalGameplayRegionIncarnationSource.RegionScope scope) {
+      entered.countDown();
+      try {
+        release.await();
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("Controlled incarnation read was interrupted", interrupted);
+      }
+      return stableIncarnation(scope, "storage-generation-1");
     }
   }
 

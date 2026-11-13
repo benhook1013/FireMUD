@@ -2,7 +2,10 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -13,9 +16,17 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.ConnectionFuture;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisFuture;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.api.async.RedisAsyncCommands;
+import io.lettuce.core.codec.ByteArrayCodec;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.net.InetSocketAddress;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.Clock;
@@ -74,6 +85,144 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .as("background admission follows the same cleanup lifecycle")
         .isTrue();
     background.release(maximumBackground);
+  }
+
+  @Test
+  void timedOutHandoffRedisConnectRetainsAdmissionThroughLateClose() throws Exception {
+    RedisClient redis = mock();
+    RedisURI uri = RedisURI.create("redis://localhost:6379");
+    var owner =
+        new CanonicalGameplayRegionLeaseRedisOwner(
+            redis, uri, RedisScriptCatalog.fromContributions(List.of()));
+    CompletableFuture<StatefulRedisConnection<byte[], byte[]>> handshake =
+        new CompletableFuture<>();
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    CompletableFuture<Void> close = new CompletableFuture<>();
+    CountDownLatch connected = new CountDownLatch(1);
+    when(redis.connectAsync(eq(ByteArrayCodec.INSTANCE), any(RedisURI.class)))
+        .thenAnswer(
+            invocation -> {
+              connected.countDown();
+              return ConnectionFuture.from(new InetSocketAddress("localhost", 6379), handshake);
+            });
+    when(connection.closeAsync()).thenReturn(close);
+    Semaphore permits =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              () ->
+                  assertThatThrownBy(
+                          () ->
+                              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                                  CLOCK,
+                                  CLOCK.millis() + 500,
+                                  budget ->
+                                      ReflectionTestUtils.invokeMethod(
+                                          owner, "openConnection", budget)))
+                      .isInstanceOf(IllegalStateException.class));
+      try {
+        assertThat(connected.await(2, TimeUnit.SECONDS)).isTrue();
+        caller.get(2, TimeUnit.SECONDS);
+        assertPermitRemainsHeld(permits, maximum);
+
+        handshake.complete(connection);
+        verify(connection, timeout(1000)).closeAsync();
+        assertPermitRemainsHeld(permits, maximum);
+        verify(connection, never()).async();
+      } finally {
+        handshake.completeExceptionally(new IllegalStateException("test cleanup"));
+        close.complete(null);
+      }
+      assertThat(permits.tryAcquire(maximum, 2, TimeUnit.SECONDS)).isTrue();
+      permits.release(maximum);
+    }
+  }
+
+  @Test
+  void successfulTransferReadbackRetainsAdmissionUntilAsyncRedisCloseCompletes() throws Exception {
+    RedisClient redis = mock();
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    ClientOptions options = ClientOptions.builder().autoReconnect(false).build();
+    RedisAsyncCommands<byte[], byte[]> commands = mock();
+    RedisFuture<String> principal = mock();
+    CompletableFuture<Void> close = new CompletableFuture<>();
+    when(redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(connection);
+    when(connection.isOpen()).thenReturn(true);
+    when(connection.getOptions()).thenReturn(options);
+    when(connection.async()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn(principal);
+    when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
+    when(connection.closeAsync()).thenReturn(close);
+    DSLContext dsl = source(mock());
+    var owner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            dsl,
+            redis,
+            RedisScriptCatalog.fromContributions(
+                List.of(new CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution())),
+            CLOCK,
+            new CanonicalGameplayTenantGameplayTagRepository(dsl, "prod", 1));
+    CountDownLatch readbackReturned = new CountDownLatch(1);
+    Semaphore operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int operationMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    Semaphore background =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int backgroundMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                      CLOCK,
+                      CLOCK.millis() + 4000,
+                      budget -> {
+                        owner
+                            .forTransferBudget(budget)
+                            .withTransferReadback(
+                                ignored -> {
+                                  readbackReturned.countDown();
+                                  return true;
+                                });
+                        return true;
+                      }));
+      try {
+        assertThat(readbackReturned.await(2, TimeUnit.SECONDS)).isTrue();
+        verify(connection, timeout(1000)).closeAsync();
+        assertPermitRemainsHeld(operations, operationMaximum);
+        assertPermitRemainsHeld(background, backgroundMaximum);
+        assertThat(caller.isDone()).isFalse();
+
+        close.complete(null);
+        assertThat(caller.get(2, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        close.complete(null);
+      }
+    }
+  }
+
+  private static void assertPermitRemainsHeld(Semaphore permits, int maximum)
+      throws InterruptedException {
+    boolean acquired = permits.tryAcquire(maximum, 100, TimeUnit.MILLISECONDS);
+    if (acquired) permits.release(maximum);
+    assertThat(acquired).isFalse();
   }
 
   @Test

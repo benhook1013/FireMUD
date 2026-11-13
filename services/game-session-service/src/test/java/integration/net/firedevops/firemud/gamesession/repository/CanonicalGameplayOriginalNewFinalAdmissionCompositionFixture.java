@@ -72,12 +72,15 @@ import org.testcontainers.containers.GenericContainer;
 public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     implements AutoCloseable {
   private static final Clock CLOCK = Clock.systemUTC();
+  private static final int TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS = 128;
+  private static final long TEST_CAPACITY_EVIDENCE_BYTES_PER_RECORD = 1_048_576L;
   private final GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
   private final AtomicInteger finalReadCalls = new AtomicInteger();
   private RedisClient administrator;
   private StatefulRedisConnection<byte[], byte[]> administration;
   private RedisClient coordination;
+  private RedisURI coordinationUri;
   private CanonicalGameplayAdmissionAbortCompositionFixture binding;
   private CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources sources;
   private CanonicalGameplayTenantGameplayTagRepository tags;
@@ -154,11 +157,11 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                 .addCommand(CommandType.HDEL)
                 .addCommand(CommandType.PEXPIRE)
                 .addCommand(CommandType.TIME));
-    coordination =
-        RedisClient.create(
-            RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379))
-                .withAuthentication("gamesession_coord_app", password)
-                .build());
+    coordinationUri =
+        RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379))
+            .withAuthentication("gamesession_coord_app", password)
+            .build();
+    coordination = RedisClient.create(coordinationUri);
     coordination.setOptions(ClientOptions.builder().autoReconnect(false).build());
     binding =
         new CanonicalGameplayAdmissionAbortCompositionFixture(
@@ -183,6 +186,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
             binding.dsl(),
             coordination,
+            coordinationUri,
             scripts,
             CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                 ::controlledRegionIncarnation,
@@ -597,6 +601,16 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   }
 
   public void installActualCandidate(AccountGameplayAdmissionLeaseEvidence actualLease) {
+    installActualCandidate(
+        actualLease,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS);
+  }
+
+  public void installActualCandidate(
+      AccountGameplayAdmissionLeaseEvidence actualLease,
+      int maximumActiveRecords,
+      int maximumRetainedRecords) {
     decision =
         new CanonicalGameplayAdmissionDecision(
             binding.transitionId(),
@@ -620,6 +634,25 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     binding.acknowledgeOriginalIssuer();
     regionInstallation = region.installForTransition(binding.transitionId(), sources.request);
     region.bridge(regionInstallation);
+    var assignment = tags.assignmentForTransition(binding.transitionId());
+    binding
+        .dsl()
+        .execute(
+            "INSERT INTO game_session_capacity_evidence_budget"
+                + " (tenant_id,maximum_records,maximum_binding_bytes,maximum_retained_records)"
+                + " VALUES (?,?,?,?)"
+                + " ON CONFLICT DO NOTHING",
+            assignment.tenantId(),
+            maximumActiveRecords,
+            maximumActiveRecords * TEST_CAPACITY_EVIDENCE_BYTES_PER_RECORD,
+            maximumRetainedRecords);
+    binding
+        .dsl()
+        .execute(
+            "INSERT INTO game_session_region_transfer_history_budget"
+                + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,256,1024)"
+                + " ON CONFLICT DO NOTHING",
+            assignment.tenantId());
   }
 
   public Receipt complete(
@@ -700,7 +733,12 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     var source =
         new CanonicalGameplayBindingInventoryRepository(binding.dsl())
             .readOriginalNewFinalAdmissionSource(decision);
-    originExecutionOwner(clock).prepareOrigin(source, request, deadline);
+    var owner = originExecutionOwner(clock);
+    if (request.evidence().permitsCreation()) {
+      owner.precharge(
+          source, request, owner.requireRequestBinding(source, request, deadline), deadline);
+    }
+    owner.prepareOrigin(source, request, deadline);
   }
 
   private CanonicalGameplayOriginalNewCapacityExecutionOwner originExecutionOwner(Clock clock) {
@@ -848,6 +886,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
           CanonicalGameplayRegionLeaseOwnerFactory.compose(
               sql,
               coordination,
+              coordinationUri,
               scripts,
               CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                   ::controlledRegionIncarnation,
@@ -891,6 +930,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
             binding.dsl(),
             coordination,
+            coordinationUri,
             scripts,
             regionInstallation,
             sources.resolver,
@@ -919,8 +959,10 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     var executionOwner =
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
             binding.dsl(), coordination, scripts, CLOCK, tags);
+    var selected = executionOwner.requireRequestBinding(source, request, deadline);
+    executionOwner.precharge(source, request, selected, deadline);
     var reservation = capacityClient.commit(request, deadline);
-    var execution = executionOwner.bind(source, request, reservation, deadline);
+    var execution = executionOwner.bind(source, request, reservation, deadline, selected);
     var issuerSource = binding.currentIssuerSource();
     var issuer =
         new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
@@ -974,6 +1016,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
             binding.dsl(),
             coordination,
+            coordinationUri,
             scripts,
             regionInstallation,
             sources.resolver,
@@ -1020,6 +1063,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
             binding.dsl(), coordination, scripts, CLOCK, tags);
     var selected = executionOwner.requireRequestBinding(source, request, deadline);
+    executionOwner.precharge(source, request, selected, deadline);
     var result = client.commit(request, deadline);
     var identity = source.candidate().bindingIdentity();
     if (binding
@@ -1045,6 +1089,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     for (String table :
         java.util.List.of(
             "game_session_canonical_binding_transition",
+            "game_session_capacity_evidence_charge",
             "game_session_original_new_capacity_execution")) {
       String rows =
           binding

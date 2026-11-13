@@ -26,6 +26,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
@@ -38,16 +40,19 @@ import org.junit.jupiter.api.Test;
 /** Controlled command transport only; mock carriers do not qualify admission or source custody. */
 class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
   @Test
-  void scopedCloseUsesSuppliedConnectionAndShrinkingCommandWaits() throws Exception {
+  void scopedCloseUsesShrinkingCommandWaitsAndHandsDisposalToItsBudget() throws Exception {
     var fixture = new Fixture();
     AtomicLong remaining = new AtomicLong(500);
+    var close = new CompletableFuture<Void>();
+    var trackedClose = new AtomicReference<CompletableFuture<Void>>();
+    when(fixture.connection.closeAsync()).thenReturn(close);
     fixture.completeWhoami(() -> remaining.set(300));
     fixture.completeScriptLoad(() -> remaining.set(100));
     fixture.completeEvaluation();
 
     assertThat(
             fixture
-                .scoped(remaining::get)
+                .scoped(remaining::get, trackedClose::set)
                 .closeCapacityExecutionOnce(
                     fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
         .isEqualTo(4);
@@ -58,6 +63,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     verifyNoInteractions(fixture.redis);
     verify(fixture.connection).closeAsync();
     verify(fixture.connection, never()).close();
+    assertThat(trackedClose.get()).isSameAs(close);
   }
 
   @Test
@@ -256,8 +262,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     }
 
     CanonicalGameplayOriginalNewFinalAdmissionRedisOwner scoped(LongSupplier remaining) {
+      return scoped(remaining, CompletableFuture::join);
+    }
+
+    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner scoped(
+        LongSupplier remaining, Consumer<CompletableFuture<Void>> close) {
       return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-          redis, catalog, Clock.systemUTC(), mock(), () -> connection, remaining);
+          redis, catalog, Clock.systemUTC(), mock(), () -> connection, remaining, close);
     }
 
     void completeWhoami(Runnable completion) throws Exception {

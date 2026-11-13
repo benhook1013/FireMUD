@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
@@ -49,6 +50,7 @@ import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** Real loopback mTLS with a controlled Account result; not Account sources or final admission. */
 @Timeout(90)
@@ -98,19 +100,71 @@ class AccountTenantCapacityClientMtlsTest {
       assertThatThrownBy(() -> client.commit(request, deadline()))
           .isInstanceOfSatisfying(
               AccountTenantCapacityClient.CapacityRefusedException.class,
-              refusal ->
-                  assertThat(refusal.code())
-                      .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.TENANT_BILLING_BLOCKED));
+              refusal -> {
+                assertThat(refusal.code())
+                    .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.TENANT_BILLING_BLOCKED);
+                assertThat(refusal.durableDenialId()).isNull();
+              });
       assertThat(calls).hasValue(1);
     } finally {
       stop(server);
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void quotaRefusalExposesAReceiptOnlyWhenTheAuthenticatedAccountSuppliesOne(boolean retained)
+      throws Exception {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    UUID decisionId = retained ? UUID.randomUUID() : null;
+    var response =
+        TenantCapacityAdmissionGrpcCodec.toRefusal(
+            request, TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED, decisionId);
+    Server server =
+        startServer(
+            "account",
+            new AccountServiceGrpc.AccountServiceImplBase() {
+              @Override
+              public void commitTenantCapacityAdmission(
+                  CommitTenantCapacityAdmissionRequest wire,
+                  StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+                assertThat(TenantCapacityAdmissionGrpcCodec.parseRequest(wire)).isEqualTo(request);
+                observer.onNext(response);
+                observer.onCompleted();
+              }
+            });
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(() -> client.commit(request, deadline()))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityClient.CapacityRefusedException.class,
+              refusal -> {
+                assertThat(refusal.code())
+                    .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED);
+                assertThat(refusal.durableDenialId()).isEqualTo(decisionId);
+              });
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void localDenialReplayRequiresADurableDecisionId() {
+    var denialId = UUID.randomUUID();
+    var replay = AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(denialId);
+    assertThat(replay.code())
+        .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED);
+    assertThat(replay.durableDenialId()).isEqualTo(denialId);
+    assertThatThrownBy(
+            () -> AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(null))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   @Test
   void mismatchedTypedRefusalDoesNotBecomeAnAccountDecision() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    Server server = server("account", calls, true);
+    AtomicReference<Throwable> serverFailure = new AtomicReference<>();
+    Server server = server("account", calls, true, serverFailure);
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest(false);
@@ -119,6 +173,7 @@ class AccountTenantCapacityClientMtlsTest {
               StatusRuntimeException.class,
               failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN));
       assertThat(calls).hasValue(1);
+      assertThat(serverFailure.get()).isNull();
     } finally {
       stop(server);
     }
@@ -142,7 +197,8 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void changedResponseFenceLeavesTheOriginalCommitmentIndeterminate() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    Server server = server("account", calls, true);
+    AtomicReference<Throwable> serverFailure = new AtomicReference<>();
+    Server server = server("account", calls, true, serverFailure);
     try (var client = client(server)) {
       client.init();
       assertThatThrownBy(
@@ -153,6 +209,7 @@ class AccountTenantCapacityClientMtlsTest {
                   assertThat(Status.fromThrowable(failure).getCode())
                       .isEqualTo(Status.Code.UNKNOWN));
       assertThat(calls).hasValue(1);
+      assertThat(serverFailure.get()).isNull();
     } finally {
       stop(server);
     }
@@ -347,8 +404,29 @@ class AccountTenantCapacityClientMtlsTest {
       String identity,
       AtomicInteger calls,
       boolean wrongFence,
+      AtomicReference<Throwable> serverFailure)
+      throws Exception {
+    return server(
+        identity, calls, wrongFence, new AtomicLong(), new AtomicBoolean(true), serverFailure);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
       AtomicLong observedNanos,
       AtomicBoolean respond)
+      throws Exception {
+    return server(identity, calls, wrongFence, observedNanos, respond, null);
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
+      AtomicLong observedNanos,
+      AtomicBoolean respond,
+      AtomicReference<Throwable> serverFailure)
       throws Exception {
     UUID reservationId = UUID.randomUUID();
     var service =
@@ -362,11 +440,20 @@ class AccountTenantCapacityClientMtlsTest {
                 Objects.requireNonNull(Context.current().getDeadline())
                     .timeRemaining(TimeUnit.NANOSECONDS));
             if (!respond.get()) return;
-            assertThat(GrpcPeerIdentity.current().uri())
-                .isEqualTo("spiffe://firemud/ns/prod/sa/game-session-service");
+            assertServerSide(
+                serverFailure,
+                () ->
+                    assertThat(GrpcPeerIdentity.current().uri())
+                        .isEqualTo("spiffe://firemud/ns/prod/sa/game-session-service"));
             var request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
+            assertServerSide(
+                serverFailure,
+                () ->
+                    assertThat(request)
+                        .isEqualTo(
+                            CapacityAdmissionTestFixture.playerRequest(
+                                request.evidence().permitsCreation())));
             if (!request.evidence().permitsCreation()) {
-              assertThat(request).isEqualTo(CapacityAdmissionTestFixture.playerRequest(false));
               var response =
                   TenantCapacityAdmissionGrpcCodec.toRefusal(
                       request, TenantCapacityAdmissionGrpcCodec.Failure.TENANT_BILLING_BLOCKED);
@@ -403,6 +490,11 @@ class AccountTenantCapacityClientMtlsTest {
             observer.onCompleted();
           }
         };
+    return startServer(identity, service);
+  }
+
+  private static Server startServer(
+      String identity, AccountServiceGrpc.AccountServiceImplBase service) throws Exception {
     var peer = pki.identity(identity);
     return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
         .sslContext(
@@ -414,6 +506,16 @@ class AccountTenantCapacityClientMtlsTest {
         .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
         .build()
         .start();
+  }
+
+  private static void assertServerSide(
+      AtomicReference<Throwable> serverFailure, Runnable assertion) {
+    try {
+      assertion.run();
+    } catch (AssertionError failure) {
+      if (serverFailure != null) serverFailure.compareAndSet(null, failure);
+      throw failure;
+    }
   }
 
   private static void stop(Server server) throws InterruptedException {
