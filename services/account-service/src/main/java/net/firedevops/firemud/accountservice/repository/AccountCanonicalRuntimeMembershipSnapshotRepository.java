@@ -331,7 +331,6 @@ public final class AccountCanonicalRuntimeMembershipSnapshotRepository {
         || !receipt.allowNewGameplayBindings()
         || !"ACTIVE".equals(snapshot.membershipLifecycleState())
         || !snapshot.gameplayAdmissionAllowed()
-        || pair.lastTransitionInvalidated()
         || !pair.equals(pairs.readForUpdate(accountUuid, tenantUuid).orElseThrow())) {
       throw unavailable("Paid membership requalification lacks exact current owner evidence");
     }
@@ -508,7 +507,8 @@ public final class AccountCanonicalRuntimeMembershipSnapshotRepository {
             .equals(event.membershipAuthorityGeneration())
         || pair.eventSequence() != stored.outboxSequence()
         || !pair.eventId().equals(stored.eventId())
-        || !pair.eventDigest().equals(stored.eventDigest())) {
+        || !pair.eventDigest().equals(stored.eventDigest())
+        || pair.lastTransitionInvalidated() != event.callerBoundAuthorityInvalidated()) {
       throw unavailable("Committed membership event differs from its current row and pair");
     }
   }
