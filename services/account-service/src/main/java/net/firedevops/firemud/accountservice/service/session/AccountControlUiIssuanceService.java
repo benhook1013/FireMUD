@@ -180,8 +180,17 @@ public final class AccountControlUiIssuanceService {
                   AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
                   try {
                     authenticated =
-                        primaryAuthentication.authenticateControlUiPrimaryIdentity(
-                            email, request.secret);
+                        request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT
+                            ? primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                                email,
+                                request.secret,
+                                () -> {
+                                  if (!credentialAbuse.isUsable(selectedPermit)) {
+                                    throw AccountCredentialAbuseRefusal.unavailable();
+                                  }
+                                })
+                            : primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                                email, request.secret);
                   } catch (AuthenticationException denial) {
                     // Only primary denial commits attempt accounting. No signer/issuance work
                     // follows.
