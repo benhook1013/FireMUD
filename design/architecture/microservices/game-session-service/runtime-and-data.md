@@ -18,6 +18,10 @@ The capacity execution owner uses one absolute budget for each complete operatio
 
 The capacity-bound FINAL changes the exact schema-2 COMPLETE payload by requiring `capacityExecutionDigest`. Before registering the receiver against previously populated Coordination Redis, qualify the script's `REQUIRES_CLUSTER_RESET` cutover through the [Coordination reset and recovery gates](../../system-architecture-redis-reset-and-recovery.md#coordination-reset-model). An older COMPLETE payload cannot qualify as a capacity-bound FINAL receipt. Preserve its Account hold and any required durable recovery evidence through the reset qualification.
 
+### Finalized capacity usage retirement
+
+The exact current Game Session owner establishes irreversible closure of serving and resume for the admitted binding and retains settlement of applicable effects and indexes. Game Session supplies an authenticated terminal receipt linked to the original admission, FINAL evidence, binding lineage and Account reservation. [Account owns retirement of the corresponding used capacity](../account-service/runtime-and-data.md#finalized-capacity-usage-retirement).
+
 ### Normal-handoff future-execution fencing
 
 Game Session may exclude an unresolved original from future execution while its historical outcome remains indeterminate. This normal-handoff operation is separate from original-attempt closure, reservation recovery and cleanup. Its permanent tenant-slot `FENCED_INDETERMINATE` hash contains only the exact retained execution binding, digest and denying state. It may be created when the execution key is absent or replace the state of an exact persistent `AUTHORIZED` hash; neither action establishes that an earlier effect did not happen. The existing `INSTALL`, `FINAL` and `CLOSE` arms, including the predecessor script, reject that state. It never creates an authorization, session candidate, session or index, and supplies no `NOT_EXECUTED_AFTER_AUTHORIZATION` evidence. The Account reservation, original attempt/fence and complete capacity hold remain pending or quarantined under Account's existing recovery policy.

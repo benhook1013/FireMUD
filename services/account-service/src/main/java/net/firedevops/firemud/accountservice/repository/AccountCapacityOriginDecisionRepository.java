@@ -87,7 +87,7 @@ public final class AccountCapacityOriginDecisionRepository {
 
   private static Record requireOutcome(Record row, String decision, String refusalCode) {
     if (!decision.equals(row.get("decision", String.class))
-        || (refusalCode != null && !refusalCode.equals(row.get("refusal_code", String.class)))) {
+        || !Objects.equals(refusalCode, row.get("refusal_code", String.class))) {
       throw conflict();
     }
     return row;
