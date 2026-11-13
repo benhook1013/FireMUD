@@ -9,7 +9,7 @@ export interface FirstInvoice {
   currency: string;
   tupleDigest: string;
   expectedRowVersion: number;
-  state: 'AWAITING_PAYMENT' | 'COMMITTED';
+  state: 'AWAITING_PAYMENT' | 'COMMITTED' | 'CANCELED';
   expiresAt: string;
   confirmationRequestId: string | null;
   /** Server-verified original identity only, never restored consent or proof. */
@@ -123,7 +123,9 @@ function invoice(value: unknown, subscriptionId: string): FirstInvoice {
     (data.expectedRowVersion as number) < 0 ||
     !Number.isSafeInteger(data.authorizationVersion) ||
     (data.authorizationVersion as number) < 0 ||
-    (data.state !== 'AWAITING_PAYMENT' && data.state !== 'COMMITTED') ||
+    (data.state !== 'AWAITING_PAYMENT' &&
+      data.state !== 'COMMITTED' &&
+      data.state !== 'CANCELED') ||
     typeof data.expiresAt !== 'string' ||
     !Number.isFinite(Date.parse(data.expiresAt)) ||
     (data.confirmationRequestId !== null &&

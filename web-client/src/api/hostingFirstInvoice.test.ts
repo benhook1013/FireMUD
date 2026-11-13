@@ -241,6 +241,22 @@ describe('first-invoice owner API', () => {
     expect(result).not.toHaveProperty('reauthenticationEvidenceId');
   });
 
+  it('accepts a canceled owner projection without retained payment authorization', async () => {
+    const authenticated = vi
+      .fn()
+      .mockResolvedValue(Response.json({ ...invoice, state: 'CANCELED' }));
+    const client = createFirstInvoiceClient(
+      'https://game.example',
+      authenticated
+    );
+
+    await expect(client.read(subscriptionId)).resolves.toMatchObject({
+      state: 'CANCELED',
+      confirmationRequestId: null,
+      preRowOriginalRequestId: null,
+    });
+  });
+
   it('compares all consent-bearing display fields and row version', () => {
     expect(sameCharge(invoice, { ...invoice })).toBe(true);
     for (const changes of [

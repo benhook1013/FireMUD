@@ -218,7 +218,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
                       "billingEventId", receipt.billingEventId().toString(),
                       "billingEventDigest", receipt.billingEventDigest(),
                       "tenantAuthorityEventDigest", event.eventDigest())),
-              evaluatedAt,
               receipt.validUntil());
         });
   }
@@ -274,7 +273,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
                   demo.tenantBillingSequence(),
                   demo.tenantAuthorityGeneration()),
               demo.snapshotIdentity(),
-              capturedAt,
               null);
         });
   }
@@ -582,7 +580,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       PublishedRealmEvidence target,
       Map<String, Object> facts,
       String entitlementSourceDigest,
-      Instant time,
       Instant paidReceiptValidUntil) {
     var scope = player.scope();
     var current = target.currentTarget();
@@ -635,6 +632,12 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         RuntimePlayerAdmissionEntitlementEvidence.digestBytes(world.canonicalBytes()));
     sources.put("worldCaptureId", world.captureId().toString());
     sources.put("worldRowVersion", Long.toString(world.rowVersion()));
+    // The capacity bundle's freshness is enforced against PostgreSQL time by the capacity owner.
+    // Keep all source checks on the injected Account clock, but stamp this new evaluation from the
+    // same database clock so a small application/database skew cannot future-date its evidence.
+    Instant capacityEvaluatedAt =
+        AccountTenantCapacityRepository.time(
+            dsl.fetchSingle("SELECT clock_timestamp() AS evaluated_at"), "evaluated_at");
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
             request.requestId(),
@@ -644,7 +647,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
             binding,
             facts,
             sources,
-            time);
+            capacityEvaluatedAt);
     // Retain only inside this actual evaluator's final source transaction. A supplied bundle
     // cannot register itself as capacity authority, and commit failure returns no evidence.
     try {

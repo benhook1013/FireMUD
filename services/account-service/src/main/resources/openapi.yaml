@@ -394,7 +394,7 @@ paths:
                   currency: {type: string, pattern: '^[a-z]{3}$'}
                   tupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
                   expectedRowVersion: {type: integer, format: int64, minimum: 1}
-                  state: {type: string, enum: [AWAITING_PAYMENT, COMMITTED]}
+                  state: {type: string, enum: [AWAITING_PAYMENT, COMMITTED, CANCELED]}
                   expiresAt: {type: string, format: date-time}
                   confirmationRequestId: {type: string, format: uuid, nullable: true}
                   preRowOriginalRequestId: {type: string, format: uuid, nullable: true, description: Server-verified original operation identity before a confirmation row exists. Observational only; requires fresh explicit consent and PRE_ROW_RENEWAL authentication. Null once a confirmation exists.}
@@ -500,7 +500,7 @@ paths:
       summary: Renew authorization for the same first-invoice payment operation
       operationId: renewHostingFirstInvoiceAuthorization
       x-runtime-status: isolated_only_default_off
-      description: Fresh primary reauthentication and explicit unchanged consent renew authorization on the original operation. A prior durable command claim is never resent.
+      description: Fresh primary reauthentication and explicit unchanged consent renew authorization on the original operation. Use expectedAuthorizationVersion zero for PRE_ROW_RENEWAL before a confirmation exists. A prior durable command claim is never resent.
       requestBody:
         required: true
         content:
