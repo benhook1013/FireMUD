@@ -12,6 +12,7 @@ import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePay
 import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.Observation;
 import net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifier.VerifiedEvent;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy;
@@ -156,6 +157,89 @@ public final class AccountHostingFirstInvoicePaymentRepository {
             dispatch.claim().attemptId())
         != 1) throw refused();
     return Objects.requireNonNull(find(invoice.subscriptionId()));
+  }
+
+  /**
+   * Read-only recovery of the exact invoice retained by this original provisioning claim. A
+   * committed AWAITING_PAYMENT work row cannot be claimed or dispatched again; recovery only
+   * returns its immutable invoice after rechecking the original claim, dispatch, owner and
+   * reservation fences.
+   */
+  public AccountHostingFirstInvoicePayment findAwaitingPayment(ProvisioningClaim claim) {
+    transaction();
+    Objects.requireNonNull(claim, "Original retained provisioning claim is required");
+    var creation = claim.creation();
+    var invoice = find(creation.subscriptionId());
+    if (invoice == null) return null;
+    if (!creation.equals(intents.findCreation(creation.requestId()).orElse(null))) throw refused();
+
+    Record attempt =
+        dsl.fetchOne(
+            "SELECT * FROM subscription_provisioning_attempts WHERE attempt_id = ?",
+            claim.attemptId());
+    if (attempt == null
+        || !creation.requestId().equals(attempt.get("request_id", UUID.class))
+        || !creation.subscriptionId().equals(attempt.get("subscription_id", UUID.class))
+        || claim.attemptNumber() != attempt.get("attempt_number", Integer.class)
+        || claim.subscriptionRowVersion() != attempt.get("claimed_row_version", Long.class)
+        || claim.subscriptionRowVersion() - 1L != attempt.get("expected_row_version", Long.class)
+        || !claim.claimedAt().equals(instant(attempt, "claimed_at"))
+        || !claim.expiresAt().equals(instant(attempt, "expires_at"))) throw refused();
+
+    var current =
+        intents.lockForLifecycle(
+            creation.requestId(), Math.addExact(claim.subscriptionRowVersion(), 1L));
+    if (!"provisioning".equals(current.status())
+        || current.supersededAt() != null
+        || !creation.subscriptionId().equals(current.subscriptionId())
+        || !creation.requestId().equals(current.creationRequestId())
+        || !invoice.providerSubscriptionId().equals(current.providerSubscriptionId())
+        || !invoice.subscriptionId().equals(creation.subscriptionId())
+        || !invoice.creationRequestId().equals(creation.requestId())
+        || !invoice.tenantId().equals(creation.tenantId())
+        || !invoice.ownerAccountId().equals(creation.owner().accountUuid())
+        || !invoice.paymentInstrumentId().equals(creation.paymentInstrumentId())
+        || invoice.instrumentVersion() != creation.reservedInstrumentVersion()
+        || !invoice.providerCustomerId().equals(creation.providerCustomerId())
+        || !invoice.quoteDigest().equals(creation.planQuote().digest())
+        || !invoice.providerPriceId().equals(creation.planQuote().providerPriceId())
+        || invoice.providerQuantity() != creation.planQuote().providerQuantity()) throw refused();
+
+    Record work =
+        dsl.fetchOne(
+            "SELECT * FROM subscription_provisioning_work WHERE request_id = ?",
+            creation.requestId());
+    if (work == null
+        || !creation.subscriptionId().equals(work.get("subscription_id", UUID.class))
+        || !"AWAITING_PAYMENT".equals(work.get("phase", String.class))
+        || !claim.attemptId().equals(work.get("last_attempt_id", UUID.class))
+        || claim.subscriptionRowVersion() != work.get("subscription_row_version", Long.class))
+      throw refused();
+
+    Record dispatch =
+        dsl.fetchOne(
+            "SELECT * FROM subscription_provider_dispatch_claim WHERE creation_request_id = ?",
+            creation.requestId());
+    if (dispatch == null
+        || !creation.subscriptionId().equals(dispatch.get("subscription_id", UUID.class))
+        || !creation
+            .subscriptionProvisioningRequestId()
+            .equals(dispatch.get("provider_operation_id", UUID.class))) throw refused();
+
+    Record history =
+        dsl.fetchOne(
+            "SELECT * FROM subscription_provider_history WHERE provider_subscription_id = ?",
+            invoice.providerSubscriptionId());
+    if (history == null
+        || !creation.subscriptionId().equals(history.get("subscription_id", UUID.class))
+        || !"SUBSCRIPTION_PROVISIONING".equals(history.get("operation_kind", String.class))
+        || !creation.requestId().equals(history.get("request_id", UUID.class))
+        || !creation
+            .subscriptionProvisioningRequestId()
+            .equals(history.get("provider_operation_id", UUID.class))
+        || !"canonical".equals(history.get("role", String.class))
+        || !invoice.digest().equals(history.get("evidence_digest", String.class))) throw refused();
+    return invoice;
   }
 
   public AccountHostingFirstInvoicePayment requireOwner(UUID subscriptionId, UUID actor) {
