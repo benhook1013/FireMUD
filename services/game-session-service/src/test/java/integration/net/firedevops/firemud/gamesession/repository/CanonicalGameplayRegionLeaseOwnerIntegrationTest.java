@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -137,6 +138,49 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             "Region member order test CA",
             new LoopbackMtlsTestPki.IdentitySpec("client", ENTITY_CLIENT_PEER, false),
             new LoopbackMtlsTestPki.IdentitySpec("entity-server", ENTITY_SERVER_PEER, true));
+  }
+
+  @Test
+  void transferInstallationIncarnationReadReturnsByFrozenDeadlineWhenSourceStalls()
+      throws Exception {
+    WorldFixture world = WorldFixture.open();
+    var blockedSource = new BlockingStableIncarnationSource();
+    var owner =
+        new CanonicalGameplayRegionLeaseOwner(
+            mock(CanonicalGameplayBindingInventoryRepository.class),
+            mock(CanonicalGameplayRegionRuntimeStatusRepository.class),
+            mock(CanonicalGameplayRegionLeaseRedisOwner.class),
+            blockedSource,
+            world.resolver(),
+            new RuntimeIdentity(
+                "game-session-service",
+                "stalled-incarnation",
+                "localhost",
+                Instant.now(),
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image"),
+            Duration.ofSeconds(30),
+            Clock.systemUTC());
+    var source = source(world.originalEvidence());
+    long deadline = System.currentTimeMillis() + 300L;
+    var transferOwner = mock(CanonicalGameplayRegionOwnerTransferCoordinator.class);
+    long startedAt = System.nanoTime();
+    CompletableFuture<CanonicalGameplayRegionIncarnationSource.StableEvidence> read =
+        CompletableFuture.supplyAsync(
+            () -> owner.readInstallationIncarnation(transferOwner, deadline, source));
+
+    try {
+      assertThat(blockedSource.entered.await(2, TimeUnit.SECONDS)).isTrue();
+      Throwable failure = catchThrowable(() -> read.get(2, TimeUnit.SECONDS));
+      long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+      assertThat(failure).isInstanceOf(java.util.concurrent.ExecutionException.class);
+      assertThat(failure.getCause())
+          .hasMessage("Original NEW capacity execution budget is unavailable");
+      assertThat(elapsedMillis).isLessThan(2_000L);
+    } finally {
+      blockedSource.release.countDown();
+    }
   }
 
   @Test
@@ -1615,6 +1659,25 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
 
     synchronized void restoreRecoveryEvidence() {
       current = stableIncarnation(current.scope(), "storage-generation-1");
+    }
+  }
+
+  private static final class BlockingStableIncarnationSource
+      implements CanonicalGameplayRegionIncarnationSource {
+    private final CountDownLatch entered = new CountDownLatch(1);
+    private final CountDownLatch release = new CountDownLatch(1);
+
+    @Override
+    public CanonicalGameplayRegionIncarnationSource.StableEvidence readCurrent(
+        CanonicalGameplayRegionIncarnationSource.RegionScope scope) {
+      entered.countDown();
+      try {
+        release.await();
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("Controlled incarnation read was interrupted", interrupted);
+      }
+      return stableIncarnation(scope, "storage-generation-1");
     }
   }
 
