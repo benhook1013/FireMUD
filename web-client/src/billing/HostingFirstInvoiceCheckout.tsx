@@ -33,19 +33,6 @@ interface Attempt {
   authorizationRequestId?: string;
 }
 
-function sameRetainedCharge(a: FirstInvoice, b: FirstInvoice): boolean {
-  return (
-    a.subscriptionId === b.subscriptionId &&
-    a.invoiceId === b.invoiceId &&
-    a.paymentIntentId === b.paymentIntentId &&
-    a.paymentInstrumentId === b.paymentInstrumentId &&
-    a.amount === b.amount &&
-    a.currency === b.currency &&
-    a.tupleDigest === b.tupleDigest &&
-    a.expiresAt === b.expiresAt
-  );
-}
-
 /**
  * Mount under QueryClientProvider only from the App-owned account checkout
  * route, after its memory-only control-ui session is active. The route keys
@@ -153,7 +140,7 @@ export default function HostingFirstInvoiceCheckout({
     invoice &&
     (invoice.confirmationRequestId === dispatchedOperation.requestId ||
       preRowOriginal?.requestId === dispatchedOperation.requestId) &&
-    sameRetainedCharge(dispatchedOperation.invoice, invoice)
+    sameCharge(dispatchedOperation.invoice, invoice)
   );
   const canRenewAuthorization = Boolean(
     (invoice?.confirmationRequestId || preRowOriginal) &&
@@ -229,7 +216,7 @@ export default function HostingFirstInvoiceCheckout({
           setHeld(true);
           setRenewing(false);
           setMessage(
-            'The invoice changed or expired after confirmation was sent. Check Account status. Explicit renewal is available only if Account retains this same operation. No new charge was requested.'
+            'The invoice changed or expired after confirmation was sent. Check Account status. Renewal requires the same retained operation and invoice version. No new charge was requested.'
           );
         } else {
           attempt.current = null;
@@ -249,7 +236,7 @@ export default function HostingFirstInvoiceCheckout({
           setHeld(true);
           setRenewing(false);
           setMessage(
-            'The invoice fence changed after confirmation was sent. Check Account status. Explicit renewal is available only if Account retains this same operation. No new charge was requested.'
+            'The invoice fence changed after confirmation was sent. Check Account status. Renewal requires the same retained operation and invoice version. No new charge was requested.'
           );
           return;
         }
@@ -564,9 +551,9 @@ export default function HostingFirstInvoiceCheckout({
                   <Alert severity="warning">
                     {dispatchedOperation && !retainedOperationMatchesAttempt ? (
                       <>
-                        Account status does not confirm the earlier operation.
-                        Only status recovery is available. Authorization cannot
-                        safely be renewed.
+                        Account status does not confirm the original operation
+                        and invoice version. Only status recovery is available.
+                        Authorization cannot safely be renewed.
                       </>
                     ) : invoice.confirmationRequestId ? (
                       <>
