@@ -1745,8 +1745,15 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var recovered = successor.resumeCompletedTransfer(interrupted, deadline());
     assertThat(recovered.status).isEqualTo(durable);
     assertThat(recovered.grant.tokenCorrelation()).isEqualTo(durable.leaseTokenCorrelation());
-    assertThat(inventory.readRegionTransferAbortedCandidate(original.transitionId, pinnedCandidate))
-        .contains(pinnedCandidate);
+    assertThat(inventory.readRegionTransferTerminalSource(original.transitionId, pinnedCandidate))
+        .hasValueSatisfying(
+            terminal -> {
+              assertThat(terminal)
+                  .isInstanceOf(
+                      CanonicalGameplayBindingInventoryRepository.AbortedRegionTransferSource
+                          .class);
+              assertThat(terminal.candidate()).isEqualTo(pinnedCandidate);
+            });
     assertThatThrownBy(() -> inventory.readProvisionalCasEvidence(original.transitionId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not a retryable provisional operation");

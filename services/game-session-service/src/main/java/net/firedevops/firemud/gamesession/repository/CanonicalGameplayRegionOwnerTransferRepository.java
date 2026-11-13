@@ -438,7 +438,6 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                 && Objects.equals(expectedSuccessorLeaseCorrelation, retainedSuccessorLease));
   }
 
-
   /**
    * One bounded enrollment step. The final anti-join, not a cursor or page size, proves
    * completeness.
