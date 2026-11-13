@@ -44,6 +44,8 @@ import net.firedevops.firemud.socialgroups.v1.SendMailResponse;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
 import net.firedevops.firemud.socialgroups.v1.UpdateFriendPresencePolicyResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class SocialGroupsGrpcServiceTest {
@@ -1242,6 +1244,73 @@ class SocialGroupsGrpcServiceTest {
       verifyNoInteractions(friend);
     } finally {
       net.firedevops.firemud.common.security.SessionContext.clear();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ordinary", "tenantAdmin", "platformAdmin"})
+  void presencePolicyRequiresExactSelfDespiteCallerRoles(String role) {
+    FriendService friend = Mockito.mock(FriendService.class);
+    var service =
+        new SocialGroupsGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ChatService.class),
+            Mockito.mock(GuildService.class),
+            friend,
+            Mockito.mock(MailService.class),
+            new SocialAccessGuard(),
+            new SimpleMeterRegistry());
+    SessionContext.setContext(
+        accountUuid(1L),
+        role.equals("platformAdmin") ? List.of(role) : List.of(),
+        role.equals("tenantAdmin") ? Map.of("7", List.of(role)) : Map.of());
+    try {
+      AtomicReference<GetFriendPresencePolicyResponse> get = new AtomicReference<>();
+      service.getFriendPresencePolicy(
+          net.firedevops.firemud.socialgroups.v1.GetFriendPresencePolicyRequest.newBuilder()
+              .setTenantId("7")
+              .setAccountId(accountUuid(2L))
+              .build(),
+          new StreamObserver<>() {
+            public void onNext(GetFriendPresencePolicyResponse value) {
+              get.set(value);
+            }
+
+            public void onError(Throwable error) {
+              throw new AssertionError(error);
+            }
+
+            public void onCompleted() {}
+          });
+      assertNotNull(get.get());
+      assertEquals("PERMISSION_DENIED", get.get().getError().getCode());
+
+      AtomicReference<UpdateFriendPresencePolicyResponse> update = new AtomicReference<>();
+      service.updateFriendPresencePolicy(
+          net.firedevops.firemud.socialgroups.v1.UpdateFriendPresencePolicyRequest.newBuilder()
+              .setTenantId("7")
+              .setAccountId(accountUuid(2L))
+              .setVisibilityPolicy(
+                  net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
+                      .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
+              .build(),
+          new StreamObserver<>() {
+            public void onNext(UpdateFriendPresencePolicyResponse value) {
+              update.set(value);
+            }
+
+            public void onError(Throwable error) {
+              throw new AssertionError(error);
+            }
+
+            public void onCompleted() {}
+          });
+      assertNotNull(update.get());
+      assertEquals("PERMISSION_DENIED", update.get().getError().getCode());
+      assertEquals(false, update.get().getSuccess());
+      verifyNoInteractions(friend);
+    } finally {
+      SessionContext.clear();
     }
   }
 
