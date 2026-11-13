@@ -37,6 +37,10 @@ import {
 const subscriptionRoute =
   /^\/account\/subscriptions\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/checkout\/?$/i;
 const publishableKeyPattern = /^pk_(test|live)_[A-Za-z0-9]+$/;
+const retrySignInInstruction =
+  'Account sign-in could not be confirmed. To retry now, re-enter the same secret and select Sign in.';
+const expiredSignInInstruction =
+  'The sign-in recovery window expired. Start a new sign-in. If you use email codes, request a fresh code before entering it.';
 
 export interface AccountCheckoutRouteProps {
   pathname: string;
@@ -313,6 +317,17 @@ function AccountLoginForm({ api, sessionStore, notice }: LoginFormProps) {
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [sameRequestRecovery, setSameRequestRecovery] = useState(false);
+  const canRetrySignIn = useSyncExternalStore(
+    sessionStore.subscribe,
+    () => sessionStore.canRetrySignIn(email.trim()),
+    () => false
+  );
+  const visibleMessage = sameRequestRecovery
+    ? canRetrySignIn
+      ? retrySignInInstruction
+      : expiredSignInInstruction
+    : message;
   const locked = useRef(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -321,6 +336,7 @@ function AccountLoginForm({ api, sessionStore, notice }: LoginFormProps) {
     locked.current = true;
     setBusy(true);
     setMessage('');
+    setSameRequestRecovery(false);
     const credentials: ControlUiCredentials = {
       email: email.trim(),
       secret,
@@ -335,9 +351,7 @@ function AccountLoginForm({ api, sessionStore, notice }: LoginFormProps) {
       ) {
         setMessage('This sign-in attempt was replaced. Sign in again.');
       } else if (sessionStore.canRetrySignIn(credentials.email)) {
-        setMessage(
-          'Account sign-in could not be confirmed. To retry now, re-enter the same secret and select Sign in.'
-        );
+        setSameRequestRecovery(true);
       } else if (
         error instanceof AccountControlUiApiError &&
         (error.uncertain || error.status === 429)
@@ -382,9 +396,10 @@ function AccountLoginForm({ api, sessionStore, notice }: LoginFormProps) {
             const nextEmail = event.target.value;
             if (
               nextEmail.trim() !== email.trim() &&
-              sessionStore.canRetrySignIn(email.trim())
+              (sessionStore.canRetrySignIn(email.trim()) || sameRequestRecovery)
             ) {
               setMessage('');
+              setSameRequestRecovery(false);
             }
             sessionStore.discardLoginRecoveryIfEmailChanged(nextEmail.trim());
             setEmail(nextEmail);
@@ -407,9 +422,9 @@ function AccountLoginForm({ api, sessionStore, notice }: LoginFormProps) {
         >
           {busy ? 'Signing in' : 'Sign in'}
         </Button>
-        {message && (
+        {visibleMessage && (
           <Alert severity="error" role="status">
-            {message}
+            {visibleMessage}
           </Alert>
         )}
         <Typography variant="caption" color="text.secondary">
