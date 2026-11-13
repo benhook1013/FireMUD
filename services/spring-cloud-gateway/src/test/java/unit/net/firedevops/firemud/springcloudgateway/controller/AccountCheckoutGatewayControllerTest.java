@@ -84,7 +84,7 @@ class AccountCheckoutGatewayControllerTest {
   }
 
   @Test
-  void canonicalSourceComesFromTrustFilterAndNeverFromUntrustedHeaders() {
+  void directTlsLoginUsesSocketPeerEvenInsideForwardedProxyCidr() {
     for (boolean trustedForwarder : new boolean[] {false, true}) {
       var authClient = mock(AccountControlUiAuthenticationClient.class);
       var checkoutClient = mock(AccountCheckoutHttpClient.class);
@@ -113,7 +113,7 @@ class AccountCheckoutGatewayControllerTest {
       var captured = org.mockito.ArgumentCaptor.forClass(Request.class);
       verify(authClient).login(captured.capture());
       assertThat(captured.getValue().sourceContext().canonicalClientAddress())
-          .isEqualTo(trustedForwarder ? "198.51.100.20" : "192.0.2.10");
+          .isEqualTo("192.0.2.10");
     }
   }
 
