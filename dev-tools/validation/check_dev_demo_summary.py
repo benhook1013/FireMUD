@@ -17,9 +17,7 @@ from pathlib import Path
 import yaml
 
 WORKFLOW_RELATIVE_PATH = Path(".github/workflows/dev-demo.yml")
-ALLOWED_WORKSPACE_ROOT_VARIABLES = frozenset(
-    {"FIREMUD_REPO_ROOT", "GITHUB_WORKSPACE", "ROOT_DIR"}
-)
+ALLOWED_WORKSPACE_ROOT_VARIABLES = frozenset({"FIREMUD_REPO_ROOT", "GITHUB_WORKSPACE", "ROOT_DIR"})
 
 SUMMARY_HELPER_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_./$-])(?:bash[ \t]+)?"
@@ -86,7 +84,7 @@ BOOTSTRAP_MANIFEST_REQUIRED_MARKERS = (
 BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     "cleanup_bootstrap_port_forward() {",
     "BOOTSTRAP_PORT_FORWARD_PID=$!",
-    "kubectl -n \"${PREVIEW_NAMESPACE}\" port-forward",
+    'kubectl -n "${PREVIEW_NAMESPACE}" port-forward',
     "--address 127.0.0.1",
     "service/spring-cloud-gateway",
     ":80",
@@ -96,23 +94,21 @@ BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     'return f"{gateway_base_url}/api/account{path}"',
     'cleanup_bootstrap_port_forward\n          if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then',
     '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
-    'value: session',
+    "value: session",
 )
 BOOTSTRAP_PORT_FORWARD_READINESS_REQUIRED_MARKERS = (
-    'BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log',
+    "BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log",
     'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then',
-    "Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80",
-    'BOOTSTRAP_GATEWAY_PORT="$({ sed -nE',
+    "parse_bootstrap_gateway_port() {",
+    r"s/^Forwarding from 127[.]0[.]0[.]1:([0-9]{1,5}) -> 8080$/\1/p",
+    "10#$port >= 1 && 10#$port <= 65535",
+    'BOOTSTRAP_GATEWAY_PORT="$(parse_bootstrap_gateway_port "${BOOTSTRAP_PORT_FORWARD_LOG}" || true)"',
     '[[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]]',
     "BOOTSTRAP_GATEWAY_PORT <= 65535",
     'cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true',
 )
-BOOTSTRAP_DYNAMIC_PORT_FORWARD_PATTERN = re.compile(
-    r"service/spring-cloud-gateway(?:\s+\\)?\s+:80"
-)
-BOOTSTRAP_PORT_FORWARD_LOOP_PATTERN = re.compile(
-    r"for attempt in \{1\.\.(?P<attempts>[0-9]+)\}; do"
-)
+BOOTSTRAP_DYNAMIC_PORT_FORWARD_PATTERN = re.compile(r"service/spring-cloud-gateway(?:\s+\\)?\s+:80")
+BOOTSTRAP_PORT_FORWARD_LOOP_PATTERN = re.compile(r"for attempt in \{1\.\.(?P<attempts>[0-9]+)\}; do")
 BOOTSTRAP_ACCOUNT_ID_REQUIRED_MARKER = "account_file.write(str(account_id))"
 BOOTSTRAP_CREDENTIAL_VALIDATION = """for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
   if [[ -z "${!credential:-}" ]]; then
@@ -134,9 +130,7 @@ BOOTSTRAP_POST_LOG_CLEANUP = """kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-
   kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
   kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
   cleanup_bootstrap_secret"""
-BOOTSTRAP_MANIFEST_HEREDOC_OPENER = (
-    "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
-)
+BOOTSTRAP_MANIFEST_HEREDOC_OPENER = "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
 
 
 @dataclass(frozen=True)
@@ -153,9 +147,7 @@ def normalize_script(script: str) -> str:
 
 
 def normalize_nonempty_lines(script: str) -> str:
-    return "\n".join(
-        " ".join(line.split()) for line in script.splitlines() if line.strip()
-    )
+    return "\n".join(" ".join(line.split()) for line in script.splitlines() if line.strip())
 
 
 def shell_group_tokens(line: str) -> list[str]:
@@ -215,10 +207,7 @@ def shell_group_tokens(line: str) -> list[str]:
 
 def _assert_supported_shell_if(line: str) -> None:
     if re.match(r"^if(?:\s|$)", line) and not SHELL_IF_START.fullmatch(line):
-        raise AssertionError(
-            "unsupported shell if form; expected a single-line 'if ...; then' opener: "
-            f"{line}"
-        )
+        raise AssertionError(f"unsupported shell if form; expected a single-line 'if ...; then' opener: {line}")
 
 
 def closing_fi_index(lines: list[str], if_index: int) -> int | None:
@@ -236,20 +225,14 @@ def closing_fi_index(lines: list[str], if_index: int) -> int | None:
     return None
 
 
-def _grouped_command_start(
-    lines: list[str], index: int, target_match: re.Match[str]
-) -> int | None:
+def _grouped_command_start(lines: list[str], index: int, target_match: re.Match[str]) -> int | None:
     attached_tokens = shell_group_tokens(lines[index][: target_match.start()])
     if not attached_tokens or attached_tokens[-1] not in "})":
         return None
     depth = 0
     saw_closing_group = False
     for candidate in range(index, -1, -1):
-        candidate_text = (
-            lines[candidate][: target_match.start()]
-            if candidate == index
-            else lines[candidate]
-        )
+        candidate_text = lines[candidate][: target_match.start()] if candidate == index else lines[candidate]
         for token in reversed(shell_group_tokens(candidate_text)):
             if token in "})":
                 depth += 1
@@ -261,13 +244,10 @@ def _grouped_command_start(
     return None
 
 
-def _summary_heredoc(
-    lines: list[str], start: int, index: int
-) -> re.Match[str] | None:
+def _summary_heredoc(lines: list[str], start: int, index: int) -> re.Match[str] | None:
     for opener_index in range(start, index + 1):
         if opener_index < index and any(
-            not lines[candidate].rstrip().endswith("\\")
-            for candidate in range(opener_index, index)
+            not lines[candidate].rstrip().endswith("\\") for candidate in range(opener_index, index)
         ):
             continue
         opener_line = lines[opener_index]
@@ -319,10 +299,7 @@ def summary_write_regions(source: str) -> list[str]:
     """Return shell regions that write to GITHUB_STEP_SUMMARY."""
 
     lines = source.splitlines()
-    return [
-        "\n".join(lines[start : end + 1])
-        for start, end in _summary_write_line_ranges(source)
-    ]
+    return ["\n".join(lines[start : end + 1]) for start, end in _summary_write_line_ranges(source)]
 
 
 def has_forbidden_summary_reference(text: str) -> bool:
@@ -340,10 +317,7 @@ def normalize_summary_helper_path(invocation: str, root_dir: Path) -> Path:
     root_dir = root_dir.resolve()
     if invocation.startswith("$"):
         variable, separator, suffix = invocation.partition("/dev-tools/")
-        if (
-            not separator
-            or _variable_name(variable) not in ALLOWED_WORKSPACE_ROOT_VARIABLES
-        ):
+        if not separator or _variable_name(variable) not in ALLOWED_WORKSPACE_ROOT_VARIABLES:
             allowed = ", ".join(sorted(ALLOWED_WORKSPACE_ROOT_VARIABLES))
             raise ValueError(
                 f"unsupported variable-prefixed summary helper path: {invocation}; "
@@ -366,26 +340,18 @@ def collect_workflow_run_sources(workflow: dict) -> list[WorkflowRunSource]:
     sources: list[WorkflowRunSource] = []
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
-            raise AssertionError(
-                f"dev-demo workflow job {job_name!r} must be a mapping"
-            )
+            raise AssertionError(f"dev-demo workflow job {job_name!r} must be a mapping")
         steps = job.get("steps")
         if steps is None:
             continue
         if not isinstance(steps, list):
-            raise AssertionError(
-                f"dev-demo workflow job {job_name!r} steps must be a list"
-            )
+            raise AssertionError(f"dev-demo workflow job {job_name!r} steps must be a list")
         for step_index, step in enumerate(steps):
             if not isinstance(step, dict):
-                raise AssertionError(
-                    f"dev-demo workflow job {job_name!r} step {step_index} must be a mapping"
-                )
+                raise AssertionError(f"dev-demo workflow job {job_name!r} step {step_index} must be a mapping")
             run = step.get("run")
             if isinstance(run, str):
-                sources.append(
-                    WorkflowRunSource(job_name, str(step.get("name", step_index)), run)
-                )
+                sources.append(WorkflowRunSource(job_name, str(step.get("name", step_index)), run))
     return sources
 
 
@@ -412,9 +378,7 @@ def discover_summary_writers(
         else:
             traversal_key = (current.job_name, current.resolved_helper_path)
             previous_reachability = seen_helpers.get(traversal_key)
-        if previous_reachability is True or (
-            previous_reachability is False and not current.summary_reachable
-        ):
+        if previous_reachability is True or (previous_reachability is False and not current.summary_reachable):
             continue
         if current.resolved_helper_path is None:
             seen_sources[traversal_key] = current.summary_reachable
@@ -430,24 +394,17 @@ def discover_summary_writers(
                 summary_writers[existing_index] = current
 
         for match in _helper_matches(current.source):
-            helper_path = normalize_summary_helper_path(
-                match.group("invocation"), root_dir
-            )
+            helper_path = normalize_summary_helper_path(match.group("invocation"), root_dir)
             try:
                 relative_helper = helper_path.relative_to(root_dir)
             except ValueError as exc:
-                raise ValueError(
-                    f"summary helper path escapes repository root: {match.group('invocation')}"
-                ) from exc
+                raise ValueError(f"summary helper path escapes repository root: {match.group('invocation')}") from exc
             if not helper_path.is_file():
                 raise AssertionError(
-                    "summary helper file is missing: "
-                    f"{helper_path} (referenced as {match.group('invocation')})"
+                    f"summary helper file is missing: {helper_path} (referenced as {match.group('invocation')})"
                 )
             line_index = current.source.count("\n", 0, match.start())
-            redirected = current.summary_reachable or any(
-                start <= line_index <= end for start, end in direct_ranges
-            )
+            redirected = current.summary_reachable or any(start <= line_index <= end for start, end in direct_ranges)
             helper_source = helper_path.read_text(encoding="utf-8")
             pending.append(
                 WorkflowRunSource(
@@ -503,9 +460,7 @@ def _cleanup_function_end_index(lines: list[str], function_start: int) -> int | 
 
 def _extract_bootstrap_pod(bootstrap_manifest: str) -> dict:
     if bootstrap_manifest.count(BOOTSTRAP_MANIFEST_HEREDOC_OPENER) != 1:
-        raise AssertionError(
-            "dev-demo bootstrap step must contain exactly one expected pod manifest heredoc opener"
-        )
+        raise AssertionError("dev-demo bootstrap step must contain exactly one expected pod manifest heredoc opener")
     try:
         manifest_start = bootstrap_manifest.index(BOOTSTRAP_MANIFEST_HEREDOC_OPENER)
         manifest_start = bootstrap_manifest.index("\n", manifest_start) + 1
@@ -516,24 +471,18 @@ def _extract_bootstrap_pod(bootstrap_manifest: str) -> dict:
                 raise
             manifest_end = len(bootstrap_manifest) - len("\nEOF")
     except ValueError as exc:
-        raise AssertionError(
-            "dev-demo bootstrap step must contain the expected pod manifest heredoc"
-        ) from exc
+        raise AssertionError("dev-demo bootstrap step must contain the expected pod manifest heredoc") from exc
     try:
         pod = yaml.safe_load(bootstrap_manifest[manifest_start:manifest_end])
     except yaml.YAMLError as exc:
-        raise AssertionError(
-            "dev-demo bootstrap pod manifest heredoc is not valid YAML"
-        ) from exc
+        raise AssertionError("dev-demo bootstrap pod manifest heredoc is not valid YAML") from exc
     if not isinstance(pod, dict):
         raise AssertionError("dev-demo bootstrap pod manifest must be a mapping")
     return pod
 
 
 def _validate_bootstrap_secret_command(command_lines: list[str]) -> None:
-    command = " ".join(
-        line.removesuffix("\\").rstrip() for line in command_lines
-    )
+    command = " ".join(line.removesuffix("\\").rstrip() for line in command_lines)
     try:
         tokens = shlex.split(command)
     except ValueError as exc:
@@ -557,9 +506,7 @@ def _validate_bootstrap_secret_command(command_lines: list[str]) -> None:
         if not argument.startswith("--from-file="):
             malformed_arguments = True
             continue
-        key, separator, path = argument.removeprefix(
-            "--from-file="
-        ).partition("=")
+        key, separator, path = argument.removeprefix("--from-file=").partition("=")
         if not separator or not key or not path:
             malformed_arguments = True
             continue
@@ -571,15 +518,11 @@ def _validate_bootstrap_secret_command(command_lines: list[str]) -> None:
     if malformed_arguments:
         issues.append("only --from-file arguments are allowed after the secret name")
     if duplicate_keys:
-        issues.append(
-            f"duplicate file keys: {', '.join(sorted(set(duplicate_keys)))}"
-        )
+        issues.append(f"duplicate file keys: {', '.join(sorted(set(duplicate_keys)))}")
     missing_keys = sorted(set(BOOTSTRAP_SECRET_FILE_MAPPINGS) - file_mappings.keys())
     if missing_keys:
         issues.append(f"missing file keys: {', '.join(missing_keys)}")
-    unexpected_keys = sorted(
-        file_mappings.keys() - set(BOOTSTRAP_SECRET_FILE_MAPPINGS)
-    )
+    unexpected_keys = sorted(file_mappings.keys() - set(BOOTSTRAP_SECRET_FILE_MAPPINGS))
     if unexpected_keys:
         issues.append(f"unexpected file keys: {', '.join(unexpected_keys)}")
     mismatched_paths = sorted(
@@ -588,75 +531,41 @@ def _validate_bootstrap_secret_command(command_lines: list[str]) -> None:
         if key in file_mappings and file_mappings[key] != expected_path
     )
     if mismatched_paths:
-        issues.append(
-            "file keys have unexpected source paths: "
-            f"{', '.join(mismatched_paths)}"
-        )
+        issues.append(f"file keys have unexpected source paths: {', '.join(mismatched_paths)}")
     if issues:
         raise AssertionError(
             "dev-demo bootstrap credential secret must use direct create without "
-            "apply annotations and only the expected file-backed credentials; "
-            + "; ".join(issues)
+            "apply annotations and only the expected file-backed credentials; " + "; ".join(issues)
         )
 
 
 def _validate_bootstrap_temp_directory_cleanup(bootstrap_lines: list[str]) -> None:
-    cleanup_starts = [
-        index
-        for index, line in enumerate(bootstrap_lines)
-        if line == "cleanup_bootstrap_temp_dir() {"
-    ]
+    cleanup_starts = [index for index, line in enumerate(bootstrap_lines) if line == "cleanup_bootstrap_temp_dir() {"]
     if len(cleanup_starts) != 1:
-        raise AssertionError(
-            "dev-demo bootstrap must contain exactly one cleanup_bootstrap_temp_dir function"
-        )
+        raise AssertionError("dev-demo bootstrap must contain exactly one cleanup_bootstrap_temp_dir function")
     cleanup_end = _cleanup_function_end_index(bootstrap_lines, cleanup_starts[0])
     if cleanup_end is None:
-        raise AssertionError(
-            "dev-demo bootstrap cleanup function has no same-nesting closing brace"
-        )
+        raise AssertionError("dev-demo bootstrap cleanup function has no same-nesting closing brace")
     cleanup_lines = bootstrap_lines[cleanup_starts[0] : cleanup_end]
     success_start = next(
-        (
-            index
-            for index, line in enumerate(cleanup_lines)
-            if 'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then' in line
-        ),
+        (index for index, line in enumerate(cleanup_lines) if 'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then' in line),
         None,
     )
     if success_start is None:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory cleanup success branch is missing"
-        )
+        raise AssertionError("dev-demo bootstrap temp directory cleanup success branch is missing")
     success_end = closing_fi_index(cleanup_lines, success_start)
     if success_end is None:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory cleanup success branch has no closing fi"
-        )
+        raise AssertionError("dev-demo bootstrap temp directory cleanup success branch has no closing fi")
     success_return = next(
-        (
-            index
-            for index in range(success_start + 1, success_end)
-            if "return 0" in cleanup_lines[index]
-        ),
+        (index for index in range(success_start + 1, success_end) if "return 0" in cleanup_lines[index]),
         None,
     )
     if success_return is None:
+        raise AssertionError("dev-demo bootstrap temp directory cleanup success branch must return 0")
+    clear_directory_lines = [index for index, line in enumerate(cleanup_lines) if line == "BOOTSTRAP_SECRET_DIR="]
+    if len(clear_directory_lines) != 1 or not success_start < clear_directory_lines[0] < success_return < success_end:
         raise AssertionError(
-            "dev-demo bootstrap temp directory cleanup success branch must return 0"
-        )
-    clear_directory_lines = [
-        index
-        for index, line in enumerate(cleanup_lines)
-        if line == "BOOTSTRAP_SECRET_DIR="
-    ]
-    if (
-        len(clear_directory_lines) != 1
-        or not success_start < clear_directory_lines[0] < success_return < success_end
-    ):
-        raise AssertionError(
-            "dev-demo bootstrap temp directory must clear its variable only in the "
-            "successful rm branch before return 0"
+            "dev-demo bootstrap temp directory must clear its variable only in the successful rm branch before return 0"
         )
 
 
@@ -667,19 +576,11 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
         raise AssertionError("dev-demo bootstrap pod must define spec as a mapping")
     containers = pod_spec.get("containers")
     if not isinstance(containers, list) or not containers:
-        raise AssertionError(
-            "dev-demo bootstrap pod spec.containers must be a non-empty list"
-        )
+        raise AssertionError("dev-demo bootstrap pod spec.containers must be a non-empty list")
     if not isinstance(containers[0], dict):
-        raise AssertionError(
-            "dev-demo bootstrap pod spec.containers[0] must be a mapping"
-        )
-    if containers[0].get("envFrom", []) != [
-        {"secretRef": {"name": "dev-demo-bootstrap-env"}}
-    ]:
-        raise AssertionError(
-            "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
-        )
+        raise AssertionError("dev-demo bootstrap pod spec.containers[0] must be a mapping")
+    if containers[0].get("envFrom", []) != [{"secretRef": {"name": "dev-demo-bootstrap-env"}}]:
+        raise AssertionError("dev-demo bootstrap pod must import dev-demo-bootstrap-env")
 
 
 def _player_bootstrap_payload_end(source: str, start: int) -> int | None:
@@ -760,9 +661,7 @@ def _validate_player_bootstrap_payload(source: str, request: re.Match[str]) -> b
     fields = {
         key.value: value.id
         for key, value in zip(payload.keys, payload.values, strict=True)
-        if isinstance(key, ast.Constant)
-        and isinstance(key.value, str)
-        and isinstance(value, ast.Name)
+        if isinstance(key, ast.Constant) and isinstance(key.value, str) and isinstance(value, ast.Name)
     }
     return fields == {"accountIdentifier": "email", "secret": "password"}
 
@@ -771,9 +670,7 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     normalized = normalize_script(bootstrap_manifest)
     for expected in BOOTSTRAP_MANIFEST_REQUIRED_MARKERS:
         if normalize_script(expected) not in normalized:
-            raise AssertionError(
-                f"dev-demo bootstrap step contract missing: {expected}"
-            )
+            raise AssertionError(f"dev-demo bootstrap step contract missing: {expected}")
     for expected in BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS:
         if normalize_script(expected) not in normalized:
             raise AssertionError(
@@ -781,82 +678,49 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
                 f"port-forward transport; missing: {expected}"
             )
     if re.search(r"\bBOOTSTRAP_GATEWAY_PORT\s*=\s*[0-9]+\b", normalized):
-        raise AssertionError(
-            "dev-demo player bootstrap must use kubectl's dynamically selected local port"
-        )
+        raise AssertionError("dev-demo player bootstrap must use kubectl's dynamically selected local port")
     if BOOTSTRAP_DYNAMIC_PORT_FORWARD_PATTERN.search(normalized) is None:
-        raise AssertionError(
-            "dev-demo player bootstrap must use kubectl's dynamic :80 local-port syntax"
-        )
+        raise AssertionError("dev-demo player bootstrap must use kubectl's dynamic :80 local-port syntax")
     for expected in BOOTSTRAP_PORT_FORWARD_READINESS_REQUIRED_MARKERS:
         if normalize_script(expected) not in normalized:
             raise AssertionError(
-                "dev-demo player bootstrap must prove the dynamic port-forward binding; "
-                f"missing: {expected}"
+                f"dev-demo player bootstrap must prove the dynamic port-forward binding; missing: {expected}"
             )
     readiness_loop_match = BOOTSTRAP_PORT_FORWARD_LOOP_PATTERN.search(normalized)
-    if readiness_loop_match is None or not 1 <= int(
-        readiness_loop_match["attempts"]
-    ) <= 60:
-        raise AssertionError(
-            "dev-demo player bootstrap must use a short bounded port-forward readiness loop"
-        )
+    if readiness_loop_match is None or not 1 <= int(readiness_loop_match["attempts"]) <= 60:
+        raise AssertionError("dev-demo player bootstrap must use a short bounded port-forward readiness loop")
     readiness_loop = readiness_loop_match.group(0)
     python_invocation = normalize_script('python3 "${BOOTSTRAP_SCRIPT}"')
-    liveness_check = normalize_script(
-        'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
-    )
+    liveness_check = normalize_script('if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then')
     python_index = normalized.find(python_invocation)
     if python_index == -1:
-        raise AssertionError(
-            'dev-demo player bootstrap must invoke Python as python3 "${BOOTSTRAP_SCRIPT}"'
-        )
+        raise AssertionError('dev-demo player bootstrap must invoke Python as python3 "${BOOTSTRAP_SCRIPT}"')
     if normalized.find(readiness_loop) > python_index:
-        raise AssertionError(
-            "dev-demo player bootstrap must prove the port-forward before invoking Python"
-        )
-    if (
-        normalized.count(liveness_check) < 2
-        or normalized.rfind(liveness_check) > python_index
-    ):
-        raise AssertionError(
-            "dev-demo player bootstrap must recheck port-forward liveness before invoking Python"
-        )
+        raise AssertionError("dev-demo player bootstrap must prove the port-forward before invoking Python")
+    if normalized.count(liveness_check) < 2 or normalized.rfind(liveness_check) > python_index:
+        raise AssertionError("dev-demo player bootstrap must recheck port-forward liveness before invoking Python")
     if normalize_script(BOOTSTRAP_ACCOUNT_ID_REQUIRED_MARKER) not in normalized:
         raise AssertionError(
-            "dev-demo bootstrap must write the account id as text to preserve the "
-            "account-id file flow"
+            "dev-demo bootstrap must write the account id as text to preserve the account-id file flow"
         )
 
     normalized_lines = normalize_nonempty_lines(bootstrap_manifest)
     credential_validation = normalize_nonempty_lines(BOOTSTRAP_CREDENTIAL_VALIDATION)
     if credential_validation not in normalized_lines:
-        raise AssertionError(
-            "dev-demo bootstrap must reject empty credentials before creating temporary files"
-        )
+        raise AssertionError("dev-demo bootstrap must reject empty credentials before creating temporary files")
     if 'chmod 700 "${BOOTSTRAP_SECRET_DIR}"' in bootstrap_manifest:
-        raise AssertionError(
-            "dev-demo bootstrap must rely on mktemp directory permissions"
-        )
-    secret_cleanup_and_create = normalize_nonempty_lines(
-        BOOTSTRAP_SECRET_CLEANUP_AND_CREATE
-    )
+        raise AssertionError("dev-demo bootstrap must rely on mktemp directory permissions")
+    secret_cleanup_and_create = normalize_nonempty_lines(BOOTSTRAP_SECRET_CLEANUP_AND_CREATE)
     if secret_cleanup_and_create not in normalized_lines:
-        raise AssertionError(
-            "dev-demo bootstrap must delete stale credentials before direct secret creation"
-        )
+        raise AssertionError("dev-demo bootstrap must delete stale credentials before direct secret creation")
 
     source_lines = bootstrap_manifest.splitlines()
     try:
         secret_start = next(
-            index
-            for index, line in enumerate(source_lines)
-            if "create secret generic dev-demo-bootstrap-env" in line
+            index for index, line in enumerate(source_lines) if "create secret generic dev-demo-bootstrap-env" in line
         )
     except StopIteration as exc:
-        raise AssertionError(
-            "dev-demo bootstrap must create its credential secret directly"
-        ) from exc
+        raise AssertionError("dev-demo bootstrap must create its credential secret directly") from exc
     secret_command_lines: list[str] = []
     secret_index = secret_start
     while True:
@@ -870,35 +734,24 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     _validate_bootstrap_secret_command(secret_command_lines)
     cleanup_success = normalize_nonempty_lines(BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_SUCCESS)
     if cleanup_success not in normalized_lines:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory must clear its variable only after rm succeeds"
-        )
+        raise AssertionError("dev-demo bootstrap temp directory must clear its variable only after rm succeeds")
     cleanup_failure = normalize_nonempty_lines(BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_FAILURE)
     if cleanup_failure not in normalized_lines:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory removal failure must return failure"
-        )
+        raise AssertionError("dev-demo bootstrap temp directory removal failure must return failure")
     post_log_cleanup = normalize_nonempty_lines(BOOTSTRAP_POST_LOG_CLEANUP)
     if post_log_cleanup not in normalized_lines:
-        raise AssertionError(
-            "dev-demo bootstrap must remove its credential secret after successful pod logging"
-        )
+        raise AssertionError("dev-demo bootstrap must remove its credential secret after successful pod logging")
 
-    player_bootstrap_requests = list(
-        PLAYER_BOOTSTRAP_REQUEST_CALL.finditer(bootstrap_manifest)
-    )
+    player_bootstrap_requests = list(PLAYER_BOOTSTRAP_REQUEST_CALL.finditer(bootstrap_manifest))
     player_bootstrap_request_count = len(player_bootstrap_requests)
     if player_bootstrap_request_count != 1:
         raise AssertionError(
             "dev-demo bootstrap must contain exactly one /auth/player-bootstrap request "
             f"(found {player_bootstrap_request_count})"
         )
-    if not _validate_player_bootstrap_payload(
-        bootstrap_manifest, player_bootstrap_requests[0]
-    ):
+    if not _validate_player_bootstrap_payload(bootstrap_manifest, player_bootstrap_requests[0]):
         raise AssertionError(
-            "dev-demo bootstrap must send exactly accountIdentifier and secret "
-            "to /auth/player-bootstrap"
+            "dev-demo bootstrap must send exactly accountIdentifier and secret to /auth/player-bootstrap"
         )
 
     bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]
@@ -917,48 +770,35 @@ def _validate_smoke_account_contract(root: Path) -> None:
     )
     for smoke_script in smoke_script_paths:
         if not smoke_script.is_file():
-            raise AssertionError(
-                f"Smoke account contract script is missing: {smoke_script}"
-            )
+            raise AssertionError(f"Smoke account contract script is missing: {smoke_script}")
         source = smoke_script.read_text(encoding="utf-8")
         for required_marker in required_markers:
             if required_marker not in source:
                 raise AssertionError(
-                    "Smoke contract missing required account verification marker "
-                    f"{required_marker!r}: {smoke_script}"
+                    f"Smoke contract missing required account verification marker {required_marker!r}: {smoke_script}"
                 )
 
 
 def _validate_smoke_condition(condition: object) -> None:
     if not isinstance(condition, str):
-        raise AssertionError(
-            "dev-demo TCP smoke must use a success() leading && guard"
-        )
+        raise AssertionError("dev-demo TCP smoke must use a success() leading && guard")
 
     expression = condition.strip()
     if not (expression.startswith("${{") and expression.endswith("}}")):
-        raise AssertionError(
-            "dev-demo TCP smoke must use a success() leading && guard"
-        )
+        raise AssertionError("dev-demo TCP smoke must use a success() leading && guard")
 
     body = expression[3:-2].strip()
     if not body.startswith("success()"):
-        raise AssertionError(
-            "dev-demo TCP smoke must use a success() leading && guard"
-        )
+        raise AssertionError("dev-demo TCP smoke must use a success() leading && guard")
 
     remainder = body[len("success()") :].strip()
     if not remainder:
         return
     if not remainder.startswith("&&"):
-        raise AssertionError(
-            "dev-demo TCP smoke must use success() as a mandatory leading && guard"
-        )
+        raise AssertionError("dev-demo TCP smoke must use success() as a mandatory leading && guard")
     continuation = remainder[2:].strip()
     if not continuation or "||" in continuation or re.search(r"!(?!=)", body):
-        raise AssertionError(
-            "dev-demo TCP smoke must use success() as a mandatory leading && guard"
-        )
+        raise AssertionError("dev-demo TCP smoke must use success() as a mandatory leading && guard")
 
 
 def validate_workflow(root: Path) -> None:
@@ -967,9 +807,7 @@ def validate_workflow(root: Path) -> None:
     if not isinstance(jobs, dict) or "dev-demo-deploy" not in jobs:
         raise AssertionError("dev-demo workflow missing required 'dev-demo-deploy' job")
     deploy_job = jobs["dev-demo-deploy"]
-    if not isinstance(deploy_job, dict) or not isinstance(
-        deploy_job.get("steps"), list
-    ):
+    if not isinstance(deploy_job, dict) or not isinstance(deploy_job.get("steps"), list):
         raise AssertionError("dev-demo-deploy job missing its required steps list")
     bootstrap_step = _find_step(deploy_job, "Create dev-demo smoke account")
     smoke_step = _find_step(deploy_job, "Smoke dev-demo over TCP")
@@ -988,17 +826,13 @@ def validate_workflow(root: Path) -> None:
         for source in summary_writers
         if any(
             has_forbidden_summary_reference(region)
-            for region in (
-                summary_write_regions(source.source)
-                + ([source.source] if source.summary_reachable else [])
-            )
+            for region in (summary_write_regions(source.source) + ([source.source] if source.summary_reachable else []))
         )
     ]
     if offending:
         writers = ", ".join(f"{job}/{step}" for job, step in offending)
         raise AssertionError(
-            "dev-demo summaries must not reference bootstrap credential material; "
-            f"offending summary writers: {writers}"
+            f"dev-demo summaries must not reference bootstrap credential material; offending summary writers: {writers}"
         )
 
 

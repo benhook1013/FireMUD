@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -154,6 +155,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
   private final java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>>
       scopedConnection;
   private final java.util.function.LongSupplier remainingCommandMillis;
+  private final OriginCustody originCustody;
   private final java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>>
       scopedClose;
 
@@ -162,7 +164,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       RedisScriptCatalog catalog,
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tenantTags) {
-    this(redisClient, catalog, clock, tenantTags, null, null, null);
+    this(redisClient, catalog, clock, tenantTags, null, null, null, null);
   }
 
   CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
@@ -173,6 +175,27 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>> scopedConnection,
       java.util.function.LongSupplier remainingCommandMillis,
       java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>> scopedClose) {
+    this(
+        redisClient,
+        catalog,
+        clock,
+        tenantTags,
+        scopedConnection,
+        remainingCommandMillis,
+        scopedClose,
+        null);
+  }
+
+  private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+      io.lettuce.core.RedisClient redisClient,
+      RedisScriptCatalog catalog,
+      Clock clock,
+      CanonicalGameplayTenantGameplayTagRepository tenantTags,
+      java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>> scopedConnection,
+      java.util.function.LongSupplier remainingCommandMillis,
+      java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>> scopedClose,
+      OriginCustody originCustody) {
+    this.originCustody = originCustody;
     if ((scopedConnection == null) != (remainingCommandMillis == null)
         || (scopedConnection == null) != (scopedClose == null))
       throw new IllegalArgumentException(
@@ -185,6 +208,30 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     this.clock = Objects.requireNonNull(clock, "Clock is required");
     this.tenantTags = Objects.requireNonNull(tenantTags, "Persisted tenant-tag owner is required");
   }
+
+  /** Manual receiving composition only; never supplies authority from a fresh owner reread. */
+  CanonicalGameplayOriginalNewFinalAdmissionRedisOwner forOrigin(
+      CanonicalGameplayCapacityOrigin origin,
+      CanonicalGameplayCapacityOriginRepository.Retained custody) {
+    Objects.requireNonNull(origin);
+    Objects.requireNonNull(custody);
+    if (custody.state() != CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED
+        && custody.state() != CanonicalGameplayCapacityOrigin.State.CLOSURE_CLAIMED)
+      throw unavailable();
+    return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+        redisClient,
+        catalog,
+        clock,
+        tenantTags,
+        scopedConnection,
+        remainingCommandMillis,
+        scopedClose,
+        new OriginCustody(origin, custody));
+  }
+
+  private record OriginCustody(
+      CanonicalGameplayCapacityOrigin origin,
+      CanonicalGameplayCapacityOriginRepository.Retained custody) {}
 
   /**
    * Applies the provisional source's final tenant-slot CAS or recovers a committed source by exact
@@ -381,6 +428,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       OriginalNewCapacityExecution execution,
       CanonicalGameplayOriginalNewCandidate candidate,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      UUID dispatchId,
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
     requireAssignment(assignment, candidate);
@@ -408,7 +456,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
           ascii("{}"),
           ascii("{}"),
           absoluteDeadlineMillis,
-          ascii("transfer-fence"),
+          ascii(dispatchId.toString()),
           execution,
           "FENCE");
     } finally {
@@ -782,18 +830,27 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
 
   private RedisScriptDescriptor requireDescriptor() {
     try {
-      RedisScriptDescriptor descriptor =
-          catalog.require(
-              CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution.SCRIPT_ID);
-      if (!CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution.SCRIPT_ID.equals(
-              descriptor.scriptId())
+      String expectedId =
+          originCustody == null
+              ? CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution.SCRIPT_ID
+              : "game-session.original-new-origin-final-admission.v1";
+      var expectedKeys = new java.util.ArrayList<>(EXPECTED_KEYS);
+      var expectedArguments = new java.util.ArrayList<>(EXPECTED_ARGUMENTS);
+      if (originCustody != null) {
+        expectedKeys.add(key("capacityOrigin", "session:game:capacity-origin:"));
+        expectedArguments.add(argument("originDigest"));
+        expectedArguments.add(argument("custodyOwnerId"));
+        expectedArguments.add(argument("custodyOwnerFence"));
+      }
+      RedisScriptDescriptor descriptor = catalog.require(expectedId);
+      if (!expectedId.equals(descriptor.scriptId())
           || !CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution.RESOURCE_PATH
               .equals(descriptor.resourcePath())
           || !"game-session-service".equals(descriptor.owner())
           || !PRINCIPAL.equals(descriptor.principal())
           || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
-          || !EXPECTED_KEYS.equals(descriptor.keys())
-          || !EXPECTED_ARGUMENTS.equals(descriptor.arguments())
+          || !expectedKeys.equals(descriptor.keys())
+          || !expectedArguments.equals(descriptor.arguments())
           || descriptor.category() != RedisScriptDescriptor.ScriptCategory.SESSION_CAS
           || !EXPECTED_OUTCOMES.equals(descriptor.outcomes())
           || descriptor.resetSensitivity() != RedisScriptDescriptor.ResetSensitivity.CLUSTER
@@ -859,32 +916,51 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       requirePrincipal(awaitCommand(commands::aclWhoami));
       String sha = awaitCommand(() -> commands.scriptLoad(script));
       if (!digest("SHA-1", script).equals(sha)) throw unavailable();
+      byte[][] commandKeys = keyBytes(keys);
+      java.util.List<byte[]> arguments =
+          new java.util.ArrayList<>(
+              java.util.Arrays.asList(
+                  ascii(assignment.tenantId().toString()),
+                  ascii(assignment.accountId().toString()),
+                  ascii(assignment.playableStateNamespaceId().toString()),
+                  ascii(candidate.bindingIdentity().characterId().toString()),
+                  ascii(assignment.gameInstanceId().toString()),
+                  ascii(assignment.sessionId()),
+                  ascii(candidate.transition().bindingGeneration().toString()),
+                  ascii(assignment.tenantGameplayTag()),
+                  candidateBytes,
+                  characterBytes,
+                  templateBytes,
+                  ascii(Long.toString(durationMillis)),
+                  accountJson,
+                  issuerJson,
+                  ascii(Long.toString(absoluteDeadlineMillis)),
+                  issuerPayload,
+                  execution.canonicalBytes(),
+                  ascii(action),
+                  ascii(execution.digest())));
+      if (originCustody != null) {
+        var origin = originCustody.origin();
+        if (!java.util.Arrays.equals(
+                net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+                    execution.request()),
+                net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+                    origin.request()))
+            || !execution.transitionId().equals(origin.transitionId())
+            || !execution.candidateDigest().equals(origin.candidateDigest())
+            || !execution.selectedOwnerId().equals(origin.selectedOwnerId())
+            || execution.selectedOwnerFence() != origin.selectedOwnerFence()) throw unavailable();
+        commandKeys = java.util.Arrays.copyOf(commandKeys, 8);
+        commandKeys[7] = ascii(origin.redisKey());
+        arguments.add(ascii(origin.digest()));
+        arguments.add(ascii(originCustody.custody().ownerId()));
+        arguments.add(ascii(Long.toString(originCustody.custody().ownerFence())));
+      }
+      final byte[][] exactKeys = commandKeys;
+      final byte[][] exactArguments = arguments.toArray(byte[][]::new);
       Long result =
           awaitCommand(
-              () ->
-                  commands.evalsha(
-                      sha,
-                      ScriptOutputType.INTEGER,
-                      keyBytes(keys),
-                      ascii(assignment.tenantId().toString()),
-                      ascii(assignment.accountId().toString()),
-                      ascii(assignment.playableStateNamespaceId().toString()),
-                      ascii(candidate.bindingIdentity().characterId().toString()),
-                      ascii(assignment.gameInstanceId().toString()),
-                      ascii(assignment.sessionId()),
-                      ascii(candidate.transition().bindingGeneration().toString()),
-                      ascii(assignment.tenantGameplayTag()),
-                      candidateBytes,
-                      characterBytes,
-                      templateBytes,
-                      ascii(Long.toString(durationMillis)),
-                      accountJson,
-                      issuerJson,
-                      ascii(Long.toString(absoluteDeadlineMillis)),
-                      issuerPayload,
-                      execution.canonicalBytes(),
-                      ascii(action),
-                      ascii(execution.digest())));
+              () -> commands.evalsha(sha, ScriptOutputType.INTEGER, exactKeys, exactArguments));
       return result;
     } catch (RuntimeException failure) {
       throw unavailable();
