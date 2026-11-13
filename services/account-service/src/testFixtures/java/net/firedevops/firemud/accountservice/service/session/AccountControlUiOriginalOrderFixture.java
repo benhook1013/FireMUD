@@ -10,6 +10,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
@@ -18,6 +21,10 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalReconciliationService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbusePolicy;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbusePolicySource;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseSubjectKeys.DigestKey;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -41,6 +48,8 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   final AccountJwtJwksTrustedSource publicSource;
   final AccountControlUiSignerFixture signerFixture;
   private final AccountControlUiIssuanceService issuance;
+  private final DigestKey credentialAbuseKey;
+  private final AccountCredentialAbuseService credentialAbuse;
   private final AccountControlUiIssuanceRepository operations;
   private final AccountControlUiCoordination coordination;
   private final RedisClient accountClient;
@@ -269,7 +278,11 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             ownedCompositionConnections,
             creationEvidence);
     RedisClient allocatedClient = null;
+    DigestKey allocatedAbuseKey = null;
     try {
+      allocatedAbuseKey = new DigestKey("fixture-key", new byte[32]);
+      credentialAbuseKey = allocatedAbuseKey;
+      credentialAbuse = testCredentialAbuseService(credentialAbuseKey);
       signerFixture = new AccountControlUiSignerFixture(f, temporary, serviceClock);
       var lifecycle = signerFixture;
       lifecycle.commit();
@@ -363,7 +376,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       issuance =
           new AccountControlUiIssuanceService(
               f.primary,
-              null, // No implicit shared abuse policy or admitting fallback.
+              credentialAbuse,
               operations,
               f.authority,
               f.fences,
@@ -377,6 +390,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
               300_000L,
               AccountControlUiOwnerSourcesFixture.CALLER);
     } catch (Exception | Error failure) {
+      if (allocatedAbuseKey != null) allocatedAbuseKey.close();
       if (allocatedClient != null) {
         try {
           allocatedClient.shutdown();
@@ -589,10 +603,65 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
         f.closeOwnedConnections();
       } catch (RuntimeException | Error cleanupFailure) {
         failure.addSuppressed(cleanupFailure);
+      } finally {
+        credentialAbuseKey.close();
       }
       throw failure;
     }
-    f.closeOwnedConnections();
+    try {
+      f.closeOwnedConnections();
+    } finally {
+      credentialAbuseKey.close();
+    }
+  }
+
+  /**
+   * Setup-only Account admission stub; receiving proofs inject a Cache-backed service. This fixture
+   * backend records no abuse evidence and grants no production or throttle proof.
+   */
+  private static AccountCredentialAbuseService testCredentialAbuseService(DigestKey key) {
+    Clock clock = Clock.systemUTC();
+    Instant now = clock.instant().truncatedTo(ChronoUnit.MILLIS);
+    var policy =
+        new AccountCredentialAbusePolicy(
+            "original-order-fixture",
+            now.minusSeconds(60),
+            now.plusSeconds(3600),
+            Duration.ofSeconds(60),
+            Duration.ofSeconds(120),
+            2,
+            512,
+            64L * 1024 * 1024,
+            4096,
+            1000,
+            10000,
+            Duration.ofSeconds(2),
+            Duration.ofSeconds(5),
+            Duration.ofSeconds(10),
+            Duration.ofSeconds(1),
+            List.of(
+                new AccountCredentialAbusePolicy.Rule(3, 2, 0, Duration.ofSeconds(1)),
+                new AccountCredentialAbusePolicy.Rule(3, 2, 10, Duration.ofSeconds(5))));
+    var backend =
+        new AccountCredentialAbuseService.Backend() {
+          @Override
+          public AccountCredentialAbusePolicy.Signals admit(
+              AccountCredentialAbusePolicy ignored,
+              AccountCredentialAbuseService.Buckets buckets,
+              Instant admittedAt) {
+            return new AccountCredentialAbusePolicy.Signals(0, 0, 0);
+          }
+
+          @Override
+          public boolean recordFailure(
+              AccountCredentialAbusePolicy ignored,
+              AccountCredentialAbuseService.Buckets buckets,
+              Instant failedAt) {
+            return true;
+          }
+        };
+    return new AccountCredentialAbuseService(
+        AccountCredentialAbusePolicySource.controlled(policy, key), backend, clock);
   }
 
   private static RedisScriptCatalog testCatalog() {
