@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence;
@@ -187,7 +188,7 @@ public final class AccountTenantCapacityRepository {
             request.evidence().evaluationIdentity(),
             delta,
             at(expiresAt),
-            at(expiresAt.plusSeconds(60)));
+            at(AccountCapacityOriginContinuation.reconcileDeadline(expiresAt)));
     if (created != 1) throw unavailable();
     return Optional.of(exact(request, Objects.requireNonNull(find(request.identity()))));
   }

@@ -62,7 +62,8 @@ local function decode(bytes, maximum)
   if not ok or type(value) ~= 'table' then return nil end
   return value
 end
-if #KEYS ~= 7 or #ARGV ~= 19 then return -2 end
+local hasOrigin = #KEYS == 8 and #ARGV == 22
+if not hasOrigin and (#KEYS ~= 7 or #ARGV ~= 19) then return -2 end
 local capacityBytes, action, capacityDigest = ARGV[17], ARGV[18], ARGV[19]
 if action ~= 'FINAL' and action ~= 'INSTALL' and action ~= 'CLOSE' and action ~= 'FENCE' then return -2 end
 local capacity = decode(capacityBytes, 1048576)
@@ -107,9 +108,25 @@ if KEYS[1] ~= prefix .. slot .. ':' .. gameInstanceId .. ':' .. sessionId
     or KEYS[6] ~= prefix .. 'issuer-admission:' .. slot .. ':firemud-account-service:' .. tenantId .. ':' .. namespaceId
     or KEYS[7] ~= prefix .. 'capacity-execution:' .. slot .. ':' .. capacity.admissionAttemptId
     or capacity.tenantId ~= tenantId then return -2 end
+-- New receiving-origin executions always carry the eighth same-slot custody key.
+-- Historical seven-key executions cannot enter the absent-marker construction branch.
+local originClose = false
+if hasOrigin then
+  if KEYS[8] ~= prefix .. 'capacity-origin:' .. slot .. ':' .. capacity.admissionAttemptId
+      or redis.call('TYPE', KEYS[8]).ok ~= 'hash' or redis.call('PTTL', KEYS[8]) ~= -1
+      or redis.call('HLEN', KEYS[8]) ~= 4
+      or redis.call('HGET', KEYS[8], 'origin') ~= ARGV[20]
+      or redis.call('HGET', KEYS[8], 'owner') ~= ARGV[21]
+      or redis.call('HGET', KEYS[8], 'fence') ~= ARGV[22] then return -1 end
+  local custody = redis.call('HGET', KEYS[8], 'state')
+  originClose = action == 'CLOSE' and custody == 'CLOSURE_CLAIMED'
+  if not originClose and custody ~= 'DISPATCH_CLAIMED' then return -1 end
+end
 -- Only a separately qualified current incarnation may dispatch FENCE during normal owner handoff.
 -- It excludes future execution, including delayed old callers, but never proves no earlier commit.
 if action == 'FENCE' then
+  local dispatchId = ARGV[16]
+  if not uuid(dispatchId) then return -2 end
   local capacityType = redis.call('TYPE', KEYS[7]).ok
   if capacityType ~= 'none' then
     if capacityType ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1
@@ -125,9 +142,12 @@ if action == 'FENCE' then
           or continuity <= admissionAt or continuity - admissionAt > 300000 then return -1 end
       return 9
     end
-    if fields ~= 3 then return -1 end
     -- Completed exact outcomes are read-only, even after the operation deadline.
-    if state == 'FENCED_INDETERMINATE' then return 8 end
+    if state == 'FENCED_INDETERMINATE' then
+      if fields == 3 or (fields == 4 and uuid(redis.call('HGET', KEYS[7], 'fenceDispatchId'))) then return 8 end
+      return -1
+    end
+    if fields ~= 3 then return -1 end
     if state == 'CLOSED' then return 7 end
     if state ~= 'AUTHORIZED' then return -1 end
   end
@@ -140,23 +160,28 @@ if action == 'FENCE' then
   if fenceNow <= 0 or fenceNow >= deadline then return -1 end
   if capacityType == 'none' then
     redis.call('HSET', KEYS[7], 'binding', capacityBytes, 'digest', capacityDigest,
-      'state', 'FENCED_INDETERMINATE')
+      'state', 'FENCED_INDETERMINATE', 'fenceDispatchId', dispatchId)
   else
-    redis.call('HSET', KEYS[7], 'state', 'FENCED_INDETERMINATE')
+    redis.call('HSET', KEYS[7], 'state', 'FENCED_INDETERMINATE', 'fenceDispatchId', dispatchId)
   end
   return 5
 end
 -- Closure uses retained SQL attempt/candidate identity, not a fresh credential or OPEN grant.
 -- It remains available after process restart/credential expiry and never infers from absence.
 if action == 'CLOSE' then
-  if redis.call('TYPE', KEYS[7]).ok ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1
-      or redis.call('HGET', KEYS[7], 'binding') ~= capacityBytes
-      or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
-  local state = redis.call('HGET', KEYS[7], 'state')
-  if state == 'CLOSED' and redis.call('HLEN', KEYS[7]) == 3 then return 7 end
-  if state == 'COMMITTED' and redis.call('HLEN', KEYS[7]) == 6 then return 9 end
-  if state ~= 'AUTHORIZED' or redis.call('HLEN', KEYS[7]) ~= 3
-      or redis.call('TYPE', KEYS[1]).ok ~= 'string' or redis.call('PTTL', KEYS[1]) ~= -1
+  local kind = redis.call('TYPE', KEYS[7]).ok
+  local constructing = kind == 'none' and originClose
+  if not constructing then
+    if kind ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1
+        or redis.call('HGET', KEYS[7], 'binding') ~= capacityBytes
+        or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
+    local state = redis.call('HGET', KEYS[7], 'state')
+    if state == 'CLOSED' and redis.call('HLEN', KEYS[7]) == 3 then return 7 end
+    if state == 'COMMITTED' and redis.call('HLEN', KEYS[7]) == 6 then return 9 end
+    -- Positive-origin construction must not relabel an already dispatched marker.
+    if originClose or state ~= 'AUTHORIZED' or redis.call('HLEN', KEYS[7]) ~= 3 then return -1 end
+  end
+  if redis.call('TYPE', KEYS[1]).ok ~= 'string' or redis.call('PTTL', KEYS[1]) ~= -1
       or redis.call('GET', KEYS[1]) ~= candidateBytes
       or redis.call('TYPE', KEYS[2]).ok ~= 'string' or redis.call('PTTL', KEYS[2]) ~= -1
       or redis.call('GET', KEYS[2]) ~= characterBytes
@@ -172,7 +197,7 @@ if action == 'CLOSE' then
       or closeMicros < 0 or closeMicros >= 1000000 or closeMicros ~= math.floor(closeMicros) then return -1 end
   local closeNow = closeSeconds * 1000 + math.floor(closeMicros / 1000)
   if closeNow <= 0 or closeNow >= deadline then return -1 end
-  redis.call('HSET', KEYS[7], 'state', 'CLOSED')
+  redis.call('HSET', KEYS[7], 'binding', capacityBytes, 'digest', capacityDigest, 'state', 'CLOSED')
   return 4
 end
 local candidate = decode(candidateBytes, 524288)

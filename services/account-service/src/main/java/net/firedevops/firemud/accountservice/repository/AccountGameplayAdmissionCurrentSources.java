@@ -49,7 +49,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * hosting owner composition. Its receipt is revalidated on this exact SQL connection. A missing
  * paid composition or changed selected head never falls back to DEMO.
  */
-final class AccountGameplayAdmissionCurrentSources {
+public final class AccountGameplayAdmissionCurrentSources {
   private static final String ACCOUNT_ISSUER = GameSessionAccountDelegationProfile.ISSUER;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Set<String> LEASE_SOURCE_FIELDS =
@@ -146,6 +146,16 @@ final class AccountGameplayAdmissionCurrentSources {
       UUID originalTokenJti,
       CommittedCandidateVerificationData candidate,
       AccountGameplayAdmissionPaidSource paidSource) {
+    return prepareCurrentPublicProductionNew(
+        tenantId, originalTokenJti, candidate, paidSource, false);
+  }
+
+  Prepared prepareCurrentPublicProductionNew(
+      UUID tenantId,
+      UUID originalTokenJti,
+      CommittedCandidateVerificationData candidate,
+      AccountGameplayAdmissionPaidSource paidSource,
+      boolean requalifyPaidMembership) {
     UUID accountId = verifiedCallerAccountId(tenantId, originalTokenJti, candidate);
     requireWritableSerializableAccountTransaction();
 
@@ -155,8 +165,14 @@ final class AccountGameplayAdmissionCurrentSources {
     AccountGameplayAdmissionPaidSource.Preparation paidPreparation = null;
     if (paidSource != null
         && paidSource.hasCurrentPaidSourceCandidate(dsl, workloadNamespace, tenantId)) {
-      lockRequiredAccountsBeforeTenantSources(tenantId, accountId);
+      lockRequiredAccountsBeforeTenantSources(dsl, tenantId, accountId);
       paidPreparation = paidSource.prepare(dsl, workloadNamespace, tenantId);
+      if (requalifyPaidMembership) {
+        var selected = tenantAuthorityEvents.readCurrentSourceSelection(tenantId);
+        if (selected.kind() != SourceKind.PAID_HOSTING) throw unavailable();
+        readCommittedCandidate(originalTokenJti, candidate);
+        return new Prepared(selected, paidSource, paidPreparation);
+      }
     } else {
       lockExactAccountFirst(accountId);
     }
@@ -191,6 +207,16 @@ final class AccountGameplayAdmissionCurrentSources {
       UUID expectedOriginalTokenJti,
       CommittedCandidateVerificationData expectedCommittedCandidate,
       Observed observed) {
+    return readCurrentPublicProductionNew(
+        targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate, observed, false);
+  }
+
+  Current readCurrentPublicProductionNew(
+      UUID targetTenantId,
+      UUID expectedOriginalTokenJti,
+      CommittedCandidateVerificationData expectedCommittedCandidate,
+      Observed observed,
+      boolean requalifyPaidMembership) {
     UUID accountId =
         verifiedCallerAccountId(
             targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate);
@@ -201,19 +227,19 @@ final class AccountGameplayAdmissionCurrentSources {
     // exact current paid source for the requested tenant.
     AccountHostingSubscriptionCurrentReceipt paidReceipt = null;
     if (observed != null && observed.paidSource != null && observed.paidObservation != null) {
-      lockRequiredAccountsBeforeTenantSources(targetTenantId, accountId);
+      lockRequiredAccountsBeforeTenantSources(dsl, targetTenantId, accountId);
       paidReceipt =
           observed.paidSource.readCurrent(dsl, workloadNamespace, observed.paidObservation);
     } else {
       lockExactAccountFirst(accountId);
     }
-    CallerSources caller =
-        readCallerSources(
-            targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate, accountId);
-    SourceSelection selected = caller.selection();
+    SourceSelection selected = tenantAuthorityEvents.readCurrentSourceSelection(targetTenantId);
     if (observed != null
         && (selected.kind() != observed.selected.kind()
             || !observed.selected.matches(selected.checkpoint()))) throw unavailable();
+    CommittedCandidateVerificationData candidate =
+        readCommittedCandidate(expectedOriginalTokenJti, expectedCommittedCandidate);
+    Snapshot snapshot;
     Long sourceValidUntilMs = null;
     if (selected.kind() == SourceKind.PAID_HOSTING) {
       if (paidReceipt == null) throw unavailable();
@@ -229,14 +255,21 @@ final class AccountGameplayAdmissionCurrentSources {
           || !receipt.allowNewGameplayBindings()) {
         throw unavailable();
       }
+      snapshot =
+          requalifyPaidMembership
+              ? membershipSnapshots.requalifyPaidAcquisition(accountId, targetTenantId, receipt)
+              : membershipSnapshots.readCurrent(accountId, targetTenantId);
       requireSupportedPublicTenantTuple(
-          caller.snapshot(), targetTenantId, event, receipt.tenantBillingSequence());
+          snapshot, targetTenantId, event, receipt.tenantBillingSequence());
       sourceValidUntilMs = receipt.validUntil().toEpochMilli();
     } else {
       if (paidReceipt != null) throw unavailable();
-      requireCurrentDemo(caller.snapshot(), targetTenantId, selected.checkpoint());
+      snapshot = membershipSnapshots.readCurrent(accountId, targetTenantId);
+      requireCurrentDemo(snapshot, targetTenantId, selected.checkpoint());
     }
-    return new Current(caller.snapshot(), caller.candidate(), sourceValidUntilMs);
+    requireCurrentActiveMembership(snapshot, accountId, targetTenantId);
+    requireCandidateAuthorityMatchesSnapshot(candidate, snapshot, accountId);
+    return new Current(snapshot, candidate, sourceValidUntilMs);
   }
 
   private void requireCurrentDemo(
@@ -258,6 +291,15 @@ final class AccountGameplayAdmissionCurrentSources {
     requireCurrentActiveMembership(snapshot, accountId, targetTenantId);
 
     CommittedCandidateVerificationData currentCommittedCandidate =
+        readCommittedCandidate(expectedOriginalTokenJti, expectedCommittedCandidate);
+    requireCandidateAuthorityMatchesSnapshot(currentCommittedCandidate, snapshot, accountId);
+    return new CallerSources(snapshot, selected, currentCommittedCandidate);
+  }
+
+  private CommittedCandidateVerificationData readCommittedCandidate(
+      UUID expectedOriginalTokenJti,
+      CommittedCandidateVerificationData expectedCommittedCandidate) {
+    CommittedCandidateVerificationData currentCommittedCandidate =
         issuance
             .readCurrentCommittedCandidateByJti(expectedOriginalTokenJti)
             .orElseThrow(AccountGameplayAdmissionCurrentSources::unavailable);
@@ -265,9 +307,7 @@ final class AccountGameplayAdmissionCurrentSources {
         expectedCommittedCandidate, currentCommittedCandidate)) {
       throw unavailable();
     }
-    requireCandidateAuthorityMatchesSnapshot(currentCommittedCandidate, snapshot, accountId);
-
-    return new CallerSources(snapshot, selected, currentCommittedCandidate);
+    return currentCommittedCandidate;
   }
 
   private UUID verifiedCallerAccountId(
@@ -288,10 +328,22 @@ final class AccountGameplayAdmissionCurrentSources {
     return accountId;
   }
 
-  /** Locks both Account identities before any tenant generation or hosting-wallet lock. */
-  private void lockRequiredAccountsBeforeTenantSources(UUID tenantId, UUID callerAccountId) {
+  /**
+   * Locks the exact caller and current tenant billing-owner Account rows in deterministic order.
+   *
+   * <p>Call inside the caller's writable SERIALIZABLE transaction, before hosting-wallet or tenant
+   * source locks. This shared lock step keeps paid admission readers on the same Account-first
+   * order even when the caller is not the billing owner.
+   */
+  public static void lockRequiredAccountsBeforeTenantSources(
+      DSLContext exactDsl, UUID tenantId, UUID callerAccountId) {
+    Objects.requireNonNull(exactDsl, "The caller-enlisted DSLContext is required");
+    requireNonNilUuid(tenantId, "Canonical tenant UUID");
+    requireNonNilUuid(callerAccountId, "Verified caller Account UUID");
+    requireWritableSerializableAccountTransaction(exactDsl);
+
     Record owner =
-        dsl.fetchOne(
+        exactDsl.fetchOne(
             "SELECT owner_account_uuid FROM account_tenant_billing_owners WHERE tenant_uuid = ?",
             tenantId);
     UUID billingOwnerAccountId = owner == null ? null : owner.get("owner_account_uuid", UUID.class);
@@ -306,7 +358,7 @@ final class AccountGameplayAdmissionCurrentSources {
     }
     requiredAccounts.sort(UUID::compareTo);
     for (UUID accountId : requiredAccounts) {
-      lockExactAccountFirst(accountId);
+      lockExactAccountFirst(exactDsl, accountId);
     }
   }
 
@@ -404,7 +456,7 @@ final class AccountGameplayAdmissionCurrentSources {
         "tokenIdentityEvidence", currentTokenIdentityEvidence(snapshot, currentCommittedCandidate));
   }
 
-  private static Map<String, Object> currentAuthorityTuple(Snapshot snapshot) {
+  static Map<String, Object> currentAuthorityTuple(Snapshot snapshot) {
     AuthorityTuple current = snapshot.authorityTuple();
     Optional<AccountSecurityCutoff> accountCutoff =
         current
@@ -550,6 +602,10 @@ final class AccountGameplayAdmissionCurrentSources {
   }
 
   private void requireWritableSerializableAccountTransaction() {
+    requireWritableSerializableAccountTransaction(dsl);
+  }
+
+  private static void requireWritableSerializableAccountTransaction(DSLContext dsl) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw unavailable();
@@ -570,6 +626,10 @@ final class AccountGameplayAdmissionCurrentSources {
   }
 
   private void lockExactAccountFirst(UUID accountId) {
+    lockExactAccountFirst(dsl, accountId);
+  }
+
+  private static void lockExactAccountFirst(DSLContext dsl, UUID accountId) {
     Record locked =
         dsl.fetchOne(
             "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", accountId);
