@@ -176,7 +176,7 @@ final class CanonicalGameplayRegionLeaseOwner {
               .orElse(null);
       if (preparation == null) {
         CanonicalGameplayRegionLeaseRedisOwner.TimelineAbsenceProof absenceProof =
-            redisOwner.requireTimelineAbsent(source, incarnation);
+            handoffRedisOwner.requireTimelineAbsent(source, incarnation);
         preparation =
             withTransferStatusRepository(
                 transferOwner,
@@ -204,7 +204,7 @@ final class CanonicalGameplayRegionLeaseOwner {
         throw unavailable();
       }
       try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
-          redisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
+          handoffRedisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
         CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
             readInstallationInventory(
                 transferOwner,
@@ -238,7 +238,7 @@ final class CanonicalGameplayRegionLeaseOwner {
                             initializationPreparation, clock.instant()));
         grant = session.initialize(permit.orElse(null));
       }
-      redisOwner.verifyInitializedTimeline(grant, preparation);
+      handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
       requireSameIncarnation(
           incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
       ResolvedBridgeSource afterInitWorld =
