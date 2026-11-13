@@ -148,7 +148,6 @@ final class AccountGameplayAdmissionCurrentSources {
       AccountGameplayAdmissionPaidSource paidSource) {
     UUID accountId = verifiedCallerAccountId(tenantId, originalTokenJti, candidate);
     requireWritableSerializableAccountTransaction();
-    lockRequiredAccountsBeforeTenantSources(tenantId, accountId);
 
     // The hosting lifecycle's lock order is Account -> customer -> instrument -> tenant owner ->
     // subscription -> tenant generation. Complete its SQL preparation before membership/source
@@ -156,7 +155,10 @@ final class AccountGameplayAdmissionCurrentSources {
     AccountGameplayAdmissionPaidSource.Preparation paidPreparation = null;
     if (paidSource != null
         && paidSource.hasCurrentPaidSourceCandidate(dsl, workloadNamespace, tenantId)) {
+      lockRequiredAccountsBeforeTenantSources(tenantId, accountId);
       paidPreparation = paidSource.prepare(dsl, workloadNamespace, tenantId);
+    } else {
+      lockExactAccountFirst(accountId);
     }
     CallerSources caller = readCallerSources(tenantId, originalTokenJti, candidate, accountId);
     SourceSelection selected = caller.selection();
@@ -193,15 +195,17 @@ final class AccountGameplayAdmissionCurrentSources {
         verifiedCallerAccountId(
             targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate);
     requireWritableSerializableAccountTransaction();
-    lockRequiredAccountsBeforeTenantSources(targetTenantId, accountId);
 
     // Reacquire the complete hosting lifecycle lock set before taking membership/tenant source
     // generations. The post-lock source selector below still verifies that this receipt is the
     // exact current paid source for the requested tenant.
     AccountHostingSubscriptionCurrentReceipt paidReceipt = null;
     if (observed != null && observed.paidSource != null && observed.paidObservation != null) {
+      lockRequiredAccountsBeforeTenantSources(targetTenantId, accountId);
       paidReceipt =
           observed.paidSource.readCurrent(dsl, workloadNamespace, observed.paidObservation);
+    } else {
+      lockExactAccountFirst(accountId);
     }
     CallerSources caller =
         readCallerSources(
