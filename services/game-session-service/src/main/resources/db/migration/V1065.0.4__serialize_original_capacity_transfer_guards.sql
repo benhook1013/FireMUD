@@ -164,6 +164,71 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION guard_gs_region_owner_transfer() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP='DELETE' THEN
+        RAISE EXCEPTION 'Region owner transfer custody is retained' USING ERRCODE='23514';
+    END IF;
+    IF ROW(NEW.transfer_id,NEW.tenant_id,NEW.game_instance_id,NEW.region_id,NEW.region_epoch,
+        NEW.old_owner_id,NEW.old_owner_fence,NEW.old_lease_correlation,NEW.source_digest,NEW.intent_digest)
+       IS DISTINCT FROM ROW(OLD.transfer_id,OLD.tenant_id,OLD.game_instance_id,OLD.region_id,OLD.region_epoch,
+        OLD.old_owner_id,OLD.old_owner_fence,OLD.old_lease_correlation,OLD.source_digest,OLD.intent_digest)
+       OR (OLD.state='COMPLETED' AND NEW IS DISTINCT FROM OLD)
+       OR (OLD.incarnation_digest IS NOT NULL AND NEW.incarnation_digest IS DISTINCT FROM OLD.incarnation_digest)
+       OR (OLD.verification_round IS NOT NULL AND NEW.verification_round IS DISTINCT FROM OLD.verification_round)
+       OR NEW.verification_cursor<OLD.verification_cursor
+       OR (OLD.verification_complete AND NOT NEW.verification_complete) THEN
+        RAISE EXCEPTION 'Region transfer source and completed custody are immutable' USING ERRCODE='23514';
+    END IF;
+    IF NEW.state='COMPLETED' AND OLD.state='FROZEN'
+       AND EXISTS (SELECT 1 FROM game_session_region_owner_transfer_item i WHERE i.transfer_id=NEW.transfer_id) THEN
+        IF NEW.verification_complete IS DISTINCT FROM true
+           OR NEW.incarnation_digest IS NULL OR NEW.verification_round IS NULL THEN
+            RAISE EXCEPTION 'Captured region transfer requires complete current verification' USING ERRCODE='23514';
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM game_session_region_owner_transfer_item i
+            LEFT JOIN game_session_original_new_capacity_execution e
+              ON e.execution_digest=i.execution_digest
+            LEFT JOIN game_session_canonical_binding_transition t
+              ON t.transition_id=e.transition_id
+            LEFT JOIN game_session_canonical_binding_region_bridge_obligation b
+              ON b.transition_id=e.transition_id AND b.tenant_id=NEW.tenant_id
+             AND b.game_instance_id=NEW.game_instance_id AND b.region_id=NEW.region_id
+            LEFT JOIN game_session_canonical_tenant_gameplay_tag a
+              ON a.tenant_id=e.tenant_id
+            WHERE i.transfer_id=NEW.transfer_id AND (
+                e.execution_digest IS NULL
+                OR i.canonical_execution IS DISTINCT FROM e.canonical_execution
+                OR i.candidate_digest IS DISTINCT FROM t.original_new_candidate_digest
+                OR i.tenant_gameplay_tag IS DISTINCT FROM e.tenant_gameplay_tag
+                OR i.tenant_gameplay_tag IS DISTINCT FROM a.tenant_gameplay_tag
+                OR i.allocation_version IS DISTINCT FROM a.allocation_version
+                OR b.transition_id IS NULL
+                OR i.fence_readback IS NULL
+                OR i.incarnation_digest IS DISTINCT FROM NEW.incarnation_digest
+                OR i.before_payload_digest IS NULL
+                OR i.after_payload_digest IS NULL
+                OR i.verified_round IS DISTINCT FROM NEW.verification_round)) THEN
+            RAISE EXCEPTION 'Captured region transfer item lacks its full exact current receipt' USING ERRCODE='23514';
+        END IF;
+    END IF;
+    IF NEW.state='COMPLETED' AND EXISTS (
+        SELECT 1 FROM game_session_original_new_capacity_execution e
+        JOIN game_session_canonical_binding_region_bridge_obligation b ON b.transition_id=e.transition_id
+        WHERE b.tenant_id=NEW.tenant_id AND b.game_instance_id=NEW.game_instance_id AND b.region_id=NEW.region_id
+          AND e.status IN ('INSTALL_DISPATCHED','AUTHORIZED') AND NOT EXISTS (
+            SELECT 1 FROM game_session_region_owner_transfer_item i
+            WHERE i.transfer_id=NEW.transfer_id AND i.execution_digest=e.execution_digest
+              AND i.canonical_execution=e.canonical_execution AND i.fence_readback IS NOT NULL
+              AND i.incarnation_digest=NEW.incarnation_digest AND i.verified_round=NEW.verification_round
+              AND NEW.verification_complete)) THEN
+        RAISE EXCEPTION 'Unresolved original lacks complete current transfer custody' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 DO $migration$
 DECLARE definition TEXT; original TEXT; replacement TEXT;
 BEGIN
