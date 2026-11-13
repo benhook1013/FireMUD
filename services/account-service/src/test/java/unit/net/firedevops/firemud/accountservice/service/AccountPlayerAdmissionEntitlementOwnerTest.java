@@ -233,6 +233,63 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(value.evaluatedAt()).isAfter(f.time.get());
   }
 
+  @Test
+  void capacityCaptureRejectsConnectScopeExpiredAtDatabaseStamp() throws Exception {
+    Fixture f = new Fixture(false);
+    f.databaseTime.set(NOW.plusSeconds(60));
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable")
+        .hasNoCause();
+    assertThat(f.retainedCapacity).isEmpty();
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "rollback");
+  }
+
+  @Test
+  void capacityCaptureRejectsPaidReceiptExpiredAtDatabaseStamp() throws Exception {
+    Fixture f = new Fixture(true);
+    when(f.sources.readCurrentSourceSelection(TENANT))
+        .thenReturn(new SourceSelection(SourceKind.PAID_HOSTING, f.tenantEvent));
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    when(f.hosting.prepareCurrentRead(TENANT)).thenReturn(fence);
+    when(f.observer.observe(fence.binding())).thenReturn(observed);
+    var receipt = f.receipt(Status.ACTIVE);
+    receipt =
+        new AccountHostingSubscriptionCurrentReceipt(
+            receipt.current(),
+            receipt.receiptRequestId(),
+            receipt.subscriptionStatus(),
+            receipt.gameplayAvailable(),
+            receipt.allowPublicJoin(),
+            receipt.allowNewGameplayBindings(),
+            receipt.allowNewInstanceStarts(),
+            receipt.entitlementVersion(),
+            receipt.tenantBillingSequence(),
+            receipt.billingEventId(),
+            receipt.billingEventDigest(),
+            receipt.tenantAuthorityEvent(),
+            receipt.rawProviderStatus(),
+            receipt.currentPeriodStart(),
+            receipt.currentPeriodEnd(),
+            receipt.cancelAtPeriodEnd(),
+            receipt.cancelAt(),
+            receipt.cutoffAt(),
+            receipt.evaluatedAt(),
+            NOW.plusSeconds(1));
+    when(f.hosting.readCurrent(fence, observed)).thenReturn(receipt);
+    f.databaseTime.set(NOW.plusSeconds(1));
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable")
+        .hasNoCause();
+    assertThat(f.retainedCapacity).isEmpty();
+    assertThat(f.transactions.events)
+        .containsExactly("begin", "commit", "begin", "commit", "begin", "rollback");
+  }
+
   @ParameterizedTest
   @EnumSource(Status.class)
   void paidReadRunsProviderOutsideSqlThenCapturesCurrentReceiptAndPlayerInFinalTransaction(

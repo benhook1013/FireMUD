@@ -12,11 +12,13 @@ import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.RestoreArgs;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -41,6 +43,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDeci
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIssuerIndexObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayCapacityOriginCustodyRedisScriptContribution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -1432,6 +1435,54 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             "controlled-test-image");
     byte[] key = ascii(original.grant.key());
     assertThat(admin.pexpire(key, 0)).isTrue();
+    byte[] acquireScript;
+    try (InputStream input =
+        getClass()
+            .getClassLoader()
+            .getResourceAsStream(
+                CanonicalGameplayRegionLeaseRedisScriptContribution.ACQUIRE_PATH)) {
+      assertThat(input).isNotNull();
+      acquireScript = input.readAllBytes();
+    }
+    byte[][] keys = {
+      key,
+      ascii(
+          CanonicalGameplayRegionRedisKeys.meta(
+              original.source.tenantId(),
+              original.source.gameInstanceId(),
+              original.source.regionId()))
+    };
+    byte[] token = ascii(UUID.randomUUID().toString());
+    byte[][] arguments = {
+      ascii("gs_region_lease/v2"),
+      token,
+      ascii(Long.toString(original.status.regionEpoch())),
+      ascii("30000"),
+      ascii("1")
+    };
+    Long refused = admin.eval(acquireScript, ScriptOutputType.INTEGER, keys, arguments);
+    assertThat(refused).isZero();
+    assertThat(admin.type(key)).isEqualTo("none");
+
+    // Bypass the Java client's own TTL cap to exercise the Redis deadline independently.
+    long redisNow =
+        admin.eval(
+            "local now = redis.call('TIME'); return now[1] * 1000 + math.floor(now[2] / 1000)",
+            ScriptOutputType.INTEGER);
+    long deadline = redisNow + 5_000L;
+    arguments[4] = ascii(Long.toString(deadline));
+    Long acquired = admin.eval(acquireScript, ScriptOutputType.INTEGER, keys, arguments);
+    assertThat(acquired).isEqualTo(1L);
+    long expiry = admin.pexpiretime(key);
+    assertThat(expiry).isGreaterThan(redisNow).isLessThanOrEqualTo(deadline);
+
+    arguments[4] = ascii("1");
+    Long replayed = admin.eval(acquireScript, ScriptOutputType.INTEGER, keys, arguments);
+    assertThat(replayed).isEqualTo(2L);
+    assertThat(admin.get(key)).containsExactly(token);
+    assertThat(admin.pexpiretime(key)).isEqualTo(expiry);
+    assertThat(admin.pexpire(key, 0)).isTrue();
+
     var grant =
         leases
             .forHandoffDeadline(CLOCK, CLOCK.millis() + 5_000L)
@@ -2785,6 +2836,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     assertThat(recovered.evidence)
         .as("committed continuation grants no provisional bridge authority")
         .isNull();
+    // The old epoch cannot reacquire the lease after the successor advances the timeline.
     assertThatThrownBy(
             () ->
                 CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
@@ -2796,8 +2848,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     sources.resolver,
                     transfer,
                     deadline()))
-        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-        .hasMessage("A first binding cannot proceed while an active controller exists");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical Game Session region lease is unavailable");
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
         .contains(recovered.status);

@@ -1887,6 +1887,39 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
+  void deniedCapacityEvidenceSettlementUpgradeRetainsPopulatedCatalogAtEpochFifteen() {
+    try (Fixture f = fixture("1065.0.5")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.6",
+          14,
+          "V1065.0.6__settle_denied_capacity_evidence_charges.sql",
+          Map.of(
+              "guard_gs_capacity_evidence_charge()",
+              List.of(
+                  "NEW.account_denial_id IS NOT NULL",
+                  "Retained capacity evidence history is exhausted or invalid"),
+              "require_gs_capacity_evidence_charge()",
+              List.of("c.account_denial_id IS NULL"),
+              "settle_gs_capacity_evidence_charge()",
+              List.of(
+                  "OLD.account_denial_id IS NOT NULL",
+                  "Execution custody prevents capacity evidence settlement")),
+          Map.of(
+              "game_session_capacity_evidence_charge.gs_capacity_evidence_charge_retained",
+              "settle_gs_capacity_evidence_charge()"),
+          Map.of(
+              "game_session_capacity_evidence_budget.",
+              List.of("CHECK (maximum_retained_records >= maximum_records)"),
+              "game_session_capacity_evidence_charge.",
+              List.of("UNIQUE (account_denial_id)", "CHECK (account_denial_id <>")),
+          Map.of(
+              "gs_capacity_evidence_charge_active", "account_denial_id IS NULL",
+              "game_session_capacity_evidence_charge_account_denial_id_key", "account_denial_id"));
+    }
+  }
+
+  @Test
   void transferHistoryBudgetUpgradeSealsItsOwnerWithoutChangingRetainedEvidence() {
     try (Fixture f = fixture("1065.0.6")) {
       f.populatePredecessor();
@@ -1935,6 +1968,50 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void retainedRegionFenceDispatchUpgradePreservesPopulatedCatalogAtEpochEighteen() {
+    try (Fixture f = fixture("1065.0.8")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.9",
+          17,
+          "V1065.0.9__retain_region_fence_dispatch_custody.sql",
+          Map.of(
+              "preserve_gs_region_fence_dispatch()",
+              List.of(
+                  "Region fence dispatch custody is immutable",
+                  "Region fence dispatch requires an unfenced frozen original"),
+              "require_gs_region_fence_dispatch_completion()",
+              List.of("Region transfer requires settled fence dispatch custody")),
+          Map.of(
+              "game_session_region_owner_transfer_item.gs_region_fence_dispatch_guard",
+              "preserve_gs_region_fence_dispatch()",
+              "game_session_region_owner_transfer.gs_region_fence_dispatch_completion",
+              "require_gs_region_fence_dispatch_completion()"),
+          Map.of("game_session_region_owner_transfer_item.", List.of("CHECK (fence_dispatch_id")),
+          Map.of(
+              "gs_region_fence_dispatch_execution", "execution_digest",
+              "gs_region_fence_receipt_execution", "execution_digest"));
+    }
+  }
+
+  @Test
+  void capacityClosureReceiptLookupUpgradePreservesPopulatedCatalogAtEpochNineteen() {
+    try (Fixture f = fixture("1065.0.9")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.10",
+          18,
+          "V1065.0.10__bound_capacity_closure_receipt_lookup.sql",
+          "reject_gs_capacity_close_after_final_receipt()",
+          null,
+          List.of(
+              "OLD.status='AUTHORIZED' AND NEW.status='CLOSED'",
+              "t.original_new_capacity_execution_digest=OLD.execution_digest",
+              "Original NEW execution cannot close after retained final receipt"));
+    }
+  }
+
   private static void assertCapacityCatalogGuardUpgrade(
       Fixture f,
       String target,
@@ -1949,8 +2026,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
         priorEpoch,
         script,
         Map.of(guardRoutine, guardFragments),
-        addedTrigger,
-        guardRoutine);
+        addedTrigger == null ? Map.of() : Map.of(addedTrigger, guardRoutine));
   }
 
   private static void assertCapacityCatalogGuardUpgrade(
@@ -1961,6 +2037,35 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, List<String>> guardFragmentsByRoutine,
       String addedTrigger,
       String addedTriggerRoutine) {
+    assertCapacityCatalogGuardUpgrade(
+        f,
+        target,
+        priorEpoch,
+        script,
+        guardFragmentsByRoutine,
+        addedTrigger == null ? Map.of() : Map.of(addedTrigger, addedTriggerRoutine));
+  }
+
+  private static void assertCapacityCatalogGuardUpgrade(
+      Fixture f,
+      String target,
+      long priorEpoch,
+      String script,
+      Map<String, List<String>> guardFragmentsByRoutine,
+      Map<String, String> addedTriggers) {
+    assertCapacityCatalogGuardUpgrade(
+        f, target, priorEpoch, script, guardFragmentsByRoutine, addedTriggers, Map.of(), Map.of());
+  }
+
+  private static void assertCapacityCatalogGuardUpgrade(
+      Fixture f,
+      String target,
+      long priorEpoch,
+      String script,
+      Map<String, List<String>> guardFragmentsByRoutine,
+      Map<String, String> changedTriggers,
+      Map<String, List<String>> addedConstraints,
+      Map<String, String> addedIndexes) {
     f.populatePredecessor();
     assertThat(f.count("game_instances")).isGreaterThan(0L);
     assertThat(f.count("gameplay_command")).isGreaterThan(0L);
@@ -1988,6 +2093,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     var history = f.historyRows(false);
     var sequences = f.sequencePositions();
     var guards = f.guards();
+    changedTriggers.keySet().forEach(guards::remove);
     var constraints = f.constraints();
     var indexes = f.indexes();
     var routines = f.routines();
@@ -2033,13 +2139,31 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     assertThat(f.sequencePositions()).isEqualTo(sequences);
     var installedGuards = f.guards();
     assertThat(installedGuards).containsAllEntriesOf(guards);
-    if (addedTrigger == null) {
-      assertThat(installedGuards).isEqualTo(guards);
-    } else {
-      assertThat(installedGuards.keySet()).hasSize(guards.size() + 1).contains(addedTrigger);
-    }
-    assertThat(f.constraints()).isEqualTo(constraints);
-    assertThat(f.indexes()).isEqualTo(indexes);
+    assertThat(installedGuards.keySet())
+        .hasSize(guards.size() + changedTriggers.size())
+        .containsAll(changedTriggers.keySet());
+    var installedConstraints = f.constraints();
+    assertThat(installedConstraints).containsAllEntriesOf(constraints);
+    installedConstraints.keySet().removeAll(constraints.keySet());
+    int addedConstraintCount = addedConstraints.values().stream().mapToInt(List::size).sum();
+    assertThat(installedConstraints).hasSize(addedConstraintCount);
+    addedConstraints.forEach(
+        (table, definitions) ->
+            definitions.forEach(
+                definition ->
+                    assertThat(installedConstraints.entrySet())
+                        .filteredOn(
+                            entry ->
+                                entry.getKey().startsWith(table)
+                                    && entry.getValue().contains(definition))
+                        .hasSize(1)));
+    var installedIndexes = f.indexes();
+    assertThat(installedIndexes).containsAllEntriesOf(indexes);
+    assertThat(installedIndexes.keySet())
+        .hasSize(indexes.size() + addedIndexes.size())
+        .containsAll(addedIndexes.keySet());
+    addedIndexes.forEach(
+        (index, fragment) -> assertThat(installedIndexes.get(index)).contains(fragment));
     var installedRoutines = f.routines();
     assertThat(installedRoutines).containsAllEntriesOf(routines);
     assertThat(installedRoutines.keySet())
@@ -2059,16 +2183,22 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           assertThat(installedGuard).isNotNull();
           fragments.forEach(fragment -> assertThat(installedGuard).contains(fragment));
         });
-    if (addedTrigger != null) {
-      assertThat(f.guards()).containsKey(addedTrigger);
-      assertThat(f.guards().get(addedTrigger))
-          .contains(
-              "reject_gs_capacity_close_after_final_receipt()".equals(addedTriggerRoutine)
-                  ? "BEFORE UPDATE"
-                  : "BEFORE INSERT")
-          .contains("EXECUTE FUNCTION")
-          .contains(addedTriggerRoutine.substring(0, addedTriggerRoutine.indexOf('(')));
-    }
+    changedTriggers.forEach(
+        (trigger, routine) -> {
+          String event =
+              switch (routine) {
+                case "settle_gs_capacity_evidence_charge()" -> "BEFORE DELETE OR UPDATE";
+                case "preserve_gs_region_fence_dispatch()" -> "BEFORE INSERT OR UPDATE";
+                case "reject_gs_capacity_close_after_final_receipt()",
+                    "require_gs_region_fence_dispatch_completion()" ->
+                    "BEFORE UPDATE";
+                default -> "BEFORE INSERT";
+              };
+          assertThat(installedGuards.get(trigger))
+              .contains(event)
+              .contains("EXECUTE FUNCTION")
+              .contains(routine.substring(0, routine.indexOf('(')));
+        });
     var current = f.owner().capture(request());
     assertThat(current.catalog().catalogEpoch()).isEqualTo(priorEpoch + 1);
     assertThat(f.owner().readExact(current.request())).isEqualTo(current);
