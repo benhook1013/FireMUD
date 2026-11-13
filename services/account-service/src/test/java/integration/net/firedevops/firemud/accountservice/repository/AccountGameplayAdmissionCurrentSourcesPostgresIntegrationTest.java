@@ -1819,7 +1819,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return newFixture(null);
   }
 
-  private PaidFixture newPaidFixture(AccountGameplayDelegationRedisClient redis) throws Exception {
+  PaidFixture newPaidFixture(AccountGameplayDelegationRedisClient redis) throws Exception {
     Fixture caller = newFixture(redis);
     var hosting = CanonicalHostingSubscriptionTestFixture.create(caller.dataSource, TEST_NAMESPACE);
     hosting.completeFirstInvoice();
@@ -1864,7 +1864,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return new PaidFixture(caller, hosting);
   }
 
-  private record PaidFixture(
+  record PaidFixture(
       Fixture caller, CanonicalHostingSubscriptionTestFixture.Fixture hosting) {
     AccountGameplayAdmissionCurrentSources.Prepared prepare() {
       return caller.inCurrentSources(
