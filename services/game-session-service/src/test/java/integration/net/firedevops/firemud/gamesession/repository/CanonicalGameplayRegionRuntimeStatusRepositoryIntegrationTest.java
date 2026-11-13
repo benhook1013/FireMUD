@@ -499,7 +499,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   @org.junit.jupiter.params.provider.CsvSource({"1,134217728", "128,1048576"})
   void chargedAbsentExecutionCanStillBeFencedWhenEitherBudgetDimensionIsFull(
       int maximumRecords, long maximumBindingBytes) throws Exception {
-    try (var proof = new TransferSqlProof(maximumRecords, maximumBindingBytes)) {
+    try (var proof = withCapacityBudget(maximumRecords, maximumBindingBytes)) {
       proof.seedUndeliveredDispatch(proof.execution);
       assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
       assertThat(
@@ -566,7 +566,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
 
   @Test
   void postgresSerializesTheLastEvidenceChargeAcrossConcurrentAttempts() throws Exception {
-    try (var proof = new TransferSqlProof(2, 2_097_152L);
+    try (var proof = withCapacityBudget(2, 2_097_152L);
         var callers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
       var first = proof.newControlledExecution();
       var second = proof.newControlledExecution();
@@ -1104,6 +1104,148 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                   .fetchSingle("SELECT count(*) FROM game_session_region_owner_transfer")
                   .get(0, Long.class))
           .isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void postgresSerializesTheLastTransferParentAcrossRegionsOfTheSameTenant() throws Exception {
+    try (var proof = withTransferHistoryBudget(1, 2);
+        ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      var otherScope =
+          new CanonicalGameplayRegionRuntimeStatusRepository.Source(
+              proof.scope.tenantId(),
+              proof.scope.gameInstanceId(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              proof.scope.lifecycleEpoch(),
+              proof.scope.lifecycleRowVersion(),
+              proof.scope.lifecycleRequest(),
+              proof.scope.captureId(),
+              proof.scope.graphSha256(),
+              proof.scope.preparationInputDigest());
+      var status = new CanonicalGameplayRegionRuntimeStatusRepository(proof.sql);
+      var otherPrior =
+          status.installOwner(
+              otherScope,
+              1L,
+              null,
+              "f".repeat(64),
+              "game-session-service",
+              "sql-proof-other-region",
+              proof.clock.instant());
+      var inserted = new CountDownLatch(1);
+      var release = new CountDownLatch(1);
+      var blockerPid = new AtomicInteger();
+      String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
+      Future<UUID> first =
+          executor.submit(
+              () -> {
+                try (var connection =
+                    java.sql.DriverManager.getConnection(
+                        POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+                  connection.setSchema(schema);
+                  connection.setAutoCommit(false);
+                  DSLContext rawSql = DSL.using(connection, SQLDialect.POSTGRES);
+                  rawSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+                  UUID transferId = proof.insertRawFrozenTransfer(rawSql);
+                  blockerPid.set(
+                      rawSql.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                  inserted.countDown();
+                  if (!release.await(4, TimeUnit.SECONDS))
+                    throw new AssertionError("Transfer history reservation gate was not released");
+                  connection.commit();
+                  return transferId;
+                }
+              });
+      awaitGate(inserted, first, "First transfer did not reserve the tenant history slot");
+      var second =
+          executor.submit(
+              () ->
+                  assertTransferHistoryGuard(
+                      () -> proof.insertRawFrozenTransfer(proof.sql, otherScope, otherPrior),
+                      "Transfer history is exhausted"));
+      try {
+        assertDatabaseWaitsFor(proof.sql, blockerPid.get());
+        assertThat(second.isDone()).isFalse();
+      } finally {
+        release.countDown();
+      }
+      UUID winner = first.get(10, TimeUnit.SECONDS);
+      second.get(10, TimeUnit.SECONDS);
+      var retained =
+          proof.sql.fetchSingle(
+              "SELECT transfer_id,region_id,state,reserved_execution_items"
+                  + " FROM game_session_region_owner_transfer WHERE tenant_id=?",
+              proof.scope.tenantId());
+      assertThat(retained.get("transfer_id", UUID.class)).isEqualTo(winner);
+      assertThat(retained.get("region_id", UUID.class)).isEqualTo(proof.scope.regionId());
+      assertThat(retained.get("state", String.class)).isEqualTo("FROZEN");
+      assertThat(retained.get("reserved_execution_items", Integer.class)).isEqualTo(1);
+      assertThat(proof.itemImage(winner)).isEqualTo("[]");
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+      assertThat(status.find(otherScope)).contains(otherPrior);
+    }
+  }
+
+  @Test
+  void fullTransferItemBudgetAllowsExistingIntentToCompleteButRefusesTheNextFreeze()
+      throws Exception {
+    try (var proof = withTransferHistoryBudget(2, 1)) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      String originalExecution = proof.originalImage();
+      UUID id = proof.begin();
+      assertThat(id).isNotNull();
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT reserved_execution_items FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                      id)
+                  .get(0, Integer.class))
+          .isEqualTo(1);
+      assertThat(proof.itemImage(id)).isEqualTo("[]");
+      assertTransferHistoryGuard(
+          () -> proof.insertRawTransferItem(proof.sql, id, 1),
+          "Transfer item is outside its reserved inventory");
+      assertThat(proof.itemImage(id)).isEqualTo("[]");
+      String frozen = proof.transferImage(id);
+      proof.recreateTransferOwners();
+      assertThat(proof.begin()).isEqualTo(id);
+      assertThat(proof.transferImage(id)).isEqualTo(frozen);
+      assertThat(proof.captureAndFence(id))
+          .extracting(item -> item.execution().digest())
+          .containsExactly(proof.execution.digest());
+      proof.verifyPage(id);
+      boolean verified =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      assertThat(verified).isTrue();
+      var installed = proof.install(id);
+      String completed = proof.transferImage(id);
+      String items = proof.itemImage(id);
+      proof.recreateTransferOwners();
+      assertThat(
+              proof.coordinator.recoverCompleted(
+                  id,
+                  installed.ownerInstanceId(),
+                  installed.leaseTokenCorrelation(),
+                  transferDeadline()))
+          .isEqualTo(installed);
+
+      assertTransferHistoryGuard(
+          () -> proof.coordinator.advance(proof.scope, installed, transferDeadline()),
+          "Transfer history cannot reserve its full execution inventory");
+      assertThat(
+              proof
+                  .sql
+                  .fetch("SELECT transfer_id FROM game_session_region_owner_transfer")
+                  .getValues(0, UUID.class))
+          .containsExactly(id);
+      assertThat(proof.transferImage(id)).isEqualTo(completed);
+      assertThat(proof.itemImage(id)).isEqualTo(items);
+      assertThat(proof.originalImage()).isEqualTo(originalExecution);
+      assertThat(proof.currentOwner()).isEqualTo(installed);
     }
   }
 
@@ -2326,6 +2468,22 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     public void close() {
       release();
     }
+  }
+
+  private TransferSqlProof withCapacityBudget(int maximumRecords, long maximumBindingBytes)
+      throws Exception {
+    return new TransferSqlProof(maximumRecords, maximumBindingBytes, maximumRecords);
+  }
+
+  private TransferSqlProof withTransferHistoryBudget(int maximumTransfers, int maximumItems)
+      throws Exception {
+    return new TransferSqlProof(
+        new DefaultExecuteListener(),
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+        maximumTransfers,
+        maximumItems);
   }
 
   /**

@@ -617,26 +617,75 @@ public final class AccountHostingFirstInvoicePaymentRepository {
 
   /** A separate transaction and current owner/policy readback precede any provider confirmation. */
   public ConfirmationDispatch readDispatch(ConfirmationDispatch prepared, UUID actor) {
+    var current = requireCurrentDispatch(prepared, actor);
+    return authorizedDispatch(
+        current.confirmation(),
+        current.authorization(),
+        current.invoice(),
+        true,
+        prepared.takeInitialCommandPermission());
+  }
+
+  /**
+   * Rechecks a secret-bearing provider handoff under the current Account and owner locks. This path
+   * is read-only: it neither consumes the one-shot command permission nor opens a claim.
+   */
+  public void validateHandoffAuthorization(
+      ConfirmationDispatch dispatch, UUID actor, AccountRecentReauthenticationEvidence evidence) {
+    Objects.requireNonNull(evidence);
+    var current = requireCurrentDispatch(dispatch, actor);
+    var context = evidence.billingContext();
+    if (context == null) throw refused();
+    requireContext(current.invoice(), actor, context, evidence);
+    long expectedAuthorizationVersion = dispatch.authorizationVersion() - 1;
+    BillingAuthorizationPurpose expectedPurpose =
+        dispatch.authorizationVersion() == 1L
+            ? dispatch.requestId().equals(dispatch.authorizationRequestId())
+                ? BillingAuthorizationPurpose.INITIAL_CONFIRMATION
+                : BillingAuthorizationPurpose.PRE_ROW_RENEWAL
+            : BillingAuthorizationPurpose.FOLLOWUP_RENEWAL;
+    if (!dispatch.independentlyRead()
+        || !dispatch.invoice().equals(current.invoice())
+        || dispatch.expectedRowVersion()
+            != current.confirmation().get("expected_row_version", Long.class)
+        || dispatch.authorizationVersion()
+            != current.authorization().get("authorization_version", Long.class)
+        || !dispatch
+            .reauthenticationEvidenceId()
+            .equals(current.authorization().get("reauthentication_evidence_id", UUID.class))
+        || !dispatch.validUntil().equals(instant(current.authorization(), "valid_until"))
+        || !evidence.evidenceId().equals(dispatch.reauthenticationEvidenceId())
+        || !dispatch.requestId().equals(context.originalRequestId())
+        || dispatch.expectedRowVersion() != context.expectedRowVersion()
+        || !dispatch.authorizationRequestId().equals(context.authorizationRequestId())
+        || expectedAuthorizationVersion != context.expectedAuthorizationVersion()
+        || context.authorizationPurpose() != expectedPurpose) {
+      throw refused();
+    }
+  }
+
+  private CurrentDispatch requireCurrentDispatch(ConfirmationDispatch prepared, UUID actor) {
     transaction();
     UUID requestId = prepared.requestId();
     Record row =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT * FROM subscription_first_invoice_confirmations WHERE request_id = ?",
-                requestId));
+        dsl.fetchOne(
+            "SELECT * FROM subscription_first_invoice_confirmations WHERE request_id = ?",
+            requestId);
+    if (row == null) throw refused();
     var invoice = requireOwner(row.get("subscription_id", UUID.class), actor);
     requireCheckoutCurrent(invoice);
     requireAwaitingPayment(invoice, row.get("expected_row_version", Long.class));
-    Record authorization = Objects.requireNonNull(authorization(prepared.authorizationRequestId()));
+    Record authorization = authorization(prepared.authorizationRequestId());
+    if (authorization == null) throw refused();
+    Instant validUntil = instant(authorization, "valid_until");
     if (!actor.equals(row.get("account_uuid", UUID.class))
         || !requestId.equals(authorization.get("request_id", UUID.class))
         || authorization.get("authorization_version", Long.class)
             != authorizationVersion(invoice.subscriptionId())
         || authorization.get("created_transaction_id", Long.class) == transactionId()
         || !invoice.digest().equals(row.get("tuple_digest", String.class))
-        || !now().isBefore(instant(authorization, "valid_until"))) throw refused();
-    return authorizedDispatch(
-        row, authorization, invoice, true, prepared.takeInitialCommandPermission());
+        || !now().isBefore(validUntil)) throw refused();
+    return new CurrentDispatch(row, authorization, invoice);
   }
 
   /**
@@ -725,6 +774,25 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         .retainedConflictRequestId(verified);
   }
 
+  /** Selects operator-only work for an exact canceled invoice with no local confirmation. */
+  public AccountHostingFirstInvoicePayment unconsentedCanceledInvoice(VerifiedEvent verified) {
+    transaction();
+    if (!"payment_intent.succeeded".equals(verified.eventType())) return null;
+    var object = JSON.readTree(verified.rawPayload()).path("data").path("object");
+    Record row =
+        dsl.fetchOne(
+            "SELECT i.subscription_id, i.captured_at FROM subscription_first_invoices i "
+                + "JOIN subscription s USING (subscription_id) "
+                + "WHERE i.payment_intent_id = ? AND s.status = 'canceled' "
+                + "AND NOT EXISTS (SELECT 1 FROM subscription_first_invoice_confirmations c "
+                + "WHERE c.subscription_id = i.subscription_id)",
+            object.path("id").asText());
+    if (row == null) return null;
+    var invoice = Objects.requireNonNull(find(row.get("subscription_id", UUID.class)));
+    requireSignedTuple(verified, instant(row, "captured_at"), invoice);
+    return invoice;
+  }
+
   public boolean completed(UUID subscriptionId, UUID lifecycleRequestId) {
     transaction();
     Record row =
@@ -774,9 +842,13 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         dsl.fetchOne(
             "SELECT * FROM subscription_first_invoice_confirmations WHERE subscription_id = ? FOR UPDATE",
             subscriptionId);
-    if (row == null) throw refused();
     var invoice = Objects.requireNonNull(find(subscriptionId));
-    requireSignedTuple(verified, row, invoice);
+    if (row == null) {
+      var canceled = unconsentedCanceledInvoice(verified);
+      if (!invoice.equals(canceled)) throw refused();
+    } else {
+      requireSignedTuple(verified, row, invoice);
+    }
     if (!"succeeded".equals(observed.status())
         || !invoice.invoiceId().equals(observed.invoiceId())
         || !invoice.paymentIntentId().equals(observed.paymentIntentId())
@@ -792,11 +864,14 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || now().isBefore(observed.observedAt())
         || Duration.between(observed.readStartedAt(), now()).compareTo(Duration.ofSeconds(20)) >= 0)
       throw refused();
-    var dispatch = dispatch(row, invoice, true, false);
-    if (new AccountHostingFirstInvoicePaymentConflictRepository(dsl)
-        .retainIfCanceled(verified, dispatch, observed)) {
-      return new SignedOutcome(dispatch, true);
+    var dispatch = row == null ? null : dispatch(row, invoice, true, false);
+    UUID conflict =
+        new AccountHostingFirstInvoicePaymentConflictRepository(dsl)
+            .retainIfCanceled(verified, invoice, dispatch, observed);
+    if (conflict != null) {
+      return new SignedOutcome(dispatch, conflict);
     }
+    if (dispatch == null) throw refused();
     var intake = new StripeEventInboxRepository(dsl).retainOrReplay(verified);
     dsl.execute(
         "INSERT INTO subscription_first_invoice_success_evidence (request_id, subscription_id, provider_event_id, event_payload_digest, tuple_digest, observed_at) "
@@ -807,13 +882,25 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         intake.payloadSha256(),
         invoice.digest(),
         utc(observed.observedAt()));
-    return new SignedOutcome(dispatch, false);
+    return new SignedOutcome(dispatch, null);
   }
 
-  public record SignedOutcome(ConfirmationDispatch dispatch, boolean latePaidConflict) {}
+  private record CurrentDispatch(
+      Record confirmation, Record authorization, AccountHostingFirstInvoicePayment invoice) {}
+
+  public record SignedOutcome(ConfirmationDispatch dispatch, UUID conflictRequestId) {
+    public boolean latePaidConflict() {
+      return conflictRequestId != null;
+    }
+  }
 
   private static void requireSignedTuple(
       VerifiedEvent verified, Record confirmation, AccountHostingFirstInvoicePayment invoice) {
+    requireSignedTuple(verified, instant(confirmation, "consented_at"), invoice);
+  }
+
+  private static void requireSignedTuple(
+      VerifiedEvent verified, Instant earliestPayment, AccountHostingFirstInvoicePayment invoice) {
     JsonNode object = JSON.readTree(verified.rawPayload()).path("data").path("object");
     if (!"payment_intent.succeeded".equals(verified.eventType())
         || !"payment_intent".equals(object.path("object").asText())
@@ -831,8 +918,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || !object.path("livemode").isBoolean()
         || invoice.livemode() != object.path("livemode").asBoolean()
         || invoice.livemode() != verified.livemode()
-        || verified.eventCreatedAtEpochSeconds()
-            < instant(confirmation, "consented_at").getEpochSecond()) throw refused();
+        || verified.eventCreatedAtEpochSeconds() < earliestPayment.getEpochSecond())
+      throw refused();
   }
 
   public AccountHostingFirstInvoicePayment find(UUID subscriptionId) {

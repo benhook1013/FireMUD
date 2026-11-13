@@ -968,7 +968,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       if (connection != null) {
         try {
           if (scopedConnection == null) connection.close();
-          else scopedClose.accept(connection.closeAsync());
+          else
+            scopedClose.accept(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
         } catch (RuntimeException cleanupFailure) {
           throw unavailable();
         }
@@ -1085,7 +1087,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(issuerBarrierKey);
       if (connection != null) {
         if (scopedConnection == null) connection.close();
-        else scopedClose.accept(connection.closeAsync());
+        else
+          scopedClose.accept(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
       }
     }
   }

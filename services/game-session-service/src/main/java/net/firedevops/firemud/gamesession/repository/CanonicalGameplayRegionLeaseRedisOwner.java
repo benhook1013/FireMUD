@@ -288,13 +288,22 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       requirePrincipal(await(commands::aclWhoami, budget));
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
-      if (budget != null) budget.check();
+      if (budget != null) {
+        byte[][] probe = arguments.clone();
+        probe[1] = ascii("PROBE");
+        probe[probe.length - 1] = ascii(Long.toString(budget.absoluteDeadlineMillis()));
+        Long result =
+            await(() -> commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, probe), budget);
+        if (result == null || (result != 0L && result != 1L)) throw unavailable();
+      }
       return new PreparedTimelineInitialization(
           connection, commands, loadedSha, keys, arguments, grant, preparation, budget);
     } catch (RuntimeException failure) {
       if (connection != null) {
         if (budget == null) connection.close();
-        else connection.closeAsync().join();
+        else
+          budget.awaitAsyncClose(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
       }
       throw unavailable(failure);
     }
@@ -487,11 +496,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       initializationInFlight = false;
       closed = true;
       if (boundedClose == null) {
-        try {
-          boundedClose = connection.closeAsync();
-        } catch (RuntimeException failure) {
-          boundedClose = CompletableFuture.failedFuture(failure);
-        }
+        boundedClose =
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection);
         boundedClose.whenComplete(
             (ignored, failure) -> {
               if (failure == null) disposal.complete(null);
@@ -772,7 +778,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       CanonicalGameplayOriginalNewCapacityExecutionBudget budget,
       boolean acquiring) {
     if (budget != null) budget.check();
-    try (StatefulRedisConnection<byte[], byte[]> connection = openConnection(budget)) {
+    StatefulRedisConnection<byte[], byte[]> connection = openConnection(budget);
+    try {
       RedisAsyncCommands<byte[], byte[]> commands = connection.async();
       requirePrincipal(await(commands::aclWhoami, budget));
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
@@ -792,6 +799,11 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       return result;
     } catch (RuntimeException failure) {
       throw unavailable(failure);
+    } finally {
+      if (budget == null) connection.close();
+      else
+        budget.awaitAsyncClose(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
     }
   }
 
@@ -807,13 +819,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       return pending.get(timeout, TimeUnit.MILLISECONDS);
     } catch (InterruptedException interrupted) {
       try {
-        awaitLateConnectionCleanup(pending);
+        awaitLateConnectionCleanup(pending, budget);
       } finally {
         Thread.currentThread().interrupt();
       }
       throw unavailable(interrupted);
     } catch (TimeoutException expired) {
-      awaitLateConnectionCleanup(pending);
+      awaitLateConnectionCleanup(pending, budget);
       throw unavailable(expired);
     } catch (ExecutionException failure) {
       throw unavailable(failure);
@@ -821,13 +833,15 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   }
 
   private static void awaitLateConnectionCleanup(
-      io.lettuce.core.ConnectionFuture<StatefulRedisConnection<byte[], byte[]>> pending) {
+      io.lettuce.core.ConnectionFuture<StatefulRedisConnection<byte[], byte[]>> pending,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
     // The caller returns at the operation deadline. This worker keeps its admission permit
     // until the pending handshake and any late connection close have finished.
-    pending
-        .thenCompose(StatefulRedisConnection::closeAsync)
-        .handle((ignored, failure) -> null)
-        .join();
+    var connection = pending.handle((opened, failure) -> opened).join();
+    if (connection == null) return;
+    var close = CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection);
+    budget.retainUntilAsyncClose(close);
+    close.handle((ignored, failure) -> null).join();
   }
 
   private RedisScriptDescriptor requireBridgeDescriptor() {

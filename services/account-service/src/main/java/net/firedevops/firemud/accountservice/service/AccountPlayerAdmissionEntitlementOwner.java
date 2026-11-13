@@ -640,11 +640,13 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         RuntimePlayerAdmissionEntitlementEvidence.digestBytes(world.canonicalBytes()));
     sources.put("worldCaptureId", world.captureId().toString());
     sources.put("worldRowVersion", Long.toString(world.rowVersion()));
-    // The capacity bundle's freshness is enforced against PostgreSQL time by the capacity owner.
-    // Keep all source checks on the injected Account clock, but stamp this new evaluation from the
-    // same database clock so a small application/database skew cannot future-date its evidence.
+    // The capacity bundle and its live caller/receipt deadlines must agree with the PostgreSQL
+    // clock that stamps the evidence, so application/database skew cannot future-date the bundle.
     Instant capacityEvaluatedAt = AccountTenantCapacityRepository.databaseNow(dsl);
-    if (capacityEvaluatedAt.isBefore(Instant.parse(scope.evaluatedAt()))) throw unavailable();
+    requireCurrentTimes(player, capacityEvaluatedAt);
+    if (paidReceiptValidUntil != null && !capacityEvaluatedAt.isBefore(paidReceiptValidUntil)) {
+      throw unavailable();
+    }
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
             request.requestId(),
