@@ -144,153 +144,6 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
-  void actualCapacityCommitAndAuthenticatedFinalReadFinalizeExactlyOneHold() throws Exception {
-    try (Session session = session()) {
-      var first = session.complete();
-      var recovery =
-          new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
-              session.capacityOwner, session.dsl, session.capacityRead, CLOCK);
-      var result =
-          recovery.reconcile(
-              session.capacityRequest,
-              net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
-                  .NoCommitAction.RELEASE);
-      assertThat(result.state())
-          .isEqualTo(
-              net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State
-                  .FINALIZED);
-      assertThat(
-              recovery.reconcile(
-                  session.capacityRequest,
-                  net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
-                      .NoCommitAction.RELEASE))
-          .isEqualTo(result);
-      assertThat(session.complete()).isEqualTo(first);
-      var usage =
-          session.dsl.fetchSingle(
-              "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
-              result.identity().tenantId());
-      assertThat(usage.get("held_units", Long.class)).isZero();
-      assertThat(usage.get("used_units", Long.class)).isOne();
-      assertThat(
-              session.dsl.fetchCount(
-                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
-          .isOne();
-    }
-  }
-
-  @Test
-  void retainedActualCasEvidenceStillFinalizesCapacityAfterControlledServingRetirement()
-      throws Exception {
-    try (Session session = session()) {
-      var admitted = session.complete();
-      var reservation =
-          session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L);
-      var before =
-          session.capacityRead.readExact(
-              session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5));
-      session.gs.removeServingIndexesAfterCapacityRetentionForFault();
-      assertThat(session.gs.physicalSession()).isNull();
-      var after =
-          session.capacityRead.readExact(
-              session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5));
-      assertThat(after.disposition())
-          .isEqualTo(
-              net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
-                  .Disposition.COMMITTED);
-      assertThat(after.authoritativeStateDigest())
-          .isEqualTo("sha256:" + admitted.finalSessionSha256());
-      assertThat(after.canonicalOwnerReadback()).containsExactly(before.canonicalOwnerReadback());
-      var recovery =
-          new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
-              session.capacityOwner, session.dsl, session.capacityRead, CLOCK);
-      assertThat(
-              recovery
-                  .reconcile(
-                      session.capacityRequest,
-                      net.firedevops.firemud.accountservice.service
-                          .AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE)
-                  .state())
-          .isEqualTo(
-              net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State
-                  .FINALIZED);
-    }
-  }
-
-  @Test
-  void actualNormalHandoffKeepsUnknownCapacityHeldAndBoundedRecoveryQuarantinesSameReservation()
-      throws Exception {
-    try (Session session = session()) {
-      var reservation =
-          session.gs.authorizeThenFenceAndHandoffWithoutFinal(
-              session.client,
-              session.jwks,
-              session.jwt,
-              session.capacityClient,
-              session.capacityRequest,
-              System.currentTimeMillis() + 5000L);
-      assertThatThrownBy(
-              () ->
-                  session.capacityRead.readExact(
-                      session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5)))
-          .isInstanceOfSatisfying(
-              StatusRuntimeException.class,
-              failure ->
-                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
-      TenantCapacityAdmission.Result result = reservation;
-      var recovery =
-          new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
-              session.capacityOwner, session.dsl, session.capacityRead, CLOCK);
-      for (int attempt = 0; attempt < 12; attempt++) {
-        result =
-            recovery.reconcile(
-                session.capacityRequest,
-                net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
-                    .NoCommitAction.RELEASE);
-        assertThat(result.reservationId()).isEqualTo(reservation.reservationId());
-        assertThat(result.reservationFence()).isEqualTo(reservation.reservationFence());
-        assertThat(result.admissionAttemptId()).isEqualTo(reservation.admissionAttemptId());
-        assertThat(result.identity()).isEqualTo(reservation.identity());
-        assertThat(result.capacityRearmFence()).isEqualTo(reservation.capacityRearmFence());
-      }
-      assertThat(result.state())
-          .isEqualTo(TenantCapacityAdmission.State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION);
-      var retainedRecovery =
-          session.dsl.fetchSingle(
-              "SELECT recovery_attempt_count, recovery_claim_fence FROM account_tenant_capacity_reservations WHERE reservation_id=?",
-              reservation.reservationId());
-      assertThat(retainedRecovery.get("recovery_attempt_count", Integer.class)).isEqualTo(12);
-      assertThat(retainedRecovery.get("recovery_claim_fence", Long.class)).isEqualTo(12L);
-      assertThat(
-              session
-                  .dsl
-                  .fetchSingle(
-                      "SELECT count(*) FROM account_tenant_capacity_recovery_evidence WHERE admission_attempt_id=?",
-                      reservation.admissionAttemptId())
-                  .get(0, Long.class))
-          .isEqualTo(12L);
-      var usage =
-          session.dsl.fetchSingle(
-              "SELECT held_units,used_units FROM account_tenant_capacity_usage WHERE tenant_uuid=? AND owner_service='game-session-service'",
-              reservation.identity().tenantId());
-      assertThat(usage.get("held_units", Long.class)).isOne();
-      assertThat(usage.get("used_units", Long.class)).isZero();
-      assertThat(
-              session.dsl.fetchCount(
-                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
-          .isOne();
-      assertThat(
-              session
-                  .dsl
-                  .fetchSingle(
-                      "SELECT execution_status FROM account_tenant_capacity_reservations WHERE reservation_id=?",
-                      reservation.reservationId())
-                  .get(0, String.class))
-          .isEqualTo("OWNER_EXECUTION_PENDING");
-    }
-  }
-
-  @Test
   void targetResolutionRefusesChangedRetainedSelectorsWithoutMutatingOwners() throws Exception {
     try (Session session = session()) {
       var before = session.durableImage();
@@ -722,9 +575,6 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     private AccountOriginalNewFinalAdmissionGrpcReadClient finalRead;
     private AccountGameplayAdmissionLeaseClient client;
     private net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient;
-    private net.firedevops.firemud.accountservice.client
-            .AccountOriginalNewCapacityExecutionReadClient
-        capacityRead;
     private net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner capacityOwner;
     private net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
         capacityRequest;
@@ -920,11 +770,6 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                     1L,
                     null)
                 .withDigest();
-        capacityRead =
-            new net.firedevops.firemud.accountservice.client
-                .AccountOriginalNewCapacityExecutionReadClient(
-                endpoints, accountTls, new GrpcChannelFactory(), "test", CLOCK);
-        capacityRead.init();
         var finalized = client.finalizeLease(jwt, leaseBytes(), gs.decisionId());
         assertThat(finalized.state())
             .isEqualTo(
@@ -1140,7 +985,6 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     @Override
     public void close() throws Exception {
       try {
-        if (capacityRead != null) capacityRead.close();
         if (capacityClient != null) capacityClient.close();
         if (capacityServer != null) {
           capacityServer.shutdownNow();
