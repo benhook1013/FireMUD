@@ -56,6 +56,16 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
             operation.apply(new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl))));
   }
 
+  /** Reuses a prepared region operation's permit for its final pre-claim status read/write. */
+  <T> T withStatusRepository(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
+      Function<CanonicalGameplayRegionRuntimeStatusRepository, T> operation) {
+    Objects.requireNonNull(retainedBudget, "retainedBudget").check();
+    Objects.requireNonNull(operation, "operation");
+    return operation.apply(
+        new CanonicalGameplayRegionRuntimeStatusRepository(retainedBudget.sql(dsl)));
+  }
+
   void requireFrozenOriginal(
       CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal original,
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,

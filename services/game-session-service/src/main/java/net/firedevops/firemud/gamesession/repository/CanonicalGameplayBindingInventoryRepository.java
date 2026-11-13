@@ -93,6 +93,15 @@ public final class CanonicalGameplayBindingInventoryRepository {
         budget -> read.apply(new CanonicalGameplayBindingInventoryRepository(budget.sql(dsl))));
   }
 
+  /** Reuses a retained handoff permit while keeping this read's scoped SQL provider. */
+  <T> T withinTransferRead(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
+      java.util.function.Function<CanonicalGameplayBindingInventoryRepository, T> read) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(retainedBudget, "retainedBudget").check();
+    return read.apply(new CanonicalGameplayBindingInventoryRepository(retainedBudget.sql(dsl)));
+  }
+
   CanonicalGameplayBindingTransitionSnapshot prepare(
       CanonicalGameplayBindingTransitionRequest request) {
     Objects.requireNonNull(request, "request");
