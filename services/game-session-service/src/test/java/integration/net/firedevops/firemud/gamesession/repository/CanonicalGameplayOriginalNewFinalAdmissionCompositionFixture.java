@@ -72,6 +72,8 @@ import org.testcontainers.containers.GenericContainer;
 public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     implements AutoCloseable {
   private static final Clock CLOCK = Clock.systemUTC();
+  private static final int TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS = 128;
+  private static final long TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES = 128L * 1_048_576L;
   private final GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
   private final AtomicInteger finalReadCalls = new AtomicInteger();
@@ -622,6 +624,16 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     binding.acknowledgeOriginalIssuer();
     regionInstallation = region.installForTransition(binding.transitionId(), sources.request);
     region.bridge(regionInstallation);
+    var assignment = tags.assignmentForTransition(binding.transitionId());
+    binding
+        .dsl()
+        .execute(
+            "INSERT INTO game_session_capacity_evidence_budget"
+                + " (tenant_id,maximum_records,maximum_binding_bytes) VALUES (?,?,?)"
+                + " ON CONFLICT DO NOTHING",
+            assignment.tenantId(),
+            TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+            TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
   }
 
   public Receipt complete(
@@ -702,7 +714,12 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     var source =
         new CanonicalGameplayBindingInventoryRepository(binding.dsl())
             .readOriginalNewFinalAdmissionSource(decision);
-    originExecutionOwner(clock).prepareOrigin(source, request, deadline);
+    var owner = originExecutionOwner(clock);
+    if (request.evidence().permitsCreation()) {
+      owner.precharge(
+          source, request, owner.requireRequestBinding(source, request, deadline), deadline);
+    }
+    owner.prepareOrigin(source, request, deadline);
   }
 
   private CanonicalGameplayOriginalNewCapacityExecutionOwner originExecutionOwner(Clock clock) {
@@ -934,8 +951,10 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     var executionOwner =
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
             binding.dsl(), coordination, scripts, CLOCK, tags);
+    var selected = executionOwner.requireRequestBinding(source, request, deadline);
+    executionOwner.precharge(source, request, selected, deadline);
     var reservation = capacityClient.commit(request, deadline);
-    var execution = executionOwner.bind(source, request, reservation, deadline);
+    var execution = executionOwner.bind(source, request, reservation, deadline, selected);
     var issuerSource = binding.currentIssuerSource();
     var issuer =
         new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
@@ -1036,6 +1055,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
             binding.dsl(), coordination, scripts, CLOCK, tags);
     var selected = executionOwner.requireRequestBinding(source, request, deadline);
+    executionOwner.precharge(source, request, selected, deadline);
     var result = client.commit(request, deadline);
     var identity = source.candidate().bindingIdentity();
     if (binding
@@ -1061,6 +1081,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     for (String table :
         java.util.List.of(
             "game_session_canonical_binding_transition",
+            "game_session_capacity_evidence_charge",
             "game_session_original_new_capacity_execution")) {
       String rows =
           binding

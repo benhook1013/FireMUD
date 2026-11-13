@@ -915,13 +915,19 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
   }
 
-  @Test
-  void changedCatalogRevisionRefusesBeforeAccountCapacityCommitment() throws Exception {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"catalogRevision", "pointerVersion", "activeWorldEpoch", "canonicalVersionId"})
+  void changedTargetSnapshotRefusesBeforeAccountCapacityCommitment(String field) throws Exception {
     try (Session session = session()) {
       var original = session.capacityRequest;
       var target = (Map<?, ?>) original.evidence().fields().get("target");
-      long revision = Long.parseLong((String) target.get("catalogRevision"));
-      var changed = session.retainControlledEvaluation(true, null, revision + 1L);
+      String changedValue =
+          field.equals("canonicalVersionId")
+              ? UUID.randomUUID().toString()
+              : Long.toString(Math.incrementExact(Long.parseLong((String) target.get(field))));
+      var changed =
+          session.retainControlledEvaluation(true, null, Map.of(field, changedValue), null);
       changed.requireStructurallyValid();
       assertThat(changed.context()).isEqualTo(original.context());
       assertThat(changed.evidence().fields().get("authorityTuple"))
@@ -1174,7 +1180,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     try (Session session = session()) {
       String unretainedScopeHash =
           RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash("unretained-test-scope");
-      var wrongScope = session.retainControlledEvaluation(true, null, null, unretainedScopeHash);
+      var wrongScope =
+          session.retainControlledEvaluation(true, null, Map.of(), unretainedScopeHash);
       assertCapacityRefusalWithoutMutation(
           session, wrongScope, Status.Code.UNAVAILABLE, "ENTITLEMENT_UNAVAILABLE");
       var first = session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L);
@@ -1580,21 +1587,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     /** Controlled evaluation inputs with actual immutable retention. */
     private TenantCapacityAdmission.Request retainControlledEvaluation(
         boolean creationAllowed, @org.jspecify.annotations.Nullable String quota) {
-      return retainControlledEvaluation(creationAllowed, quota, null);
-    }
-
-    private TenantCapacityAdmission.Request retainControlledEvaluation(
-        boolean creationAllowed,
-        @org.jspecify.annotations.Nullable String quota,
-        @org.jspecify.annotations.Nullable Long catalogRevision) {
-      return retainControlledEvaluation(creationAllowed, quota, catalogRevision, null);
+      return retainControlledEvaluation(creationAllowed, quota, Map.of(), null);
     }
 
     @SuppressWarnings("unchecked")
     private TenantCapacityAdmission.Request retainControlledEvaluation(
         boolean creationAllowed,
         @org.jspecify.annotations.Nullable String quota,
-        @org.jspecify.annotations.Nullable Long catalogRevision,
+        Map<String, String> targetChanges,
         @org.jspecify.annotations.Nullable String scopeTokenHash) {
       var original = capacityRequest;
       var parsed =
@@ -1624,7 +1624,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         facts.put("quotas", quotas);
       }
       var target = new LinkedHashMap<>((Map<String, Object>) fields.get("target"));
-      if (catalogRevision != null) target.put("catalogRevision", Long.toString(catalogRevision));
+      target.putAll(targetChanges);
       var evaluation =
           RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
               original.identity().requestId(),
