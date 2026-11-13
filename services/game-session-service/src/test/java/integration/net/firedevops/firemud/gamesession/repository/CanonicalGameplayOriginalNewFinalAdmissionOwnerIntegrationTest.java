@@ -5133,6 +5133,13 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             tenantId,
             maximumRecords,
             maximumBindingBytes);
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO game_session_region_transfer_history_budget"
+                + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,256,1024)"
+                + " ON CONFLICT DO NOTHING",
+            tenantId);
   }
 
   private net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request

@@ -646,6 +646,13 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             maximumActiveRecords,
             maximumActiveRecords * TEST_CAPACITY_EVIDENCE_BYTES_PER_RECORD,
             maximumRetainedRecords);
+    binding
+        .dsl()
+        .execute(
+            "INSERT INTO game_session_region_transfer_history_budget"
+                + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,256,1024)"
+                + " ON CONFLICT DO NOTHING",
+            assignment.tenantId());
   }
 
   public Receipt complete(

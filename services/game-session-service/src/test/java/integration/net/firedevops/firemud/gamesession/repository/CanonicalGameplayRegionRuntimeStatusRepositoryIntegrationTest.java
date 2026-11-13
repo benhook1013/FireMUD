@@ -1867,6 +1867,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   private final class TransferSqlProof implements AutoCloseable {
     private final Clock clock = Clock.systemUTC();
     private final RedisClient redis;
+    private final RedisURI coordinationUri;
     private final CanonicalGameplayAdmissionAbortCompositionFixture fixture;
     private final CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources
         upstream;
@@ -1960,7 +1961,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                     .addCommand(CommandType.DEL)
                     .addCommand(CommandType.TIME));
       }
-      var coordinationUri =
+      coordinationUri =
           RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379))
               .withAuthentication("gamesession_coord_app", password)
               .withTimeout(Duration.ofSeconds(5))
@@ -2056,6 +2057,11 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           maximumRecords,
           maximumBindingBytes,
           maximumRetainedRecords);
+      sql.execute(
+          "INSERT INTO game_session_region_transfer_history_budget"
+              + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,256,1024)"
+              + " ON CONFLICT DO NOTHING",
+          assignment.tenantId());
       execution = newControlledExecution();
       precharge(execution);
       recreateTransferOwners();

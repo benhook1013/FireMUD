@@ -336,7 +336,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     Objects.requireNonNull(grant, "grant");
     Objects.requireNonNull(source, "source");
     Objects.requireNonNull(identity, "runtimeIdentity");
-    if (!grant.source.equals(source)
+    if (!CanonicalGameplayRegionRuntimeStatusRepository.sameRegionSource(grant.source, source)
         || grant.regionEpoch != regionEpoch
         || !grant.ownerService.equals(requireOwnerService(identity))
         || !grant.ownerInstanceId.equals(requireOwnerInstance(identity))) {
