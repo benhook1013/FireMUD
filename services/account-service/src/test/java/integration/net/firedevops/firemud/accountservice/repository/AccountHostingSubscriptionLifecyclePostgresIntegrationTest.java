@@ -1925,9 +1925,16 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     java.time.OffsetDateTime.ofInstant(f.clock().instant(), ZoneOffset.UTC)));
     assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
 
+    var secondEvent =
+        checkout.signWebhookPayload(signed.payload().replace("evt_", "evt_distinct_"));
+    assertThat(owner.completeSigned(secondEvent.payload(), secondEvent.signature()))
+        .isEqualTo(conflict);
+    assertThat(count(c, "subscription_first_invoice_late_paid_conflict_events")).isOne();
     checkout.status("requires_confirmation");
     assertThat(owner.completeSigned(signed.payload(), signed.signature())).isEqualTo(conflict);
     assertThat(owner.completeSigned(equivalent.payload(), equivalent.signature()))
+        .isEqualTo(conflict);
+    assertThat(owner.completeSigned(secondEvent.payload(), secondEvent.signature()))
         .isEqualTo(conflict);
     assertThat(
             c.setup()
@@ -1956,6 +1963,82 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
     assertThat(count(c, "subscription_first_invoice_completions")).isZero();
     assertThat(f.service().readCurrent(f.creation().tenantId()).gameplayAvailable()).isFalse();
+  }
+
+  @Test
+  void signedPaymentAfterCancellationBeforeConsentRetainsOperatorConflict() throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    UUID cancellationId = UUID.randomUUID();
+    long version =
+        in(
+            c,
+            () ->
+                checkout
+                    .payments()
+                    .ownerRowVersion(
+                        checkout.invoice().subscriptionId(), checkout.invoice().ownerAccountId()));
+    f.transport().json = response(f, "canceled");
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    cancellationId, f.creation().requestId(), version, f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.COMMITTED);
+    List<String> canceledImage = firstInvoiceImage(c);
+    f.clock().advanceToAtLeast(checkout.invoice().expiresAt().plusSeconds(1));
+    checkout.status("succeeded");
+    var signed = checkout.signedSuccess();
+    var owner =
+        new net.firedevops.firemud.accountservice.service.session
+            .AccountHostingFirstInvoicePaymentService(
+            mock(
+                net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.service.session
+                    .AccountRecentReauthenticationService.class),
+            checkout.payments(),
+            new StripeEventInboxRepository(c.dsl()),
+            checkout.provider(),
+            checkout.verifier(),
+            f.service(),
+            new DataSourceTransactionManager(c.source()));
+
+    var conflict = owner.completeSigned(signed.payload(), signed.signature());
+    assertThat(conflict.state()).isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
+    assertThat(conflict.requestId()).isEqualTo(cancellationId);
+    var retained =
+        c.setup()
+            .fetchSingle(
+                "SELECT request_id, lifecycle_request_id, cancellation_request_id FROM subscription_first_invoice_late_paid_conflicts");
+    assertThat(retained.get("request_id")).isNull();
+    assertThat(retained.get("lifecycle_request_id")).isNull();
+    assertThat(retained.get("cancellation_request_id", UUID.class)).isEqualTo(cancellationId);
+    var secondEvent =
+        checkout.signWebhookPayload(signed.payload().replace("evt_", "evt_distinct_"));
+    assertThat(owner.completeSigned(secondEvent.payload(), secondEvent.signature()))
+        .isEqualTo(conflict);
+    checkout.status("requires_confirmation");
+    assertThat(owner.completeSigned(signed.payload(), signed.signature())).isEqualTo(conflict);
+    assertThat(owner.completeSigned(secondEvent.payload(), secondEvent.signature()))
+        .isEqualTo(conflict);
+    assertThat(count(c, "subscription_first_invoice_late_paid_conflict_events")).isOne();
+    assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
+    assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isOne();
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(checkout.confirmations()).isZero();
   }
 
   @Test
