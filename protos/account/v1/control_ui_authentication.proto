@@ -14,6 +14,8 @@ enum AccountControlUiAuthLoginStatus {
   ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_UNSPECIFIED = 0;
   ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_SUCCESS = 1;
   ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_DENIED = 2;
+  ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_RETRY_LATER = 3;
+  ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_ABUSE_UNAVAILABLE = 4;
 }
 
 enum AccountControlUiCredentialTransportClass {
@@ -48,4 +50,6 @@ message AuthLoginResponse {
   repeated string auth_token = 7;
   // Whole UTC epoch seconds. Present exactly once only for SUCCESS.
   repeated int64 expires_at_epoch_seconds = 8;
+  // Positive exact milliseconds, required for RETRY_LATER, optional for ABUSE_UNAVAILABLE only.
+  repeated int64 retry_after_millis = 9;
 }

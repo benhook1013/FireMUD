@@ -115,6 +115,33 @@ public final class AccountCheckoutGatewayController {
                             == AccountControlUiAuthenticationGrpcCodec.Outcome.DENIED) {
                           return jsonResponse(HttpStatus.UNAUTHORIZED, errorJson("DENIED"));
                         }
+                        if (result.outcome()
+                                == AccountControlUiAuthenticationGrpcCodec.Outcome.RETRY_LATER
+                            || result.outcome()
+                                == AccountControlUiAuthenticationGrpcCodec.Outcome
+                                    .ABUSE_UNAVAILABLE) {
+                          boolean retry =
+                              result.outcome()
+                                  == AccountControlUiAuthenticationGrpcCodec.Outcome.RETRY_LATER;
+                          var builder =
+                              ResponseEntity.status(
+                                      retry
+                                          ? HttpStatus.TOO_MANY_REQUESTS
+                                          : HttpStatus.SERVICE_UNAVAILABLE)
+                                  .cacheControl(CacheControl.noStore())
+                                  .header(HttpHeaders.PRAGMA, "no-cache")
+                                  .header(HttpHeaders.EXPIRES, "0")
+                                  .contentType(MediaType.APPLICATION_JSON);
+                          if (result.retryAfterMillis() != null) {
+                            long millis = result.retryAfterMillis();
+                            builder.header(
+                                HttpHeaders.RETRY_AFTER,
+                                Long.toString(millis / 1000 + (millis % 1000 == 0 ? 0 : 1)));
+                          }
+                          return builder.body(
+                              errorJson(
+                                  retry ? "AUTH_RETRY_LATER" : "AUTH_ABUSE_CONTROL_UNAVAILABLE"));
+                        }
                         Authenticated authenticated = result.authenticated();
                         LoginSuccess success =
                             new LoginSuccess(
