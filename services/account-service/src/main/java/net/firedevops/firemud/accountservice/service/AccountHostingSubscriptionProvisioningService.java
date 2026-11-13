@@ -49,6 +49,10 @@ public final class AccountHostingSubscriptionProvisioningService {
     requireUuid(dispatchId);
     requireUuid(lifecycleRequestId);
     requireNoAmbientTransaction();
+    // retainAwaitingPayment may commit before its independent invoice readback or caller response
+    // is lost. Recover that exact retained outcome before attempting to claim or contact Stripe.
+    var replay = transaction.execute(status -> firstInvoices.findAwaitingPayment(claim));
+    if (replay != null) return new AwaitingPayment(replay);
     ProviderDispatch dispatch;
     try {
       var prepared =
@@ -58,6 +62,9 @@ public final class AccountHostingSubscriptionProvisioningService {
           Objects.requireNonNull(
               transaction.execute(status -> repository.readProviderDispatch(prepared)));
     } catch (FenceRejectedException refused) {
+      // Retention may have committed after the first read but before dispatch was fenced.
+      replay = transaction.execute(status -> firstInvoices.findAwaitingPayment(claim));
+      if (replay != null) return new AwaitingPayment(replay);
       // Dispatch remains strictly fenced. A new local transaction may only settle the same retained
       // work; stale/current-owner/reservation mismatches still reject there before any write.
       Disposition disposition =
