@@ -150,6 +150,22 @@ jobs:
               ["Validate Documentation", "Validate Documentation"],
               ["Frontend checks", "Frontend Checks"],
             ];
+            // Historical attempts have one dev-tool lane; split attempts have
+            // exactly one additional native job, never a duplicate or alias.
+            const splitDevToolName = "Dev Tool Validation Contracts";
+            const splitDevToolJobs = jobs.filter(job => job.name === splitDevToolName);
+            if (splitDevToolJobs.length > 1) throw new Error("Duplicate " + splitDevToolName + " job");
+            one("Validation Gate");
+            const gateJob = jobs.find(job => job.name === "Validation Gate");
+            const splitMarkers = (Array.isArray(gateJob.steps) ? gateJob.steps : [])
+              .filter(step => step.name === "Declare dev tool contract split");
+            if (splitMarkers.length > 1 || (splitMarkers.length === 1 && splitDevToolJobs.length !== 1)) {
+              throw new Error("Missing or ambiguous split dev tool contract inventory");
+            }
+            // The always-present gate identifies new lightweight attempts too.
+            // An unmarked historical gate retains its original single-lane shape.
+            const devToolMode = splitDevToolJobs.length === 1 ? "split" : "historical";
+            if (devToolMode === "split") fixedChecks.push(["Dev tool validation contracts", splitDevToolName]);
             const modules = new Set([
               "common-data-runtime", "common-platform-core", "common-saga", "common-temporal", "common-security",
               "common-test-support", "common-web-support", "account-service", "automation-scripting-service",

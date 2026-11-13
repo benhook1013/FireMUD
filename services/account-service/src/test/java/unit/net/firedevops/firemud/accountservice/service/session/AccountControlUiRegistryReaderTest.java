@@ -24,6 +24,54 @@ class AccountControlUiRegistryReaderTest {
   private static final String TOKEN_HASH = "a".repeat(64);
 
   @Test
+  void nullAndClosedConnectionsAreUnavailable() {
+    assertThatThrownBy(() -> new AccountControlUiRegistryReader(() -> null).readActive(TOKEN_HASH))
+        .isInstanceOf(AccountControlUiRegistryReader.RegistryUnavailableException.class)
+        .hasNoCause();
+    StatefulRedisConnection<byte[], byte[]> closed = mock(StatefulRedisConnection.class);
+    assertThatThrownBy(
+            () -> new AccountControlUiRegistryReader(() -> closed).readActive(TOKEN_HASH))
+        .isInstanceOf(AccountControlUiRegistryReader.RegistryUnavailableException.class)
+        .hasNoCause();
+    verify(closed).close();
+    verify(closed, org.mockito.Mockito.never()).sync();
+  }
+
+  @Test
+  void invalidOptionsReconnectAndWrongAclRemainRefusals() {
+    StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
+    when(connection.isOpen()).thenReturn(true);
+    var reader = new AccountControlUiRegistryReader(() -> connection);
+    assertRefused(reader);
+    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
+    assertRefused(reader);
+    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    RedisCommands<byte[], byte[]> commands = mock(RedisCommands.class);
+    when(connection.sync()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn("wrong_acl");
+    assertRefused(reader);
+    verify(commands, org.mockito.Mockito.never()).get(any(byte[].class));
+  }
+
+  private static void assertRefused(AccountControlUiRegistryReader reader) {
+    assertThatThrownBy(() -> reader.readActive(TOKEN_HASH))
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(AccountControlUiRegistryReader.RegistryUnavailableException.class);
+  }
+
+  @Test
+  void dependencyFailureIsUnavailableRatherThanEvidenceOfRevocation() {
+    var reader =
+        new AccountControlUiRegistryReader(
+            () -> {
+              throw new io.lettuce.core.RedisConnectionException("controlled transport failure");
+            });
+    assertThatThrownBy(() -> reader.readActive(TOKEN_HASH))
+        .isInstanceOf(AccountControlUiRegistryReader.RegistryUnavailableException.class)
+        .hasNoCause();
+  }
+
+  @Test
   void acceptsOnlyTheExactCanonicalActiveProfileRecord() throws Exception {
     byte[] bytes = canonicalRecord();
 
@@ -98,7 +146,30 @@ class AccountControlUiRegistryReaderTest {
     AccountControlUiRegistryReader reader = new AccountControlUiRegistryReader(() -> connection);
 
     assertThatThrownBy(() -> reader.readActive(TOKEN_HASH))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(AccountControlUiRegistryReader.RegistryUnavailableException.class);
+  }
+
+  @Test
+  void refusesMissingKeyWithoutReportingRegistryUnavailable() {
+    StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
+    ClientOptions options = mock(ClientOptions.class);
+    @SuppressWarnings("unchecked")
+    RedisCommands<byte[], byte[]> commands = mock(RedisCommands.class);
+    when(connection.isOpen()).thenReturn(true);
+    when(connection.getOptions()).thenReturn(options);
+    when(options.isAutoReconnect()).thenReturn(false);
+    when(connection.sync()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn(AccountControlUiRegistryReader.REQUIRED_ACL_IDENTITY);
+    when(commands.get(any(byte[].class))).thenReturn(null);
+
+    AccountControlUiRegistryReader reader = new AccountControlUiRegistryReader(() -> connection);
+
+    assertThatThrownBy(() -> reader.readActive(TOKEN_HASH))
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(AccountControlUiRegistryReader.RegistryUnavailableException.class);
+    verify(commands).aclWhoami();
+    verify(commands).get(any(byte[].class));
   }
 
   @Test

@@ -950,6 +950,33 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
 
     // The initial charge happened in bridge(); the exact replay is idempotent even at capacity.
     owner.precharge(source, controlledCapacity.request(), selected, deadline());
+    var original = controlledCapacity.request();
+    var unsupported =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+                original.identity(),
+                UUID.randomUUID(),
+                original.capacityRearmFence(),
+                original.targetNamespace(),
+                original.context(),
+                original.operation(),
+                original.priorShape(),
+                new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Shape(
+                    2, 0, 0),
+                original.evidence(),
+                2L,
+                null)
+            .withDigest();
+    unsupported.requireCommittable();
+    assertThatThrownBy(() -> owner.precharge(source, unsupported, selected, deadline()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Exact original NEW capacity request required");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id = ?",
+                    unsupported.admissionAttemptId()))
+        .isNull();
     assertThat(
             fixture
                 .dsl()
@@ -1175,7 +1202,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
                         ownerClient, catalog, CLOCK, tags)
                     .fenceCapacityExecutionOnce(
-                        changed, source.candidate(), assignment, deadline()))
+                        changed, source.candidate(), assignment, UUID.randomUUID(), deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(admin.type(ascii(capacityKey(assignment)))).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(retained);

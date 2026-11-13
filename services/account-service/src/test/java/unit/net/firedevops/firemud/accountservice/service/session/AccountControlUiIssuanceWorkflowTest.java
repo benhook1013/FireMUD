@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -17,6 +18,7 @@ import static org.mockito.Mockito.when;
 import io.grpc.Context;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -28,8 +30,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseRefusal;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -144,11 +149,97 @@ class AccountControlUiIssuanceWorkflowTest {
       }
       try (var ignored = fixture.withPeer(ISSUER)) {
         assertThatThrownBy(() -> fixture.service().issue(request, fixture.environment))
-            .isInstanceOf(IllegalArgumentException.class);
+            .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
       }
       verify(fixture.operations, never()).beginRecoveryFailure(any());
+      if (changed == 1 || changed == 2 || changed == 4) {
+        verify(fixture.operations, never()).lockReplayRequest(any());
+        verify(fixture.operations, never()).recordReplayFailure(any());
+      }
       verifyNoInteractions(fixture.registry, fixture.primary, fixture.signers);
     }
+  }
+
+  @Test
+  void replayCredentialMismatchCommitsFailureBeforeReportingConflictWithoutPrimaryAuthentication() {
+    Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    var original = fixture.existing();
+    AtomicReference<byte[]> replayMacInput = new AtomicReference<>();
+    when(fixture.cryptography.requestDigest(anyString(), any(byte[].class)))
+        .thenAnswer(
+            call -> {
+              replayMacInput.set(call.getArgument(1, byte[].class).clone());
+              return "changed-request-digest";
+            });
+
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .service()
+                      .issue(
+                          fixture.request(fixture.tenant, fixture.context, "wrong-secret"),
+                          fixture.environment))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+    }
+
+    assertThat(AccountControlUiIssuanceRepository.object(replayMacInput.get()))
+        .containsEntry("secret", "wrong-secret");
+    var order = inOrder(fixture.operations, fixture.cryptography, fixture.transactions);
+    order.verify(fixture.operations).lockReplayRequest(original.requestId);
+    order.verify(fixture.operations).countReplayFailures(original);
+    order.verify(fixture.cryptography).requestDigest(anyString(), any(byte[].class));
+    order.verify(fixture.operations).recordReplayFailure(original);
+    order.verify(fixture.transactions).commit(any());
+    verify(fixture.transactions, never()).rollback(any());
+    verifyNoInteractions(
+        fixture.primary,
+        fixture.authority,
+        fixture.fences,
+        fixture.signers,
+        fixture.registry,
+        fixture.actors);
+    verify(fixture.operations, never()).beginRecoveryFailure(any());
+  }
+
+  @Test
+  void exhaustedReplayBudgetDeniesBeforeCredentialMacOrAccountSourceReads() {
+    Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    var original = fixture.accountExisting();
+    when(fixture.operations.countReplayFailures(original)).thenReturn(5);
+
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> fixture.service().issueAccount(fixture.accountRequest()))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+    }
+
+    verify(fixture.operations).lockReplayRequest(original.requestId);
+    verify(fixture.operations, never()).recordReplayFailure(any());
+    verify(fixture.operations, never()).beginRecoveryFailure(any());
+    verifyNoInteractions(
+        fixture.cryptography,
+        fixture.primary,
+        fixture.authority,
+        fixture.fences,
+        fixture.signers,
+        fixture.registry,
+        fixture.actors);
+  }
+
+  @Test
+  void unavailableReplayCustodyRollsBackWithoutCountingACredentialFailure() {
+    Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    fixture.accountExisting();
+    when(fixture.cryptography.requestDigest(anyString(), any(byte[].class)))
+        .thenThrow(new IllegalStateException("custody unavailable"));
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> fixture.service().issueAccount(fixture.accountRequest()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    verify(fixture.operations, never()).recordReplayFailure(any());
+    verify(fixture.transactions).rollback(any());
+    verify(fixture.transactions, never()).commit(any());
+    verifyNoInteractions(fixture.primary, fixture.authority, fixture.registry);
   }
 
   @Test
@@ -217,6 +308,7 @@ class AccountControlUiIssuanceWorkflowTest {
   void accountGlobalIssuanceUsesAccountSourcesAndReturnsItsSingleOriginalCredential()
       throws Exception {
     Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    fixture.allowControlledAttempt();
     var source = fixture.accountSource();
     byte[] expectedCredential = "test-only-account-token".getBytes(StandardCharsets.US_ASCII);
     byte[] expectedReturnedCredential = expectedCredential.clone();
@@ -262,7 +354,7 @@ class AccountControlUiIssuanceWorkflowTest {
     when(fixture.actors.verifySigned("test-only-account-token")).thenReturn(signed);
     when(fixture.actors.authenticateAccount("test-only-account-token")).thenReturn(actor);
     when(fixture.operations.findRequest(fixture.requestId))
-        .thenReturn(null, prepared, candidate, candidate, committedStored);
+        .thenReturn(null, null, prepared, candidate, candidate, committedStored);
     when(fixture.operations.prepare(
             any(),
             anyString(),
@@ -318,7 +410,14 @@ class AccountControlUiIssuanceWorkflowTest {
         .containsEntry("authorizationScope", "ACCOUNT")
         .doesNotContainKey("canonicalTenantId");
     assertThat(requestFields)
-        .doesNotContainKeys("tenantId", "environmentId", "clusterId", "namespace");
+        .doesNotContainKeys(
+            "tenantId",
+            "environmentId",
+            "clusterId",
+            "namespace",
+            "canonicalClientAddress",
+            "transportClass",
+            "sourceContext");
     Map<String, Object> envelopeFields =
         tools.jackson.databind.json.JsonMapper.builder()
             .build()
@@ -354,6 +453,24 @@ class AccountControlUiIssuanceWorkflowTest {
   }
 
   @Test
+  void accountSignInRequiresSourceBeforeAnyPrimaryOrIssuanceWork() {
+    Fixture fixture = new Fixture(NOW);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .service()
+                    .issueAccount(
+                        new AccountControlUiIssuanceService.AccountSignInRequest(
+                            fixture.requestId,
+                            "creator@example.test",
+                            "test-only-secret",
+                            fixture.context,
+                            null)))
+        .isInstanceOf(IllegalArgumentException.class);
+    org.mockito.Mockito.verifyNoInteractions(fixture.primary, fixture.operations, fixture.signers);
+  }
+
+  @Test
   void accountGlobalReplayReturnsOriginalCredentialAndCrossScopeRetriesConflict() {
     Fixture replay = new Fixture(NOW.plusSeconds(30));
     byte[] exactCredential = "test-only-account-original".getBytes(StandardCharsets.US_ASCII);
@@ -361,6 +478,7 @@ class AccountControlUiIssuanceWorkflowTest {
     String tokenHash = AccountControlUiIssuanceRepository.hash(exactCredential);
     var original = replay.useAccountOwnerRepository(tokenHash);
     replay.accountRecoveryInputs();
+    doAnswer(call -> 4).when(replay.operations).countReplayFailures(any());
     var binding = replay.envelopeBinding(original, tokenHash);
     var envelope = new AccountControlUiIssuanceRepository.Envelope(new byte[] {9}, binding);
     doAnswer(call -> envelope).when(replay.operations).envelope(any());
@@ -371,13 +489,22 @@ class AccountControlUiIssuanceWorkflowTest {
     when(actor.issuanceOperationId()).thenReturn(replay.operationId);
     when(replay.actors.authenticateAccount("test-only-account-original")).thenReturn(actor);
 
+    var retry = replay.accountRequest();
+    var changedSourceRetry =
+        new AccountControlUiIssuanceService.AccountSignInRequest(
+            retry.requestId(),
+            retry.email(),
+            retry.secret(),
+            retry.callerContextId(),
+            new SourceContext("198.51.100.20"));
     try (var ignored = replay.withPeer(ISSUER)) {
-      try (var issued = replay.service().issueAccount(replay.accountRequest())) {
+      try (var issued = replay.service().issueAccount(changedSourceRetry)) {
         assertThat(issued.compactBytes()).containsExactly(expectedCredential);
       }
     }
     verify(replay.authority, org.mockito.Mockito.atLeastOnce()).captureAccount(replay.account);
     verify(replay.actors).authenticateAccount("test-only-account-original");
+    verify(replay.operations, never()).recordReplayFailure(any());
     verify(replay.primary, never()).authenticateControlUiPrimaryIdentity(anyString(), anyString());
     verify(replay.signers, never()).sign(any(), any(), any());
     assertThat(original.scopeKind()).isEqualTo(AccountControlUiAuthority.ScopeKind.ACCOUNT);
@@ -400,10 +527,10 @@ class AccountControlUiIssuanceWorkflowTest {
                               conflict.request(
                                   conflict.tenant, conflict.context, "test-only-secret"),
                               conflict.environment))
-              .isInstanceOf(IllegalArgumentException.class);
+              .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
         } else {
           assertThatThrownBy(() -> conflict.service().issueAccount(conflict.accountRequest()))
-              .isInstanceOf(IllegalArgumentException.class);
+              .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
         }
       }
       verify(conflict.operations, never()).beginRecoveryFailure(any());
@@ -562,6 +689,163 @@ class AccountControlUiIssuanceWorkflowTest {
         && expected.recoveryExpiry.equals(actual.recoveryExpiry);
   }
 
+  @org.junit.jupiter.api.Test
+  void accountOnlyCompositionRefusesTenantIssuanceBeforePrimaryAuthentication() {
+    Fixture f = new Fixture(NOW.plusSeconds(600));
+    var accountOnly =
+        new net.firedevops.firemud.accountservice.authordraft.AccountControlUiAccountAuthority(
+            mock(net.firedevops.firemud.accountservice.repository.AccountRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountAuthoritySourceEvidenceRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountPlatformRestrictionOperationRepository.class),
+            mock(org.jooq.DSLContext.class));
+    var issuer =
+        new AccountControlUiIssuanceService(
+            f.primary,
+            null, // No implicit shared abuse policy or admitting fallback.
+            f.operations,
+            accountOnly,
+            f.fences,
+            f.signers,
+            f.cryptography,
+            f.registry,
+            f.actors,
+            f.transactions,
+            Clock.fixed(NOW, ZoneOffset.UTC),
+            300_000L,
+            ISSUER);
+    try (var ignored = f.withPeer(ISSUER)) {
+      assertThatThrownBy(
+              () ->
+                  issuer.issue(
+                      new AccountControlUiIssuanceService.Request(
+                          f.requestId,
+                          "owner@example.test",
+                          "controlled-secret",
+                          f.tenant,
+                          f.context),
+                      f.environment))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    org.mockito.Mockito.verifyNoInteractions(f.primary, f.operations, f.signers, f.registry);
+  }
+
+  @Test
+  void newAccountAttemptWithoutPolicyRefusesBeforePrimaryAuthentication() {
+    var f = new Fixture(NOW.plusSeconds(30));
+    try (var ignored = f.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> f.service().issueAccount(f.accountRequest()))
+          .isInstanceOf(AccountCredentialAbuseRefusal.class)
+          .hasMessage("AUTH_ABUSE_CONTROL_UNAVAILABLE");
+    }
+    verifyNoInteractions(f.primary, f.signers, f.registry, f.authority);
+  }
+
+  @Test
+  void remoteAdmissionAndFailureAccountingRunOutsideSqlAfterCredentialDenialCommits() {
+    var f = new Fixture(NOW.plusSeconds(30));
+    f.allowControlledAttempt();
+    when(f.primary.authenticateControlUiPrimaryIdentity(anyString(), anyString()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              throw new AuthenticationException("AUTH_INVALID_CREDENTIALS", "Invalid credentials");
+            });
+    try (var ignored = f.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> f.service().issueAccount(f.accountRequest()))
+          .isInstanceOf(AuthenticationException.class);
+    }
+    var ordered = inOrder(f.operations, f.transactions, f.abuse, f.primary);
+    ordered.verify(f.operations).findRequest(f.requestId);
+    ordered.verify(f.transactions).commit(any());
+    ordered.verify(f.abuse).admit(any(), eq("creator@example.test"));
+    ordered.verify(f.operations).lockReplayRequest(f.requestId);
+    ordered.verify(f.operations).findRequest(f.requestId);
+    ordered.verify(f.primary).authenticateControlUiPrimaryIdentity(anyString(), anyString());
+    ordered.verify(f.transactions).commit(any());
+    ordered.verify(f.abuse).recordFailure(any());
+    verify(f.transactions, never()).rollback(any());
+    verifyNoInteractions(f.signers, f.registry);
+  }
+
+  @Test
+  void failedSharedAccountingReturnsUnavailableRatherThanCredentialDenial() {
+    var f = new Fixture(NOW.plusSeconds(30));
+    f.allowControlledAttempt();
+    when(f.primary.authenticateControlUiPrimaryIdentity(anyString(), anyString()))
+        .thenThrow(new AuthenticationException("AUTH_INVALID_CREDENTIALS", "Invalid credentials"));
+    when(f.abuse.recordFailure(any()))
+        .thenReturn(
+            new AccountCredentialAbuseService.Decision(
+                AccountCredentialAbuseService.Outcome.UNAVAILABLE, Duration.ofSeconds(2), null));
+    try (var ignored = f.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> f.service().issueAccount(f.accountRequest()))
+          .isInstanceOf(AccountCredentialAbuseRefusal.class)
+          .hasMessage("AUTH_ABUSE_CONTROL_UNAVAILABLE");
+    }
+    verify(f.transactions, never()).rollback(any());
+  }
+
+  @Test
+  void throttledCandidateNeverReachesAccountLookupOrPrimaryAuthentication() {
+    var f = new Fixture(NOW.plusSeconds(30));
+    f.allowControlledAttempt();
+    when(f.abuse.admit(any(), anyString()))
+        .thenReturn(
+            new AccountCredentialAbuseService.Decision(
+                AccountCredentialAbuseService.Outcome.RETRY_LATER, Duration.ofMillis(1501), null));
+    try (var ignored = f.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> f.service().issueAccount(f.accountRequest()))
+          .isInstanceOf(AccountCredentialAbuseRefusal.class)
+          .satisfies(
+              error ->
+                  assertThat(((AccountCredentialAbuseRefusal) error).retryAfterMillis())
+                      .isEqualTo(1501));
+    }
+    verifyNoInteractions(f.primary, f.authority, f.signers, f.registry);
+    verify(f.abuse, never()).recordFailure(any());
+  }
+
+  @Test
+  void concurrentReplayWinnerIsRecheckedBeforePrimaryAndDoesNotSpendNewFailureBudget() {
+    var f = new Fixture(NOW.plusSeconds(30));
+    f.allowControlledAttempt();
+    when(f.abuse.admit(any(), anyString()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              var original = f.accountExisting();
+              when(f.operations.countReplayFailures(original)).thenReturn(5);
+              return new AccountCredentialAbuseService.Decision(
+                  AccountCredentialAbuseService.Outcome.ADMITTED,
+                  null,
+                  mock(AccountCredentialAbuseService.Permit.class));
+            });
+    try (var ignored = f.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> f.service().issueAccount(f.accountRequest()))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+    }
+    verifyNoInteractions(f.primary, f.signers, f.registry);
+    verify(f.abuse, never()).recordFailure(any());
+    verify(f.operations, never()).recordReplayFailure(any());
+  }
+
+  @Test
+  void expiredAdmissionAfterRequestLockWaitNeverConsumesPrimaryCredential() {
+    var f = new Fixture(NOW.plusSeconds(30));
+    f.allowControlledAttempt();
+    when(f.abuse.isUsable(any())).thenReturn(false);
+    try (var ignored = f.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> f.service().issueAccount(f.accountRequest()))
+          .isInstanceOf(AccountCredentialAbuseRefusal.class);
+    }
+    verifyNoInteractions(f.primary, f.authority, f.signers, f.registry);
+    verify(f.abuse, never()).recordFailure(any());
+  }
+
   private static final class Fixture {
     final UUID requestId = UUID.randomUUID();
     final UUID operationId = UUID.randomUUID();
@@ -581,6 +865,29 @@ class AccountControlUiIssuanceWorkflowTest {
     final CapturedEnvironmentBoundary environment = mock(CapturedEnvironmentBoundary.class);
     final PlatformTransactionManager transactions = mock(PlatformTransactionManager.class);
     AccountControlUiIssuanceService service;
+    AccountCredentialAbuseService abuse;
+
+    void allowControlledAttempt() {
+      abuse = mock(AccountCredentialAbuseService.class);
+      when(abuse.isUsable(any())).thenReturn(true);
+      when(abuse.admit(any(), anyString()))
+          .thenAnswer(
+              call -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return new AccountCredentialAbuseService.Decision(
+                    AccountCredentialAbuseService.Outcome.ADMITTED,
+                    null,
+                    mock(AccountCredentialAbuseService.Permit.class));
+              });
+      when(abuse.recordFailure(any()))
+          .thenAnswer(
+              call -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return new AccountCredentialAbuseService.Decision(
+                    AccountCredentialAbuseService.Outcome.FAILURE_RECORDED, null, null);
+              });
+    }
+
     Record ownerRow;
 
     Fixture(Instant recoveryExpiry) {
@@ -612,6 +919,7 @@ class AccountControlUiIssuanceWorkflowTest {
         service =
             new AccountControlUiIssuanceService(
                 primary,
+                abuse,
                 operations,
                 authority,
                 fences,
@@ -677,6 +985,7 @@ class AccountControlUiIssuanceWorkflowTest {
           .connection(any(org.jooq.ConnectionRunnable.class));
       when(dsl.fetchOne(anyString(), any(Object[].class))).thenAnswer(call -> ownerRow);
       operations = Mockito.spy(new AccountControlUiIssuanceRepository(dsl));
+      doAnswer(call -> 0).when(operations).countReplayFailures(any());
       doAnswer(call -> stored).when(operations).findRequest(requestId);
       when(cryptography.requestDigest(anyString(), any(byte[].class)))
           .thenReturn("original-request-digest");
@@ -908,7 +1217,11 @@ class AccountControlUiIssuanceWorkflowTest {
 
     AccountControlUiIssuanceService.AccountSignInRequest accountRequest() {
       return new AccountControlUiIssuanceService.AccountSignInRequest(
-          requestId, "creator@example.test", "test-only-secret", context);
+          requestId,
+          "creator@example.test",
+          "test-only-secret",
+          context,
+          new SourceContext("192.0.2.10"));
     }
 
     PeerScope withPeer(String uri) {

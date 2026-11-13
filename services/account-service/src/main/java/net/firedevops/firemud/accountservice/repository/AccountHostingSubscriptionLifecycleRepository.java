@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.TerminalUnpaidObservation;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.ExpectedBinding;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.ObservedSubscription;
@@ -28,9 +29,9 @@ import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Manually composed hosting lifecycle owner. All methods use short writable Account transactions;
- * the service performs actual SDK reads strictly between them. No provider mutation or runtime
- * route is registered. Stored status rows alone are never a positive internal read.
+ * Manually composed hosting lifecycle owner. Mutation methods use short writable Account
+ * transactions; the service performs actual SDK reads strictly between them. No provider mutation
+ * or runtime route is registered. Stored status rows alone are never a positive internal read.
  */
 public final class AccountHostingSubscriptionLifecycleRepository {
   private final DSLContext dsl;
@@ -75,6 +76,37 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     tenantEvents =
         new AccountTenantAuthorityEventRepository(
             dsl, new AccountAuthorityOutboxRepository(dsl), billing, tenantIdentity, generations);
+  }
+
+  /**
+   * Read-only activation prerequisite, not an activation grant or a retained-row repair.
+   *
+   * <p>The caller owns a read-only transaction and must keep registration held on any failure. A
+   * clear snapshot does not fence concurrent writers or qualify the remaining activation gates. No
+   * subscription identities or retained evidence leave this check.
+   */
+  public void requireNoRetainedPositiveCompletionGaps(int queryTimeoutSeconds) {
+    if (queryTimeoutSeconds < 1 || queryTimeoutSeconds > 5) {
+      throw new IllegalArgumentException(
+          "Retained-positive inspection requires a 1..5 second budget");
+    }
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Retained-positive inspection requires read-only Account SQL");
+    }
+    var query =
+        dsl.resultQuery(
+            "SELECT EXISTS (SELECT 1 FROM subscription s WHERE s.superseded_at IS NULL "
+                + "AND s.status IN ('trialing', 'active', 'past_due', 'grace') "
+                + "AND NOT EXISTS (SELECT 1 FROM subscription_first_invoice_completions c "
+                + "WHERE c.subscription_id = s.subscription_id)) AS unresolved");
+    query.queryTimeout(queryTimeoutSeconds);
+    Record result = Objects.requireNonNull(query.fetchOne(), "Retained-positive inspection absent");
+    if (!Boolean.FALSE.equals(result.get("unresolved", Boolean.class))) {
+      throw new FenceRejectedException(
+          "HOSTING_ACTIVATION_UNAVAILABLE: retained positive completion evidence unresolved");
+    }
   }
 
   /** Locked read capture only. No journal, intent, audit or fence changes precede final auth. */
@@ -364,7 +396,112 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       long expectedVersion,
       String providerId,
       UUID provisioningAttemptId) {
+    return prepare(requestId, creationId, expectedVersion, providerId, provisioningAttemptId, null);
+  }
+
+  /** Captures the exact unpaid checkout for a fresh terminal provider read without reserving it. */
+  public UnpaidCancellationCapture captureUnpaidFirstInvoiceCancellation(
+      UUID requestId, UUID creationId, long expectedVersion, String providerId) {
     requireTransaction();
+    byte[] input =
+        reconciliationInput(requestId, creationId, expectedVersion, providerId, null, true);
+    var original = intents.findCreation(creationId).orElseThrow();
+    lockReconciliationWallet(original);
+    Record operation = matchingOperation(requestId, input);
+    if (operation != null) {
+      if (!"COMMITTED".equals(operation.get("state", String.class))) {
+        throw new FenceRejectedException("Unpaid cancellation has no committed outcome to replay");
+      }
+      return new UnpaidCancellationCapture(
+          requestId,
+          creationId,
+          expectedVersion,
+          null,
+          null,
+          null,
+          null,
+          preparationOutcome(operation).result());
+    }
+    var current = intents.lockForLifecycle(creationId, expectedVersion);
+    ExpectedBinding binding = expected(original, providerId);
+    var invoice = requireUnpaidFirstInvoice(current, binding);
+    UUID confirmationId = cancellationClaim(current.subscriptionId());
+    if (links(current.subscriptionId()).get("lifecycle_inflight_request_id") != null) {
+      throw new FenceRejectedException("Another lifecycle request owns the current fence");
+    }
+    return new UnpaidCancellationCapture(
+        requestId, creationId, expectedVersion, binding, now(), invoice, confirmationId, null);
+  }
+
+  /** A nonterminal or ambiguous observation never takes the durable lifecycle fence. */
+  public TransitionResult applyUnpaidFirstInvoiceCancellation(
+      UnpaidCancellationCapture captured,
+      StripeHostingSubscriptionObserver.Result result,
+      TerminalUnpaidObservation unpaid) {
+    requireTransaction();
+    Record isolation = dsl.fetchOne("SHOW transaction_isolation");
+    if (isolation == null || !"read committed".equals(isolation.get(0, String.class))) {
+      throw new IllegalStateException(
+          "Unpaid first-invoice cancellation requires READ COMMITTED isolation");
+    }
+    Objects.requireNonNull(captured);
+    if (captured.replayResult() != null) return captured.replayResult();
+    Instant evaluated = now();
+    if (!(result instanceof ObservedSubscription observed)
+        || !observed.providerStatusIsCanceled()
+        || observed.readStartedAt().isBefore(captured.capturedAt)
+        || !evaluated.isBefore(captured.capturedAt.plus(limits.lease()))
+        || policy.evaluate(observed, evaluated, null).status() != Status.CANCELED
+        || (captured.confirmationId != null
+            && (unpaid == null
+                || !captured.invoice.digest().equals(unpaid.tupleDigest())
+                || unpaid.readStartedAt().isBefore(observed.observedAt())
+                || evaluated.isBefore(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS))
+                || !evaluated.isBefore(
+                    unpaid
+                        .readStartedAt()
+                        .truncatedTo(ChronoUnit.MICROS)
+                        .plus(policy.maximumObservationAge()))))) {
+      return new TransitionResult(
+          captured.requestId, Outcome.RECONCILING, 0, "UNPAID_CANCELLATION_UNCONFIRMED");
+    }
+    requireObservedBinding(captured.binding(), observed);
+    var prepared =
+        prepare(
+            captured.requestId,
+            captured.creationId,
+            captured.expectedVersion,
+            captured.binding().providerSubscriptionId(),
+            null,
+            captured);
+    if (prepared.outcome() == Outcome.COMMITTED) return prepared.result();
+    if (prepared.outcome() == Outcome.RECONCILING) return prepared.result();
+    if (prepared.outcome() != Outcome.READY) {
+      throw new FenceRejectedException(
+          "Unpaid first-invoice cancellation did not reserve its receipt");
+    }
+    if (captured.confirmationId != null) {
+      dsl.execute(
+          "INSERT INTO subscription_first_invoice_no_send_cancellations "
+              + "(cancellation_request_id, confirmation_request_id, invoice_id, payment_intent_id, "
+              + "read_started_at, observed_at) VALUES (?, ?, ?, ?, ?::timestamptz, ?::timestamptz)",
+          captured.requestId,
+          captured.confirmationId,
+          unpaid.invoiceId(),
+          unpaid.paymentIntentId(),
+          utc(unpaid.readStartedAt().truncatedTo(ChronoUnit.MICROS)),
+          utc(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS)));
+    }
+    return apply(prepared, observed, true);
+  }
+
+  private static byte[] reconciliationInput(
+      UUID requestId,
+      UUID creationId,
+      long expectedVersion,
+      String providerId,
+      UUID provisioningAttemptId,
+      boolean unpaidCancellation) {
     AccountBillingCustomerRecord.requireUuid(requestId);
     AccountBillingCustomerRecord.requireUuid(creationId);
     if (expectedVersion < 1
@@ -374,33 +511,61 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       throw new IllegalArgumentException(
           "Exact provider identity and advanceable current version are required");
     }
-    byte[] input =
-        AccountHostingSubscriptionLifecycleEvidence.encode(
-            Map.of(
-                "schemaVersion",
-                "account-hosting-reconciliation-request/v1",
-                "requestId",
-                requestId.toString(),
-                "creationRequestId",
-                creationId.toString(),
-                "expectedRowVersion",
-                Long.toString(expectedVersion),
-                "providerSubscriptionId",
-                providerId,
-                "provisioningAttemptId",
-                provisioningAttemptId == null ? "" : provisioningAttemptId.toString()));
-    var original = intents.findCreation(creationId).orElseThrow();
-    // Serialize same-owner retries before reading the mutable operation head. A same-request
-    // contender observes the winner's pending/committed outcome instead of a stale pre-lock image.
-    new AccountPaymentInstrumentRepository(dsl)
-        .findByOwnerForUpdate(original.owner().accountUuid(), original.paymentInstrumentId())
-        .orElseThrow(() -> new FenceRejectedException("Original provisioning wallet is absent"));
+    return AccountHostingSubscriptionLifecycleEvidence.encode(
+        Map.of(
+            "schemaVersion",
+            unpaidCancellation
+                ? "account-hosting-unpaid-first-invoice-cancellation/v1"
+                : "account-hosting-reconciliation-request/v1",
+            "requestId",
+            requestId.toString(),
+            "creationRequestId",
+            creationId.toString(),
+            "expectedRowVersion",
+            Long.toString(expectedVersion),
+            "providerSubscriptionId",
+            providerId,
+            "provisioningAttemptId",
+            provisioningAttemptId == null ? "" : provisioningAttemptId.toString()));
+  }
+
+  private Record matchingOperation(UUID requestId, byte[] input) {
     Record operation =
         dsl.fetchOne(
             "SELECT * FROM subscription_lifecycle_operations WHERE request_id = ?", requestId);
     if (operation != null
         && !Arrays.equals(input, operation.get("request_payload", byte[].class))) {
       throw new FenceRejectedException("IDEMPOTENCY_CONFLICT: lifecycle request changed");
+    }
+    return operation;
+  }
+
+  private Preparation prepare(
+      UUID requestId,
+      UUID creationId,
+      long expectedVersion,
+      String providerId,
+      UUID provisioningAttemptId,
+      UnpaidCancellationCapture cancellation) {
+    requireTransaction();
+    boolean unpaidCancellation = cancellation != null;
+    byte[] input =
+        reconciliationInput(
+            requestId,
+            creationId,
+            expectedVersion,
+            providerId,
+            provisioningAttemptId,
+            unpaidCancellation);
+    var original = intents.findCreation(creationId).orElseThrow();
+    // Serialize same-owner retries before reading the mutable operation head. A same-request
+    // contender observes the winner's pending/committed outcome instead of a stale pre-lock image.
+    lockReconciliationWallet(original);
+    Record operation = matchingOperation(requestId, input);
+    if (unpaidCancellation
+        && operation != null
+        && !"COMMITTED".equals(operation.get("state", String.class))) {
+      throw new FenceRejectedException("Unpaid cancellation has no committed outcome to replay");
     }
     if (operation != null && !"PENDING".equals(operation.get("state", String.class))) {
       return preparationOutcome(operation);
@@ -421,31 +586,58 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         throw new FenceRejectedException("Another lifecycle request owns the current fence");
       }
       Record priorReceipt = receiptForCurrent(currentLinks);
+      if (unpaidCancellation) {
+        var invoice = requireUnpaidFirstInvoice(current, expected(original, providerId));
+        if (!invoice.digest().equals(cancellation.invoice.digest())
+            || !Objects.equals(
+                cancellationClaim(current.subscriptionId()), cancellation.confirmationId)) {
+          throw new FenceRejectedException("First-invoice cancellation evidence changed");
+        }
+        if (Boolean.TRUE.equals(
+            dsl.fetchSingle(
+                    "SELECT account_first_invoice_signed_success_retained(?, ?)",
+                    invoice.paymentIntentId(),
+                    invoice.livemode())
+                .get(0, Boolean.class))) {
+          return new Preparation(
+              requestId, null, null, Outcome.RECONCILING, "UNPAID_CANCELLATION_UNCONFIRMED", 0);
+        }
+      }
       if (current.providerSubscriptionId() != null
           && !providerId.equals(current.providerSubscriptionId())) {
         throw new FenceRejectedException(
             "Reconciliation cannot rebind the canonical provider identity");
       }
       if (priorReceipt == null) {
-        Record work = workForUpdate(creationId);
-        Record claimedAttempt =
-            provisioningAttemptId == null
-                ? null
-                : dsl.fetchOne(
-                    "SELECT claimed_at FROM subscription_provisioning_attempts WHERE attempt_id = ?",
-                    provisioningAttemptId);
-        Instant provisioningNow = databaseNow();
-        if (provisioningAttemptId == null
-            || !"provisioning".equals(current.status())
-            || claimedAttempt == null
-            || provisioningNow.isBefore(instant(claimedAttempt, "claimed_at"))
-            || !"CLAIMED".equals(work.get("phase", String.class))
-            || !provisioningAttemptId.equals(work.get("last_attempt_id", UUID.class))
-            || current.rowVersion() != work.get("subscription_row_version", Long.class)
-            || !provisioningNow.isBefore(instant(work, "lease_expires_at"))
-            || !provisioningNow.isBefore(instant(work, "deadline_at"))) {
-          throw new FenceRejectedException(
-              "Initial confirmation lacks its exact durable provisioning claim");
+        if (current.providerSubscriptionId() != null) {
+          if (!unpaidCancellation
+              && (firstPaymentProof(current.subscriptionId(), requestId) == null
+                  || provisioningAttemptId != null
+                  || !"provisioning".equals(current.status()))) {
+            throw new FenceRejectedException(
+                "Initial paid lifecycle requires exact signed first-invoice completion evidence");
+          }
+        } else {
+          Record work = workForUpdate(creationId);
+          Record claimedAttempt =
+              provisioningAttemptId == null
+                  ? null
+                  : dsl.fetchOne(
+                      "SELECT claimed_at FROM subscription_provisioning_attempts WHERE attempt_id = ?",
+                      provisioningAttemptId);
+          Instant provisioningNow = databaseNow();
+          if (provisioningAttemptId == null
+              || !"provisioning".equals(current.status())
+              || claimedAttempt == null
+              || provisioningNow.isBefore(instant(claimedAttempt, "claimed_at"))
+              || !"CLAIMED".equals(work.get("phase", String.class))
+              || !provisioningAttemptId.equals(work.get("last_attempt_id", UUID.class))
+              || current.rowVersion() != work.get("subscription_row_version", Long.class)
+              || !provisioningNow.isBefore(instant(work, "lease_expires_at"))
+              || !provisioningNow.isBefore(instant(work, "deadline_at"))) {
+            throw new FenceRejectedException(
+                "Initial confirmation lacks its exact durable provisioning claim");
+          }
         }
       } else if (current.providerSubscriptionId() == null || provisioningAttemptId != null) {
         throw new FenceRejectedException(
@@ -510,9 +702,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return new Preparation(requestId, null, null, Outcome.RECONCILING, "BACKOFF_OR_INFLIGHT", 0);
     }
     UUID attemptId = UUID.randomUUID();
+    Instant attemptStarted = unpaidCancellation ? cancellation.capturedAt : now;
     Instant expires =
         earlier(
-            now.plusMillis(operation.get("lease_millis", Long.class)),
+            attemptStarted.plusMillis(operation.get("lease_millis", Long.class)),
             instant(operation, "deadline_at"));
     int number = operation.get("attempt_count", Integer.class) + 1;
     dsl.execute(
@@ -520,7 +713,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         attemptId,
         requestId,
         number,
-        utc(now),
+        utc(attemptStarted),
         utc(expires));
     dsl.execute(
         "UPDATE subscription_lifecycle_operations SET attempt_count = ?, last_attempt_id = ?, retry_at = ?::timestamptz, "
@@ -544,6 +737,13 @@ public final class AccountHostingSubscriptionLifecycleRepository {
    */
   public TransitionResult apply(
       Preparation prepared, StripeHostingSubscriptionObserver.Result result) {
+    return apply(prepared, result, false);
+  }
+
+  private TransitionResult apply(
+      Preparation prepared,
+      StripeHostingSubscriptionObserver.Result result,
+      boolean unpaidCancellation) {
     requireTransaction();
     Objects.requireNonNull(prepared);
     Objects.requireNonNull(result);
@@ -581,6 +781,12 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     // A provider read cannot establish when an uninterrupted payment-failure episode began.
     // Missing retained history must remain unresolved rather than restarting warning/grace.
     var decision = retainedPolicy(operation).evaluate(result, now, origin);
+    if (unpaidCancellation
+        && (!(result instanceof ObservedSubscription observed)
+            || !observed.providerStatusIsCanceled()
+            || decision.status() != Status.CANCELED)) {
+      throw new FenceRejectedException("Fresh exact canceled SDK evidence is required");
+    }
     byte[] observation = AccountHostingSubscriptionLifecycleEvidence.observation(result);
     String observationDigest = AccountHostingSubscriptionLifecycleEvidence.digest(observation);
     String factsDigest =
@@ -630,6 +836,27 @@ public final class AccountHostingSubscriptionLifecycleRepository {
           prepared.requestId(), Outcome.RECONCILING, 0, decision.reason().name());
     }
     Objects.requireNonNull(observed);
+    if (!unpaidCancellation
+        && oldReceipt == null
+        && current.status().equals("provisioning")
+        && decision.status() == Status.CANCELED
+        && firstPaymentProof(current.subscriptionId(), prepared.requestId()) != null) {
+      String reason = "PAID_FIRST_INVOICE_PROVIDER_CANCELED";
+      terminalLifecycle(operation, reason, now);
+      return new TransitionResult(prepared.requestId(), Outcome.TERMINAL_FAILURE, 0, reason);
+    }
+    Record firstPayment = null;
+    if (java.util.Set.of(Status.TRIALING, Status.ACTIVE, Status.PAST_DUE, Status.GRACE)
+            .contains(decision.status())
+        && dsl.fetchOne(
+                "SELECT subscription_id FROM subscription_first_invoice_completions WHERE subscription_id = ?",
+                current.subscriptionId())
+            == null) {
+      firstPayment = firstPaymentProof(current.subscriptionId(), prepared.requestId());
+      if (firstPayment == null)
+        throw new FenceRejectedException(
+            "Authorizing hosting requires exact signed first-invoice payment completion");
+    }
     if (current.status().equals("canceled") && decision.status() != Status.CANCELED) {
       throw new FenceRejectedException("A canceled subscription cannot be reactivated");
     }
@@ -748,6 +975,35 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         authorityEvent.eventId().toString(),
         authorityEvent.eventDigest(),
         utc(now));
+    if (firstPayment != null) {
+      var auditFields = new LinkedHashMap<String, Object>();
+      auditFields.put("schemaVersion", "account-hosting-first-invoice-completed/v1");
+      auditFields.put("checkoutRequestId", firstPayment.get("request_id", UUID.class).toString());
+      auditFields.put("subscriptionId", current.subscriptionId().toString());
+      auditFields.put("invoiceId", firstPayment.get("invoice_id", String.class));
+      auditFields.put("paymentIntentId", firstPayment.get("payment_intent_id", String.class));
+      auditFields.put("tupleDigest", firstPayment.get("tuple_digest", String.class));
+      auditFields.put(
+          "receiptDigest", AccountHostingSubscriptionLifecycleEvidence.digest(receiptPayload));
+      new AccountAuditOutboxRepository(dsl)
+          .appendCanonicalTenant(
+              firstPayment.get("audit_event_id", UUID.class),
+              current.tenantId().toString(),
+              "HOSTING_FIRST_INVOICE_COMPLETED",
+              new String(
+                  AccountHostingSubscriptionLifecycleEvidence.encode(auditFields),
+                  StandardCharsets.UTF_8));
+      dsl.execute(
+          "INSERT INTO subscription_first_invoice_completions (subscription_id, request_id, lifecycle_request_id, tuple_digest, receipt_digest, audit_event_id, committed_at) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz)",
+          current.subscriptionId(),
+          firstPayment.get("request_id"),
+          prepared.requestId(),
+          firstPayment.get("tuple_digest"),
+          AccountHostingSubscriptionLifecycleEvidence.digest(receiptPayload),
+          firstPayment.get("audit_event_id", UUID.class),
+          utc(now));
+    }
     UUID terminalResolution = current.terminalResolutionId();
     if (observed.providerStatusIsCanceled() && terminalResolution == null) {
       terminalResolution = UUID.randomUUID();
@@ -786,14 +1042,87 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             + "row_version = row_version + 1 WHERE request_id = ?",
         factsDigest,
         prepared.requestId());
-    if (operation.get("provisioning_attempt_id") != null) {
+    if (unpaidCancellation) {
+      if (dsl.execute(
+              "UPDATE subscription_provisioning_work SET phase = 'CANCELED', row_version = row_version + 1 WHERE request_id = ? AND phase = 'AWAITING_PAYMENT'",
+              original.requestId())
+          != 1) {
+        throw new FenceRejectedException(
+            "Unpaid first-invoice cancellation lost its provisioning work");
+      }
+    } else if (operation.get("provisioning_attempt_id") != null || firstPayment != null) {
       dsl.execute(
-          "UPDATE subscription_provisioning_work SET phase = 'CONFIRMED', row_version = row_version + 1 WHERE request_id = ? AND phase = 'CLAIMED'",
+          "UPDATE subscription_provisioning_work SET phase = 'CONFIRMED', row_version = row_version + 1 WHERE request_id = ? AND phase IN ('CLAIMED','AWAITING_PAYMENT')",
           original.requestId());
     }
     tenantEvents.readHostingCheckpoint(current.tenantId(), prepared.requestId());
     return new TransitionResult(
         prepared.requestId(), Outcome.COMMITTED, current.rowVersion() + 1, null);
+  }
+
+  private AccountHostingFirstInvoicePayment requireUnpaidFirstInvoice(
+      AccountSubscriptionCurrentRecord current, ExpectedBinding binding) {
+    var payments = new AccountHostingFirstInvoicePaymentRepository(dsl, intents, clock);
+    var invoice = payments.find(current.subscriptionId());
+    if (invoice == null
+        || current.terminalResolutionId() != null
+        || links(current.subscriptionId()).get("current_receipt_request_id") != null
+        || !current.creationRequestId().equals(invoice.creationRequestId())
+        || !current.tenantId().equals(invoice.tenantId())
+        || !current.owner().accountUuid().equals(invoice.ownerAccountId())
+        || !current.paymentInstrumentId().equals(invoice.paymentInstrumentId())
+        || current.reservedInstrumentVersion() != invoice.instrumentVersion()
+        || !current.planQuote().digest().equals(invoice.quoteDigest())
+        || !binding.providerSubscriptionId().equals(invoice.providerSubscriptionId())
+        || !binding.providerCustomerId().equals(invoice.providerCustomerId())
+        || !binding.providerPaymentMethodId().equals(invoice.providerPaymentMethodId())
+        || !binding.providerPriceId().equals(invoice.providerPriceId())
+        || binding.expectedQuantity() != invoice.providerQuantity()
+        || binding.livemode() != invoice.livemode()
+        || dsl.fetchOne(
+                "SELECT 1 FROM subscription_first_invoice_success_evidence WHERE subscription_id = ?",
+                current.subscriptionId())
+            != null) {
+      throw new FenceRejectedException("Exact unpaid first invoice is required for cancellation");
+    }
+    payments.requireAwaitingPayment(invoice, current.rowVersion());
+    return invoice;
+  }
+
+  private UUID cancellationClaim(UUID subscriptionId) {
+    Record claim =
+        dsl.fetchOne(
+            "SELECT request_id FROM subscription_first_invoice_command_claims WHERE subscription_id = ?",
+            subscriptionId);
+    if (claim == null) return null;
+    UUID requestId = claim.get("request_id", UUID.class);
+    if (dsl.fetchOne(
+            "SELECT request_id FROM subscription_first_invoice_expired_before_post WHERE request_id = ?",
+            requestId)
+        == null) {
+      throw new FenceRejectedException(
+          "Exact unclaimed unpaid first invoice or committed no-send evidence is required for cancellation");
+    }
+    return requestId;
+  }
+
+  private void lockReconciliationWallet(AccountSubscriptionCreationRecord original) {
+    new AccountPaymentInstrumentRepository(dsl)
+        .findByOwnerForUpdate(original.owner().accountUuid(), original.paymentInstrumentId())
+        .orElseThrow(() -> new FenceRejectedException("Original provisioning wallet is absent"));
+  }
+
+  private Record firstPaymentProof(UUID subscriptionId, UUID lifecycleRequestId) {
+    // Historical authorization was atomically consumed before the single provider dispatch.
+    // Reading it after expiry cannot renew payment permission or disclose a client secret.
+    return dsl.fetchOne(
+        "SELECT c.*, i.invoice_id, i.payment_intent_id, e.tuple_digest AS evidence_tuple FROM subscription_first_invoice_confirmations c "
+            + "JOIN subscription_first_invoice_success_evidence e USING (request_id, subscription_id) "
+            + "JOIN subscription_first_invoice_dispatches d USING (request_id, subscription_id) "
+            + "JOIN subscription_first_invoices i ON i.subscription_id = c.subscription_id AND i.tuple_digest = c.tuple_digest "
+            + "WHERE c.subscription_id = ? AND c.lifecycle_request_id = ? AND c.tuple_digest = e.tuple_digest FOR SHARE OF c",
+        subscriptionId,
+        lifecycleRequestId);
   }
 
   private Map<String, Object> receiptFields(
@@ -949,6 +1278,14 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     var candidate = intents.findCurrentByTenant(tenantId).orElseThrow();
     var current = intents.lockForLifecycle(candidate.creationRequestId(), candidate.rowVersion());
     Record currentLinks = links(current.subscriptionId());
+    if (java.util.Set.of("trialing", "active", "past_due", "grace").contains(current.status())
+        && dsl.fetchOne(
+                "SELECT subscription_id FROM subscription_first_invoice_completions WHERE subscription_id = ?",
+                current.subscriptionId())
+            == null) {
+      throw new FenceRejectedException(
+          "ENTITLEMENT_UNAVAILABLE: signed first-invoice fulfillment is absent");
+    }
     if (currentLinks.get("lifecycle_inflight_request_id") != null
         || current.providerSubscriptionId() == null) {
       throw new FenceRejectedException(
@@ -1195,6 +1532,48 @@ public final class AccountHostingSubscriptionLifecycleRepository {
 
     public TransitionResult result() {
       return new TransitionResult(requestId, outcome, version, reason);
+    }
+  }
+
+  public static final class UnpaidCancellationCapture {
+    private final UUID requestId;
+    private final UUID creationId;
+    private final long expectedVersion;
+    private final ExpectedBinding binding;
+    private final Instant capturedAt;
+    private final AccountHostingFirstInvoicePayment invoice;
+    private final UUID confirmationId;
+    private final TransitionResult replay;
+
+    private UnpaidCancellationCapture(
+        UUID requestId,
+        UUID creationId,
+        long expectedVersion,
+        ExpectedBinding binding,
+        Instant capturedAt,
+        AccountHostingFirstInvoicePayment invoice,
+        UUID confirmationId,
+        TransitionResult replay) {
+      this.requestId = requestId;
+      this.creationId = creationId;
+      this.expectedVersion = expectedVersion;
+      this.binding = binding;
+      this.capturedAt = capturedAt;
+      this.invoice = invoice;
+      this.confirmationId = confirmationId;
+      this.replay = replay;
+    }
+
+    public ExpectedBinding binding() {
+      return binding;
+    }
+
+    public TransitionResult replayResult() {
+      return replay;
+    }
+
+    public AccountHostingFirstInvoicePayment invoiceRequiringTerminalRead() {
+      return confirmationId == null ? null : invoice;
     }
   }
 
