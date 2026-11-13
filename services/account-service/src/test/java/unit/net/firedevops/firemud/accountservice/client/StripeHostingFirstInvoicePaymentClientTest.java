@@ -287,6 +287,88 @@ class StripeHostingFirstInvoicePaymentClientTest {
   }
 
   @Test
+  void terminalUnpaidObservationRequiresVoidedOriginalAndSeparatelyRetrievedCanceledIntent()
+      throws Exception {
+    var transport = new Transport(terminalInvoice(), intent("canceled"));
+    var evidence = client(transport).observeTerminalUnpaid(INVOICE);
+
+    assertThat(evidence.invoiceId()).isEqualTo("in_exact");
+    assertThat(evidence.paymentIntentId()).isEqualTo("pi_exact");
+    assertThat(evidence.tupleDigest()).isEqualTo(INVOICE.digest());
+    assertThat(evidence.readStartedAt()).isEqualTo(NOW);
+    assertThat(evidence.observedAt()).isEqualTo(NOW);
+    assertThat(transport.paths)
+        .containsExactly("/v1/invoices/in_exact", "/v1/payment_intents/pi_exact");
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+    assertThat(transport.params.getFirst())
+        .containsEntry("expand", List.of("payments.data.payment.payment_intent"));
+    assertThat(transport.options)
+        .allSatisfy(options -> assertThat(options.getMaxNetworkRetries()).isZero());
+  }
+
+  @Test
+  void terminalUnpaidObservationRemainsAvailableAfterOriginalCheckoutExpiry() throws Exception {
+    var expired =
+        new AccountHostingFirstInvoicePayment(
+            INVOICE.subscriptionId(),
+            INVOICE.creationRequestId(),
+            INVOICE.tenantId(),
+            INVOICE.ownerAccountId(),
+            INVOICE.paymentInstrumentId(),
+            INVOICE.instrumentVersion(),
+            INVOICE.providerSubscriptionId(),
+            INVOICE.providerCustomerId(),
+            INVOICE.providerPaymentMethodId(),
+            INVOICE.invoiceId(),
+            INVOICE.paymentIntentId(),
+            INVOICE.amount(),
+            INVOICE.currency(),
+            INVOICE.quoteDigest(),
+            INVOICE.providerPriceId(),
+            INVOICE.providerQuantity(),
+            INVOICE.billingPolicyVersion(),
+            INVOICE.billingPolicyDigest(),
+            INVOICE.livemode(),
+            NOW.minusSeconds(200),
+            NOW.minusSeconds(100));
+    var transport = new Transport(terminalInvoice(), intent("canceled"));
+
+    assertThat(client(transport).observeTerminalUnpaid(expired).observedAt()).isEqualTo(NOW);
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+  }
+
+  @Test
+  void terminalUnpaidObservationRefusesPaidAmbiguousOrMismatchedProviderEvidence() {
+    for (String response :
+        List.of(
+            terminalInvoice().replace("\"status\":\"void\"", "\"status\":\"paid\""),
+            terminalInvoice().replace("\"amount_paid\":0", "\"amount_paid\":1"),
+            terminalInvoice().replace("\"amount_remaining\":0", "\"amount_remaining\":1"),
+            terminalInvoice().replace("\"has_more\":false", "\"has_more\":true"),
+            terminalInvoice().replace("\"price\":\"price_exact\"", "\"price\":\"price_other\""),
+            terminalInvoice().replace("\"id\":\"pi_exact\"", "\"id\":\"pi_other\""))) {
+      var transport = new Transport(response, intent("canceled"));
+      assertThatThrownBy(() -> client(transport).observeTerminalUnpaid(INVOICE))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(transport.methods).containsExactly(RequestMethod.GET);
+    }
+
+    for (String response :
+        List.of(
+            intent("canceled")
+                .replace("\"payment_method\":\"pm_exact\"", "\"payment_method\":\"pm_other\""),
+            intent("canceled").replace("\"customer\":\"cus_exact\"", "\"customer\":\"cus_other\""),
+            intent("canceled").replace("\"amount\":2400", "\"amount\":2500"),
+            intent("canceled").replace("\"amount_received\":0", "\"amount_received\":1"),
+            intent("canceled").replace("\"status\":\"canceled\"", "\"status\":\"succeeded\""))) {
+      var transport = new Transport(terminalInvoice(), response);
+      assertThatThrownBy(() -> client(transport).observeTerminalUnpaid(INVOICE))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+    }
+  }
+
+  @Test
   void forgedUncommittedDispatchAndAmbientSqlRefuseBeforeProviderIo() {
     var transport = new Transport();
     assertThatThrownBy(
@@ -400,6 +482,12 @@ class StripeHostingFirstInvoicePaymentClientTest {
         + "\"payment\":{\"type\":\"payment_intent\",\"payment_intent\":"
         + intent(status)
         + "}}]}}";
+  }
+
+  private static String terminalInvoice() {
+    return invoice("canceled")
+        .replace("\"amount_remaining\":2400", "\"amount_remaining\":0")
+        .replace("\"status\":\"open\"", "\"status\":\"void\"");
   }
 
   private static final class Transport implements StripeResponseGetter {

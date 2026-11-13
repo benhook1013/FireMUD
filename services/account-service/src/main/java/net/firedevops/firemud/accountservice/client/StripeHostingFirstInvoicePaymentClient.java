@@ -106,6 +106,102 @@ public final class StripeHostingFirstInvoicePaymentClient {
   }
 
   /**
+   * Independently observes that the retained original invoice and its existing intent are
+   * terminally unpaid. This is read-only evidence; it does not establish payment or entitlement.
+   */
+  public TerminalUnpaidObservation observeTerminalUnpaid(AccountHostingFirstInvoicePayment expected)
+      throws StripeException {
+    outsideSql();
+    Objects.requireNonNull(expected);
+    Instant started = clock.instant();
+    Invoice invoice =
+        stripe
+            .invoices()
+            .retrieve(
+                expected.invoiceId(),
+                InvoiceRetrieveParams.builder()
+                    .addExpand("payments.data.payment.payment_intent")
+                    .build(),
+                options);
+    require(
+        invoice != null
+            && "invoice".equals(invoice.getObject())
+            && expected.invoiceId().equals(invoice.getId())
+            && expected.providerCustomerId().equals(invoice.getCustomer())
+            && Boolean.valueOf(expected.livemode()).equals(invoice.getLivemode())
+            && "subscription_create".equals(invoice.getBillingReason())
+            && invoice.getParent() != null
+            && invoice.getParent().getSubscriptionDetails() != null
+            && expected
+                .providerSubscriptionId()
+                .equals(invoice.getParent().getSubscriptionDetails().getSubscription())
+            && "void".equals(invoice.getStatus())
+            && Long.valueOf(0).equals(invoice.getAmountPaid())
+            && Long.valueOf(0).equals(invoice.getAmountRemaining())
+            && Long.valueOf(0).equals(invoice.getStartingBalance())
+            && Long.valueOf(expected.amount()).equals(invoice.getAmountDue())
+            && Long.valueOf(expected.amount()).equals(invoice.getTotal())
+            && expected.currency().equals(invoice.getCurrency())
+            && invoice.getPayments() != null
+            && Boolean.FALSE.equals(invoice.getPayments().getHasMore())
+            && invoice.getPayments().getData() != null
+            && invoice.getPayments().getData().size() == 1
+            && invoice.getLines() != null
+            && Boolean.FALSE.equals(invoice.getLines().getHasMore())
+            && invoice.getLines().getData() != null
+            && invoice.getLines().getData().size() == 1);
+    var line = invoice.getLines().getData().getFirst();
+    require(
+        line != null
+            && "line_item".equals(line.getObject())
+            && Long.valueOf(expected.providerQuantity()).equals(line.getQuantity())
+            && (line.getQuantityDecimal() == null
+                || java.math.BigDecimal.valueOf(expected.providerQuantity())
+                        .compareTo(line.getQuantityDecimal())
+                    == 0)
+            && Long.valueOf(expected.amount()).equals(line.getAmount())
+            && expected.currency().equals(line.getCurrency())
+            && line.getPricing() != null
+            && "price_details".equals(line.getPricing().getType())
+            && line.getPricing().getPriceDetails() != null
+            && expected.providerPriceId().equals(line.getPricing().getPriceDetails().getPrice()));
+    var payment = invoice.getPayments().getData().getFirst();
+    require(
+        payment != null
+            && payment.getPayment() != null
+            && "payment_intent".equals(payment.getPayment().getType())
+            && expected.paymentIntentId().equals(payment.getPayment().getPaymentIntent()));
+    PaymentIntent expandedIntent = payment.getPayment().getPaymentIntentObject();
+    requireTerminalIntent(expandedIntent, expected);
+
+    PaymentIntent intent = stripe.paymentIntents().retrieve(expected.paymentIntentId(), options);
+    requireTerminalIntent(intent, expected);
+
+    Instant observed = clock.instant();
+    require(
+        !observed.isBefore(started)
+            && Duration.between(started, observed).compareTo(Duration.ofSeconds(20)) < 0);
+    return new TerminalUnpaidObservation(
+        expected.invoiceId(), expected.paymentIntentId(), expected.digest(), started, observed);
+  }
+
+  private static void requireTerminalIntent(
+      PaymentIntent intent, AccountHostingFirstInvoicePayment expected) {
+    require(
+        intent != null
+            && "payment_intent".equals(intent.getObject())
+            && expected.paymentIntentId().equals(intent.getId())
+            && expected.providerCustomerId().equals(intent.getCustomer())
+            && expected.providerPaymentMethodId().equals(intent.getPaymentMethod())
+            && Boolean.valueOf(expected.livemode()).equals(intent.getLivemode())
+            && "automatic".equals(intent.getConfirmationMethod())
+            && "canceled".equals(intent.getStatus())
+            && Long.valueOf(expected.amount()).equals(intent.getAmount())
+            && Long.valueOf(0).equals(intent.getAmountReceived())
+            && expected.currency().equals(intent.getCurrency()));
+  }
+
+  /**
    * Only the original durable authorization may issue one confirm; recovery observes the same
    * intent.
    */
@@ -436,6 +532,48 @@ public final class StripeHostingFirstInvoicePaymentClient {
 
     public Instant expiresAt() {
       return expiresAt;
+    }
+  }
+
+  /** Closed, read-only evidence for the exact unpaid original invoice/intent tuple. */
+  public static final class TerminalUnpaidObservation {
+    private final String invoiceId;
+    private final String paymentIntentId;
+    private final String tupleDigest;
+    private final Instant readStartedAt;
+    private final Instant observedAt;
+
+    private TerminalUnpaidObservation(
+        String invoiceId,
+        String paymentIntentId,
+        String tupleDigest,
+        Instant readStartedAt,
+        Instant observedAt) {
+      this.invoiceId = invoiceId;
+      this.paymentIntentId = paymentIntentId;
+      this.tupleDigest = tupleDigest;
+      this.readStartedAt = readStartedAt;
+      this.observedAt = observedAt;
+    }
+
+    public String invoiceId() {
+      return invoiceId;
+    }
+
+    public String paymentIntentId() {
+      return paymentIntentId;
+    }
+
+    public String tupleDigest() {
+      return tupleDigest;
+    }
+
+    public Instant readStartedAt() {
+      return readStartedAt;
+    }
+
+    public Instant observedAt() {
+      return observedAt;
     }
   }
 
