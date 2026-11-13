@@ -14,6 +14,7 @@ import com.stripe.net.RequestOptions;
 import com.stripe.net.StripeResponseGetter;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
+import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture.ControlledFirstInvoiceTransport;
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture.MutableClock;
 import java.io.InputStream;
 import java.lang.reflect.Type;
@@ -547,7 +548,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         List.of(
             "UPDATE subscription_first_invoice_expired_before_post SET observed_at = observed_at",
             "DELETE FROM subscription_first_invoice_expired_before_post",
-            "TRUNCATE subscription_first_invoice_expired_before_post")) {
+            "TRUNCATE subscription_first_invoice_expired_before_post, subscription_first_invoice_no_send_cancellations")) {
       assertSqlState("23514", () -> c.setup().execute(sql));
     }
   }
@@ -1378,7 +1379,6 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     List<String> beforeUpgrade = firstInvoiceImage(c);
     configuration(c).target("1046.2").load().migrate();
     assertThat(firstInvoiceImage(c)).isEqualTo(beforeUpgrade);
-
     assertSqlState(
         "23514",
         "Canceled first-invoice provisioning requires exact unclaimed terminal release",
@@ -1456,6 +1456,297 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .isEqualTo(committed);
     assertThat(f.transport().reads).isEqualTo(providerReads);
     assertThat(count(c, "subscription_provider_terminal_resolutions")).isOne();
+    assertThat(f.terminalInvoiceTransport().readPaths()).isEmpty();
+    assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
+    assertThat(f.terminalInvoiceTransport().reads()).isZero();
+  }
+
+  @Test
+  void exactTerminalInvoiceAndIntentSettleOnlyClaimWithRetainedNoSendWitness() {
+    Context c = context("1046.4");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var witness =
+        checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    var witnessImage =
+        c.setup()
+            .fetch(
+                "SELECT request_id, observed_at FROM subscription_first_invoice_expired_before_post "
+                    + "WHERE request_id = ?",
+                witness.requestId())
+            .intoMaps();
+    var claimImage =
+        c.setup()
+            .fetch(
+                "SELECT * FROM subscription_first_invoice_command_claims WHERE request_id = ?",
+                witness.requestId())
+            .intoMaps();
+    assertThat(witnessImage).hasSize(1);
+    assertThat(claimImage).hasSize(1);
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isOne();
+    assertThat(checkout.confirmations()).isZero();
+    configuration(c).target("latest").load().migrate();
+    assertThat(count(c, "subscription_first_invoice_no_send_cancellations")).isZero();
+    long version =
+        in(
+            c,
+            () ->
+                checkout
+                    .payments()
+                    .ownerRowVersion(
+                        f.creation().subscriptionId(), checkout.invoice().ownerAccountId()));
+    f.transport().json = response(f, "canceled");
+
+    var committed =
+        f.service()
+            .reconcileUnpaidFirstInvoiceCancellation(
+                UUID.randomUUID(), f.creation().requestId(), version, f.providerId());
+
+    assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isOne();
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isOne();
+    assertThat(
+            one(
+                    c,
+                    "SELECT j.confirmation_request_id FROM subscription_first_invoice_no_send_cancellations j "
+                        + "JOIN subscription_lifecycle_receipts r ON r.request_id = j.cancellation_request_id "
+                        + "AND r.committed_transaction_id = j.created_transaction_id "
+                        + "WHERE r.request_id = ?",
+                    committed.requestId())
+                .get("confirmation_request_id", UUID.class))
+        .isEqualTo(witness.requestId());
+    assertThat(
+            c.setup()
+                .fetch(
+                    "SELECT request_id, observed_at FROM subscription_first_invoice_expired_before_post "
+                        + "WHERE request_id = ?",
+                    witness.requestId())
+                .intoMaps())
+        .isEqualTo(witnessImage);
+    assertThat(
+            c.setup()
+                .fetch(
+                    "SELECT * FROM subscription_first_invoice_command_claims WHERE request_id = ?",
+                    witness.requestId())
+                .intoMaps())
+        .isEqualTo(claimImage);
+    var settlement =
+        one(
+            c,
+            "SELECT w.phase, s.status, s.current_receipt_request_id, r.released_at, "
+                + "r.terminal_resolution_id = t.resolution_id AS exact_release "
+                + "FROM subscription s JOIN subscription_provisioning_work w USING (subscription_id) "
+                + "JOIN subscription_instrument_reservations r ON r.subscription_id = s.subscription_id "
+                + "JOIN subscription_provider_terminal_resolutions t ON t.resolution_id = s.terminal_resolution_id "
+                + "WHERE s.subscription_id = ?",
+            f.creation().subscriptionId());
+    assertThat(settlement.get("phase", String.class)).isEqualTo("CANCELED");
+    assertThat(settlement.get("status", String.class)).isEqualTo("canceled");
+    assertThat(settlement.get("current_receipt_request_id", UUID.class))
+        .isEqualTo(committed.requestId());
+    assertThat(settlement.get("released_at")).isNotNull();
+    assertThat(settlement.get("exact_release", Boolean.class)).isTrue();
+    assertThat(f.terminalInvoiceTransport().readPaths())
+        .containsExactly(
+            "/v1/invoices/in_" + f.creation().subscriptionId().toString().replace("-", ""),
+            "/v1/payment_intents/pi_" + f.creation().subscriptionId().toString().replace("-", ""));
+    assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
+    assertThat(f.terminalInvoiceTransport().reads()).isEqualTo(2);
+    int subscriptionReads = f.transport().reads;
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    committed.requestId(), f.creation().requestId(), version, f.providerId()))
+        .isEqualTo(committed);
+    assertThat(f.transport().reads).isEqualTo(subscriptionReads);
+    assertThat(f.terminalInvoiceTransport().reads()).isEqualTo(2);
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isOne();
+  }
+
+  @Test
+  void nonExactTerminalInvoiceOrIntentEvidenceRetainsHoldAndNeverPosts() {
+    for (String failure : List.of("nonvoid-invoice", "live-intent", "wrong-intent", "received")) {
+      Context c = context("latest");
+      Fixture f = fixture(c);
+      var checkout =
+          CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+              c.source(),
+              c.dsl(),
+              c.tx(),
+              f.creation(),
+              f.instrument(),
+              f.providerId(),
+              f.clock(),
+              f.owner());
+      var witness =
+          checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+      assertThat(witness.requestId()).isNotNull();
+      long version =
+          in(
+              c,
+              () ->
+                  checkout
+                      .payments()
+                      .ownerRowVersion(
+                          f.creation().subscriptionId(), checkout.invoice().ownerAccountId()));
+      UUID cancellationId = UUID.randomUUID();
+      f.transport().json = response(f, "canceled");
+      switch (failure) {
+        case "nonvoid-invoice" -> f.terminalInvoiceTransport().terminalInvoiceStatus("open");
+        case "live-intent" ->
+            f.terminalInvoiceTransport().terminalIntentStatus("requires_confirmation");
+        case "wrong-intent" ->
+            f.terminalInvoiceTransport().terminalIntentId("pi_wrong_controlled_binding");
+        case "received" -> f.terminalInvoiceTransport().terminalAmounts(0, 0, 1);
+        default -> throw new AssertionError("Unexpected terminal evidence case: " + failure);
+      }
+
+      assertThat(
+              f.service()
+                  .reconcileUnpaidFirstInvoiceCancellation(
+                      cancellationId, f.creation().requestId(), version, f.providerId())
+                  .outcome())
+          .isEqualTo(Outcome.RECONCILING);
+      assertThat(count(c, "subscription_lifecycle_operations")).isZero();
+      assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+      assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+      assertThat(
+              one(
+                      c,
+                      "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                      f.creation().requestId())
+                  .get("released_at"))
+          .isNull();
+      int expectedReads = failure.equals("wrong-intent") ? 2 : 1;
+      assertThat(f.terminalInvoiceTransport().reads()).isEqualTo(expectedReads);
+      assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
+      var expectedPaths =
+          new ArrayList<>(
+              List.of(
+                  "/v1/invoices/in_" + f.creation().subscriptionId().toString().replace("-", "")));
+      if (failure.equals("wrong-intent"))
+        expectedPaths.add(
+            "/v1/payment_intents/pi_" + f.creation().subscriptionId().toString().replace("-", ""));
+      assertThat(f.terminalInvoiceTransport().readPaths()).containsExactlyElementsOf(expectedPaths);
+    }
+  }
+
+  @Test
+  void expiredTerminalObservationCannotReleaseExactInvoiceReservation() {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var witness =
+        checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    assertThat(witness.requestId()).isNotNull();
+    long version =
+        in(
+            c,
+            () ->
+                checkout
+                    .payments()
+                    .ownerRowVersion(
+                        f.creation().subscriptionId(), checkout.invoice().ownerAccountId()));
+    f.transport().json = response(f, "canceled");
+    f.terminalInvoiceTransport().duringRead(() -> f.clock().advance(Duration.ofSeconds(11)));
+
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    UUID.randomUUID(), f.creation().requestId(), version, f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.RECONCILING);
+    assertThat(count(c, "subscription_lifecycle_operations")).isZero();
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+    assertThat(
+            one(
+                    c,
+                    "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                    f.creation().requestId())
+                .get("released_at"))
+        .isNull();
+    assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
+  }
+
+  @Test
+  void verifiedPaidInboxEventRetainedDuringProviderReadWinsBeforeCancellationApply()
+      throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var witness =
+        checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    assertThat(witness.requestId()).isNotNull();
+    long version =
+        in(
+            c,
+            () ->
+                checkout
+                    .payments()
+                    .ownerRowVersion(
+                        f.creation().subscriptionId(), checkout.invoice().ownerAccountId()));
+    var signed = checkout.signedSuccess();
+    var verified = checkout.verifier().verify(signed.payload(), signed.signature());
+    f.transport().json = response(f, "canceled");
+    f.terminalInvoiceTransport()
+        .duringRead(
+            () -> in(c, () -> new StripeEventInboxRepository(c.dsl()).retainOrReplay(verified)));
+
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    UUID.randomUUID(), f.creation().requestId(), version, f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.RECONCILING);
+    assertThat(count(c, "subscription_lifecycle_operations")).isZero();
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
+    assertThat(
+            one(
+                    c,
+                    "SELECT processing_status FROM stripe_event_inbox WHERE provider_event_id = ?",
+                    verified.providerEventId())
+                .get("processing_status", String.class))
+        .isEqualTo("PENDING");
+    assertThat(
+            one(
+                    c,
+                    "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                    f.creation().requestId())
+                .get("released_at"))
+        .isNull();
+    assertThat(f.terminalInvoiceTransport().readPaths())
+        .containsExactly(
+            "/v1/invoices/in_" + f.creation().subscriptionId().toString().replace("-", ""),
+            "/v1/payment_intents/pi_" + f.creation().subscriptionId().toString().replace("-", ""));
+    assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
   }
 
   @Test
@@ -1497,8 +1788,10 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .isNull();
   }
 
-  @Test
-  void lateSignedPaymentAfterUnclaimedCancellationRetainsOneOperatorConflict() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void lateSignedPaymentAfterUnpaidCancellationRetainsOneOperatorConflict(boolean noSendWitness)
+      throws Exception {
     Context c = context("latest");
     Fixture f = fixture(c);
     var checkout =
@@ -1511,18 +1804,34 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             f.providerId(),
             f.clock(),
             f.owner());
-    var dispatch =
-        checkout.prepareConfirmationDispatch(
-            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    UUID confirmationRequestId;
+    long expectedRowVersion;
+    if (noSendWitness) {
+      var witness =
+          checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+      confirmationRequestId = witness.requestId();
+      expectedRowVersion =
+          in(
+              c,
+              () ->
+                  checkout
+                      .payments()
+                      .ownerRowVersion(
+                          checkout.invoice().subscriptionId(),
+                          checkout.invoice().ownerAccountId()));
+    } else {
+      var dispatch =
+          checkout.prepareConfirmationDispatch(
+              CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+      confirmationRequestId = dispatch.requestId();
+      expectedRowVersion = dispatch.expectedRowVersion();
+    }
     UUID cancellationId = UUID.randomUUID();
     f.transport().json = response(f, "canceled");
     assertThat(
             f.service()
                 .reconcileUnpaidFirstInvoiceCancellation(
-                    cancellationId,
-                    f.creation().requestId(),
-                    dispatch.expectedRowVersion(),
-                    f.providerId())
+                    cancellationId, f.creation().requestId(), expectedRowVersion, f.providerId())
                 .outcome())
         .isEqualTo(Outcome.COMMITTED);
     List<String> canceledImage = firstInvoiceImage(c);
@@ -1546,8 +1855,28 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             new DataSourceTransactionManager(c.source()));
     var conflict = owner.completeSigned(signed.payload(), signed.signature());
     assertThat(conflict.state()).isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
-    assertThat(conflict.requestId()).isEqualTo(dispatch.requestId());
+    assertThat(conflict.requestId()).isEqualTo(confirmationRequestId);
     assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isOne();
+    var verified = checkout.verifier().verify(signed.payload(), signed.signature());
+    var paidObservation = checkout.provider().observe(checkout.invoice());
+    assertThatThrownBy(
+            () -> in(c, () -> checkout.payments().retainSignedSuccess(verified, paidObservation)))
+        .isInstanceOf(IllegalStateException.class);
+    assertSqlState(
+        "23514",
+        () ->
+            c.setup()
+                .execute(
+                    "INSERT INTO subscription_first_invoice_success_evidence "
+                        + "(request_id, subscription_id, provider_event_id, event_payload_digest, "
+                        + "tuple_digest, observed_at) VALUES (?, ?, ?, ?, ?, ?::timestamptz)",
+                    confirmationRequestId,
+                    checkout.invoice().subscriptionId(),
+                    verified.providerEventId(),
+                    verified.payloadSha256(),
+                    checkout.invoice().digest(),
+                    java.time.OffsetDateTime.ofInstant(f.clock().instant(), ZoneOffset.UTC)));
+    assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
 
     checkout.status("requires_confirmation");
     assertThat(owner.completeSigned(signed.payload(), signed.signature())).isEqualTo(conflict);
@@ -2902,12 +3231,32 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             clock,
             Duration.ofMillis(250),
             Duration.ofSeconds(1));
+    var terminalInvoiceTransport =
+        new ControlledFirstInvoiceTransport(creation, instrument, "sub_" + row, true);
+    var terminalInvoiceClient =
+        new net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient(
+            new com.stripe.StripeClient(terminalInvoiceTransport),
+            clock,
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
     var service =
         new AccountHostingSubscriptionLifecycleService(
-            repository, observer, new DataSourceTransactionManager(c.source()));
+            repository,
+            observer,
+            new DataSourceTransactionManager(c.source()),
+            terminalInvoiceClient);
     Fixture fixture =
         new Fixture(
-            c, creation, instrument, "sub_" + row, clock, transport, repository, observer, service);
+            c,
+            creation,
+            instrument,
+            "sub_" + row,
+            clock,
+            transport,
+            terminalInvoiceTransport,
+            repository,
+            observer,
+            service);
     transport.json = response(fixture, "active");
     return fixture;
   }
@@ -3058,6 +3407,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       String providerId,
       MutableClock clock,
       ControlledTransport transport,
+      ControlledFirstInvoiceTransport terminalInvoiceTransport,
       AccountHostingSubscriptionLifecycleRepository owner,
       StripeHostingSubscriptionObserver observer,
       AccountHostingSubscriptionLifecycleService service) {}
