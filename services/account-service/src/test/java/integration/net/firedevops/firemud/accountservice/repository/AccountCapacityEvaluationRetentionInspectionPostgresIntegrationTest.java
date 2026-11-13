@@ -429,6 +429,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
                 evaluation[3]);
           }
           UUID attempt = UUID.randomUUID();
+          String mutationDigest = "e".repeat(64);
           byte[] capacityPayload = {7};
           dsl.execute(
               "INSERT INTO account_capacity_origin_decisions "
@@ -439,7 +440,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
               request,
               admission,
               attempt,
-              "e".repeat(64),
+              mutationDigest,
               capacityPayload,
               UUID.randomUUID());
           dsl.execute(
@@ -453,7 +454,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
               admission,
               UUID.randomUUID(),
               attempt,
-              "e".repeat(64),
+              mutationDigest,
               capacityPayload,
               digest('b'));
           dsl.execute(

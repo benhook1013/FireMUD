@@ -40,7 +40,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * explicit, synthetic inputs, never deployed settings. These tests do not qualify public receiving
  * or RSS from used_memory; the isolated container has a separate hard memory limit.
  */
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 @org.junit.jupiter.api.Timeout(60)
 @SuppressWarnings("resource")
 class AccountCredentialAbuseRedisIntegrationTest {
