@@ -266,6 +266,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         .transactionResult(
             configuration -> {
               var tx = DSL.using(configuration);
+              tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
               requireOldOwner(tx, source, prior);
               Record old =
                   tx.fetchOne(

@@ -194,6 +194,87 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
     }
   }
 
+  @Test
+  void actualFreezeUsesReadCommittedWithRepeatableReadDatasourceAfterAuthorizationWaits()
+      throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), Clock.systemUTC());
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution);
+        var gate = new RegionRowLockGate();
+        ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      Future<?> authorization =
+          executor.submit(
+              () ->
+                  proof
+                      .capacity(gate.attach(proof.sql))
+                      .authorize(
+                          proof.admission,
+                          template,
+                          account,
+                          issuer,
+                          proof.execution,
+                          transferDeadline()));
+      gate.awaitLock();
+
+      var repeatableReadSource =
+          new DriverManagerDataSource() {
+            @Override
+            public java.sql.Connection getConnection() throws java.sql.SQLException {
+              java.sql.Connection connection = super.getConnection();
+              connection.setTransactionIsolation(java.sql.Connection.TRANSACTION_REPEATABLE_READ);
+              return connection;
+            }
+          };
+      repeatableReadSource.setDriverClassName(postgresContainer().getDriverClassName());
+      String url = postgresContainer().getJdbcUrl();
+      String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
+      repeatableReadSource.setUrl(
+          url + (url.contains("?") ? "&" : "?") + "currentSchema=" + schema);
+      repeatableReadSource.setUsername(postgresContainer().getUsername());
+      repeatableReadSource.setPassword(postgresContainer().getPassword());
+      var repeatableReadTransfers =
+          new CanonicalGameplayRegionOwnerTransferRepository(
+              DSL.using(repeatableReadSource, SQLDialect.POSTGRES), proof.clock, proof.tags);
+      Future<UUID> freeze =
+          executor.submit(
+              () ->
+                  repeatableReadTransfers.within(
+                      transferDeadline(),
+                      ignored -> repeatableReadTransfers.begin(proof.scope, proof.prior)));
+      try {
+        assertDatabaseWaitsFor(proof.sql, gate.backendPid());
+        assertThat(freeze.isDone()).isFalse();
+      } finally {
+        gate.release();
+      }
+
+      authorization.get(10, TimeUnit.SECONDS);
+      UUID transferId = freeze.get(10, TimeUnit.SECONDS);
+      assertThat(transferId).isNotNull();
+      assertThat(proof.executionState(proof.execution)).isEqualTo("AUTHORIZED");
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                      transferId)
+                  .get(0, String.class))
+          .isEqualTo("FROZEN");
+      List<CanonicalGameplayRegionOwnerTransferRepository.Item> captured =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.capture(transferId));
+      assertThat(captured)
+          .extracting(item -> item.execution().digest())
+          .containsExactly(proof.execution.digest());
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+    }
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.CsvSource({"1,134217728", "128,1048576"})
   void chargedAbsentExecutionCanStillBeFencedWhenEitherBudgetDimensionIsFull(

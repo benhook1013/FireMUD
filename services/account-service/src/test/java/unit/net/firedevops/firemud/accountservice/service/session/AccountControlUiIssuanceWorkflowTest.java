@@ -639,6 +639,35 @@ class AccountControlUiIssuanceWorkflowTest {
         .seal(any(byte[].class), any(byte[].class), any(Instant.class));
   }
 
+  @Test
+  void expiredOriginalReturnsPermanentDenialOnlyAfterRevocationIsRetained() {
+    Fixture fixture = new Fixture(NOW.minusSeconds(1));
+    var original = fixture.existing();
+    var revoking = fixture.stored("REVOKING", original.recoveryExpiry, original.tokenHash);
+    var receipt = mock(AccountControlUiCoordination.Receipt.class);
+    when(fixture.operations.beginRecoveryFailure(original)).thenReturn(revoking);
+    when(fixture.registry.revoke(revoking)).thenReturn(receipt);
+
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .service()
+                      .issue(
+                          fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
+                          fixture.environment))
+          .isInstanceOf(AccountControlUiIssuanceService.PermanentRecoveryDenialException.class);
+    }
+
+    var order = inOrder(fixture.operations, fixture.registry);
+    order.verify(fixture.operations).beginRecoveryFailure(original);
+    order.verify(fixture.registry).revoke(revoking);
+    order.verify(fixture.operations).finishRecoveryFailure(revoking, receipt);
+    verifyNoInteractions(fixture.primary, fixture.signers);
+    verify(fixture.cryptography, never())
+        .open(any(byte[].class), any(byte[].class), any(Instant.class));
+  }
+
   private static AccountControlUiIssuanceRepository.Committed committed(
       AccountControlUiIssuanceRepository.Stored stored) throws Exception {
     var constructor =
