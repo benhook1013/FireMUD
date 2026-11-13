@@ -1285,13 +1285,17 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
-    UUID transferId = transfer.advance(original.source, original.status, deadline());
     assertThatThrownBy(() -> replaceRegionOwner("unproved-successor"))
         .isInstanceOf(IllegalStateException.class);
     admin.pexpire(ascii(original.grant.key()), 0);
     var successor =
         CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
             fixture.dsl(), ownerClient, catalog, original, sources.resolver, transfer, deadline());
+    UUID transferId =
+        fixture
+            .dsl()
+            .fetchSingle("SELECT transfer_id FROM game_session_region_owner_transfer")
+            .get(0, UUID.class);
     var completed = receiver.observeForRegionOwnerTransfer(transferId, 0, deadline());
     assertThat(completed.regionOwnerTransferContext().controlState()).isEqualTo("COMPLETED");
     assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(candidate);
