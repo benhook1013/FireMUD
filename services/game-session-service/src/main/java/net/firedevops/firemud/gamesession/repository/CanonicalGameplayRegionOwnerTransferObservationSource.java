@@ -1,13 +1,24 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import java.time.Clock;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 
 /** Current SQL transfer intent/item or sealed completion, never transfer mutation authority. */
 @FunctionalInterface
 interface CanonicalGameplayRegionOwnerTransferObservationSource {
   Context readCurrent(UUID transferId, long targetOrdinal);
+
+  /** The caller waits only to the deadline. The worker keeps admission until observation exits. */
+  default <T> T withinObservation(
+      Clock clock,
+      long deadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> observation) {
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+        clock, deadline, observation);
+  }
 
   default Context readCurrent(UUID transferId, long targetOrdinal, long deadline) {
     return readCurrent(transferId, targetOrdinal);

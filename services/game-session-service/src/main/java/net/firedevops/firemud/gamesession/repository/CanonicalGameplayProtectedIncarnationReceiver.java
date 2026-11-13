@@ -263,13 +263,34 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     if (absoluteDeadlineMillis <= clock.millis()) {
       throw new ObservationUnavailableException("Protected transfer observation deadline expired");
     }
+    try {
+      return regionOwnerTransferSource.withinObservation(
+          clock,
+          absoluteDeadlineMillis,
+          budget -> observeForRegionOwnerTransfer(transferId, targetOrdinal, budget));
+    } catch (CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable expired) {
+      throw new ObservationUnavailableException(
+          "Protected transfer observation deadline or admission unavailable");
+    }
+  }
+
+  VerifiedIncarnation observeForRegionOwnerTransfer(
+      UUID transferId,
+      long targetOrdinal,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    requireNoAmbientTransaction();
+    requireAvailable(OwnerKind.REGION_OWNER_TRANSFER);
+    long absoluteDeadlineMillis = budget.absoluteDeadlineMillis();
     CurrentContext before =
         loadRegionOwnerTransferCurrentContext(transferId, targetOrdinal, absoluteDeadlineMillis);
+    budget.check();
     return observeCurrentContext(
         before,
-        () ->
-            loadRegionOwnerTransferCurrentContext(
-                transferId, targetOrdinal, absoluteDeadlineMillis),
+        () -> {
+          budget.check();
+          return loadRegionOwnerTransferCurrentContext(
+              transferId, targetOrdinal, absoluteDeadlineMillis);
+        },
         absoluteDeadlineMillis);
   }
 
