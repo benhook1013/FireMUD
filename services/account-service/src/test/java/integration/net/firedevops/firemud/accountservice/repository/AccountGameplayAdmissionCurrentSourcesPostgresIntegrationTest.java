@@ -2276,6 +2276,10 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   }
 
   static Candidate admissionCandidate(Fixture fixture) {
+    return admissionCandidate(fixture, BigInteger.ONE);
+  }
+
+  static Candidate admissionCandidate(Fixture fixture, BigInteger issuerPartitionCapacity) {
     var identity = fixture.committedCandidate.identity();
     var authority = fixture.committedCandidate.authoritySnapshot();
     return new Candidate(
@@ -2293,7 +2297,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         BigInteger.valueOf(authority.issuerGeneration()),
         BigInteger.ONE,
         BigInteger.ONE,
-        BigInteger.ONE);
+        issuerPartitionCapacity);
   }
 
   private static Candidate candidateWithAccount(Candidate candidate, UUID accountId) {
