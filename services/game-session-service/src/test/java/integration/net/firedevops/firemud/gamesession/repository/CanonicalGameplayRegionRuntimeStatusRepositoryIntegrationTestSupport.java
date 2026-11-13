@@ -31,7 +31,6 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
-import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.Record;
@@ -45,10 +44,12 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 
-@SuppressWarnings("resource")
 abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupport {
+  abstract PostgreSQLContainer<?> postgresContainer();
+
+  abstract GenericContainer<?> redisContainer();
+
   static final UUID TENANT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
   static final UUID OTHER_GAME_INSTANCE_ID =
       UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
@@ -64,14 +65,6 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
   static final int TEST_TRANSFER_HISTORY_MAXIMUM_TRANSFERS = 256;
   static final int TEST_TRANSFER_HISTORY_MAXIMUM_ITEMS = 1024;
 
-  @Container
-  static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
-
-  @Container
-  static final GenericContainer<?> REDIS =
-      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
-
   @TempDir Path directory;
 
   DSLContext dsl;
@@ -80,13 +73,13 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
 
   @BeforeAll
   void setUpRepository() {
-    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgresContainer());
 
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName(POSTGRES.getDriverClassName());
-    dataSource.setUrl(POSTGRES.getJdbcUrl());
-    dataSource.setUsername(POSTGRES.getUsername());
-    dataSource.setPassword(POSTGRES.getPassword());
+    dataSource.setDriverClassName(postgresContainer().getDriverClassName());
+    dataSource.setUrl(postgresContainer().getJdbcUrl());
+    dataSource.setUsername(postgresContainer().getUsername());
+    dataSource.setPassword(postgresContainer().getPassword());
 
     CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
             dataSource,
@@ -102,6 +95,18 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
   @BeforeEach
   void selectFreshOwnerScopeWithoutDiscardingRetainedCustody() {
     source = source(UUID.randomUUID(), CAPTURE_ID);
+  }
+
+  static UUID beginAfterBarrier(
+      TransferSqlProof proof,
+      CanonicalGameplayRegionOwnerTransferRepository transfers,
+      CountDownLatch ready,
+      CountDownLatch start)
+      throws InterruptedException {
+    ready.countDown();
+    assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
+    return transfers.within(
+        transferDeadline(), ignored -> transfers.begin(proof.scope, proof.prior));
   }
 
   static void assertDatabaseWaitsFor(DSLContext sql, int blockerPid) throws Exception {
@@ -213,6 +218,57 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
     }
   }
 
+  /** Stops a real bridge transaction only after its inventory-clock lock was granted. */
+  static final class InventoryRowLockGate extends DefaultExecuteListener implements AutoCloseable {
+    final AtomicBoolean armed = new AtomicBoolean();
+    final AtomicInteger pid = new AtomicInteger();
+    final CountDownLatch locked = new CountDownLatch(1);
+    final CountDownLatch resume = new CountDownLatch(1);
+
+    void arm() {
+      armed.set(true);
+    }
+
+    @Override
+    public void executeEnd(ExecuteContext context) {
+      String statement = context.sql();
+      if (statement == null
+          || !statement.contains("game_session_canonical_binding_inventory_clock")
+          || !statement.contains("FOR UPDATE")
+          || !armed.compareAndSet(true, false)) return;
+      try (var query = context.connection().createStatement();
+          var result = query.executeQuery("SELECT pg_backend_pid()")) {
+        assertThat(result.next()).isTrue();
+        pid.set(result.getInt(1));
+        locked.countDown();
+        if (!resume.await(4, TimeUnit.SECONDS))
+          throw new AssertionError("Inventory-row test gate was not released");
+      } catch (java.sql.SQLException failure) {
+        throw new IllegalStateException("Could not observe actual inventory lock owner", failure);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("Inventory-row test gate was interrupted", interrupted);
+      }
+    }
+
+    void awaitLock() throws InterruptedException {
+      assertThat(locked.await(3, TimeUnit.SECONDS)).isTrue();
+    }
+
+    int backendPid() {
+      return pid.get();
+    }
+
+    void release() {
+      resume.countDown();
+    }
+
+    @Override
+    public void close() {
+      release();
+    }
+  }
+
   TransferSqlProof withCapacityBudget(int maximumRecords, long maximumBindingBytes)
       throws Exception {
     return new TransferSqlProof(maximumRecords, maximumBindingBytes, maximumRecords);
@@ -221,6 +277,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
   TransferSqlProof withTransferHistoryBudget(int maximumTransfers, int maximumItems)
       throws Exception {
     return new TransferSqlProof(
+        new DefaultExecuteListener(),
         TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
         TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES,
         TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
@@ -248,17 +305,46 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
     final CanonicalGameplayRegionRuntimeStatus prior;
     final OriginalNewCapacityExecution execution;
     final CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding region;
+    CanonicalGameplayRegionOwnerTransferRepository transfers;
+    CanonicalGameplayProtectedIncarnationReceiver receiver;
+    CanonicalGameplayRegionOwnerTransferCoordinator coordinator;
 
     TransferSqlProof() throws Exception {
       this(
+          new DefaultExecuteListener(),
           TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
-          TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES,
-          TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS);
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
     }
 
     TransferSqlProof(int maximumRecords, long maximumBindingBytes, int maximumRetainedRecords)
         throws Exception {
       this(
+          new DefaultExecuteListener(),
+          maximumRecords,
+          maximumBindingBytes,
+          maximumRetainedRecords);
+    }
+
+    TransferSqlProof(DefaultExecuteListener listener) throws Exception {
+      this(
+          listener,
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
+    }
+
+    TransferSqlProof(DefaultExecuteListener listener, int maximumRecords, long maximumBindingBytes)
+        throws Exception {
+      this(listener, maximumRecords, maximumBindingBytes, maximumRecords);
+    }
+
+    TransferSqlProof(
+        DefaultExecuteListener listener,
+        int maximumRecords,
+        long maximumBindingBytes,
+        int maximumRetainedRecords)
+        throws Exception {
+      this(
+          listener,
           maximumRecords,
           maximumBindingBytes,
           maximumRetainedRecords,
@@ -267,6 +353,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
     }
 
     TransferSqlProof(
+        DefaultExecuteListener listener,
         int maximumRecords,
         long maximumBindingBytes,
         int maximumRetainedRecords,
@@ -275,7 +362,9 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
         throws Exception {
       String password = UUID.randomUUID().toString();
       try (var administrator =
-              RedisClient.create(RedisURI.create(REDIS.getHost(), REDIS.getMappedPort(6379)));
+              RedisClient.create(
+                  RedisURI.create(
+                      redisContainer().getHost(), redisContainer().getMappedPort(6379)));
           var connection = administrator.connect(ByteArrayCodec.INSTANCE)) {
         connection.sync().flushdb();
         connection
@@ -312,18 +401,18 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
                     .addCommand(CommandType.TIME));
       }
       coordinationUri =
-          RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379))
+          RedisURI.Builder.redis(redisContainer().getHost(), redisContainer().getMappedPort(6379))
               .withAuthentication("gamesession_coord_app", password)
               .withTimeout(Duration.ofSeconds(5))
               .build();
       redis = RedisClient.create(coordinationUri);
       redis.setOptions(ClientOptions.builder().autoReconnect(false).build());
       var dataSource = new DriverManagerDataSource();
-      dataSource.setDriverClassName(POSTGRES.getDriverClassName());
-      String url = POSTGRES.getJdbcUrl();
+      dataSource.setDriverClassName(postgresContainer().getDriverClassName());
+      String url = postgresContainer().getJdbcUrl();
       dataSource.setUrl(url + (url.contains("?") ? "&" : "?") + "currentSchema=public");
-      dataSource.setUsername(POSTGRES.getUsername());
-      dataSource.setPassword(POSTGRES.getPassword());
+      dataSource.setUsername(postgresContainer().getUsername());
+      dataSource.setPassword(postgresContainer().getPassword());
       var candidate =
           new Candidate(
               UUID.randomUUID(),
@@ -342,7 +431,28 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
               BigInteger.ONE,
               BigInteger.valueOf(64));
       fixture = new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate, redis);
-      sql = fixture.dsl();
+      sql =
+          DSL.using(
+              fixture
+                  .dsl()
+                  .configuration()
+                  .deriveAppending(
+                      listener,
+                      new DefaultExecuteListener() {
+                        @Override
+                        public void resultEnd(ExecuteContext context) {
+                          String query = context.sql();
+                          var result = context.result();
+                          if (query != null
+                              && query.contains("JOIN game_session_region_runtime_status r")
+                              && result != null) {
+                            assertThat(result.fields())
+                                .extracting(org.jooq.Field::getName)
+                                .as("current transfer observation has unambiguous field names")
+                                .doesNotHaveDuplicates();
+                          }
+                        }
+                      }));
       tags = new CanonicalGameplayTenantGameplayTagRepository(sql, "test", 1);
       scripts =
           RedisScriptCatalog.fromContributions(
@@ -380,8 +490,8 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       var assignment = tags.assignmentForTransition(admission.candidate().bindingDecisionId());
       sql.execute(
           "INSERT INTO game_session_capacity_evidence_budget"
-              + " (tenant_id,maximum_records,maximum_binding_bytes,maximum_retained_records) VALUES (?,?,?,?)"
-              + " ON CONFLICT DO NOTHING",
+              + " (tenant_id,maximum_records,maximum_binding_bytes,maximum_retained_records) VALUES"
+              + " (?,?,?,?) ON CONFLICT DO NOTHING",
           assignment.tenantId(),
           maximumRecords,
           maximumBindingBytes,
@@ -394,6 +504,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           maximumItems);
       execution = newControlledExecution();
       precharge(execution);
+      recreateTransferOwners();
     }
 
     void replayBridge() {
@@ -414,9 +525,27 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           prior.executorFence().longValueExact());
     }
 
+    CanonicalGameplayRegionOwnerTransferRepository transfers(DSLContext context) {
+      return new CanonicalGameplayRegionOwnerTransferRepository(context, clock, tags);
+    }
+
     CanonicalGameplayOriginalNewCapacityExecutionOwner capacity(DSLContext context) {
       return new CanonicalGameplayOriginalNewCapacityExecutionOwner(
           context, redis, scripts, clock, tags);
+    }
+
+    void recreateTransferOwners() throws Exception {
+      transfers = transfers(sql);
+      receiver =
+          new CanonicalGameplayControlledRegionTransferObservationFixture(clock)
+              .receiver(transfers, tags);
+      coordinator =
+          new CanonicalGameplayRegionOwnerTransferCoordinator(
+              sql, clock, transfers, capacity(sql), receiver);
+    }
+
+    UUID begin() {
+      return transfers.within(transferDeadline(), ignored -> transfers.begin(scope, prior));
     }
 
     void seedUndeliveredDispatch(OriginalNewCapacityExecution original) {
@@ -529,8 +658,8 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       context.execute(
           "INSERT INTO game_session_region_owner_transfer"
               + " (transfer_id,tenant_id,game_instance_id,region_id,region_epoch,old_owner_id,old_owner_fence,"
-              + " old_lease_correlation,source_digest,intent_digest,state)"
-              + " VALUES (?,?,?,?,?,?,?,?,?,?,'FROZEN')",
+              + " old_lease_correlation,source_digest,intent_digest,state) VALUES"
+              + " (?,?,?,?,?,?,?,?,?,?,'FROZEN')",
           transferId,
           source.tenantId(),
           source.gameInstanceId(),
@@ -539,22 +668,18 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           owner.ownerInstanceId(),
           owner.executorFence().longValueExact(),
           owner.leaseTokenCorrelation(),
-          "sha256:" + "b".repeat(64),
+          CanonicalGameplayRegionOwnerTransferRepository.sourceDigest(source, owner),
           "sha256:" + "c".repeat(64));
       return transferId;
     }
 
     void insertRawTransferItem(DSLContext context, UUID transferId, long ordinal) {
-      insertRawTransferItem(context, transferId, ordinal, execution);
-    }
-
-    void insertRawTransferItem(
-        DSLContext context, UUID transferId, long ordinal, OriginalNewCapacityExecution execution) {
       var assignment = tags.assignmentForTransition(execution.transitionId());
       context.execute(
           "INSERT INTO game_session_region_owner_transfer_item"
               + " (transfer_id,target_ordinal,execution_digest,canonical_execution,candidate_digest,"
-              + " tenant_gameplay_tag,workload_namespace,allocation_version) VALUES (?,?,?,?,?,?,?,?)",
+              + " tenant_gameplay_tag,workload_namespace,allocation_version) VALUES"
+              + " (?,?,?,?,?,?,?,?)",
           transferId,
           ordinal,
           execution.digest(),
@@ -563,6 +688,59 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           assignment.tenantGameplayTag(),
           assignment.workloadNamespace(),
           assignment.allocationVersion());
+    }
+
+    List<CanonicalGameplayRegionOwnerTransferRepository.Item> captureAndFence(UUID id) {
+      var page = transfers.within(transferDeadline(), ignored -> transfers.capture(id));
+      assertThat(page.size()).isLessThanOrEqualTo(32);
+      for (var item : page) fence(item);
+      return page;
+    }
+
+    void fence(CanonicalGameplayRegionOwnerTransferRepository.Item item) {
+      long deadline = transferDeadline();
+      transfers.within(
+          deadline,
+          budget -> {
+            var before =
+                receiver.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), deadline);
+            var dispatch = transfers.fenceDispatch(item, before);
+            var actual =
+                capacity(sql).forTransferBudget(budget).fenceForTransfer(item, dispatch, deadline);
+            var after =
+                receiver.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), deadline);
+            transfers.retainFence(item, actual, before, after);
+            return null;
+          });
+    }
+
+    void verifyPage(UUID id) {
+      long cursor =
+          transfers.within(transferDeadline(), ignored -> transfers.verificationCursor(id));
+      var page = transfers.within(transferDeadline(), ignored -> transfers.page(id, cursor));
+      assertThat(page.size()).isLessThanOrEqualTo(32);
+      for (var item : page) {
+        var before = receiver.observeForRegionOwnerTransfer(id, item.ordinal(), transferDeadline());
+        var actual = capacity(sql).readTransferFence(item, transferDeadline());
+        var after = receiver.observeForRegionOwnerTransfer(id, item.ordinal(), transferDeadline());
+        transfers.within(
+            transferDeadline(),
+            ignored -> {
+              transfers.retainVerification(item, actual, before, after);
+              return null;
+            });
+      }
+    }
+
+    CanonicalGameplayRegionRuntimeStatus install(UUID id) {
+      return coordinator.install(
+          id,
+          scope,
+          prior,
+          "e".repeat(64),
+          "game-session-service",
+          "sql-proof-successor",
+          transferDeadline());
     }
 
     CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen() {
@@ -637,7 +815,8 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
     String executionState(OriginalNewCapacityExecution original) {
       Record row =
           sql.fetchOne(
-              "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+              "SELECT status FROM game_session_original_new_capacity_execution WHERE"
+                  + " execution_digest=?",
               original.digest());
       return row == null ? null : row.get(0, String.class);
     }
@@ -661,13 +840,31 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       }
     }
 
+    void losePhysicalExecution(OriginalNewCapacityExecution original) {
+      String tag = tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
+      try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
+        assertThat(
+                connection
+                    .sync()
+                    .del(
+                        ascii(
+                            "session:game:capacity-execution:{"
+                                + tag
+                                + "}:"
+                                + original.request().admissionAttemptId())))
+            .isEqualTo(1L);
+      }
+    }
+
     void rawReplaceOwner(String owner, String correlation) {
       rawReplaceOwner(sql, owner, correlation);
     }
 
     void rawReplaceOwner(DSLContext context, String owner, String correlation) {
       context.execute(
-          "UPDATE game_session_region_runtime_status SET owner_instance_id=?,executor_fence=nextval('game_session_region_executor_fence_seq'),lease_token_correlation=? WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
+          "UPDATE game_session_region_runtime_status SET"
+              + " owner_instance_id=?,executor_fence=nextval('game_session_region_executor_fence_seq'),lease_token_correlation=?"
+              + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
           owner,
           correlation,
           scope.tenantId(),
@@ -675,40 +872,9 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           scope.regionId());
     }
 
-    // Seeds the fields guarded by the SQL completion boundary. It provides no physical proof.
-    void retainControlledTransferReceipt(UUID id) {
-      String digest = "sha256:" + "a".repeat(64);
-      UUID round = UUID.randomUUID();
-      sql.transaction(
-          configuration -> {
-            DSLContext transaction = DSL.using(configuration);
-            assertThat(
-                    transaction.execute(
-                        "UPDATE game_session_region_owner_transfer"
-                            + " SET incarnation_digest=?,verification_round=? WHERE transfer_id=?",
-                        digest,
-                        round,
-                        id))
-                .isEqualTo(1);
-            assertThat(
-                    transaction.execute(
-                        "UPDATE game_session_region_owner_transfer_item"
-                            + " SET fence_readback=?,incarnation_digest=?,before_payload_digest=?,"
-                            + " after_payload_digest=?,verified_round=? WHERE transfer_id=?",
-                        ascii("controlled-readback"),
-                        digest,
-                        digest,
-                        digest,
-                        round,
-                        id))
-                .isEqualTo(1);
-            assertThat(
-                    transaction.execute(
-                        "UPDATE game_session_region_owner_transfer"
-                            + " SET verification_cursor=0,verification_complete=true WHERE transfer_id=?",
-                        id))
-                .isEqualTo(1);
-          });
+    CanonicalGameplayRegionRuntimeStatus rawCompleteAndInstall(
+        UUID transferId, String owner, String correlation) {
+      return rawCompleteAndInstall(transferId, owner, correlation, false);
     }
 
     CanonicalGameplayRegionRuntimeStatus rawCompleteAndInstall(
@@ -716,7 +882,9 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       String schema = sql.fetchSingle("SELECT current_schema()").get(0, String.class);
       try (var connection =
           java.sql.DriverManager.getConnection(
-              POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+              postgresContainer().getJdbcUrl(),
+              postgresContainer().getUsername(),
+              postgresContainer().getPassword())) {
         connection.setSchema(schema);
         connection.setAutoCommit(false);
         DSLContext transaction = DSL.using(connection, SQLDialect.POSTGRES);
@@ -735,8 +903,8 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
               transferId);
         }
         if (transaction.execute(
-                "UPDATE game_session_region_owner_transfer"
-                    + " SET state='COMPLETED',new_owner_id=?,new_owner_fence=?,new_lease_correlation=?"
+                "UPDATE game_session_region_owner_transfer SET"
+                    + " state='COMPLETED',new_owner_id=?,new_owner_fence=?,new_lease_correlation=?"
                     + " WHERE transfer_id=? AND state='FROZEN'",
                 owner,
                 fence,
@@ -745,16 +913,16 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
             != 1) throw new IllegalStateException("Expected one frozen transfer");
         Record installed =
             transaction.fetchOne(
-                "UPDATE game_session_region_runtime_status"
-                    + " SET executor_fence=?,lease_token_correlation=?,owner_service=?,owner_instance_id=?,"
-                    + " updated_at=CURRENT_TIMESTAMP::timestamp"
-                    + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?"
-                    + " AND tenant_region_tag=? AND canonical_region_id=? AND lifecycle_epoch=?"
-                    + " AND lifecycle_row_version=? AND capture_id=? AND lifecycle_request_bytes=?"
-                    + " AND graph_sha256=? AND preparation_input_digest=? AND region_epoch=?"
-                    + " AND executor_fence=? AND lease_token_correlation=? AND owner_service=?"
-                    + " AND owner_instance_id=? AND paused=? AND last_committed_tick_id=?"
-                    + " AND last_committed_tick_batch_id IS NOT DISTINCT FROM ? RETURNING *",
+                "UPDATE game_session_region_runtime_status SET"
+                    + " executor_fence=?,lease_token_correlation=?,owner_service=?,owner_instance_id=?,"
+                    + " updated_at=CURRENT_TIMESTAMP::timestamp WHERE tenant_id=? AND"
+                    + " game_instance_id=? AND region_id=? AND tenant_region_tag=? AND"
+                    + " canonical_region_id=? AND lifecycle_epoch=? AND lifecycle_row_version=? AND"
+                    + " capture_id=? AND lifecycle_request_bytes=? AND graph_sha256=? AND"
+                    + " preparation_input_digest=? AND region_epoch=? AND executor_fence=? AND"
+                    + " lease_token_correlation=? AND owner_service=? AND owner_instance_id=? AND"
+                    + " paused=? AND last_committed_tick_id=? AND last_committed_tick_batch_id IS"
+                    + " NOT DISTINCT FROM ? RETURNING *",
                 fence,
                 correlation,
                 "game-session-service",
@@ -789,29 +957,24 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
 
     String originalImage() {
       return sql.fetch(
-              "SELECT to_jsonb(e)::text FROM game_session_original_new_capacity_execution e ORDER BY execution_digest")
+              "SELECT to_jsonb(e)::text FROM game_session_original_new_capacity_execution e ORDER"
+                  + " BY execution_digest")
           .getValues(0, String.class)
           .toString();
     }
 
     String transferImage(UUID id) {
       return sql.fetchSingle(
-              "SELECT to_jsonb(t)::text FROM game_session_region_owner_transfer t WHERE transfer_id=?",
+              "SELECT to_jsonb(t)::text FROM game_session_region_owner_transfer t WHERE"
+                  + " transfer_id=?",
               id)
           .get(0, String.class);
     }
 
-    List<String> transferExecutionDigests(UUID id) {
-      return sql.fetch(
-              "SELECT execution_digest FROM game_session_region_owner_transfer_item"
-                  + " WHERE transfer_id=? ORDER BY target_ordinal",
-              id)
-          .getValues(0, String.class);
-    }
-
     String itemImage(UUID id) {
       return sql.fetch(
-              "SELECT to_jsonb(i)::text FROM game_session_region_owner_transfer_item i WHERE transfer_id=? ORDER BY target_ordinal",
+              "SELECT to_jsonb(i)::text FROM game_session_region_owner_transfer_item i WHERE"
+                  + " transfer_id=? ORDER BY target_ordinal",
               id)
           .getValues(0, String.class)
           .toString();

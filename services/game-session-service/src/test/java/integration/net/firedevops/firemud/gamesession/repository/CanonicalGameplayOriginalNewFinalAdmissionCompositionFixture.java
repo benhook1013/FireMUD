@@ -816,6 +816,89 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     return binding.candidate();
   }
 
+  /** Real Account hold/credential and GS authorization, intentionally stopped before FINAL. */
+  public net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result
+      authorizeThenFenceAndHandoffWithoutFinal(
+          AccountGameplayAdmissionLeaseClient account,
+          AccountPublicJwksCache jwks,
+          String originalLoginJwt,
+          net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
+          net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+          long deadline)
+          throws Exception {
+    var inventory = new CanonicalGameplayBindingInventoryRepository(binding.dsl());
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var executionOwner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            binding.dsl(), coordination, scripts, CLOCK, tags);
+    var selected = executionOwner.requireRequestBinding(source, request, deadline);
+    executionOwner.precharge(source, request, selected, deadline);
+    var reservation = capacityClient.commit(request, deadline);
+    var execution = executionOwner.bind(source, request, reservation, deadline, selected);
+    var issuerSource = binding.currentIssuerSource();
+    var issuer =
+        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
+            coordination,
+            scripts,
+            new CanonicalGameplayIssuerAdmissionBarrierRepository(
+                binding.dsl(), tags, issuerSource),
+            issuerSource);
+    try (var credential =
+            account.issueOriginalNewBoundGameplayCredential(
+                originalLoginJwt,
+                decision.leaseEvidence().canonicalJson().getBytes(StandardCharsets.UTF_8));
+        var raw =
+            CanonicalGameplayOriginalNewAuthenticatedSession.template(
+                source.candidate(),
+                credential,
+                new CanonicalGameplayOriginalNewBoundCredentialVerifier(jwks, CLOCK),
+                120_000L);
+        var template = raw.bindCapacityExecution(execution)) {
+      var current =
+          initialOwner()
+              .verifyCurrentOpenForTarget(
+                  request.context()
+                          instanceof
+                          net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
+                                  .PlayerContext
+                              player
+                      ? player.accountId()
+                      : null,
+                  request.identity().tenantId(),
+                  source.candidate().bindingIdentity().playableStateNamespaceId());
+      if (!(current instanceof CanonicalGameplayAccountInitialOpenProof.CurrentOpen open))
+        throw new IllegalStateException("Actual INITIAL source is not OPEN");
+      executionOwner.authorize(
+          source,
+          template,
+          open,
+          issuer.initializeAndRead(source.issuerAcknowledgement().operationId()),
+          execution,
+          deadline);
+    }
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(binding.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            binding.dsl(), CLOCK, repository, executionOwner, receiver);
+    administration.sync().pexpire(ascii(regionInstallation.grant.key()), 0);
+    regionInstallation =
+        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+            binding.dsl(),
+            coordination,
+            coordinationUri,
+            scripts,
+            regionInstallation,
+            sources.resolver,
+            CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
+                ::controlledRegionIncarnation,
+            transfer,
+            deadline);
+    return reservation;
+  }
+
   public Target target() {
     return binding.target();
   }

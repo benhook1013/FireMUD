@@ -81,6 +81,27 @@ public final class CanonicalGameplayBindingInventoryRepository {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
   }
 
+  /** Handoff reads retain this repository's exact provider and the caller's frozen deadline. */
+  <T> T withinTransferRead(
+      java.time.Clock clock,
+      long absoluteDeadlineMillis,
+      java.util.function.Function<CanonicalGameplayBindingInventoryRepository, T> read) {
+    requireNoAmbientTransaction();
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+        clock,
+        absoluteDeadlineMillis,
+        budget -> read.apply(new CanonicalGameplayBindingInventoryRepository(budget.sql(dsl))));
+  }
+
+  /** Reuses a retained handoff permit while keeping this read's scoped SQL provider. */
+  <T> T withinTransferRead(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
+      java.util.function.Function<CanonicalGameplayBindingInventoryRepository, T> read) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(retainedBudget, "retainedBudget").check();
+    return read.apply(new CanonicalGameplayBindingInventoryRepository(retainedBudget.sql(dsl)));
+  }
+
   CanonicalGameplayBindingTransitionSnapshot prepare(
       CanonicalGameplayBindingTransitionRequest request) {
     Objects.requireNonNull(request, "request");
@@ -859,15 +880,62 @@ public final class CanonicalGameplayBindingInventoryRepository {
    */
   OriginalNewFinalAdmissionSource readOriginalNewFinalAdmissionSource(
       CanonicalGameplayAdmissionDecision originalDecision) {
+    return readOriginalNewSource(originalDecision, OriginalNewSourcePurpose.FINAL_ADMISSION);
+  }
+
+  /**
+   * Reads a retained COMMITTED original only as topology input for normal region handoff.
+   *
+   * <p>This terminal observation is deliberately separate from the current final-admission source:
+   * it preserves the original member-repair acknowledgement and final receipt while permitting a
+   * later Account-wide fence to make that acknowledgement stale for admission.
+   */
+  OriginalNewFinalAdmissionSource readOriginalNewRegionTopologyObservation(
+      UUID transitionId, CanonicalGameplayOriginalNewCandidate expectedOriginal) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    Objects.requireNonNull(expectedOriginal, "expectedOriginal");
+    if (!transitionId.equals(expectedOriginal.bindingDecisionId())) {
+      throw conflict("Region topology observation changed its original transition");
+    }
+    var decision =
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            expectedOriginal.leaseEvidence(),
+            expectedOriginal.bindingIdentity(),
+            expectedOriginal.transition().bindingGeneration(),
+            null,
+            expectedOriginal.targetEvidence());
+    OriginalNewFinalAdmissionSource current =
+        readOriginalNewSource(decision, OriginalNewSourcePurpose.REGION_TOPOLOGY);
+    if (current.transitionStatus() != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED
+        || !expectedOriginal.equals(current.candidate())
+        || current.finalReceipt().isEmpty()) {
+      throw conflict("Region topology observation lacks the exact retained committed original");
+    }
+    return current;
+  }
+
+  private OriginalNewFinalAdmissionSource readOriginalNewSource(
+      CanonicalGameplayAdmissionDecision originalDecision, OriginalNewSourcePurpose purpose) {
     Objects.requireNonNull(originalDecision, "original Account decision");
     requireNoAmbientTransaction();
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
           BigInteger revision = lockInventoryRevision(transaction);
-          requireNoActiveAccountControl(
-              lockExistingAccountCoverageControl(
-                  transaction, originalDecision.candidate().accountId()));
+          Record accountControl =
+              transaction.fetchOne(
+                  "SELECT * FROM game_session_canonical_account_coverage_control "
+                      + "WHERE account_id = ? FOR UPDATE",
+                  originalDecision.candidate().accountId());
+          if (accountControl == null) {
+            throw conflict(
+                "Account coverage control row is missing; absence is not no-active proof");
+          }
+          if (purpose == OriginalNewSourcePurpose.FINAL_ADMISSION) {
+            requireNoActiveAccountControl(
+                toAccountCoverageControl(accountControl, originalDecision.candidate().accountId()));
+          }
           String runtimeStatus =
               lockLeaseBoundRuntimeBeforeTransition(
                   transaction,
@@ -888,6 +956,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (row == null) throw conflict("Original NEW transition is missing");
           String status = row.get("status", String.class);
           boolean committed = "COMMITTED".equals(status);
+          if (purpose == OriginalNewSourcePurpose.REGION_TOPOLOGY && !committed) {
+            throw conflict("Region topology observation requires a committed original NEW");
+          }
           if (!committed && !"PROVISIONAL".equals(status)) {
             throw conflict("Only a provisional or committed original NEW can be a final source");
           }
@@ -1017,7 +1088,13 @@ public final class CanonicalGameplayBindingInventoryRepository {
               throw conflict("Original NEW account obligation is not exact");
             }
             requireCompletedMemberRepairAcknowledgement(
-                transaction, transition, entry, obligations.getFirst());
+                transaction,
+                transition,
+                entry,
+                obligations.getFirst(),
+                purpose == OriginalNewSourcePurpose.REGION_TOPOLOGY,
+                accountControl,
+                revision);
             CanonicalGameplayIssuerBindingLocalAcknowledgement issuerAcknowledgement =
                 requireOriginalNewFinalIssuerAcknowledgement(
                     transaction, candidate, transition, committed);
@@ -1049,6 +1126,237 @@ public final class CanonicalGameplayBindingInventoryRepository {
             if (canonicalBytes != null) Arrays.fill(canonicalBytes, (byte) 0);
           }
         });
+  }
+
+  /** Pins original identity only; ordinary provisional handoff needs no final ACK capability. */
+  CanonicalGameplayOriginalNewCandidate readRegionTransferOriginalCandidate(
+      UUID transitionId, CanonicalGameplayBindingProvisionalCasEvidence expectedOriginal) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(expectedOriginal, "expected original placement");
+    if (!expectedOriginal.transition().transitionId().equals(transitionId)
+        || expectedOriginal.transition().status()
+            != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+        || expectedOriginal.expectedPrior() != null) {
+      throw conflict("Region transfer requires its exact original provisional placement");
+    }
+    CanonicalGameplayAdmissionDecision decision =
+        dsl.transactionResult(
+            configuration ->
+                toAdmissionDecision(
+                    readTransition(DSL.using(configuration), transitionId), expectedOriginal));
+    return CanonicalGameplayOriginalNewCandidate.fromOriginalSources(expectedOriginal, decision);
+  }
+
+  /**
+   * Selects an already-retained committed original as topology evidence for a first handoff. This
+   * source is terminal-only and never reconstructs provisional CAS authority.
+   */
+  Optional<OriginalNewFinalAdmissionSource> readRegionTransferCommittedSource(UUID transitionId) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(transitionId, "transitionId");
+    CanonicalGameplayOriginalNewCandidate candidate =
+        dsl.transactionResult(
+            configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+              Record row = readTransition(transaction, transitionId);
+              if (row == null) throw conflict("Region transfer original transition is missing");
+              String status = row.get("status", String.class);
+              if ("PROVISIONAL".equals(status)) return null;
+              if (!"COMMITTED".equals(status)) {
+                throw conflict("Region transfer original has no committed topology source");
+              }
+              byte[] candidateBytes = row.get("original_new_candidate_bytes", byte[].class);
+              try {
+                if (candidateBytes == null
+                    || candidateBytes.length == 0
+                    || candidateBytes.length
+                        > CanonicalGameplayOriginalNewCandidateCodec.MAX_CANDIDATE_BYTES) {
+                  throw conflict("Committed original has no bounded retained candidate");
+                }
+                try {
+                  return CanonicalGameplayOriginalNewCandidate.parseCanonical(candidateBytes);
+                } catch (RuntimeException malformed) {
+                  throw conflict("Committed original candidate bytes are not canonical");
+                }
+              } finally {
+                if (candidateBytes != null) Arrays.fill(candidateBytes, (byte) 0);
+              }
+            });
+    if (candidate == null) return Optional.empty();
+    return Optional.of(
+        readRegionTransferCommittedSource(transitionId, candidate)
+            .orElseThrow(
+                () -> conflict("Committed topology source changed during exact revalidation")));
+  }
+
+  /** Only an explicitly observed COMMITTED original selects the strict terminal source path. */
+  Optional<OriginalNewFinalAdmissionSource> readRegionTransferCommittedSource(
+      UUID transitionId, CanonicalGameplayOriginalNewCandidate expectedOriginal) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(expectedOriginal, "pinned original transfer candidate");
+    if (!expectedOriginal.bindingDecisionId().equals(transitionId)) {
+      throw conflict("Region transfer changed its original transition");
+    }
+    boolean committed =
+        dsl.transactionResult(
+            configuration -> {
+              var transaction = DSL.using(configuration);
+              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+              Record row = readTransition(transaction, transitionId);
+              if (row == null) throw conflict("Region transfer original transition is missing");
+              String status = row.get("status", String.class);
+              if ("COMMITTED".equals(status)) return true;
+              if (!"PROVISIONAL".equals(status)) {
+                throw conflict("Region transfer original has no current installation lifecycle");
+              }
+              var provisional = loadProvisionalCasEvidence(transaction, transitionId, false);
+              var decision = toAdmissionDecision(row, provisional);
+              if (!expectedOriginal.equals(
+                  CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
+                      provisional, decision))) {
+                throw conflict(
+                    "Region transfer original differs from its current provisional source");
+              }
+              return false;
+            });
+    if (!committed) return Optional.empty();
+    var current = readOriginalNewRegionTopologyObservation(transitionId, expectedOriginal);
+    if (current.transitionStatus() != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED
+        || !expectedOriginal.equals(current.candidate())) {
+      throw conflict("Region transfer committed source differs from the pinned original");
+    }
+    return Optional.of(current);
+  }
+
+  /**
+   * Revalidates an exact retained first-NEW Account abort for transfer topology only. The abort
+   * remains terminal and this method never constructs provisional or final-admission evidence.
+   */
+  Optional<CanonicalGameplayOriginalNewCandidate> readRegionTransferAbortedCandidate(
+      UUID transitionId, CanonicalGameplayOriginalNewCandidate expectedOriginal) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(expectedOriginal, "pinned original transfer candidate");
+    if (!expectedOriginal.bindingDecisionId().equals(transitionId)) {
+      throw conflict("Region transfer changed its original transition");
+    }
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          Record row = readTransition(transaction, transitionId);
+          if (row == null) throw conflict("Region transfer original transition is missing");
+          if (!"ABORTED".equals(row.get("status", String.class))) return Optional.empty();
+          var aborted = loadFirstNewAdmissionAbortSource(transaction, transitionId, false, true);
+          if (!aborted.isAccountAborted()
+              || !sameRegionTransferCandidate(expectedOriginal, aborted)) {
+            throw conflict(
+                "Region transfer retained Account abort differs from its pinned original");
+          }
+          return Optional.of(expectedOriginal);
+        });
+  }
+
+  private static boolean sameRegionTransferCandidate(
+      CanonicalGameplayOriginalNewCandidate expected,
+      CanonicalGameplayAdmissionAbortSource aborted) {
+    var transition = aborted.transition();
+    var expectedTransition = expected.transition();
+    var reservation = aborted.reservation();
+    var expectedReservation = expected.reservation();
+    return expected.bindingIdentity().equals(aborted.candidate().identity())
+        && expected
+            .leaseEvidence()
+            .canonicalJson()
+            .equals(aborted.originalDecision().leaseEvidenceJson())
+        && expected.targetEvidence().equals(aborted.originalDecision().targetEvidence())
+        && expectedTransition.transitionId().equals(transition.transitionId())
+        && expectedTransition.bindingRef().equals(transition.bindingRef())
+        && expectedTransition.bindingGeneration().equals(transition.bindingGeneration())
+        && expectedTransition.issuerReservationId().equals(transition.issuerReservationId())
+        && expectedTransition.reservationFence().equals(transition.reservationFence())
+        && expectedTransition
+            .candidateAccountIndexFence()
+            .equals(transition.candidateAccountIndexFence())
+        && expectedReservation.reservationId().equals(reservation.reservationId())
+        && expectedReservation.ownerBindingRef().equals(reservation.owner().bindingRef())
+        && expectedReservation.bindingGeneration().equals(reservation.bindingGeneration())
+        && expectedReservation.transitionId().equals(reservation.transitionId())
+        && expectedReservation.partitionId().equals(reservation.partitionId())
+        && expectedReservation.reservationFence().equals(reservation.reservationFence())
+        && expectedReservation
+            .issuerCoverageOperationId()
+            .equals(reservation.issuerCoverageOperationId())
+        && expectedReservation
+            .issuerCoverageOperationFence()
+            .equals(reservation.issuerCoverageOperationFence())
+        && expectedReservation.coverageFence().equals(reservation.coverageFence())
+        && expectedReservation
+            .inventorySnapshotRevision()
+            .equals(reservation.inventorySnapshotRevision());
+  }
+
+  /** Revalidates actual final lifecycle/receipts; never presents COMMITTED as provisional work. */
+  OriginalNewFinalAdmissionSource readRegionTransferOriginalSource(
+      UUID transitionId, OriginalNewFinalAdmissionSource expectedOriginal) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(expectedOriginal, "pinned original transfer source");
+    var candidate = expectedOriginal.candidate();
+    if (!candidate.bindingDecisionId().equals(transitionId)) {
+      throw conflict("Region transfer changed its original transition");
+    }
+    if ((expectedOriginal.transitionStatus()
+                != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+            && expectedOriginal.transitionStatus()
+                != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED)
+        || (expectedOriginal.transitionStatus()
+                == CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED
+            && expectedOriginal.finalReceipt().isEmpty())) {
+      throw conflict("Region transfer source is not a retained committed original");
+    }
+    var current =
+        readOriginalNewRegionTopologyObservation(transitionId, expectedOriginal.candidate());
+    if (!candidate.equals(current.candidate())
+        || !expectedOriginal.candidateDigest().equals(current.candidateDigest())
+        || !expectedOriginal
+            .originalCandidateReadbackDigest()
+            .equals(current.originalCandidateReadbackDigest())
+        || !regionTransferAcknowledgementFields(expectedOriginal.regionAcknowledgement())
+            .equals(regionTransferAcknowledgementFields(current.regionAcknowledgement()))
+        || !Arrays.equals(
+            expectedOriginal.issuerAcknowledgement().exactBytes(),
+            current.issuerAcknowledgement().exactBytes())
+        || (expectedOriginal.finalReceipt().isPresent()
+            && !expectedOriginal.finalReceipt().equals(current.finalReceipt()))) {
+      throw conflict("Region transfer original or retained final proof changed");
+    }
+    return current;
+  }
+
+  private static List<?> regionTransferAcknowledgementFields(
+      CanonicalGameplayBindingRegionBridgeObligation acknowledgement) {
+    // The strict source reader separately binds controller identity and current inventory revision.
+    // Final SQL retention advances that revision, but none of the original ACK proof may change.
+    return Arrays.asList(
+        acknowledgement.bridgeOperationId(),
+        acknowledgement.bridgePreimageState(),
+        acknowledgement.runtimeEntityId(),
+        acknowledgement.entityProjectionGeneration(),
+        acknowledgement.entityProjectionFence(),
+        acknowledgement.entityWorkloadNamespace(),
+        acknowledgement.actorOrigin(),
+        acknowledgement.entityReferenceDigest(),
+        acknowledgement.worldSourceDigest(),
+        acknowledgement.canonicalRegionId(),
+        acknowledgement.worldLifecycleEpoch(),
+        acknowledgement.worldLifecycleRowVersion(),
+        acknowledgement.worldCaptureId(),
+        acknowledgement.worldGraphSha256(),
+        acknowledgement.worldPreparationInputDigest(),
+        acknowledgement.executorFence(),
+        acknowledgement.leaseTokenCorrelation(),
+        acknowledgement.redisReadbackDigest(),
+        acknowledgement.acknowledgedAt());
   }
 
   void requireSameProvisionalSource(
@@ -4075,6 +4383,18 @@ public final class CanonicalGameplayBindingInventoryRepository {
       CanonicalGameplayBindingTransitionSnapshot transition,
       CanonicalGameplayBindingInventoryEntry candidate,
       CanonicalGameplayBindingAccountIndexObligation obligation) {
+    requireCompletedMemberRepairAcknowledgement(
+        transaction, transition, candidate, obligation, false, null, null);
+  }
+
+  private static void requireCompletedMemberRepairAcknowledgement(
+      DSLContext transaction,
+      CanonicalGameplayBindingTransitionSnapshot transition,
+      CanonicalGameplayBindingInventoryEntry candidate,
+      CanonicalGameplayBindingAccountIndexObligation obligation,
+      boolean regionTopologyOnly,
+      Record currentAccountControl,
+      BigInteger currentInventoryRevision) {
     if (!obligation.transitionId().equals(transition.transitionId())
         || obligation.ordinal() != 0
         || !obligation.bindingRef().equals(candidate.bindingRef())
@@ -4099,21 +4419,152 @@ public final class CanonicalGameplayBindingInventoryRepository {
       throw conflict("Account-index obligation was acknowledged before its operation completed");
     }
     requireMemberRepairObligationCurrent(operation, candidate, obligation, true);
-    toMemberAcknowledgement(operationRow);
-    Record control =
-        transaction.fetchOne(
-            "SELECT * FROM game_session_canonical_account_coverage_control WHERE account_id = ?",
-            operation.accountId());
-    if (control == null) {
-      throw conflict("Acknowledged member repair lost its positive account-control row");
+    var acknowledgement = toMemberAcknowledgement(operationRow);
+    BigInteger completedRevision = readBigInteger(operationRow, "completed_inventory_revision");
+    if (!CanonicalGameplayAccountIndexMember.of(candidate)
+        .value()
+        .equals(acknowledgement.member())) {
+      throw conflict("Completed member repair lost its exact monotonic projection readback");
     }
-    CanonicalGameplayAccountCoverageEvidence currentControl =
-        accountCoverageEvidenceFromControl(control, operation.accountId());
-    if (!(currentControl instanceof CanonicalGameplayAccountCoverageEvidence.NoActiveFlow)
-        || !transition.accountCoverageEvidence().equals(currentControl)
-        || !readBigInteger(control, "last_operation_fence")
-            .equals(operation.accountControlEpoch())) {
-      throw conflict("Acknowledged member repair has stale account-control state or fence epoch");
+    if (currentInventoryRevision != null
+        && (completedRevision.compareTo(operation.inventorySnapshotRevision()) <= 0
+            || completedRevision.compareTo(currentInventoryRevision) >= 0
+            || (operation.originalObligation().projectionState()
+                    == CanonicalGameplayBindingAccountIndexObligation.ProjectionState.REQUIRED
+                && !completedRevision.equals(obligation.projectionInventoryRevision())))) {
+      throw conflict("Completed member repair lost its exact monotonic projection readback");
+    }
+    if (regionTopologyOnly) {
+      requireRegionTopologyAccountControl(
+          transaction,
+          currentAccountControl,
+          operation.accountId(),
+          operation.accountControlEpoch());
+    } else {
+      Record control =
+          transaction.fetchOne(
+              "SELECT * FROM game_session_canonical_account_coverage_control WHERE account_id = ?",
+              operation.accountId());
+      if (control == null) {
+        throw conflict("Acknowledged member repair lost its positive account-control row");
+      }
+      CanonicalGameplayAccountCoverageEvidence currentControl =
+          accountCoverageEvidenceFromControl(control, operation.accountId());
+      if (!(currentControl instanceof CanonicalGameplayAccountCoverageEvidence.NoActiveFlow)
+          || !transition.accountCoverageEvidence().equals(currentControl)
+          || !readBigInteger(control, "last_operation_fence")
+              .equals(operation.accountControlEpoch())) {
+        throw conflict("Acknowledged member repair has stale account-control state or fence epoch");
+      }
+    }
+  }
+
+  /**
+   * Validates the current control row without treating a later account fence as current repair
+   * evidence. The original acknowledgement remains bound to its frozen no-active epoch.
+   */
+  private static void requireRegionTopologyAccountControl(
+      DSLContext transaction, Record control, UUID accountId, BigInteger originalRepairEpoch) {
+    if (control == null || !accountId.equals(control.get("account_id", UUID.class))) {
+      throw conflict("Region topology observation has no exact current Account control row");
+    }
+    BigInteger currentEpoch = readBigInteger(control, "last_operation_fence");
+    String state = control.get("state", String.class);
+    if (currentEpoch.signum() < 0 || originalRepairEpoch.signum() < 0) {
+      throw conflict("Region topology observation has an invalid Account control epoch");
+    }
+    if ("NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(state)) {
+      if (!currentEpoch.equals(originalRepairEpoch)
+          || control.get("current_operation_id", UUID.class) != null
+          || control.get("current_fence_intent_id", UUID.class) != null
+          || nullableBigInteger(control, "current_operation_fence") != null
+          || control.get("account_admission_fence", UUID.class) != null
+          || control.get("historical_account_admission_fence", UUID.class) != null
+          || control.get("coverage_fence", UUID.class) != null
+          || nullableBigInteger(control, "inventory_snapshot_revision") != null
+          || nullableBigInteger(control, "coverage_generation") != null) {
+        throw conflict("No-active Account control does not match the original repair epoch");
+      }
+      return;
+    }
+    if (currentEpoch.compareTo(originalRepairEpoch) <= 0) {
+      throw conflict("Account fence did not advance beyond the original member-repair epoch");
+    }
+    if ("ACQUISITION_INTENT".equals(state)) {
+      UUID intentId = control.get("current_fence_intent_id", UUID.class);
+      UUID plannedFence = control.get("account_admission_fence", UUID.class);
+      BigInteger intentFence = nullableBigInteger(control, "current_operation_fence");
+      Record intent =
+          intentId == null
+              ? null
+              : transaction.fetchOne(
+                  "SELECT operation_id, account_id, operation_fence,"
+                      + " planned_account_admission_fence, intent_state"
+                      + " FROM game_session_canonical_account_admission_fence_intent"
+                      + " WHERE operation_id = ? AND account_id = ? FOR SHARE",
+                  intentId,
+                  accountId);
+      if (intent == null
+          || control.get("current_operation_id", UUID.class) != null
+          || intentFence == null
+          || !intentFence.equals(currentEpoch)
+          || !Objects.equals(
+              plannedFence, intent.get("planned_account_admission_fence", UUID.class))
+          || !intentId.equals(intent.get("operation_id", UUID.class))
+          || !accountId.equals(intent.get("account_id", UUID.class))
+          || !currentEpoch.equals(readBigInteger(intent, "operation_fence"))
+          || !"ACQUISITION_INTENT".equals(intent.get("intent_state", String.class))
+          || control.get("historical_account_admission_fence", UUID.class) != null
+          || control.get("coverage_fence", UUID.class) != null
+          || nullableBigInteger(control, "coverage_generation") != null) {
+        throw conflict("Current Account acquisition intent is not its exact retained fence owner");
+      }
+      return;
+    }
+    if (!"ACTIVE".equals(state) && !"HISTORICAL".equals(state)) {
+      throw conflict("Region topology observation cannot cross an unresolved Account fence intent");
+    }
+    UUID operationId = control.get("current_operation_id", UUID.class);
+    BigInteger operationFence = nullableBigInteger(control, "current_operation_fence");
+    UUID coverageFence = control.get("coverage_fence", UUID.class);
+    UUID accountAdmissionFence = control.get("account_admission_fence", UUID.class);
+    UUID historicalAccountAdmissionFence =
+        control.get("historical_account_admission_fence", UUID.class);
+    boolean active = "ACTIVE".equals(state);
+    if (operationId == null
+        || operationFence == null
+        || operationFence.signum() <= 0
+        || !operationFence.equals(currentEpoch)
+        || coverageFence == null
+        || NIL_UUID.equals(coverageFence)
+        || (active
+            ? accountAdmissionFence == null
+                || NIL_UUID.equals(accountAdmissionFence)
+                || historicalAccountAdmissionFence != null
+            : accountAdmissionFence != null
+                || historicalAccountAdmissionFence == null
+                || NIL_UUID.equals(historicalAccountAdmissionFence))) {
+      throw conflict("Current Account fence control tuple is incomplete or inconsistent");
+    }
+
+    Record operation =
+        transaction.fetchOne(
+            "SELECT operation_id, account_id, lifecycle, operation_fence, coverage_fence,"
+                + " account_admission_fence, historical_account_admission_fence"
+                + " FROM game_session_canonical_account_coverage_operation "
+                + "WHERE operation_id = ? AND account_id = ? FOR SHARE",
+            operationId,
+            accountId);
+    if (operation == null
+        || !state.equals(operation.get("lifecycle", String.class))
+        || !operationFence.equals(readBigInteger(operation, "operation_fence"))
+        || !coverageFence.equals(operation.get("coverage_fence", UUID.class))
+        || !Objects.equals(
+            accountAdmissionFence, operation.get("account_admission_fence", UUID.class))
+        || !Objects.equals(
+            historicalAccountAdmissionFence,
+            operation.get("historical_account_admission_fence", UUID.class))) {
+      throw conflict("Current Account fence row differs from its retained operation");
     }
   }
 
@@ -6125,6 +6576,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
   enum OriginalNewCandidateInstallationProvenance {
     HISTORICAL_READBACK_CONFIRMED
+  }
+
+  private enum OriginalNewSourcePurpose {
+    FINAL_ADMISSION,
+    REGION_TOPOLOGY
   }
 
   /**

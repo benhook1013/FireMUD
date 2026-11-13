@@ -10,9 +10,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = true)
@@ -20,6 +24,24 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
     extends CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupport {
+  @Container
+  static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final GenericContainer<?> REDIS =
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+
+  @Override
+  PostgreSQLContainer<?> postgresContainer() {
+    return POSTGRES;
+  }
+
+  @Override
+  GenericContainer<?> redisContainer() {
+    return REDIS;
+  }
+
   @Test
   void initializesOnlyAnAbsentRegionAtItsFirstEpochAndFirstTick() {
     assertThatThrownBy(
@@ -67,7 +89,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
   }
 
   @Test
-  void exactOwnerRetryKeepsFenceAndReplacementIsHeld() {
+  void exactOwnerRetryReplacesFenceWithoutResettingRegionTimeline() {
     var initial =
         repository.installOwner(
             source,
@@ -100,19 +122,34 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
         OPERATIONAL_REGION_ID);
     var current = repository.find(source).orElseThrow();
 
+    var retry =
+        repository.installOwner(
+            source,
+            1L,
+            current,
+            SECOND_LEASE_CORRELATION,
+            "game-session-service",
+            "instance-b",
+            Instant.parse("2026-10-26T00:00:02Z"));
+
+    assertThat(retry.regionEpoch()).isEqualTo(1L);
+    assertThat(retry.executorFence()).isGreaterThan(initial.executorFence());
+    assertThat(retry.leaseTokenCorrelation()).isEqualTo(SECOND_LEASE_CORRELATION);
+    assertThat(retry.ownerInstanceId()).isEqualTo("instance-b");
+    assertThat(retry.lastCommittedTickId()).isEqualTo(7L);
+    assertThat(retry.lastCommittedTickBatchId()).isEqualTo("batch-7");
     assertThatThrownBy(
             () ->
                 repository.installOwner(
                     source,
                     1L,
-                    current,
-                    SECOND_LEASE_CORRELATION,
+                    initial,
+                    FIRST_LEASE_CORRELATION,
                     "game-session-service",
-                    "instance-b",
-                    Instant.parse("2026-10-26T00:00:02Z")))
+                    "instance-a",
+                    Instant.parse("2026-10-26T00:00:03Z")))
         .isInstanceOf(IllegalStateException.class);
-    assertThat(repository.find(source)).contains(current);
-    assertThat(fenceSequenceValue()).isEqualTo(sequenceAfterInstall);
+    assertThat(repository.find(source)).contains(retry);
   }
 
   @Test
@@ -158,12 +195,12 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
             laterSource,
             1L,
             initial,
-            FIRST_LEASE_CORRELATION,
+            SECOND_LEASE_CORRELATION,
             "game-session-service",
-            "instance-a",
+            "instance-b",
             Instant.parse("2026-10-26T00:00:02Z"));
 
-    assertThat(later).isEqualTo(initial);
+    assertThat(later.executorFence()).isGreaterThan(initial.executorFence());
     assertThat(later.regionEpoch()).isEqualTo(1L);
     assertThat(later.lastCommittedTickId()).isEqualTo(-1L);
     assertThat(
@@ -215,7 +252,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
   }
 
   @Test
-  void concurrentReplacementRequestsLeaveTheOriginalFence() throws Exception {
+  void concurrentNewGrantsFromOnePriorOwnerInstallOnlyOneNewFence() throws Exception {
     var prior =
         repository.installOwner(
             source,
@@ -242,10 +279,13 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
       start.countDown();
       var firstResult = first.get(10, TimeUnit.SECONDS);
       var secondResult = second.get(10, TimeUnit.SECONDS);
-      assertThat(firstResult).isNull();
-      assertThat(secondResult).isNull();
-      assertThat(repository.find(source)).contains(prior);
-      assertThat(fenceSequenceValue()).isEqualTo(sequenceBefore);
+      assertThat((firstResult == null) ^ (secondResult == null)).isTrue();
+
+      var committed = repository.find(source).orElseThrow();
+      assertThat(committed.executorFence()).isGreaterThan(prior.executorFence());
+      assertThat(committed.regionEpoch()).isEqualTo(prior.regionEpoch());
+      assertThat(fenceSequenceValue()).isEqualTo(sequenceBefore + 1L);
+      assertThat(committed).isEqualTo(firstResult == null ? secondResult : firstResult);
     }
   }
 }
