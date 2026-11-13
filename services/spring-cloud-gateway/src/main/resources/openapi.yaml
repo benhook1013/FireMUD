@@ -77,6 +77,7 @@ paths:
                       expiresAt: {type: string, format: date-time}
         '400': {description: Invalid bounded request or actual HTTPS required}
         '401': {description: Primary authentication denied}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
         '409': {description: Account login request conflicts with retained idempotency evidence}
         '413': {description: Login request exceeds the Gateway body limit}
         '415': {description: Login requires an application/json request}
@@ -98,6 +99,7 @@ paths:
         '200': {description: No-store Account owner result under the Account first-invoice API contract}
         '400': {description: Malformed request}
         '401': {description: Current control-ui owner authority required}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
         '409': {description: Exact retained evidence refused or outcome uncertain}
         '413': {description: Request exceeds the subscription-operation body limit}
         '429': {description: Receiving rate limit exceeded}
@@ -143,6 +145,7 @@ paths:
         '200': {description: No-store Account owner result under the Account first-invoice API contract}
         '400': {description: Malformed request}
         '401': {description: Current control-ui owner authority required}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
         '409': {description: Exact retained evidence refused or outcome uncertain}
         '413': {description: Request exceeds the subscription-operation body limit}
         '415': {description: Action requires an application/json request}
@@ -178,6 +181,7 @@ paths:
         '200': {description: No-store Account owner result under the Account first-invoice API contract}
         '400': {description: Malformed request}
         '401': {description: Current control-ui owner authority required}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
         '409': {description: Exact retained evidence refused or outcome uncertain}
         '413': {description: Request exceeds the subscription-operation body limit}
         '415': {description: Action requires an application/json request}
@@ -215,6 +219,7 @@ paths:
         '200': {description: No-store Account owner result under the Account first-invoice API contract}
         '400': {description: Malformed request}
         '401': {description: Current control-ui owner authority required}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
         '409': {description: Exact retained evidence refused or outcome uncertain}
         '413': {description: Request exceeds the subscription-operation body limit}
         '415': {description: Action requires an application/json request}
@@ -251,6 +256,7 @@ paths:
         '200': {description: No-store Account completion state}
         '400': {description: Invalid signed event}
         '401': {description: Account rejected provider-event authentication}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
         '409': {description: Account could not accept this event against retained state}
         '413': {description: Request exceeds the webhook body limit}
         '429': {description: Receiving rate limit exceeded}

@@ -106,6 +106,30 @@ public final class AccountRecentReauthenticationService {
                 }));
   }
 
+  /**
+   * Replays only exact retained pre-binding billing evidence under the current Account actor. A
+   * missing request still reaches the existing null-context refusal before primary authentication,
+   * evidence insertion, or any billing-operation write.
+   */
+  AccountRecentReauthenticationEvidence replayHistoricalUnboundBilling(
+      Request request, AccountControlUiActorService actors, String bearer) {
+    Objects.requireNonNull(request, "Account reauthentication request is required");
+    Objects.requireNonNull(actors, "Current Account actor owner is required");
+    if (!AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(request.purpose)
+        || request.billingContext != null) {
+      throw conflict();
+    }
+    return reauthenticate(
+        request,
+        action ->
+            actors.withCurrentAccount(
+                bearer,
+                actor -> {
+                  if (!request.accountId.equals(actor.accountId())) throw conflict();
+                  return action.get();
+                }));
+  }
+
   private AccountRecentReauthenticationEvidence reauthenticate(
       Request request, Function<Supplier<Attempt>, Attempt> retainInOwnerTransaction) {
     Objects.requireNonNull(request, "Account reauthentication request is required");

@@ -3,7 +3,9 @@ package net.firedevops.firemud.accountservice.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -72,6 +74,57 @@ class AccountHostingFirstInvoiceControllerTest {
             org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
                     "$.clientSecret")
                 .doesNotExist());
+  }
+
+  @Test
+  void unboundReauthenticationRoutesOnlyToExactHistoricalReplay() throws Exception {
+    var service = mock(AccountHostingFirstInvoicePaymentService.class);
+    UUID subscription = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    UUID authorizationRequestId = UUID.randomUUID();
+    UUID evidenceId = UUID.randomUUID();
+    when(service.replayHistoricalUnboundReauthentication(
+            "controlled-bearer",
+            requestId,
+            authorizationRequestId,
+            "owner@example.test",
+            "controlled-secret"))
+        .thenReturn(evidenceId);
+
+    registeredController(service)
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(
+                    "/billing/hosting/subscriptions/"
+                        + subscription
+                        + "/first-invoice/reauthenticate")
+                .secure(true)
+                .header("Authorization", "Bearer controlled-bearer")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"requestId\":\""
+                        + requestId
+                        + "\",\"confirmationRequestId\":\""
+                        + authorizationRequestId
+                        + "\",\"email\":\"owner@example.test\""
+                        + ",\"secret\":\"controlled-secret\"}"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                .string("Cache-Control", "no-store"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.evidenceId")
+                .value(evidenceId.toString()));
+
+    verify(service)
+        .replayHistoricalUnboundReauthentication(
+            "controlled-bearer",
+            requestId,
+            authorizationRequestId,
+            "owner@example.test",
+            "controlled-secret");
+    verifyNoMoreInteractions(service);
   }
 
   @Test
