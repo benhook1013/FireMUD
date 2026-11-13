@@ -293,26 +293,6 @@ class StripeHostingSubscriptionObserverTest {
   }
 
   @Test
-  void retainsIncompleteExpiredAsDistinctRawTerminalEvidenceWithoutPeriodBoundaries() {
-    String expired =
-        VALID_RESPONSE
-            .replace("\"status\":\"active\"", "\"status\":\"incomplete_expired\"")
-            .replace("\"current_period_start\":1778000000", "\"current_period_start\":null")
-            .replace("\"current_period_end\":1780592000", "\"current_period_end\":null");
-
-    StripeHostingSubscriptionObserver.ObservedSubscription result =
-        assertInstanceOf(
-            StripeHostingSubscriptionObserver.ObservedSubscription.class,
-            observer(new ControlledStripeTransport(expired)).observe(expected()));
-
-    assertEquals("incomplete_expired", result.providerStatus());
-    assertFalse(result.providerStatusIsCanceled());
-    assertTrue(result.providerStatusIsIncompleteExpired());
-    assertTrue(result.currentPeriodStart().isEmpty());
-    assertTrue(result.currentPeriodEnd().isEmpty());
-  }
-
-  @Test
   void rejectsContradictoryCanceledPeriodBoundariesWhenBothArePresent() {
     String reversed =
         VALID_RESPONSE

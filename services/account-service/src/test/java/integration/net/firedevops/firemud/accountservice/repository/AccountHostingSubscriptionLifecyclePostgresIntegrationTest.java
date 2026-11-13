@@ -1352,10 +1352,8 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .isEqualTo(Status.CANCELED);
   }
 
-  @ParameterizedTest
-  @ValueSource(strings = {"canceled", "incomplete_expired"})
-  void unclaimedFirstInvoiceCancellationKeepsAmbiguityHeldThenReleasesExactReservation(
-      String providerStatus) {
+  @Test
+  void unclaimedFirstInvoiceCancellationKeepsAmbiguityHeldThenReleasesExactReservation() {
     Context c = context("1046.1");
     Fixture f = fixture(c);
     var checkout =
@@ -1419,7 +1417,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
           .isEqualTo(version);
     }
 
-    f.transport().json = response(f, providerStatus);
+    f.transport().json = response(f, "canceled");
     var committed =
         f.service()
             .reconcileUnpaidFirstInvoiceCancellation(
@@ -1444,31 +1442,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(settled.get("outcome", String.class)).isEqualTo("CANCELED");
     assertThat(settled.get("evidence_digest", String.class))
         .isEqualTo(settled.get("observation_digest", String.class));
-    assertThat(
-            one(
-                    c,
-                    "SELECT raw_status FROM subscription_lifecycle_observations WHERE request_id = ?",
-                    cancellationId)
-                .get("raw_status", String.class))
-        .isEqualTo(providerStatus);
     assertThat(count(c, "subscription_first_invoice_command_claims")).isZero();
     assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
     assertThat(count(c, "subscription_first_invoice_completions")).isZero();
     assertThat(checkout.confirmations()).isZero();
-    if (providerStatus.equals("incomplete_expired")) {
-      assertThat(f.terminalInvoiceTransport().readPaths())
-          .containsExactly(
-              "/v1/invoices/in_" + subscriptionId.toString().replace("-", ""),
-              "/v1/payment_intents/pi_" + subscriptionId.toString().replace("-", ""));
-      assertThat(f.terminalInvoiceTransport().reads()).isEqualTo(2);
-    } else {
-      assertThat(f.terminalInvoiceTransport().readPaths()).isEmpty();
-    }
     var current = f.service().readCurrent(f.creation().tenantId());
     assertThat(current.subscriptionStatus()).isEqualTo(Status.CANCELED);
     assertThat(current.gameplayAvailable()).isFalse();
     int providerReads = f.transport().reads;
-    int terminalInvoiceReads = f.terminalInvoiceTransport().reads();
     assertThat(
             f.service()
                 .reconcileUnpaidFirstInvoiceCancellation(
@@ -1476,14 +1457,13 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .isEqualTo(committed);
     assertThat(f.transport().reads).isEqualTo(providerReads);
     assertThat(count(c, "subscription_provider_terminal_resolutions")).isOne();
+    assertThat(f.terminalInvoiceTransport().readPaths()).isEmpty();
     assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
-    assertThat(f.terminalInvoiceTransport().reads()).isEqualTo(terminalInvoiceReads);
+    assertThat(f.terminalInvoiceTransport().reads()).isZero();
   }
 
-  @ParameterizedTest
-  @ValueSource(strings = {"canceled", "incomplete_expired"})
-  void exactTerminalInvoiceAndIntentSettleOnlyClaimWithRetainedNoSendWitness(
-      String providerStatus) {
+  @Test
+  void exactTerminalInvoiceAndIntentSettleOnlyClaimWithRetainedNoSendWitness() {
     Context c = context("1046.4");
     Fixture f = fixture(c);
     var checkout =
@@ -1525,7 +1505,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     .payments()
                     .ownerRowVersion(
                         f.creation().subscriptionId(), checkout.invoice().ownerAccountId()));
-    f.transport().json = response(f, providerStatus);
+    f.transport().json = response(f, "canceled");
 
     var committed =
         f.service()
@@ -1593,9 +1573,8 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(count(c, "subscription_provider_terminal_resolutions")).isOne();
   }
 
-  @ParameterizedTest
-  @ValueSource(strings = {"canceled", "incomplete_expired"})
-  void nonExactTerminalInvoiceOrIntentEvidenceRetainsHoldAndNeverPosts(String providerStatus) {
+  @Test
+  void nonExactTerminalInvoiceOrIntentEvidenceRetainsHoldAndNeverPosts() {
     for (String failure : List.of("nonvoid-invoice", "live-intent", "wrong-intent", "received")) {
       Context c = context("latest");
       Fixture f = fixture(c);
@@ -1621,7 +1600,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                       .ownerRowVersion(
                           f.creation().subscriptionId(), checkout.invoice().ownerAccountId()));
       UUID cancellationId = UUID.randomUUID();
-      f.transport().json = response(f, providerStatus);
+      f.transport().json = response(f, "canceled");
       switch (failure) {
         case "nonvoid-invoice" -> f.terminalInvoiceTransport().terminalInvoiceStatus("open");
         case "live-intent" ->
@@ -1850,28 +1829,12 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     }
     UUID cancellationId = UUID.randomUUID();
     f.transport().json = response(f, "canceled");
-    var cancellation =
-        f.service()
-            .reconcileUnpaidFirstInvoiceCancellation(
-                cancellationId, f.creation().requestId(), expectedRowVersion, f.providerId());
-    assertThat(cancellation.outcome()).isEqualTo(Outcome.COMMITTED);
-    UUID laterReceiptId = UUID.randomUUID();
-    var laterReceipt =
-        f.service()
-            .reconcile(
-                laterReceiptId,
-                f.creation().requestId(),
-                cancellation.committedRowVersion(),
-                f.providerId(),
-                null);
-    assertThat(laterReceipt.outcome()).isEqualTo(Outcome.COMMITTED);
     assertThat(
-            one(
-                    c,
-                    "SELECT current_receipt_request_id FROM subscription WHERE subscription_id = ?",
-                    checkout.invoice().subscriptionId())
-                .get("current_receipt_request_id", UUID.class))
-        .isEqualTo(laterReceiptId);
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    cancellationId, f.creation().requestId(), expectedRowVersion, f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.COMMITTED);
     List<String> canceledImage = firstInvoiceImage(c);
 
     f.clock().advanceToAtLeast(checkout.invoice().expiresAt().plusSeconds(1));
@@ -1899,12 +1862,6 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(conflict.state()).isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
     assertThat(conflict.requestId()).isEqualTo(confirmationRequestId);
     assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isOne();
-    assertThat(
-            c.setup()
-                .fetchSingle(
-                    "SELECT cancellation_request_id FROM subscription_first_invoice_late_paid_conflicts")
-                .get(0, UUID.class))
-        .isEqualTo(cancellationId);
     var paidObservation = checkout.provider().observe(checkout.invoice());
     assertThatThrownBy(
             () -> in(c, () -> checkout.payments().retainSignedSuccess(verified, paidObservation)))
@@ -1925,16 +1882,9 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     java.time.OffsetDateTime.ofInstant(f.clock().instant(), ZoneOffset.UTC)));
     assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
 
-    var secondEvent =
-        checkout.signWebhookPayload(signed.payload().replace("evt_", "evt_distinct_"));
-    assertThat(owner.completeSigned(secondEvent.payload(), secondEvent.signature()))
-        .isEqualTo(conflict);
-    assertThat(count(c, "subscription_first_invoice_late_paid_conflict_events")).isOne();
     checkout.status("requires_confirmation");
     assertThat(owner.completeSigned(signed.payload(), signed.signature())).isEqualTo(conflict);
     assertThat(owner.completeSigned(equivalent.payload(), equivalent.signature()))
-        .isEqualTo(conflict);
-    assertThat(owner.completeSigned(secondEvent.payload(), secondEvent.signature()))
         .isEqualTo(conflict);
     assertThat(
             c.setup()
@@ -1963,82 +1913,6 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
     assertThat(count(c, "subscription_first_invoice_completions")).isZero();
     assertThat(f.service().readCurrent(f.creation().tenantId()).gameplayAvailable()).isFalse();
-  }
-
-  @Test
-  void signedPaymentAfterCancellationBeforeConsentRetainsOperatorConflict() throws Exception {
-    Context c = context("latest");
-    Fixture f = fixture(c);
-    var checkout =
-        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
-            c.source(),
-            c.dsl(),
-            c.tx(),
-            f.creation(),
-            f.instrument(),
-            f.providerId(),
-            f.clock(),
-            f.owner());
-    UUID cancellationId = UUID.randomUUID();
-    long version =
-        in(
-            c,
-            () ->
-                checkout
-                    .payments()
-                    .ownerRowVersion(
-                        checkout.invoice().subscriptionId(), checkout.invoice().ownerAccountId()));
-    f.transport().json = response(f, "canceled");
-    assertThat(
-            f.service()
-                .reconcileUnpaidFirstInvoiceCancellation(
-                    cancellationId, f.creation().requestId(), version, f.providerId())
-                .outcome())
-        .isEqualTo(Outcome.COMMITTED);
-    List<String> canceledImage = firstInvoiceImage(c);
-    f.clock().advanceToAtLeast(checkout.invoice().expiresAt().plusSeconds(1));
-    checkout.status("succeeded");
-    var signed = checkout.signedSuccess();
-    var owner =
-        new net.firedevops.firemud.accountservice.service.session
-            .AccountHostingFirstInvoicePaymentService(
-            mock(
-                net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService
-                    .class),
-            mock(
-                net.firedevops.firemud.accountservice.service.session
-                    .AccountRecentReauthenticationService.class),
-            checkout.payments(),
-            new StripeEventInboxRepository(c.dsl()),
-            checkout.provider(),
-            checkout.verifier(),
-            f.service(),
-            new DataSourceTransactionManager(c.source()));
-
-    var conflict = owner.completeSigned(signed.payload(), signed.signature());
-    assertThat(conflict.state()).isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
-    assertThat(conflict.requestId()).isEqualTo(cancellationId);
-    var retained =
-        c.setup()
-            .fetchSingle(
-                "SELECT request_id, lifecycle_request_id, cancellation_request_id FROM subscription_first_invoice_late_paid_conflicts");
-    assertThat(retained.get("request_id")).isNull();
-    assertThat(retained.get("lifecycle_request_id")).isNull();
-    assertThat(retained.get("cancellation_request_id", UUID.class)).isEqualTo(cancellationId);
-    var secondEvent =
-        checkout.signWebhookPayload(signed.payload().replace("evt_", "evt_distinct_"));
-    assertThat(owner.completeSigned(secondEvent.payload(), secondEvent.signature()))
-        .isEqualTo(conflict);
-    checkout.status("requires_confirmation");
-    assertThat(owner.completeSigned(signed.payload(), signed.signature())).isEqualTo(conflict);
-    assertThat(owner.completeSigned(secondEvent.payload(), secondEvent.signature()))
-        .isEqualTo(conflict);
-    assertThat(count(c, "subscription_first_invoice_late_paid_conflict_events")).isOne();
-    assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
-    assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isOne();
-    assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
-    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
-    assertThat(checkout.confirmations()).isZero();
   }
 
   @Test

@@ -92,7 +92,7 @@ public final class AccountHostingSubscriptionLifecycleService {
         transaction.execute(s -> repository.apply(prepared, actualSdkResult)));
   }
 
-  /** Read-only Stripe reconciliation of an externally canceled or expired unpaid first invoice. */
+  /** Read-only Stripe reconciliation of an externally canceled first invoice. */
   public TransitionResult reconcileUnpaidFirstInvoiceCancellation(
       UUID requestId,
       UUID creationRequestId,
@@ -107,16 +107,12 @@ public final class AccountHostingSubscriptionLifecycleService {
                         requestId, creationRequestId, expectedRowVersion, providerSubscriptionId)));
     if (captured.replayResult() != null) return captured.replayResult();
     var observed = observer.observe(captured.binding());
-    boolean incompleteExpired =
-        observed instanceof ObservedSubscription subscription
-            && subscription.providerStatusIsIncompleteExpired();
-    var invoice = captured.invoiceRequiringTerminalRead(incompleteExpired);
+    var invoice = captured.invoiceRequiringTerminalRead();
     TerminalUnpaidObservation unpaid = null;
     if (invoice != null
         && firstInvoice != null
         && observed instanceof ObservedSubscription subscription
-        && (subscription.providerStatusIsCanceled()
-            || subscription.providerStatusIsIncompleteExpired())) {
+        && subscription.providerStatusIsCanceled()) {
       try {
         unpaid = firstInvoice.observeTerminalUnpaid(invoice);
       } catch (StripeException | IllegalStateException unproven) {

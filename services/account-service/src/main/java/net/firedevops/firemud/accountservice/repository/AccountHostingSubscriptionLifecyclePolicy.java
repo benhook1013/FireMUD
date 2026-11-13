@@ -42,14 +42,6 @@ public final class AccountHostingSubscriptionLifecyclePolicy {
       StripeHostingSubscriptionObserver.Result result,
       Instant evaluatedAt,
       Instant retainedPastDueSince) {
-    return evaluate(result, evaluatedAt, retainedPastDueSince, false);
-  }
-
-  private Decision evaluate(
-      StripeHostingSubscriptionObserver.Result result,
-      Instant evaluatedAt,
-      Instant retainedPastDueSince,
-      boolean allowIncompleteExpiredFirstInvoiceCancellation) {
     Objects.requireNonNull(result, "Actual SDK read result is required");
     Objects.requireNonNull(evaluatedAt, "Account evaluation time is required");
     if (!(result instanceof ObservedSubscription observed)) {
@@ -68,16 +60,21 @@ public final class AccountHostingSubscriptionLifecyclePolicy {
     if (!evaluatedAt.isBefore(observationDeadline)) {
       return unavailable(Reason.OBSERVATION_EXPIRED);
     }
-    if (observed.providerStatusIsCanceled()
-        || (allowIncompleteExpiredFirstInvoiceCancellation
-            && observed.providerStatusIsIncompleteExpired())) {
-      return terminalCancellation(observed, evaluatedAt, observationDeadline);
-    }
-    // Stripe's incomplete_expired is a terminal outcome only for the dedicated unpaid
-    // first-invoice cancellation owner. It must not enter generic lifecycle mapping, including
-    // through a coincident effective cancel_at value.
-    if (observed.providerStatusIsIncompleteExpired()) {
-      return unavailable(Reason.UNMAPPED_PROVIDER_STATUS);
+    if (observed.providerStatusIsCanceled()) {
+      // canceled_at is the cancellation-request time for period-end cancellation, NOT paid-through.
+      Instant endedAt =
+          observed
+              .endedAt()
+              .orElse(observed.observedAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+      if (endedAt.isAfter(evaluatedAt)) {
+        return unavailable(Reason.CONTRADICTORY_PROVIDER_FACTS);
+      }
+      return new Decision(
+          Status.CANCELED,
+          Reason.PROVIDER_CONFIRMED,
+          observationDeadline,
+          observationDeadline,
+          endedAt);
     }
 
     Instant start = observed.currentPeriodStart().orElse(null);
@@ -121,38 +118,6 @@ public final class AccountHostingSubscriptionLifecyclePolicy {
       // paused subscription. Automatic suspension is driven by the configured past_due episode.
       default -> unavailable(Reason.UNMAPPED_PROVIDER_STATUS);
     };
-  }
-
-  /**
-   * Maps only exact Stripe incomplete_expired evidence for the dedicated unpaid first-invoice
-   * cancellation path. Generic lifecycle evaluation deliberately leaves that raw status unmapped.
-   */
-  public Decision evaluateIncompleteExpiredFirstInvoiceCancellation(
-      ObservedSubscription observed, Instant evaluatedAt) {
-    Objects.requireNonNull(observed, "Actual SDK read result is required");
-    Objects.requireNonNull(evaluatedAt, "Account evaluation time is required");
-    if (!observed.providerStatusIsIncompleteExpired()) {
-      return unavailable(Reason.UNMAPPED_PROVIDER_STATUS);
-    }
-    return evaluate(observed, evaluatedAt, null, true);
-  }
-
-  private Decision terminalCancellation(
-      ObservedSubscription observed, Instant evaluatedAt, Instant observationDeadline) {
-    // canceled_at is the cancellation-request time for period-end cancellation, NOT paid-through.
-    Instant endedAt =
-        observed
-            .endedAt()
-            .orElse(observed.observedAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
-    if (endedAt.isAfter(evaluatedAt)) {
-      return unavailable(Reason.CONTRADICTORY_PROVIDER_FACTS);
-    }
-    return new Decision(
-        Status.CANCELED,
-        Reason.PROVIDER_CONFIRMED,
-        observationDeadline,
-        observationDeadline,
-        endedAt);
   }
 
   private Decision pastDue(

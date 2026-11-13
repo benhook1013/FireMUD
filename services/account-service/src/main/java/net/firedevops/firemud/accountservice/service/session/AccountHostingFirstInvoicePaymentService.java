@@ -276,16 +276,11 @@ public final class AccountHostingFirstInvoicePaymentService {
     }
     var candidate = transaction.execute(status -> payments.candidateForSignedEvent(event));
     if (candidate == null) {
-      var invoice = transaction.execute(status -> payments.unconsentedCanceledInvoice(event));
-      if (invoice == null) return new Completion("IGNORED", null);
-      var observed = provider.observe(invoice);
-      var outcome =
-          Objects.requireNonNull(
-              transaction.execute(status -> payments.retainSignedOutcome(event, observed)));
-      if (!outcome.latePaidConflict()) {
-        throw new IllegalStateException("Exact late-payment operator conflict is required");
-      }
-      return new Completion("OPERATOR_RECONCILIATION_REQUIRED", outcome.conflictRequestId());
+      boolean needsReconciliation =
+          Boolean.TRUE.equals(
+              transaction.execute(
+                  status -> payments.requiresUnconsentedLatePaymentReconciliation(event)));
+      return new Completion(needsReconciliation ? "RECONCILING" : "IGNORED", null);
     }
     boolean alreadyCompleted =
         Boolean.TRUE.equals(
@@ -299,7 +294,7 @@ public final class AccountHostingFirstInvoicePaymentService {
           Objects.requireNonNull(
               transaction.execute(status -> payments.retainSignedOutcome(event, observed)));
       if (signed.latePaidConflict()) {
-        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", signed.conflictRequestId());
+        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", candidate.requestId());
       }
       var transition =
           lifecycle.reconcile(
