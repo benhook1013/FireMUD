@@ -1434,6 +1434,102 @@ public class AccountServiceImpl implements AccountService {
     return new ControlUiPrimaryIdentity(accountUuid);
   }
 
+  /** Evaluates the credential against a read-only snapshot before billing takes producer locks. */
+  public BillingPrimaryVerification preverifyBillingPrimaryCredential(
+      UUID accountId, String email, String secret) {
+    Account account =
+        accountRepository.findByAccountUuid(accountId).orElseThrow(this::invalidCredentials);
+    requireAuthenticationPersistedIdentity(account);
+    if (!email.equals(EmailCanonicalization.normalize(account.getEmail()))) {
+      throw invalidCredentials();
+    }
+    var challenge =
+        allowsEmailLoginOtp(account)
+            ? accountEmailLoginChallengeRepository.findByAccountId(account.getId()).orElse(null)
+            : null;
+    boolean active = billingOtpActive(challenge, LocalDateTime.now());
+    boolean otpAccepted = active && matchesEmailLoginOtp(challenge, secret);
+    boolean accepted =
+        otpAccepted
+            || (allowsPassword(account) && verifyPassword(secret, account.getPasswordHash()));
+    return new BillingPrimaryVerification(account, challenge, active, otpAccepted, accepted);
+  }
+
+  /** Applies an exact, still-current verification in the billing evidence owner's transaction. */
+  @Transactional(
+      propagation = org.springframework.transaction.annotation.Propagation.MANDATORY,
+      noRollbackFor = AuthenticationException.class)
+  public ControlUiPrimaryIdentity applyBillingPrimaryVerification(
+      Account lockedAccount, BillingPrimaryVerification verification) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException("Writable Account billing transaction required");
+    }
+    requireAuthenticationPersistedIdentity(lockedAccount);
+    requireAuthenticationEligible(lockedAccount);
+    if (verification == null || !verification.matches(lockedAccount)) {
+      throw new IllegalStateException("Account billing credential changed before retention");
+    }
+    AccountEmailLoginChallenge challenge = null;
+    if (allowsEmailLoginOtp(lockedAccount)) {
+      if (!accountEmailLoginChallengeRepository.tryLockAccountChallenge(lockedAccount.getId())) {
+        throw new org.springframework.dao.CannotAcquireLockException(
+            "Account billing email challenge is busy");
+      }
+      challenge =
+          accountEmailLoginChallengeRepository.findByAccountId(lockedAccount.getId()).orElse(null);
+    }
+    LocalDateTime now = LocalDateTime.now();
+    if (!Objects.equals(verification.challenge, challenge)
+        || verification.activeChallenge != billingOtpActive(challenge, now)) {
+      throw new IllegalStateException("Account billing email challenge changed before retention");
+    }
+    if (verification.otpAccepted) {
+      accountEmailLoginChallengeRepository.delete(challenge);
+    } else if (challenge != null && (!verification.activeChallenge || !verification.accepted)) {
+      recordFailedEmailLoginAttempt(challenge, now);
+    }
+    if (!verification.accepted) throw invalidCredentials();
+    return new ControlUiPrimaryIdentity(lockedAccount.getAccountUuid());
+  }
+
+  private static boolean billingOtpActive(AccountEmailLoginChallenge challenge, LocalDateTime now) {
+    return challenge != null
+        && !challenge.getExpiresAt().isBefore(now)
+        && challenge.getInvalidAttemptCount() < EMAIL_LOGIN_OTP_MAX_ATTEMPTS;
+  }
+
+  /** Private credential state tied to one observation. It grants no authority on its own. */
+  public static final class BillingPrimaryVerification {
+    private final Account account;
+    private final AccountEmailLoginChallenge challenge;
+    private final boolean activeChallenge;
+    private final boolean otpAccepted;
+    private final boolean accepted;
+
+    private BillingPrimaryVerification(
+        Account account,
+        AccountEmailLoginChallenge challenge,
+        boolean activeChallenge,
+        boolean otpAccepted,
+        boolean accepted) {
+      this.account = account;
+      this.challenge = challenge;
+      this.activeChallenge = activeChallenge;
+      this.otpAccepted = otpAccepted;
+      this.accepted = accepted;
+    }
+
+    private boolean matches(Account current) {
+      return account.getId().equals(current.getId())
+          && account.getAccountUuid().equals(current.getAccountUuid())
+          && account.getAccountUuidProvenance() == current.getAccountUuidProvenance()
+          && Objects.equals(account.getEmail(), current.getEmail())
+          && Objects.equals(account.getLoginAuthModes(), current.getLoginAuthModes())
+          && Objects.equals(account.getPasswordHash(), current.getPasswordHash());
+    }
+  }
+
   private Account lockSelectedAccountForPrimaryAuthentication(String selector) {
     String normalizedSelector = EmailCanonicalization.normalize(selector);
     Account selectedAccount =
