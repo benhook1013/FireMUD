@@ -24,6 +24,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecutionReadGrpcCodec;
@@ -143,7 +144,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       }
     } else if (retained.state() == CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED) {
       requireResumableOriginReplay(source, origin, retained);
-    } else {
+    } else if (retained.state() != CanonicalGameplayCapacityOrigin.State.DENIED) {
       throw unavailable();
     }
     var after = repository.read(origin);
@@ -302,7 +303,21 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             retained.ownerFence(),
             retained.state(),
             physicalDeadline);
-    if (denied) return; // Exact denial retires origin custody only; never releases an Account hold.
+    if (denied) {
+      // Retire the origin marker before returning the active execution reserve. A lost reply can
+      // replay the retained denial through this same owner without freeing uncertain attempts.
+      sql()
+          .transaction(
+              configuration ->
+                  CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                      DSL.using(configuration),
+                      origin.request(),
+                      origin.candidateDigest(),
+                      new CurrentOwner(origin.selectedOwnerId(), origin.selectedOwnerFence()),
+                      origin.tenantGameplayTag(),
+                      resolution.denialId()));
+      return;
+    }
     var execution =
         new OriginalNewCapacityExecution(
             resolution.request(),
@@ -504,21 +519,14 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     return selected;
   }
 
-  /** Retains capacity for this attempt before Account can commit a reservation. */
-  void precharge(
+  /** Returns a retained terminal denial on exact replay, otherwise reserves execution evidence. */
+  UUID precharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,
       CurrentOwner selected,
       long deadline) {
-    if (budget == null) {
-      within(
-          deadline,
-          owner -> {
-            owner.precharge(source, request, selected, deadline);
-            return null;
-          });
-      return;
-    }
+    if (budget == null)
+      return within(deadline, owner -> owner.precharge(source, request, selected, deadline));
     budget.check();
     request.requireCommittable();
     if (!source.candidate().bindingDecisionId().equals(request.identity().admissionId())
@@ -528,15 +536,93 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     }
     var candidate = source.candidate();
     var assignment = scopedTags().assignmentForTransition(candidate.bindingDecisionId());
-    sql()
+    return sql()
         .transactionResult(
             configuration -> {
               var tx = DSL.using(configuration);
               requireSelectedOwner(tx, candidate, selected);
-              CanonicalGameplayCapacityEvidenceBudget.precharge(
+              return CanonicalGameplayCapacityEvidenceBudget.precharge(
                   tx, request, source.candidateDigest(), selected, assignment.tenantGameplayTag());
-              return null;
             });
+  }
+
+  void retireQuotaDeniedOrigin(
+      CanonicalGameplayCapacityOrigin origin, UUID accountDenialId, long deadline) {
+    within(
+        deadline,
+        owner -> {
+          var resolution =
+              new AccountCapacityOriginResolution(
+                  origin.request(),
+                  AccountCapacityOriginResolution.Status.NO_ACCEPT_RETAINED,
+                  null,
+                  accountDenialId);
+          var repository = new CanonicalGameplayCapacityOriginRepository(owner.sql());
+          var before = repository.read(origin);
+          if (!origin.selectedOwnerId().equals(before.ownerId())
+              || origin.selectedOwnerFence() != before.ownerFence()) throw unavailable();
+          var retained =
+              owner
+                  .sql()
+                  .transactionResult(
+                      configuration ->
+                          CanonicalGameplayCapacityOriginRepository.claimInTransaction(
+                              DSL.using(configuration),
+                              origin,
+                              before.ownerId(),
+                              before.ownerFence(),
+                              CanonicalGameplayCapacityOrigin.State.DENIED,
+                              resolution));
+          owner
+              .originRedis()
+              .apply(
+                  origin,
+                  CanonicalGameplayCapacityOriginRedisOwner.Action.DENY,
+                  retained.ownerId(),
+                  retained.ownerFence(),
+                  retained.ownerId(),
+                  retained.ownerFence(),
+                  retained.state(),
+                  owner.budget.absoluteDeadlineMillis());
+          owner
+              .sql()
+              .transaction(
+                  configuration ->
+                      CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                          DSL.using(configuration),
+                          origin.request(),
+                          origin.candidateDigest(),
+                          new CurrentOwner(origin.selectedOwnerId(), origin.selectedOwnerFence()),
+                          origin.tenantGameplayTag(),
+                          accountDenialId));
+          return null;
+        });
+  }
+
+  void settleDeniedCharge(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      CurrentOwner selected,
+      UUID accountDenialId,
+      long deadline) {
+    within(
+        deadline,
+        owner -> {
+          var assignment =
+              owner.scopedTags().assignmentForTransition(request.identity().admissionId());
+          owner
+              .sql()
+              .transaction(
+                  configuration ->
+                      CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                          DSL.using(configuration),
+                          request,
+                          source.candidateDigest(),
+                          selected,
+                          assignment.tenantGameplayTag(),
+                          accountDenialId));
+          return null;
+        });
   }
 
   /** Returns only after independently reading the already-installed exact execution record. */

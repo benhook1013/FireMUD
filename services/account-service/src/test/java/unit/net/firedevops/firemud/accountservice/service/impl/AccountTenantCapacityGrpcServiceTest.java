@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import io.grpc.Status;
 import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
+import java.util.UUID;
 import java.util.stream.Stream;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
@@ -21,6 +22,7 @@ import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -110,8 +112,29 @@ class AccountTenantCapacityGrpcServiceTest {
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
       var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
       verify(observer).onNext(response.capture());
-      assertThat(TenantCapacityAdmissionGrpcCodec.readRefusal(request, response.getValue()))
-          .contains(code);
+      assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response.getValue()))
+          .contains(new Refusal(code, null));
+      verify(observer).onCompleted();
+      verify(observer, never()).onError(any());
+    }
+  }
+
+  @Test
+  void retainedQuotaDenialCarriesTheExactAccountDecision() {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    var decisionId = UUID.randomUUID();
+    try (var guards = authenticatedCaller()) {
+      AccountTenantCapacityOwner owner = mock();
+      when(owner.commit(request, CapacityAdmissionTestFixture.PEER))
+          .thenThrow(new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+      new AccountTenantCapacityGrpcService(owner, "prod")
+          .commitTenantCapacityAdmission(
+              TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
+      var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
+      verify(observer).onNext(response.capture());
+      assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response.getValue()))
+          .contains(new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
       verify(observer).onCompleted();
       verify(observer, never()).onError(any());
     }

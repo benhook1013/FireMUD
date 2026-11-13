@@ -50,6 +50,7 @@ import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** Real loopback mTLS with a controlled Account result; not Account sources or final admission. */
 @Timeout(90)
@@ -99,13 +100,64 @@ class AccountTenantCapacityClientMtlsTest {
       assertThatThrownBy(() -> client.commit(request, deadline()))
           .isInstanceOfSatisfying(
               AccountTenantCapacityClient.CapacityRefusedException.class,
-              refusal ->
-                  assertThat(refusal.code())
-                      .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.TENANT_BILLING_BLOCKED));
+              refusal -> {
+                assertThat(refusal.code())
+                    .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.TENANT_BILLING_BLOCKED);
+                assertThat(refusal.durableDenialId()).isNull();
+              });
       assertThat(calls).hasValue(1);
     } finally {
       stop(server);
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void quotaRefusalExposesAReceiptOnlyWhenTheAuthenticatedAccountSuppliesOne(boolean retained)
+      throws Exception {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    UUID decisionId = retained ? UUID.randomUUID() : null;
+    var response =
+        TenantCapacityAdmissionGrpcCodec.toRefusal(
+            request, TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED, decisionId);
+    Server server =
+        startServer(
+            "account",
+            new AccountServiceGrpc.AccountServiceImplBase() {
+              @Override
+              public void commitTenantCapacityAdmission(
+                  CommitTenantCapacityAdmissionRequest wire,
+                  StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+                assertThat(TenantCapacityAdmissionGrpcCodec.parseRequest(wire)).isEqualTo(request);
+                observer.onNext(response);
+                observer.onCompleted();
+              }
+            });
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(() -> client.commit(request, deadline()))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityClient.CapacityRefusedException.class,
+              refusal -> {
+                assertThat(refusal.code())
+                    .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED);
+                assertThat(refusal.durableDenialId()).isEqualTo(decisionId);
+              });
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void localDenialReplayRequiresADurableDecisionId() {
+    var denialId = UUID.randomUUID();
+    var replay = AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(denialId);
+    assertThat(replay.code())
+        .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED);
+    assertThat(replay.durableDenialId()).isEqualTo(denialId);
+    assertThatThrownBy(
+            () -> AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(null))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
@@ -438,6 +490,11 @@ class AccountTenantCapacityClientMtlsTest {
             observer.onCompleted();
           }
         };
+    return startServer(identity, service);
+  }
+
+  private static Server startServer(
+      String identity, AccountServiceGrpc.AccountServiceImplBase service) throws Exception {
     var peer = pki.identity(identity);
     return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
         .sslContext(

@@ -509,6 +509,7 @@ class AccountTenantCapacityOwnerTest {
                 String sql = invocation.getArgument(0, String.class);
                 if (sql.startsWith("SELECT * FROM account_tenant_capacity_reservations "))
                   return existing ? row : null;
+                if (sql.startsWith("SELECT * FROM account_capacity_origin_decisions ")) return null;
                 if (sql.startsWith(
                     "SELECT snapshot_identity FROM account_tenant_capacity_evaluations "))
                   return evaluation;
