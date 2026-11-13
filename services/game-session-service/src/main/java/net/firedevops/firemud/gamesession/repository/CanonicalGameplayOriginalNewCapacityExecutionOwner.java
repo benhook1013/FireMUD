@@ -188,6 +188,22 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     budget.check();
     CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
     var assignment = scopedTags().assignmentForTransition(execution.transitionId());
+    Record retained = find(sql(), execution);
+    if (retained != null) {
+      // Preserve exact retry/recovery behavior: an existing dispatch never needs fresh inputs.
+      exact(retained, execution);
+    } else {
+      try {
+        scopedFinalOwner()
+            .validateInstallInputs(source, template, accountOpen, issuerOpen, execution, deadline);
+      } catch (RuntimeException invalidInputs) {
+        // A concurrent exact dispatcher may have committed while local validation ran. Only
+        // that retained row can turn this into the existing read-only recovery path.
+        Record concurrentlyRetained = find(sql(), execution);
+        if (concurrentlyRetained == null) throw invalidInputs;
+        exact(concurrentlyRetained, execution);
+      }
+    }
     boolean dispatch =
         sql()
             .transactionResult(
