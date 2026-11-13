@@ -1317,9 +1317,6 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   }
 
   private DraftAuthorizationFenceBinding binding(UUID account, SourceKind sourceKind) {
-    SourceEvidence source =
-        new SourceEvidence(
-            sourceKind, account.toString(), "3", "5", "stream/" + account, "2", new byte[] {7});
     DraftCommitBinding complete =
         completeBinding(
             UUID.randomUUID(),
@@ -1329,6 +1326,17 @@ class DraftAuthorizationFencePostgresIntegrationTest {
             "opaque/base:9007199254740993",
             "world-payload",
             UUID.randomUUID());
+    // Controlled, stipulated source-participation inputs qualify only fence storage here.
+    // Canonical key shape does not prove a membership writer or actual source provenance.
+    String tenant = complete.target().canonicalTenantId().toString();
+    String scopeId =
+        switch (sourceKind) {
+          case MEMBERSHIP -> account + "/" + tenant;
+          case TENANT -> tenant;
+          default -> account.toString();
+        };
+    SourceEvidence source =
+        new SourceEvidence(sourceKind, scopeId, "3", "5", "stream/" + account, "2", new byte[] {7});
     return new DraftAuthorizationFenceBinding(
         UUID.randomUUID(),
         complete.requestId(),
