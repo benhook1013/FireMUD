@@ -30,6 +30,7 @@ const initial: FirstInvoice = {
   state: 'AWAITING_PAYMENT',
   expiresAt: '2099-01-01T00:00:00Z',
   confirmationRequestId: null,
+  openingRequestId: null,
   authorizationVersion: 0,
 };
 
@@ -503,6 +504,103 @@ describe('owner first-invoice checkout', () => {
     });
     expect(client.confirm).not.toHaveBeenCalled();
     await waitFor(() => expect(stripe.handleNextAction).toHaveBeenCalledOnce());
+  });
+
+  it('recovers a retained opening after reload with explicit pre-row renewal', async () => {
+    const original = '44444444-4444-4444-8444-444444444444';
+    const { client } = setup({ ...initial, openingRequestId: original });
+    const renew = await screen.findByRole('button', {
+      name: 'Renew exact authorization',
+    });
+    expect(client.reauthenticate).not.toHaveBeenCalled();
+    fireEvent.click(renew);
+    fireEvent.change(screen.getByLabelText('Account email'), {
+      target: { value: 'owner@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Primary authentication secret'), {
+      target: { value: 'fresh-secret' },
+    });
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Resume exact confirmation' })
+    );
+    await waitFor(() => expect(client.renew).toHaveBeenCalledOnce());
+    const request = client.renew.mock.calls[0][2];
+    expect(request).toMatchObject({
+      requestId: original,
+      expectedAuthorizationVersion: 0,
+    });
+    expect(request.authorizationRequestId).not.toBe(original);
+    expect(client.reauthenticate.mock.calls[0][1].billingBinding).toMatchObject(
+      {
+        originalRequestId: original,
+        authorizationPurpose: 'PRE_ROW_RENEWAL',
+      }
+    );
+    expect(client.confirm).not.toHaveBeenCalled();
+  });
+
+  it('requires fresh explicit renewal when another tab wins before dispatch', async () => {
+    const original = '44444444-4444-4444-8444-444444444444';
+    const retained = {
+      ...initial,
+      confirmationRequestId: original,
+      authorizationVersion: 2,
+    };
+    const { client, setCurrent } = setup(retained);
+    client.reauthenticate.mockImplementationOnce(async () => {
+      setCurrent({ ...retained, authorizationVersion: 3 });
+      throw new FirstInvoiceError(409);
+    });
+
+    async function explicitlyRenew() {
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Renew exact authorization' })
+      );
+      fireEvent.change(screen.getByLabelText('Account email'), {
+        target: { value: 'owner@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText('Primary authentication secret'), {
+        target: { value: 'fresh-secret' },
+      });
+      fireEvent.click(screen.getByRole('checkbox'));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Resume exact confirmation' })
+      );
+    }
+
+    await explicitlyRenew();
+    await screen.findByText(/Account refused this renewal/);
+    expect(client.renew).not.toHaveBeenCalled();
+    expect(client.confirm).not.toHaveBeenCalled();
+    await waitFor(() => expect(client.read).toHaveBeenCalledTimes(3));
+
+    await explicitlyRenew();
+    await waitFor(() => expect(client.renew).toHaveBeenCalledOnce());
+    expect(client.renew.mock.calls[0][2]).toMatchObject({
+      requestId: original,
+      expectedAuthorizationVersion: 3,
+    });
+    expect(client.reauthenticate.mock.calls[1][1].billingBinding).toMatchObject(
+      {
+        originalRequestId: original,
+        expectedAuthorizationVersion: 3,
+      }
+    );
+    expect(client.reauthenticate.mock.calls[1][1].requestId).not.toBe(
+      client.reauthenticate.mock.calls[0][1].requestId
+    );
+    expect(client.confirm).not.toHaveBeenCalled();
+  });
+
+  it('shows a canceled checkout without payment authorization', async () => {
+    const { client } = setup({ ...initial, state: 'CANCELED' });
+    await screen.findByText(/Account recorded this checkout as canceled/);
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Renew exact authorization' })
+    ).toBeNull();
+    expect(client.reauthenticate).not.toHaveBeenCalled();
   });
 
   it('does not offer authorization renewal after the original invoice expires', async () => {

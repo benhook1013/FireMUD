@@ -179,6 +179,16 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         .get("row_version", Long.class);
   }
 
+  public boolean hasCanceledCheckout(AccountHostingFirstInvoicePayment invoice) {
+    transaction();
+    return dsl.fetchOne(
+            "SELECT 1 FROM subscription WHERE subscription_id = ?"
+                + " AND account_uuid = ? AND status = 'canceled' AND superseded_at IS NULL",
+            invoice.subscriptionId(),
+            invoice.ownerAccountId())
+        != null;
+  }
+
   public UUID confirmationRequestId(UUID subscriptionId) {
     transaction();
     Record row =
@@ -186,6 +196,17 @@ public final class AccountHostingFirstInvoicePaymentRepository {
             "SELECT request_id FROM subscription_first_invoice_confirmations WHERE subscription_id = ?",
             subscriptionId);
     return row == null ? null : row.get("request_id", UUID.class);
+  }
+
+  public UUID openingRequestId(AccountHostingFirstInvoicePayment invoice, long rowVersion) {
+    transaction();
+    Record fence = operationFence(invoice.subscriptionId(), false);
+    if (fence == null) return null;
+    if (!invoice.ownerAccountId().equals(fence.get("account_uuid", UUID.class))
+        || !invoice.digest().equals(fence.get("tuple_digest", String.class))
+        || rowVersion != fence.get("expected_row_version", Long.class)
+        || !invoice.expiresAt().equals(instant(fence, "invoice_expires_at"))) throw refused();
+    return fence.get("request_id", UUID.class);
   }
 
   public long authorizationVersion(UUID subscriptionId) {

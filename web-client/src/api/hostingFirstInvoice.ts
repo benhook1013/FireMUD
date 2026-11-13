@@ -9,9 +9,10 @@ export interface FirstInvoice {
   currency: string;
   tupleDigest: string;
   expectedRowVersion: number;
-  state: 'AWAITING_PAYMENT' | 'COMMITTED';
+  state: 'AWAITING_PAYMENT' | 'COMMITTED' | 'CANCELED';
   expiresAt: string;
   confirmationRequestId: string | null;
+  openingRequestId: string | null;
   authorizationVersion: number;
 }
 
@@ -121,12 +122,20 @@ function invoice(value: unknown, subscriptionId: string): FirstInvoice {
     (data.expectedRowVersion as number) < 0 ||
     !Number.isSafeInteger(data.authorizationVersion) ||
     (data.authorizationVersion as number) < 0 ||
-    (data.state !== 'AWAITING_PAYMENT' && data.state !== 'COMMITTED') ||
+    (data.state !== 'AWAITING_PAYMENT' &&
+      data.state !== 'COMMITTED' &&
+      data.state !== 'CANCELED') ||
     typeof data.expiresAt !== 'string' ||
     !Number.isFinite(Date.parse(data.expiresAt)) ||
     (data.confirmationRequestId !== null &&
       (typeof data.confirmationRequestId !== 'string' ||
-        !uuid.test(data.confirmationRequestId)))
+        !uuid.test(data.confirmationRequestId))) ||
+    (data.openingRequestId !== null &&
+      (typeof data.openingRequestId !== 'string' ||
+        !uuid.test(data.openingRequestId) ||
+        data.state !== 'AWAITING_PAYMENT' ||
+        data.confirmationRequestId !== null ||
+        data.authorizationVersion !== 0))
   ) {
     throw new FirstInvoiceError(0);
   }
@@ -143,6 +152,7 @@ function invoice(value: unknown, subscriptionId: string): FirstInvoice {
     state: data.state,
     expiresAt: data.expiresAt,
     confirmationRequestId: data.confirmationRequestId as string | null,
+    openingRequestId: data.openingRequestId as string | null,
     authorizationVersion: data.authorizationVersion as number,
   };
 }

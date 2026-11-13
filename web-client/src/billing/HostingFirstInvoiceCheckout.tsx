@@ -81,7 +81,7 @@ export default function HostingFirstInvoiceCheckout({
     enabled: !closed,
     refetchInterval: (current) =>
       !closed &&
-      current.state.data?.state !== 'COMMITTED' &&
+      current.state.data?.state === 'AWAITING_PAYMENT' &&
       (pending || current.state.data?.confirmationRequestId)
         ? 3000
         : false,
@@ -89,24 +89,33 @@ export default function HostingFirstInvoiceCheckout({
 
   const invoice = query.data;
   const committed = invoice?.state === 'COMMITTED' && !query.isError;
+  const canceled = invoice?.state === 'CANCELED';
   const expired = invoice ? now >= Date.parse(invoice.expiresAt) : true;
   const consented = Boolean(
     invoice && accepted && sameCharge(invoice, accepted) && !expired
   );
-  const recovering = Boolean(pending || invoice?.confirmationRequestId);
+  const recovering = Boolean(
+    pending || invoice?.confirmationRequestId || invoice?.openingRequestId
+  );
   const preRowOriginal =
     invoice &&
     invoice.confirmationRequestId === null &&
-    invoice.authorizationVersion === 0 &&
-    retainedOrigin &&
-    sameCharge(invoice, retainedOrigin.invoice)
-      ? retainedOrigin
+    invoice.authorizationVersion === 0
+      ? invoice.openingRequestId
+        ? { invoice, requestId: invoice.openingRequestId }
+        : retainedOrigin && sameCharge(invoice, retainedOrigin.invoice)
+          ? retainedOrigin
+          : null
       : null;
 
   // Reload never authorizes provider work. Renewal requires a separate explicit owner action.
   const readOnlyRecovery =
     held ||
-    Boolean(invoice?.confirmationRequestId && !evidenceReady && !renewing);
+    Boolean(
+      (invoice?.confirmationRequestId || preRowOriginal) &&
+      !evidenceReady &&
+      !renewing
+    );
 
   function renewAuthorization() {
     attempt.current = preRowOriginal
@@ -146,6 +155,7 @@ export default function HostingFirstInvoiceCheckout({
       !accepted ||
       !consented ||
       committed ||
+      canceled ||
       readOnlyRecovery
     )
       return;
@@ -161,7 +171,7 @@ export default function HostingFirstInvoiceCheckout({
       const current = await query.refetch({ throwOnError: true });
       if (!active()) return;
       const latest = current.data;
-      if (latest?.state === 'COMMITTED') return;
+      if (latest && latest.state !== 'AWAITING_PAYMENT') return;
       if (
         !latest ||
         !sameCharge(latest, accepted) ||
@@ -185,8 +195,12 @@ export default function HostingFirstInvoiceCheckout({
         retained = null;
       }
       if (!retained) {
-        if (latest.confirmationRequestId && !renewing) {
+        if (
+          latest.openingRequestId ||
+          (latest.confirmationRequestId && !renewing)
+        ) {
           setHeld(true);
+          setRenewing(false);
           setAccepted(null);
           setMessage(
             'Account retained an existing confirmation. Review and explicitly renew authorization to resume this same invoice.'
@@ -204,16 +218,22 @@ export default function HostingFirstInvoiceCheckout({
         };
         attempt.current = retained;
       }
+      const preRowRenewal = retained.invoice.authorizationVersion === 0;
       if (
         retained.authorizationRequestId &&
-        retained.invoice.authorizationVersion === 0 &&
         !retained.dispatched &&
-        (latest.confirmationRequestId !== null ||
-          latest.authorizationVersion !== 0)
+        (latest.confirmationRequestId !==
+          (preRowRenewal ? null : retained.requestId) ||
+          latest.authorizationVersion !==
+            retained.invoice.authorizationVersion ||
+          (preRowRenewal &&
+            latest.openingRequestId !== null &&
+            latest.openingRequestId !== retained.requestId))
       ) {
         attempt.current = null;
         setHeld(true);
         setRenewing(false);
+        setEvidenceReady(false);
         setAccepted(null);
         setMessage(
           'Account retained a confirmation while you were reviewing this invoice. Check its status and explicitly renew the current authorization.'
@@ -314,19 +334,32 @@ export default function HostingFirstInvoiceCheckout({
         [409, 410].includes(error.status)
       ) {
         setAccepted(null);
-        const dispatched = attempt.current;
-        if (dispatched?.dispatched) {
+        const failedAttempt = attempt.current;
+        if (failedAttempt?.dispatched) {
           setHeld(true);
           // Opening proof is returned only after Account retains the exact operation.
           if (
-            dispatched.evidenceId &&
-            dispatched.invoice.authorizationVersion === 0
+            failedAttempt.evidenceId &&
+            failedAttempt.invoice.authorizationVersion === 0
           ) {
             setRetainedOrigin({
-              invoice: dispatched.invoice,
-              requestId: dispatched.requestId,
+              invoice: failedAttempt.invoice,
+              requestId: failedAttempt.requestId,
             });
           }
+        } else if (
+          error.status === 409 &&
+          failedAttempt?.authorizationRequestId
+        ) {
+          attempt.current = null;
+          setHeld(true);
+          setRenewing(false);
+          setEvidenceReady(false);
+          setMessage(
+            'Account refused this renewal. Check the invoice status and explicitly renew the current authorization.'
+          );
+          await query.refetch();
+          return;
         }
         setMessage(
           'Account refused stale or expired checkout evidence. Refresh and review the invoice. Any earlier confirmation remains unresolved.'
@@ -395,6 +428,11 @@ export default function HostingFirstInvoiceCheckout({
             {committed ? (
               <Alert severity="success">
                 Account confirmed and committed this first-invoice payment.
+              </Alert>
+            ) : canceled ? (
+              <Alert severity="info">
+                Account recorded this checkout as canceled. Payment
+                authorization is closed.
               </Alert>
             ) : (
               <>
@@ -489,12 +527,13 @@ export default function HostingFirstInvoiceCheckout({
             )}
           </>
         )}
-        {!committed && message && (
+        {!committed && !canceled && message && (
           <Typography role="status">{message}</Typography>
         )}
         <Stack direction="row" spacing={1}>
           {readOnlyRecovery &&
             !committed &&
+            !canceled &&
             !expired &&
             (invoice?.confirmationRequestId || preRowOriginal) && (
               <Button

@@ -572,19 +572,59 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 + "/first-invoice";
         JsonNode tuple = JSON.readTree(https.request("GET", path, issued.compact(), null).body());
         UUID originalRequestId = UUID.randomUUID();
+        UUID openingProofRequestId = UUID.randomUUID();
+        var openingRequest =
+            billingReauthenticationRequest(
+                tuple,
+                openingProofRequestId,
+                originalRequestId,
+                originalRequestId,
+                0L,
+                "INITIAL_CONFIRMATION",
+                issued.account().getEmail());
+        hosting
+            .dsl()
+            .execute(
+                """
+            CREATE FUNCTION fixture_refuse_opening_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+              RAISE EXCEPTION 'controlled first-invoice fence rollback' USING ERRCODE = '23514';
+            END;
+            $$
+            """);
+        hosting
+            .dsl()
+            .execute(
+                "CREATE TRIGGER fixture_refuse_opening_fence BEFORE INSERT"
+                    + " ON subscription_first_invoice_operation_fences FOR EACH ROW"
+                    + " EXECUTE FUNCTION fixture_refuse_opening_fence()");
+        try {
+          assertThat(
+                  https
+                      .request("POST", path + "/reauthenticate", issued.compact(), openingRequest)
+                      .statusCode())
+              .isGreaterThanOrEqualTo(400);
+          assertThat(
+                  hosting
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT count(*) FROM account_recent_reauthentication_evidence WHERE request_id = ?",
+                          openingProofRequestId)
+                      .get(0, Long.class))
+              .isZero();
+          assertThat(
+                  count(
+                      hosting, "SELECT count(*) FROM subscription_first_invoice_operation_fences"))
+              .isZero();
+        } finally {
+          hosting
+              .dsl()
+              .execute(
+                  "DROP TRIGGER fixture_refuse_opening_fence ON subscription_first_invoice_operation_fences");
+          hosting.dsl().execute("DROP FUNCTION fixture_refuse_opening_fence()");
+        }
         var openingProof =
-            https.request(
-                "POST",
-                path + "/reauthenticate",
-                issued.compact(),
-                billingReauthenticationRequest(
-                    tuple,
-                    UUID.randomUUID(),
-                    originalRequestId,
-                    originalRequestId,
-                    0L,
-                    "INITIAL_CONFIRMATION",
-                    issued.account().getEmail()));
+            https.request("POST", path + "/reauthenticate", issued.compact(), openingRequest);
         assertThat(openingProof.statusCode()).isEqualTo(200);
         UUID openingEvidence =
             UUID.fromString(JSON.readTree(openingProof.body()).path("evidenceId").asText());
@@ -615,6 +655,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         JsonNode whileDelayed =
             JSON.readTree(https.request("GET", path, issued.compact(), null).body());
         assertThat(whileDelayed.path("confirmationRequestId").isNull()).isTrue();
+        assertThat(whileDelayed.path("openingRequestId").asText())
+            .isEqualTo(originalRequestId.toString());
         assertThat(whileDelayed.path("authorizationVersion").asLong()).isZero();
         assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_confirmations"))
             .isZero();
@@ -835,6 +877,19 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
             .isEqualTo(originalRequestId.toString());
         assertThat(after.path("authorizationVersion").asLong()).isEqualTo(1L);
         assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
+        var latestAuthorization =
+            hosting
+                .dsl()
+                .fetchSingle(
+                    "SELECT request_id, authorization_request_id, authorization_version "
+                        + "FROM subscription_first_invoice_authorizations");
+        assertThat(latestAuthorization.get("request_id", UUID.class)).isEqualTo(originalRequestId);
+        assertThat(latestAuthorization.get("authorization_request_id", UUID.class))
+            .isEqualTo(winnerAuthorizationId);
+        assertThat(latestAuthorization.get("authorization_version", Long.class)).isEqualTo(1L);
+
+        // The provider still requires action under the latest retained authorization. The next
+        // fresh proof is bound to that current version, then allowed to expire before renewal.
         UUID expiredAuthorization = UUID.randomUUID();
         var expiredProof =
             https.request(
