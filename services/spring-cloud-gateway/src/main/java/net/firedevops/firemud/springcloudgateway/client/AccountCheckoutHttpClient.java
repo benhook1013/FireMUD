@@ -211,6 +211,9 @@ public final class AccountCheckoutHttpClient {
         || body.length == 0
         || body.length > MAX_ERROR_RESPONSE_BYTES
         || !isJsonContentType(oneHeader(headers, HttpHeaders.CONTENT_TYPE))) return empty;
+    ForwardedResponse credentialDenial =
+        reauthenticationCredentialDenial(method, path, upstreamStatus, body);
+    if (credentialDenial != null) return credentialDenial;
     boolean confirmation =
         HttpMethod.POST.equals(method) && (path.endsWith("/confirm") || path.endsWith("/renew"));
     String expected =
@@ -236,6 +239,41 @@ public final class AccountCheckoutHttpClient {
       return new ForwardedResponse(safeStatus, MediaType.APPLICATION_JSON_VALUE, safeBody);
     } catch (RuntimeException invalid) {
       return empty;
+    }
+  }
+
+  private static ForwardedResponse reauthenticationCredentialDenial(
+      HttpMethod method, String path, HttpStatusCode upstreamStatus, byte[] body) {
+    if (!HttpMethod.POST.equals(method)
+        || !path.endsWith("/reauthenticate")
+        || upstreamStatus.value() != HttpStatus.UNAUTHORIZED.value()) return null;
+    try {
+      JsonNode root = ERROR_JSON.readTree(body);
+      if (root == null
+          || !root.isObject()
+          || root.size() != 3
+          || !root.path("status").isTextual()
+          || !"ERROR".equals(root.path("status").textValue())
+          || !root.path("data").isNull()) return null;
+      JsonNode error = root.get("error");
+      if (error == null
+          || !error.isObject()
+          || error.size() != 2
+          || !error.path("code").isTextual()
+          || !error.path("message").isTextual()
+          || error.path("message").textValue().isBlank()) return null;
+      String code = error.path("code").textValue();
+      if (!"AUTH_INVALID_CREDENTIALS".equals(code) && !"INVALID_CREDENTIALS".equals(code))
+        return null;
+      byte[] safeBody =
+          ("{\"status\":\"ERROR\",\"data\":null,\"error\":{\"code\":\""
+                  + code
+                  + "\",\"message\":\"Invalid credentials\"}}")
+              .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+      return new ForwardedResponse(
+          HttpStatus.UNAUTHORIZED, MediaType.APPLICATION_JSON_VALUE, safeBody);
+    } catch (RuntimeException invalid) {
+      return null;
     }
   }
 
