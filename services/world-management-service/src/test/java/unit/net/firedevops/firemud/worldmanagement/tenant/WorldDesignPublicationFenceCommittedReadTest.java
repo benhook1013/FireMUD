@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -24,6 +25,8 @@ import org.jooq.SelectWhereStep;
 import org.jooq.Table;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
@@ -116,6 +119,58 @@ class WorldDesignPublicationFenceCommittedReadTest {
     assertThatThrownBy(() -> repository.lockExistingOpenByPrivateKeys(1L, 7L))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(dsl);
+  }
+
+  @ParameterizedTest
+  @EnumSource(UnsafeDatabaseSettings.class)
+  void actualDatabaseSettingsMustAgreeWithWritableReadCommittedSpringScope(
+      UnsafeDatabaseSettings unsafe) {
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+    TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(
+        Connection.TRANSACTION_READ_COMMITTED);
+    DSLContext dsl = mock(DSLContext.class);
+    var intake = mock(WorldAuthoredSourceIntakeRepository.class);
+    var repository = new WorldDesignPublicationFenceRepository(dsl, intake);
+    Record settings = null;
+    if (unsafe != UnsafeDatabaseSettings.MISSING_ROW) {
+      settings = mock(Record.class);
+      when(settings.get("transaction_isolation", String.class))
+          .thenReturn(
+              switch (unsafe) {
+                case REPEATABLE_READ -> "repeatable read";
+                case SERIALIZABLE -> "serializable";
+                case MISSING_ISOLATION -> null;
+                default -> "read committed";
+              });
+      when(settings.get("transaction_read_only", String.class))
+          .thenReturn(
+              switch (unsafe) {
+                case READ_ONLY -> "on";
+                case MISSING_READ_ONLY -> null;
+                default -> "off";
+              });
+    }
+    when(dsl.fetchOne(
+            "SELECT current_setting('transaction_isolation') AS transaction_isolation, "
+                + "current_setting('transaction_read_only') AS transaction_read_only"))
+        .thenReturn(settings);
+
+    assertThatThrownBy(() -> repository.lockExistingOpenByPrivateKeys(1L, 7L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("World publication fence requires a writable READ COMMITTED owner transaction");
+
+    verify(dsl, never()).selectFrom(any(Table.class));
+    verifyNoInteractions(intake);
+  }
+
+  private enum UnsafeDatabaseSettings {
+    REPEATABLE_READ,
+    SERIALIZABLE,
+    READ_ONLY,
+    MISSING_ROW,
+    MISSING_ISOLATION,
+    MISSING_READ_ONLY
   }
 
   @Test

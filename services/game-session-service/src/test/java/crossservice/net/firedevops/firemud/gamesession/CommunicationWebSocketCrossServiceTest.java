@@ -201,18 +201,13 @@ class CommunicationWebSocketCrossServiceTest {
 
     List<String> responses =
         runCommunicationSequence(
-            sessionId,
-            "FRIENDS",
-            "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online in Demo World / Live Realm (idle)");
+            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains(
-                    "Sora [acct #"
-                        + SORA_ACCOUNT_UUID
-                        + "] - online in Demo World / Live Realm (idle)"));
+                response.contains("Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID);
   }
@@ -226,19 +221,14 @@ class CommunicationWebSocketCrossServiceTest {
         runCommunicationSequence(
             sessionId,
             "FRIENDS ONLINE",
-            "Friends ONLINE [1/1]:\n"
-                + "1) Sora [acct #"
-                + SORA_ACCOUNT_UUID
-                + "] - online in Demo World / Live Realm (idle)");
+            "Friends ONLINE:\n" + "1) Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)");
 
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains("Friends ONLINE [1/1]:")
+                response.contains("Friends ONLINE:")
                     && response.contains(
-                        "1) Sora [acct #"
-                            + SORA_ACCOUNT_UUID
-                            + "] - online in Demo World / Live Realm (idle)"));
+                        "1) Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(),
         Long.toString(TENANT_ID),
@@ -247,32 +237,14 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketFriendsSharedFiltersCanonicalRoster() throws Exception {
+  void websocketLocationScopeFiltersFailClosedWithoutSocialQuery() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-
+    var before = socialStub().lastFriendsRequest();
     List<String> responses =
-        runCommunicationSequence(
-            sessionId,
-            "FRIENDS SHARED",
-            "Friends SHARED [1/1]:\n"
-                + "1) Sora [acct #"
-                + SORA_ACCOUNT_UUID
-                + "] - online in Demo World / Live Realm (idle)");
-
-    assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains("Friends SHARED [1/1]:")
-                    && response.contains(
-                        "1) Sora [acct #"
-                            + SORA_ACCOUNT_UUID
-                            + "] - online in Demo World / Live Realm (idle)"));
-    GameplaySocialAssertions.assertListFriendsRequest(
-        socialStub().lastFriendsRequest(),
-        Long.toString(TENANT_ID),
-        ACCOUNT_UUID,
-        net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_SHARED);
+        runCommunicationSequence(sessionId, "FRIENDS SHARED", "FRIEND_PRESENCE_UNAVAILABLE");
+    assertThat(responses).anyMatch(response -> response.contains("FRIEND_PRESENCE_UNAVAILABLE"));
+    assertThat(socialStub().lastFriendsRequest()).isEqualTo(before);
   }
 
   @Test
@@ -284,17 +256,12 @@ class CommunicationWebSocketCrossServiceTest {
     sessionId = prepareGameInstance();
     List<String> responses =
         runCommunicationSequence(
-            sessionId,
-            "FRIENDS",
-            "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online in Demo World / Live Realm (idle)");
+            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)");
 
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains(
-                    "Sora [acct #"
-                        + SORA_ACCOUNT_UUID
-                        + "] - online in Demo World / Live Realm (idle)"));
+                response.contains("Sora [acct #" + SORA_ACCOUNT_UUID + "] - online (idle)"));
   }
 
   @Test
@@ -404,7 +371,7 @@ class CommunicationWebSocketCrossServiceTest {
         openReadySessionClient(sessionId, "friends-show-detail-conn")) {
       client.send("FRIENDS SHOW #1");
       client.awaitContains("Friend Sora [acct #" + SORA_ACCOUNT_UUID + "]");
-      client.awaitContains("Presence: online in Demo World / Live Realm (idle)");
+      client.awaitContains("Presence: online (idle)");
       client.awaitContains("Roster entry: #1");
     }
 
@@ -422,9 +389,6 @@ class CommunicationWebSocketCrossServiceTest {
       client.send("FRIENDS SUMMARY");
       client.awaitContains("Friend roster summary:");
       client.awaitContains("Linked: 1");
-      client.awaitContains("Online: 1");
-      client.awaitContains("Offline: 0");
-      client.awaitContains("Recent offline: 0");
     }
 
     GameplaySocialAssertions.assertFriendRosterSummaryRequest(

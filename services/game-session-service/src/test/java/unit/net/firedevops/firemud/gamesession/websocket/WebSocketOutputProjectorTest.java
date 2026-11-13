@@ -461,7 +461,6 @@ class WebSocketOutputProjectorTest {
                         new FriendPresenceViewOutput(
                             "ALL",
                             1,
-                            1,
                             List.of(
                                 new FriendPresenceViewOutput.Entry(
                                     1,
@@ -485,7 +484,6 @@ class WebSocketOutputProjectorTest {
                 PlayerOutput.view(
                     new FriendPresenceViewOutput(
                         "ALL",
-                        1,
                         1,
                         List.of(
                             new FriendPresenceViewOutput.Entry(
@@ -678,12 +676,8 @@ class WebSocketOutputProjectorTest {
             new TextCommand(TextCommandType.FRIENDS, List.of("SUMMARY"), "FRIENDS SUMMARY"),
             new TextCommandInterpretationResult(
                 CommandEnqueueResult.success(),
-                List.of(
-                    PlayerOutput.view(
-                        new FriendRosterSummaryViewOutput(4, 1, 3, 2, 1, 2, 1, 0, 2, 1, 1)))),
-            List.of(
-                PlayerOutput.view(
-                    new FriendRosterSummaryViewOutput(4, 1, 3, 2, 1, 2, 1, 0, 2, 1, 1))),
+                List.of(PlayerOutput.view(new FriendRosterSummaryViewOutput(4)))),
+            List.of(PlayerOutput.view(new FriendRosterSummaryViewOutput(4))),
             "en-NZ",
             presentation);
 
@@ -693,16 +687,17 @@ class WebSocketOutputProjectorTest {
         .isEqualTo("friend_roster_summary_view");
     assertThat(json.path("outputs").get(0).path("payload").path("totalCount").asInt()).isEqualTo(4);
     assertThat(json.path("outputs").get(0).path("payload").has("hiddenStaffCount")).isFalse();
-    assertThat(json.path("outputs").get(0).path("payload").path("recentCount").asInt())
-        .isEqualTo(2);
-    assertThat(json.path("outputs").get(0).path("payload").path("friendsOnlyCount").asInt())
-        .isEqualTo(2);
-    assertThat(json.path("outputs").get(0).path("payload").path("privateCount").asInt())
-        .isEqualTo(1);
-    assertThat(json.path("outputs").get(0).path("payload").path("sharedCount").asInt())
-        .isEqualTo(2);
-    assertThat(json.path("outputs").get(0).path("payload").path("isolatedCount").asInt())
-        .isEqualTo(1);
+    for (String hidden :
+        List.of(
+            "recentCount",
+            "friendsOnlyCount",
+            "privateCount",
+            "sharedCount",
+            "isolatedCount",
+            "onlineCount",
+            "offlineCount")) {
+      assertThat(json.path("outputs").get(0).path("payload").has(hidden)).isFalse();
+    }
   }
 
   @Test
