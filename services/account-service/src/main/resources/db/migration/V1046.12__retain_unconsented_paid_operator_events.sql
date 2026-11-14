@@ -74,4 +74,3 @@ CREATE TRIGGER first_invoice_unconsented_paid_confirmation_guard
     BEFORE INSERT ON subscription_first_invoice_confirmations
     FOR EACH ROW EXECUTE FUNCTION account_first_invoice_unconsented_paid_confirmation_guard();
 -- [jooq ignore stop]
-
