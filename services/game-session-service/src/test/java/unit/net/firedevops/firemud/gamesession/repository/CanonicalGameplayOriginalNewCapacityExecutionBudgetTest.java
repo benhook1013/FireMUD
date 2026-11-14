@@ -97,6 +97,119 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   }
 
   @Test
+  void retainedInitialGrantOnlyReadsSameLiveTokenAndRejectsReplacement() throws Exception {
+    RedisClient client = mock(RedisClient.class);
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    RedisAsyncCommands<byte[], byte[]> commands = mock();
+    RedisFuture<String> principal = mock();
+    RedisFuture<byte[]> tokenRead = mock();
+    RedisFuture<Long> ttlRead = mock();
+    var source = mock(CanonicalGameplayRegionRuntimeStatusRepository.Source.class);
+    when(source.tenantId()).thenReturn(UUID.randomUUID());
+    when(source.gameInstanceId()).thenReturn(UUID.randomUUID());
+    when(source.regionId()).thenReturn(UUID.randomUUID());
+    var preparation =
+        mock(CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class);
+    when(preparation.source()).thenReturn(source);
+    when(preparation.regionEpoch()).thenReturn(1L);
+    var status =
+        mock(net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus.class);
+    String token = UUID.randomUUID().toString();
+    String correlation =
+        HexFormat.of()
+            .formatHex(
+                MessageDigest.getInstance("SHA-256")
+                    .digest(token.getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
+    when(preparation.leaseTokenCorrelation()).thenReturn(correlation);
+    when(status.leaseTokenCorrelation()).thenReturn(correlation);
+    when(status.regionEpoch()).thenReturn(1L);
+    when(status.ownerService()).thenReturn("game-session-service");
+    when(status.ownerInstanceId()).thenReturn("same-instance");
+    var identity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "same-instance",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "test");
+    var owner = new CanonicalGameplayRegionLeaseRedisOwner(client, mock(RedisScriptCatalog.class));
+    when(client.connect(ByteArrayCodec.INSTANCE)).thenReturn(connection);
+    when(connection.async()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn(principal);
+    when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
+    when(commands.get(any(byte[].class))).thenReturn(tokenRead);
+    when(tokenRead.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
+        .thenAnswer(ignored -> token.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    when(commands.pttl(any(byte[].class))).thenReturn(ttlRead);
+    when(ttlRead.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1000L);
+    assertThat(owner.readRetainedInitialGrant(preparation, status, identity).tokenCorrelation())
+        .isEqualTo(correlation);
+    when(ttlRead.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(-2L);
+    assertThatThrownBy(() -> owner.readRetainedInitialGrant(preparation, status, identity))
+        .isInstanceOf(IllegalStateException.class);
+    when(ttlRead.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1000L);
+    when(tokenRead.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
+        .thenAnswer(
+            ignored ->
+                UUID.randomUUID().toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    assertThatThrownBy(() -> owner.readRetainedInitialGrant(preparation, status, identity))
+        .isInstanceOf(IllegalStateException.class);
+    when(status.ownerInstanceId()).thenReturn("replacement-instance");
+    assertThatThrownBy(() -> owner.readRetainedInitialGrant(preparation, status, identity))
+        .isInstanceOf(IllegalStateException.class);
+    verify(commands, org.mockito.Mockito.times(3)).aclWhoami();
+    verify(commands, org.mockito.Mockito.times(3)).get(any(byte[].class));
+    verify(commands, org.mockito.Mockito.times(3)).pttl(any(byte[].class));
+    org.mockito.Mockito.verifyNoMoreInteractions(commands);
+  }
+
+  @Test
+  void manualFactoryEnablesPerInstallationDeadline() {
+    var owner =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            mock(DSLContext.class),
+            mock(RedisClient.class),
+            RedisURI.create("redis://localhost:6379"),
+            mock(RedisScriptCatalog.class),
+            mock(CanonicalGameplayRegionIncarnationSource.class),
+            mock(
+                net.firedevops.firemud.gamesession.service
+                    .CanonicalInitialPlayerLocationRegionResolver.class),
+            mock(RuntimeIdentity.class),
+            Duration.ofSeconds(30),
+            CLOCK);
+    assertThat(ReflectionTestUtils.getField(owner, "deadlineBoundInstallation")).isEqualTo(true);
+  }
+
+  @Test
+  void installationFreezesDeadlineAndNeverExtendsExistingBudget() {
+    Clock frozenClock = Clock.fixed(CLOCK.instant(), java.time.ZoneOffset.UTC);
+    RedisClient client = mock(RedisClient.class);
+    var owner =
+        new CanonicalGameplayRegionLeaseRedisOwner(
+            client, RedisURI.create("redis://localhost:6379"), mock(RedisScriptCatalog.class));
+    var bounded = owner.forInstallation(frozenClock);
+    assertThat(ReflectionTestUtils.getField(bounded, "handoffDeadlineMillis"))
+        .isEqualTo(frozenClock.millis() + 5000L);
+    var shorter =
+        owner
+            .forHandoffDeadline(frozenClock, frozenClock.millis() + 1000L)
+            .forInstallation(frozenClock);
+    assertThat(ReflectionTestUtils.getField(shorter, "handoffDeadlineMillis"))
+        .isEqualTo(frozenClock.millis() + 1000L);
+    try (var context = Context.current().withCancellation()) {
+      context.cancel(new IllegalStateException("cancelled before installation"));
+      context.run(
+          () ->
+              assertThatThrownBy(() -> assertThat(owner.forInstallation(frozenClock)).isNotNull())
+                  .isInstanceOf(IllegalStateException.class));
+    }
+    verifyNoInteractions(client);
+  }
+
+  @Test
   void timedOutHandoffRedisConnectRetainsAdmissionThroughLateClose() throws Exception {
     RedisClient redis = mock();
     RedisURI uri = RedisURI.create("redis://localhost:6379");

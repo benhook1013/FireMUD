@@ -71,10 +71,10 @@ if not tag1 or tag1 ~= tag2
 -- PROBE runs before the durable SQL creation permission is consumed. Require TIME here too so
 -- the principal's command ACL is proven before that permission can enter INITIALIZING.
 local redisTime = redis.call('TIME')
+local redisNowMillis = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
+local remainingMillis = tonumber(absoluteDeadlineMillis) - redisNowMillis
+if (action == 'PROBE' or action == 'INITIALIZE') and remainingMillis <= 0 then return -3 end
 if action == 'INITIALIZE' then
-  local redisNowMillis = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
-  local remainingMillis = tonumber(absoluteDeadlineMillis) - redisNowMillis
-  if remainingMillis <= 0 then return -3 end
   ttl = math.min(tonumber(ttl), remainingMillis)
 end
 
