@@ -75,15 +75,19 @@ import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseServiceGrpc;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionAbortResolution;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
+import net.firedevops.firemud.accountservice.dto.AccountSecurityStateMutationRequest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
@@ -91,6 +95,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.RecoveredCredential;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository.Capture;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.ProducerEvidence;
 import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinator;
@@ -114,7 +119,11 @@ import net.firedevops.firemud.accountservice.service.session.LettuceAccountCoord
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec.AccountState;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
@@ -175,6 +184,7 @@ import org.testcontainers.containers.Network;
  * runtime registration, nor an admitted Game Session binding.
  */
 class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
+  private boolean canonicalRoleBirth;
   private static final String SCHEMA_PREFIX = "gameplay_admission_current_";
   private static final String TEST_NAMESPACE = "test";
   private static final String CALLER_WORKLOAD = "spiffe://firemud/ns/test/sa/game-session-service";
@@ -514,6 +524,307 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     assertThat(paid.caller().readLeaseOperation(lease).state())
         .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
     assertThat(paid.caller().sourceAndIssuanceImage()).isEqualTo(before);
+  }
+
+  private static AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot
+      advanceControlledClosedAccountSource(
+          Fixture caller,
+          AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot beforeSource) {
+    var accounts = caller.accounts;
+    var account = caller.account;
+    var generations = caller.generations;
+    var dsl = caller.dsl;
+    var outbox = caller.authorityOutbox;
+    var evidence = caller.sourceEvidence;
+    Account current = accounts.findByAccountUuidForUpdate(account.getAccountUuid()).orElseThrow();
+    var sourceState =
+        generations.read(
+            AccountAuthorityGenerationRepository.AuthorityScope.account(account.getAccountUuid()));
+    var roleSource =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT global_roles, global_role_source_version FROM account_global_role_sources "
+                    + "WHERE account_uuid = ? FOR SHARE",
+                account.getAccountUuid()));
+    long roleVersion = roleSource.get("global_role_source_version", Long.class);
+    var beforeState =
+        new AccountState(
+            current.isEmailVerified(),
+            AccountLoginAuthModes.read(current.getLoginAuthModes()).stream()
+                .map(Enum::name)
+                .sorted()
+                .toList(),
+            java.util.Arrays.stream(roleSource.get("global_roles", String[].class))
+                .sorted()
+                .toList(),
+            current.getLifecycleState().name());
+    var afterState =
+        new AccountState(
+            !beforeState.emailVerified(),
+            beforeState.loginAuthModes(),
+            beforeState.globalRoles(),
+            beforeState.lifecycleState());
+    UUID requestId = UUID.randomUUID();
+    // These bytes are retained fixture correlation, not authenticated caller authorization.
+    byte[] correlation =
+        ("{\"actorAccountUuid\":\""
+                + account.getAccountUuid()
+                + "\",\"ownerEvidenceDigest\":\"sha256:"
+                + "a".repeat(64)
+                + "\",\"ownerOperationId\":\""
+                + requestId
+                + "\",\"schemaVersion\":\"account-security-state-caller-correlation/v1\"}")
+            .getBytes(StandardCharsets.UTF_8);
+    var request =
+        new AccountSecurityStateMutationRequest(
+            requestId,
+            account.getAccountUuid(),
+            correlation,
+            sourceState.generation(),
+            sourceState.sourceVersion(),
+            AccountSecurityStateOperationRepository.detectedKinds(beforeState, afterState),
+            afterState);
+    var checkpoint = beforeSource.account().checkpoint();
+    byte[] checkpointPayload =
+        checkpoint.sequence() == 0L
+            ? new byte[0]
+            : outbox
+                .findEvent(checkpoint.outboxStreamKey(), checkpoint.sequence())
+                .orElseThrow()
+                .payload();
+    var draft =
+        new Capture(
+            current.getId(),
+            current.getAccountUuidProvenance(),
+            beforeState,
+            sourceState,
+            checkpoint.sequence(),
+            checkpointPayload,
+            roleVersion,
+            null);
+    byte[] captureBytes = AccountSecurityStateOperationRepository.captureBytes(request, draft);
+    var source =
+        new SourceEvidence(
+            SourceKind.ACCOUNT,
+            account.getAccountUuid().toString(),
+            Long.toString(sourceState.generation()),
+            Long.toString(sourceState.sourceVersion()),
+            checkpoint.outboxStreamKey(),
+            Long.toString(checkpoint.sequence()),
+            captureBytes);
+    var change = new SourceChange(UUID.randomUUID(), List.of(source), captureBytes);
+    var capture =
+        new Capture(
+            draft.accountId(),
+            draft.provenance(),
+            beforeState,
+            sourceState,
+            checkpoint.sequence(),
+            checkpointPayload,
+            roleVersion,
+            change);
+    var fences = new DraftAuthorizationFenceRepository(dsl);
+    var security = new AccountSecurityStateOperationRepository(dsl);
+    if (!fences.requestSourceChange(change)
+        || !security.claim(request, capture).claimed()
+        || !fences.sourceMutationPermitted(change)) {
+      throw new IllegalStateException("Controlled closed source change is not exclusively settled");
+    }
+    var advanced =
+        evidence.prepareClosedAccountAdvance(account.getAccountUuid(), beforeSource.account());
+    int changed =
+        dsl.execute(
+            "UPDATE accounts SET email_verified = ? WHERE account_uuid = ? AND email_verified = ?",
+            afterState.emailVerified(),
+            account.getAccountUuid(),
+            beforeState.emailVerified());
+    if (changed != 1) {
+      throw new IllegalStateException("Controlled closed Account state CAS did not change once");
+    }
+    var event =
+        outbox.append(
+            checkpoint.outboxStreamKey(),
+            requestId.toString(),
+            sequence -> {
+              var sealed =
+                  AccountSecurityStateAuthorityEventV1Codec.seal(
+                      AccountSecurityStateMutationRequest.eventPreimage(
+                          requestId,
+                          account.getAccountUuid(),
+                          Long.toString(advanced.generation()),
+                          Long.toString(advanced.sourceVersion()),
+                          Long.toString(sequence),
+                          request.mutationKinds(),
+                          afterState));
+              return new AccountAuthorityOutboxRepository.EventEvidence(
+                  sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
+            });
+    fences.markSourceCommitted(change);
+    var completed = security.complete(request, event, advanced, roleVersion);
+    assertThat(completed.receipt().orElseThrow().event()).isEqualTo(event);
+    assertThat(completed.receipt().orElseThrow().sourceState()).isEqualTo(advanced);
+    assertThat(completed.capture().sourceChange().canonicalBytes())
+        .isEqualTo(change.canonicalBytes());
+    assertThat(fences.readSourceChange(change).status()).isEqualTo("SOURCE_COMMITTED");
+    return evidence.readCurrentIssuerAccountSources(
+        "firemud-account-service", account.getAccountUuid());
+  }
+
+  @Test
+  void paidCheckpointRequalifiesHistoricallyInvalidatingOrdinaryEventInPhysicalSql()
+      throws Exception {
+    canonicalRoleBirth = true;
+    PaidFixture paid = newPaidFixture(null);
+    Fixture caller = paid.caller();
+    UUID accountId = caller.account.getAccountUuid();
+    UUID tenantId = paid.hosting().tenantId();
+    String stream = "account:auth-authority:v1:membership/" + accountId + "/" + tenantId;
+    var prior = caller.authorityOutbox.findEvent(stream, 1L).orElseThrow();
+    caller.transaction.executeWithoutResult(
+        status -> {
+          // Controlled historical owner input; retain all physical generation/outbox constraints.
+          var account = caller.accounts.findByIdForUpdate(caller.account.getId()).orElseThrow();
+          advanceControlledClosedAccountSource(
+              caller,
+              caller.sourceEvidence.readCurrentIssuerAccountSources(
+                  "firemud-account-service", accountId));
+          var scope = AuthorityScope.membership(accountId, tenantId);
+          var generation = caller.generations.read(scope);
+          assertThat(
+                  caller.dsl.execute(
+                      "UPDATE account_authority_generations SET generation=generation+1, source_version=source_version+1, updated_at=CURRENT_TIMESTAMP WHERE scope_kind='MEMBERSHIP' AND account_uuid=? AND tenant_uuid=? AND generation=? AND source_version=?",
+                      accountId,
+                      tenantId,
+                      generation.generation(),
+                      generation.sourceVersion()))
+              .isEqualTo(1);
+          var composite =
+              caller.generations.readCompositeSnapshot(
+                  "firemud-account-service", accountId, List.of(tenantId), List.of(tenantId));
+          var source =
+              caller.sourceEvidence.readCurrentIssuerAccountSources(
+                  "firemud-account-service", accountId);
+          var member =
+              caller
+                  .memberships
+                  .findCanonicalMembershipForUpdate(accountId, tenantId)
+                  .orElseThrow();
+          var pair = caller.membershipPairs.readForUpdate(accountId, tenantId).orElseThrow();
+          var nextGeneration = composite.memberships().getFirst().generation();
+          var nextVersion = member.getMembershipVersion() + 1;
+          Map<String, Object> body =
+              new LinkedHashMap<>(
+                  tools.jackson.databind.json.JsonMapper.builder()
+                      .build()
+                      .readValue(new String(prior.payload(), StandardCharsets.UTF_8), Map.class));
+          body.remove("eventDigest");
+          body.put("eventId", UUID.randomUUID().toString());
+          body.put("requestId", "controlled-invalidating-" + UUID.randomUUID());
+          body.put("outboxSequence", "2");
+          body.put("membershipVersion", Map.of(tenantId.toString(), Long.toString(nextVersion)));
+          body.put("membershipAuthorityGeneration", Long.toString(nextGeneration));
+          body.put("callerBoundAuthorityInvalidated", true);
+          body.put("issuanceFence", Long.toString(composite.issuanceFence().value()));
+          Map<String, Object> tuple =
+              new LinkedHashMap<>((Map<String, Object>) body.get("authorityTuple"));
+          tuple.put("accountAuthorityGeneration", Long.toString(composite.account().generation()));
+          tuple.put(
+              "membershipAuthorityGeneration",
+              Map.of(tenantId.toString(), Long.toString(nextGeneration)));
+          var cutoff = source.account().accountSecurityCutoff().orElseThrow();
+          tuple.put(
+              "accountSecurityCutoff",
+              Map.of(
+                  "accountAuthorityGeneration",
+                  cutoff.accountAuthorityGeneration(),
+                  "outboxStreamKey",
+                  cutoff.outboxStreamKey(),
+                  "outboxSequence",
+                  cutoff.outboxSequence()));
+          body.put("authorityTuple", tuple);
+          var event = MembershipAuthorityEventV1Codec.seal(body);
+          var appended =
+              caller.authorityOutbox.append(
+                  stream,
+                  event.requestId(),
+                  sequence -> {
+                    assertThat(sequence).isEqualTo(2L);
+                    return new AccountAuthorityOutboxRepository.EventEvidence(
+                        event.eventId(), event.eventDigest(), event.canonicalJsonUtf8());
+                  });
+          assertThat(
+                  caller.dsl.execute(
+                      "UPDATE account_tenant_membership SET membership_version=?, membership_authority_generation=? WHERE id=?",
+                      nextVersion,
+                      nextGeneration,
+                      member.getId()))
+              .isEqualTo(1);
+          var updated =
+              caller
+                  .memberships
+                  .findCanonicalMembershipForUpdate(accountId, tenantId)
+                  .orElseThrow();
+          caller.membershipRoles.replaceCanonical(
+              updated, accountId, tenantId, pair.provenance(), nextVersion, event.roles());
+          assertThat(
+                  caller.dsl.execute(
+                      "UPDATE account_membership_pair_authority SET membership_version=?, membership_authority_generation=?, last_event_sequence=?, last_event_id=?, last_event_digest=?, last_transition_invalidated=TRUE WHERE account_uuid=? AND tenant_uuid=?",
+                      nextVersion,
+                      nextGeneration,
+                      appended.outboxSequence(),
+                      appended.eventId(),
+                      appended.eventDigest(),
+                      accountId,
+                      tenantId))
+              .isEqualTo(1);
+        });
+    var historical = caller.authorityOutbox.findEvent(stream, 2L).orElseThrow();
+    assertThat(
+            MembershipAuthorityEventV1Codec.verify(
+                    new String(historical.payload(), StandardCharsets.UTF_8))
+                .callerBoundAuthorityInvalidated())
+        .isTrue();
+    assertThatThrownBy(paid::prepare).isInstanceOf(RuntimeException.class);
+    paid.hosting().clock().advance(Duration.ofSeconds(1));
+    paid.refresh();
+    var fence =
+        paid.hosting()
+            .transaction()
+            .execute(status -> paid.hosting().lifecycleRepository().prepareCurrentRead(tenantId));
+    var observation = paid.hosting().observer().observe(fence.binding());
+    var fresh =
+        caller.transaction.execute(
+            status -> {
+              var receipt = paid.hosting().lifecycleRepository().readCurrent(fence, observation);
+              return new AccountCanonicalRuntimeMembershipSnapshotRepository(
+                      caller.accounts,
+                      caller.generations,
+                      caller.sourceEvidence,
+                      caller.tenantAuthorityEvents,
+                      caller.freshTenants,
+                      caller.memberships,
+                      caller.membershipPairs,
+                      caller.membershipRoles,
+                      caller.authorityOutbox)
+                  .requalifyPaidAcquisition(accountId, tenantId, receipt);
+            });
+    assertThat(fresh.membershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(fresh.gameplayAdmissionAllowed()).isTrue();
+    assertThat(caller.authorityOutbox.findEvent(stream, 2L)).contains(historical);
+    var checkpoint =
+        MembershipAuthorityEventV1Codec.verify(
+            new String(
+                caller.authorityOutbox.findEvent(stream, 3L).orElseThrow().payload(),
+                StandardCharsets.UTF_8));
+    var previous =
+        MembershipAuthorityEventV1Codec.verify(
+            new String(historical.payload(), StandardCharsets.UTF_8));
+    assertThat(checkpoint.callerBoundAuthorityInvalidated()).isFalse();
+    assertThat(checkpoint.membershipAuthorityGeneration())
+        .isEqualTo(previous.membershipAuthorityGeneration());
+    assertThat(checkpoint.membershipVersion()).isEqualTo(previous.membershipVersion());
+    assertThat(checkpoint.roles()).isEqualTo(previous.roles());
+    assertThatThrownBy(paid::prepare).isInstanceOf(RuntimeException.class);
   }
 
   @Test
@@ -2150,7 +2461,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         temporaryDirectory,
         redisClient,
         currentScope,
-        capacityBootstrap);
+        capacityBootstrap,
+        canonicalRoleBirth);
   }
 
   private static int awaitBackendBlockedBy(
@@ -2855,7 +3167,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         Path temporaryDirectory,
         AccountGameplayDelegationRedisClient redisClient,
         boolean currentScope,
-        boolean capacityBootstrap)
+        boolean capacityBootstrap,
+        boolean canonicalRoleBirth)
         throws Exception {
       this.capacityBootstrap = capacityBootstrap;
       this.schema = schema;
@@ -2924,7 +3237,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       newAccount.setUsername("current-source-" + suffix);
       newAccount.setEmail("current-source-" + suffix + "@example.test");
       newAccount.setPasswordHash("integration-fixture-password-hash");
-      newAccount.setRole("player");
+      newAccount.setRole(canonicalRoleBirth ? null : "player");
       this.account = transaction.execute(status -> accounts.save(newAccount));
       var retainedScope = canonicalJoinScope(account.getAccountUuid(), tenantUuid);
       this.joinScope =
