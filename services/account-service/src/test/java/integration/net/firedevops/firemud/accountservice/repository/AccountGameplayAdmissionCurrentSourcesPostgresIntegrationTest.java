@@ -184,7 +184,6 @@ import org.testcontainers.containers.Network;
  * runtime registration, nor an admitted Game Session binding.
  */
 class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
-  private boolean canonicalRoleBirth;
   private static final String SCHEMA_PREFIX = "gameplay_admission_current_";
   private static final String TEST_NAMESPACE = "test";
   private static final String CALLER_WORKLOAD = "spiffe://firemud/ns/test/sa/game-session-service";
@@ -673,8 +672,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   @Test
   void paidCheckpointRequalifiesHistoricallyInvalidatingOrdinaryEventInPhysicalSql()
       throws Exception {
-    canonicalRoleBirth = true;
-    PaidFixture paid = newPaidFixture(null);
+    PaidFixture paid = newPaidFixture(null, true);
     Fixture caller = paid.caller();
     UUID accountId = caller.account.getAccountUuid();
     UUID tenantId = paid.hosting().tenantId();
@@ -2289,7 +2287,12 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   }
 
   PaidFixture newPaidFixture(AccountGameplayDelegationRedisClient redis) throws Exception {
-    Fixture caller = newFixture(redis);
+    return newPaidFixture(redis, false);
+  }
+
+  private PaidFixture newPaidFixture(
+      AccountGameplayDelegationRedisClient redis, boolean canonicalRoleBirth) throws Exception {
+    Fixture caller = newFixture(redis, "latest", false, false, canonicalRoleBirth);
     var hosting = CanonicalHostingSubscriptionTestFixture.create(caller.dataSource, TEST_NAMESPACE);
     hosting.completeFirstInvoice();
     UUID tenantId = hosting.tenantId();
@@ -2437,6 +2440,16 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       String migrationTarget,
       boolean currentScope,
       boolean capacityBootstrap)
+      throws Exception {
+    return newFixture(redisClient, migrationTarget, currentScope, capacityBootstrap, false);
+  }
+
+  private Fixture newFixture(
+      AccountGameplayDelegationRedisClient redisClient,
+      String migrationTarget,
+      boolean currentScope,
+      boolean capacityBootstrap,
+      boolean canonicalRoleBirth)
       throws Exception {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     if (schema.length() > 63) throw new IllegalStateException("Generated schema name is too long");
