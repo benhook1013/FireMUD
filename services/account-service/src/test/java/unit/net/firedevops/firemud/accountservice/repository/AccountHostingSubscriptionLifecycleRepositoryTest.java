@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -21,6 +22,7 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReconciliationLimits;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.ResultQuery;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -49,6 +51,54 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
   void clearTransactionState() {
     TransactionSynchronizationManager.setActualTransactionActive(false);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+  }
+
+  @Test
+  void retainedPositiveInspectionRequiresBoundedReadOnlyTransactionBeforeSql() {
+    assertThatThrownBy(() -> repository.requireNoRetainedPositiveCompletionGaps(0))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> repository.requireNoRetainedPositiveCompletionGaps(6))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> repository.requireNoRetainedPositiveCompletionGaps(1))
+        .isInstanceOf(IllegalStateException.class);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    assertThatThrownBy(() -> repository.requireNoRetainedPositiveCompletionGaps(1))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void retainedPositiveInspectionOnlyAcceptsExplicitClearSnapshot() {
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+    ResultQuery<Record> query = mock(ResultQuery.class);
+    Record result = mock(Record.class);
+    when(dsl.resultQuery(anyString())).thenReturn(query);
+    when(query.fetchOne()).thenReturn(result);
+    when(result.get("unresolved", Boolean.class)).thenReturn(true, null, false);
+    assertThatThrownBy(() -> repository.requireNoRetainedPositiveCompletionGaps(2))
+        .hasMessageContaining("HOSTING_ACTIVATION_UNAVAILABLE");
+    assertThatThrownBy(() -> repository.requireNoRetainedPositiveCompletionGaps(2))
+        .hasMessageContaining("HOSTING_ACTIVATION_UNAVAILABLE");
+    repository.requireNoRetainedPositiveCompletionGaps(2);
+    verify(query, org.mockito.Mockito.times(3)).queryTimeout(2);
+    when(query.fetchOne()).thenReturn(null);
+    assertThatThrownBy(() -> repository.requireNoRetainedPositiveCompletionGaps(2))
+        .isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void retainedPositiveInspectionPropagatesDatabaseFailure() {
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+    ResultQuery<Record> query = mock(ResultQuery.class);
+    when(dsl.resultQuery(anyString())).thenReturn(query);
+    when(query.fetchOne()).thenThrow(new org.jooq.exception.DataAccessException("timeout"));
+    assertThatThrownBy(() -> repository.requireNoRetainedPositiveCompletionGaps(1))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    verify(query).queryTimeout(1);
   }
 
   @Test

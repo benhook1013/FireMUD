@@ -645,8 +645,8 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
   }
 
   @Test
-  void firstRecoveryAfterDeadlineFinalizesAnExactPositiveOnce() {
-    var f = capacityPersistenceFixture(true);
+  void firstRecoveryAfterDeadlineFinalizesAnExactPositiveOnce() throws InterruptedException {
+    var f = capacityPersistenceFixturesPastRecoveryDeadline(1).getFirst();
     assertThat(Instant.now()).isAfter(f.initial.expiresAt().plusSeconds(60));
     var calls = new java.util.concurrent.atomic.AtomicInteger();
     var recovery =
@@ -692,10 +692,13 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
   }
 
   @Test
-  void firstLateNegativeMalformedUnavailableAndOverBudgetReadsQuarantineWithoutReleasing() {
-    for (String outcome :
-        List.of("negative", "indeterminate", "malformed", "unavailable", "late")) {
-      var f = capacityPersistenceFixture(true);
+  void firstLateNegativeMalformedUnavailableAndOverBudgetReadsQuarantineWithoutReleasing()
+      throws InterruptedException {
+    var outcomes = List.of("negative", "indeterminate", "malformed", "unavailable", "late");
+    var fixtures = capacityPersistenceFixturesPastRecoveryDeadline(outcomes.size());
+    for (int index = 0; index < outcomes.size(); index++) {
+      String outcome = outcomes.get(index);
+      var f = fixtures.get(index);
       assertThat(Instant.now()).isAfter(f.initial.expiresAt().plusSeconds(60));
       var now = new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
       var recoveryClock =
@@ -784,12 +787,55 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     }
   }
 
-  /** Genuine same-transaction fresh creation; controlled entitlement and owner execution source. */
-  private static CapacityPersistenceFixture capacityPersistenceFixture() {
-    return capacityPersistenceFixture(false);
+  /** Age committed fresh attempts without changing evidence, immutable rows or database time. */
+  private static List<CapacityPersistenceFixture> capacityPersistenceFixturesPastRecoveryDeadline(
+      int count) throws InterruptedException {
+    var fixtures = new ArrayList<CapacityPersistenceFixture>();
+    var retained = new ArrayList<String>();
+    // Create all cases before waiting, so the five negative cases share one real aging window.
+    for (int index = 0; index < count; index++) {
+      var fixture = capacityPersistenceFixture();
+      fixtures.add(fixture);
+      retained.add(capacityReservationImage(fixture));
+    }
+    long started = System.nanoTime();
+    for (int index = 0; index < fixtures.size(); index++) {
+      var fixture = fixtures.get(index);
+      while (!fixture
+              .context
+              .dsl
+              .fetchSingle(
+                  "SELECT clock_timestamp() > reconcile_deadline AS expired FROM account_tenant_capacity_reservations WHERE reservation_id = ?",
+                  fixture.initial.reservationId())
+              .get("expired", Boolean.class)
+          || !Instant.now().isAfter(fixture.initial.expiresAt().plusSeconds(60))) {
+        assertThat(System.nanoTime() - started)
+            .as(
+                "Fresh reservation must age past its persisted recovery deadline within two minutes")
+            .isLessThan(TimeUnit.MINUTES.toNanos(2));
+        Thread.sleep(250);
+      }
+      assertThat(capacityReservationImage(fixture)).isEqualTo(retained.get(index));
+      assertThat(
+              fixture.context.dsl.fetchCount(
+                  DSL.table("account_tenant_capacity_recovery_evidence")))
+          .isZero();
+    }
+    return fixtures;
   }
 
-  private static CapacityPersistenceFixture capacityPersistenceFixture(boolean expired) {
+  private static String capacityReservationImage(CapacityPersistenceFixture fixture) {
+    return fixture
+        .context
+        .dsl
+        .fetchSingle(
+            "SELECT jsonb_build_object('row', to_jsonb(reservation), 'xmin', reservation.xmin::text)::text AS image FROM account_tenant_capacity_reservations reservation WHERE reservation_id = ?",
+            fixture.initial.reservationId())
+        .get("image", String.class);
+  }
+
+  /** Genuine same-transaction fresh creation; controlled entitlement and owner execution source. */
+  private static CapacityPersistenceFixture capacityPersistenceFixture() {
     StorageContext c = storageContext();
     var fixture = storageFixture(c);
     var assembled = assembleStoredOwner(c, fixture, new AccountAuditOutboxRepository(c.dsl));
@@ -802,12 +848,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     var base =
         net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture.worldRequest(
             17L);
-    // A retained historical reservation is inserted through the same controlled source fixture.
-    // No live producer accepts stale evidence, and no immutable row or database clock is changed.
-    var now =
-        java.time.Instant.now()
-            .minusSeconds(expired ? 120 : 0)
-            .truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    var now = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     String json =
         new String(base.evidence().canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8)
             .replace(base.identity().tenantId().toString(), tenant.toString())
@@ -866,10 +907,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                   net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
                       .at(evidence.expiresAt()));
               return repository
-                  .createIfQuotaAvailable(
-                      request,
-                      evidence.expiresAt(),
-                      Clock.fixed(evidence.evaluatedAt(), ZoneOffset.UTC))
+                  .createIfQuotaAvailable(request, repository.usage(request), evidence.expiresAt())
                   .orElseThrow();
             });
     var owner =

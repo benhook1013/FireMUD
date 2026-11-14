@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -42,6 +43,8 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -73,19 +76,19 @@ class AccountTenantCapacityOwnerTest {
             .thenReturn(TenantCapacityAdmission.decimal(vector.path("held").asText()));
         when(usage.get("used_units", Long.class))
             .thenReturn(TenantCapacityAdmission.decimal(vector.path("usage").asText()));
-        when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(usage);
         var request =
             CapacityAdmissionTestFixture.worldRequest(
                 TenantCapacityAdmission.decimal(vector.path("capacityDelta").asText()));
         request.requireCommittable();
+        Record databaseTime = mock(Record.class);
+        when(databaseTime.get("observed_at", java.time.OffsetDateTime.class))
+            .thenReturn(request.evidence().evaluatedAt().atOffset(java.time.ZoneOffset.UTC));
+        when(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at")).thenReturn(databaseTime);
         TransactionSynchronizationManager.setActualTransactionActive(true);
         try {
           assertThat(
                   new AccountTenantCapacityRepository(dsl)
-                      .createIfQuotaAvailable(
-                          request,
-                          request.evidence().expiresAt(),
-                          Clock.fixed(request.evidence().evaluatedAt(), ZoneOffset.UTC)))
+                      .createIfQuotaAvailable(request, usage, request.evidence().expiresAt()))
               .as(vector.path("name").asText())
               .isEmpty();
           verify(dsl, never()).execute(anyString(), any(Object[].class));
@@ -100,23 +103,25 @@ class AccountTenantCapacityOwnerTest {
   void expiryWhileWaitingForUsageDoesNotReserveCapacity() {
     var request = CapacityAdmissionTestFixture.playerRequest();
     DSLContext dsl = mock(DSLContext.class);
-    Clock clock = mock(Clock.class);
-    when(clock.instant()).thenThrow(new AssertionError("read before acquiring usage row"));
-    when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              org.mockito.Mockito.doReturn(request.evidence().expiresAt()).when(clock).instant();
-              return mock(Record.class);
-            });
+    Record usage = mock(Record.class);
+    Record databaseTime = mock(Record.class);
+    when(databaseTime.get("observed_at", java.time.OffsetDateTime.class))
+        .thenReturn(AccountTenantCapacityRepository.at(request.evidence().expiresAt()));
+    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(usage);
+    when(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at")).thenReturn(databaseTime);
+    var repository = new AccountTenantCapacityRepository(dsl);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
     assertThatThrownBy(
             () ->
-                new AccountTenantCapacityRepository(dsl)
-                    .createIfQuotaAvailable(request, request.evidence().expiresAt(), clock))
+                repository.createIfQuotaAvailable(
+                    request, repository.usage(request), request.evidence().expiresAt()))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
             failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
+    var order = inOrder(dsl);
+    order.verify(dsl).fetchOne(anyString(), any(Object[].class));
+    order.verify(dsl).fetchSingle("SELECT clock_timestamp() AS observed_at");
     verify(dsl, never()).execute(anyString(), any(Object[].class));
   }
 
@@ -129,6 +134,34 @@ class AccountTenantCapacityOwnerTest {
     assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload())).isEqualTo(result);
     verifyNoInteractions(f.accounts, f.memberships, f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void onlyTheNamedDeferredFreshnessViolationMapsToStaleAdmission() throws Exception {
+    for (String constraint :
+        new String[] {"account_tenant_capacity_attempt_freshness", "unrelated_constraint"}) {
+      var f = new Fixture(true);
+      var violation = mock(PSQLException.class);
+      var diagnostic = mock(ServerErrorMessage.class);
+      when(violation.getSQLState()).thenReturn("23514");
+      when(violation.getServerErrorMessage()).thenReturn(diagnostic);
+      when(diagnostic.getConstraint()).thenReturn(constraint);
+      var commitFailure =
+          new org.springframework.transaction.TransactionSystemException(
+              "Commit refused", violation);
+      f.transactions.commitFailure = commitFailure;
+
+      var result =
+          assertThatThrownBy(
+              () -> f.owner.commit(f.request, f.request.evidence().callerWorkload()));
+      if ("account_tenant_capacity_attempt_freshness".equals(constraint)) {
+        result.isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
+      } else {
+        result.isSameAs(commitFailure);
+      }
+    }
   }
 
   @Test
@@ -480,6 +513,8 @@ class AccountTenantCapacityOwnerTest {
     private boolean retained;
     private Record originDecision;
 
+    private final ControlledTransactions transactions = new ControlledTransactions();
+
     private Fixture(boolean expired) throws Exception {
       this(expired, CapacityAdmissionTestFixture.playerRequest());
     }
@@ -545,8 +580,18 @@ class AccountTenantCapacityOwnerTest {
                   return evaluation;
                 if (sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
                   return retained ? evaluation : null;
+                if (sql.startsWith("SELECT * FROM account_tenant_capacity_usage "))
+                  return mock(Record.class);
                 throw new AssertionError(sql);
               });
+      Record databaseTime = mock(Record.class);
+      var databaseNow =
+          expired
+              ? request.evidence().expiresAt()
+              : request.evidence().evaluatedAt().plusSeconds(1);
+      when(databaseTime.get("observed_at", java.time.OffsetDateTime.class))
+          .thenReturn(AccountTenantCapacityRepository.at(databaseNow));
+      when(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at")).thenReturn(databaseTime);
       owner =
           new AccountTenantCapacityOwner(
               dsl,
@@ -554,7 +599,7 @@ class AccountTenantCapacityOwnerTest {
               memberships,
               issuances,
               scopes,
-              new ControlledTransactions(),
+              transactions,
               Clock.fixed(
                   CapacityAdmissionTestFixture.NOW.plusSeconds(expired ? 60 : 1), ZoneOffset.UTC),
               namespace);
@@ -562,6 +607,8 @@ class AccountTenantCapacityOwnerTest {
   }
 
   private static final class ControlledTransactions implements PlatformTransactionManager {
+    private RuntimeException commitFailure;
+
     @Override
     public TransactionStatus getTransaction(
         @org.jspecify.annotations.Nullable TransactionDefinition definition) {
@@ -579,6 +626,7 @@ class AccountTenantCapacityOwnerTest {
     @Override
     public void commit(TransactionStatus status) {
       TransactionSynchronizationManager.setActualTransactionActive(false);
+      if (commitFailure != null) throw commitFailure;
     }
 
     @Override

@@ -278,7 +278,10 @@ public final class AccountCanonicalPublicRealmScopeOwner {
                 throw entitlementUnavailable(null);
               }
               requireFresh(entitlement);
-              Instant evaluatedAt = now();
+              Instant applicationTime = now();
+              Instant databaseTime = scopes.canonicalIssuanceTime();
+              Instant evaluatedAt =
+                  databaseTime.isBefore(applicationTime) ? databaseTime : applicationTime;
               Instant expiresAt = evaluatedAt.plusMillis(scopeLifetimeMillis);
               if (original.expiresAt().isBefore(expiresAt)) expiresAt = original.expiresAt();
               // JWT NumericDate has second precision. The persisted preimage uses that exact

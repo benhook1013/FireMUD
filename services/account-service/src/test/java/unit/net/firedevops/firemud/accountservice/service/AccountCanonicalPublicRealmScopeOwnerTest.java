@@ -337,6 +337,19 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   }
 
   @Test
+  void scopeIssuedWhenApplicationLeadsRetainsDatabaseTime() {
+    Fixture f = new Fixture(300000L);
+    Instant databaseTime =
+        Instant.now().minusSeconds(1).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    org.mockito.Mockito.doReturn(databaseTime).when(f.scopes).canonicalIssuanceTime();
+
+    var result = f.owner.listRealmScopes(f.token, "tenant", "world").getFirst();
+
+    assertThat(result.scope().evaluatedAt()).isEqualTo(databaseTime.toString());
+    assertThat(f.retained.get()).isEqualTo(result.scope());
+  }
+
+  @Test
   void genuineAbsenceAndClosedEnrollmentStillProduceOnlyACanonicalPublicSelectorScope() {
     Fixture f = new Fixture(300000L);
 
@@ -878,6 +891,12 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
               })
           .when(scopes)
           .insertCanonical(anyLong(), any(), any());
+      when(scopes.canonicalIssuanceTime())
+          .thenAnswer(
+              invocation -> {
+                assertInsideSql();
+                return Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+              });
       when(scopes.findCanonical(any()))
           .thenAnswer(
               invocation -> {

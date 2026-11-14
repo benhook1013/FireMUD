@@ -27,6 +27,20 @@ class AccountRecentReauthenticationPolicyTest {
   }
 
   @Test
+  void billingPurposeHasDistinctDigestAndCannotReuseGameCreationPolicyEvidence() {
+    var platform = new PlatformValue(1L, 300L, 30L);
+    var deployment = new DeploymentValue(1L, 300L, 30L);
+    var game = AccountRecentReauthenticationPolicy.resolve(platform, deployment);
+    var billing =
+        AccountRecentReauthenticationPolicy.resolve(
+            AccountRecentReauthenticationPolicy.BILLING_PURPOSE, platform, deployment);
+    assertThat(billing.effectivePolicyVersion()).isNotEqualTo(game.effectivePolicyVersion());
+    assertThatThrownBy(
+            () -> AccountRecentReauthenticationPolicy.resolve("UNRELATED", platform, deployment))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void deploymentCannotLoosenPlatformOrExceedHardAgeAndSkewLimits() {
     var platform = new PlatformValue(1L, 300L, 30L);
     assertThatThrownBy(

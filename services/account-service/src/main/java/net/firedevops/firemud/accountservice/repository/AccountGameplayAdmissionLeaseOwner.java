@@ -68,12 +68,23 @@ public final class AccountGameplayAdmissionLeaseOwner {
   private final String workloadNamespace;
   private final AccountGameplayAdmissionOriginalCommitExecutor originalCommitExecutor;
   private final AccountGameplayAdmissionOriginalAckReceiptCommitExecutor receiptExecutor;
+  private final AccountGameplayAdmissionPaidSource paidSource;
 
   public AccountGameplayAdmissionLeaseOwner(
       AccountGameplayAdmissionCallerVerifier callerVerifier,
       CanonicalGameplayAdmissionDecisionReadClient decisionReadClient,
       String workloadNamespace,
       DataSource dataSource) {
+    this(callerVerifier, decisionReadClient, workloadNamespace, dataSource, null);
+  }
+
+  /** Explicit paid source composition; the four-argument form remains DEMO-only. */
+  public AccountGameplayAdmissionLeaseOwner(
+      AccountGameplayAdmissionCallerVerifier callerVerifier,
+      CanonicalGameplayAdmissionDecisionReadClient decisionReadClient,
+      String workloadNamespace,
+      DataSource dataSource,
+      AccountGameplayAdmissionPaidSource paidSource) {
     this.callerVerifier =
         Objects.requireNonNull(callerVerifier, "Account caller verifier required");
     this.decisionReadClient =
@@ -83,6 +94,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
     }
     this.workloadNamespace = workloadNamespace;
     this.dataSource = Objects.requireNonNull(dataSource, "Account DataSource required");
+    this.paidSource = paidSource;
     originalCommitExecutor = new AccountGameplayAdmissionOriginalCommitExecutor(dataSource);
     receiptExecutor = new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(dataSource);
   }
@@ -148,7 +160,8 @@ public final class AccountGameplayAdmissionLeaseOwner {
                       expectedTarget,
                       request.bindingGeneration(),
                       current.currentSources().leaseSourceFields(),
-                      caller.identity().expiresAtEpochSecond());
+                      caller.identity().expiresAtEpochSecond(),
+                      current.currentSources().sourceValidUntilMs());
               return repository.beginPending(evidence);
             });
 
@@ -182,7 +195,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
     // Game Session is allowed to have advanced the decision beyond PROVISIONAL after the original
     // physical COMMIT, so do this narrowly fenced read before asking for a fresh provisional view.
     AccountGameplayAdmissionLeaseOperation retainedBeforeRemoteReads =
-        readExactForFinalization(caller, lease);
+        readExactWithCurrentCallerOnly(caller, lease);
     if (retainedBeforeRemoteReads.state()
         == AccountGameplayAdmissionLeaseOperation.State.COMMITTED) {
       OriginalAckReceiptEvidence receipt =
@@ -220,7 +233,8 @@ public final class AccountGameplayAdmissionLeaseOwner {
       throw unavailable();
     }
 
-    AccountGameplayAdmissionLeaseOperation beforeCommit = readExactForFinalization(caller, lease);
+    AccountGameplayAdmissionLeaseOperation beforeCommit =
+        readExactWithCurrentCallerOnly(caller, lease);
 
     if (beforeCommit.state() == AccountGameplayAdmissionLeaseOperation.State.COMMITTED) {
       OriginalAckReceiptEvidence receipt =
@@ -247,9 +261,14 @@ public final class AccountGameplayAdmissionLeaseOwner {
     // through this executor to reconstruct a late acknowledgement.
     OriginalCommitAcknowledgement acknowledgement;
     try {
+      var observed = prepareCurrentSources(caller, tenantId(lease));
       acknowledgement =
           originalCommitExecutor.executeWithCurrentSources(
-              lease, request.bindingDecisionId(), workloadNamespace, caller.currentCandidate());
+              lease,
+              request.bindingDecisionId(),
+              workloadNamespace,
+              caller.currentCandidate(),
+              observed);
     } catch (RuntimeException unavailable) {
       throw unavailable();
     }
@@ -694,7 +713,8 @@ public final class AccountGameplayAdmissionLeaseOwner {
       Target target,
       BigInteger bindingGeneration,
       Map<String, Object> currentSourceFields,
-      long tokenExpiryEpochSecond) {
+      long tokenExpiryEpochSecond,
+      Long sourceValidUntilMs) {
     Long databaseNow =
         dsl.fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
             .get(0, Long.class);
@@ -706,6 +726,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
           Math.min(
               Math.addExact(now, AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS),
               Math.multiplyExact(tokenExpiryEpochSecond, 1000L));
+      if (sourceValidUntilMs != null) originalExpiry = Math.min(originalExpiry, sourceValidUntilMs);
     } catch (ArithmeticException overflow) {
       throw unavailable();
     }
@@ -750,13 +771,14 @@ public final class AccountGameplayAdmissionLeaseOwner {
     Objects.requireNonNull(caller);
     Objects.requireNonNull(tenantId);
     try {
+      var observed = prepareCurrentSources(caller, tenantId);
       return inWritableSerializableTransaction(
           dsl -> {
             AccountGameplayAdmissionCurrentSources currentSources =
                 AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
             var current =
                 currentSources.readCurrentPublicProductionNew(
-                    tenantId, caller.identity().tokenJti(), caller.currentCandidate());
+                    tenantId, caller.identity().tokenJti(), caller.currentCandidate(), observed);
             return operation.apply(
                 new CurrentAccountOperation(
                     dsl, current, new AccountGameplayAdmissionLeaseRepository(dsl)));
@@ -766,6 +788,21 @@ public final class AccountGameplayAdmissionLeaseOwner {
     } catch (RuntimeException unavailable) {
       throw unavailable();
     }
+  }
+
+  private AccountGameplayAdmissionCurrentSources.Observed prepareCurrentSources(
+      VerifiedCaller caller, UUID tenantId) {
+    var prepared =
+        inWritableSerializableTransaction(
+            dsl ->
+                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace)
+                    .prepareCurrentPublicProductionNew(
+                        tenantId,
+                        caller.identity().tokenJti(),
+                        caller.currentCandidate(),
+                        paidSource));
+    requireNoAmbientSql();
+    return prepared.observeOutsideSql();
   }
 
   /** Exact non-admitting read after fresh current caller/global Account/token SQL proof. */
@@ -780,39 +817,6 @@ public final class AccountGameplayAdmissionLeaseOwner {
             return new AccountGameplayAdmissionLeaseRepository(dsl)
                 .readExact(lease)
                 .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
-          });
-    } catch (StatusRuntimeException failure) {
-      throw failure;
-    } catch (RuntimeException unavailable) {
-      throw unavailable();
-    }
-  }
-
-  /**
-   * Exact finalization lookup: terminal history needs only current caller proof, while PENDING
-   * still requires the complete current public-production tenant source tuple in this transaction.
-   */
-  private AccountGameplayAdmissionLeaseOperation readExactForFinalization(
-      VerifiedCaller caller, AccountGameplayAdmissionLeaseEvidence lease) {
-    try {
-      return inWritableSerializableTransaction(
-          dsl -> {
-            AccountGameplayAdmissionCurrentSources currentSources =
-                AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
-            currentSources.requireCurrentAuthenticatedCallerOnly(caller.currentCandidate());
-            AccountGameplayAdmissionLeaseRepository repository =
-                new AccountGameplayAdmissionLeaseRepository(dsl);
-            AccountGameplayAdmissionLeaseOperation operation =
-                repository
-                    .readExact(lease)
-                    .orElseThrow(AccountGameplayAdmissionLeaseOwner::unavailable);
-            if (operation.state() == AccountGameplayAdmissionLeaseOperation.State.PENDING) {
-              var current =
-                  currentSources.readCurrentPublicProductionNew(
-                      tenantId(lease), caller.identity().tokenJti(), caller.currentCandidate());
-              current.requireMatchesOriginalLease(lease);
-            }
-            return operation;
           });
     } catch (StatusRuntimeException failure) {
       throw failure;

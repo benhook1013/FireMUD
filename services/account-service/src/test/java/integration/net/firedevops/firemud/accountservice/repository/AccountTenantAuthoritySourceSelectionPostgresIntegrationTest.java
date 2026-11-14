@@ -13,7 +13,6 @@ import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
-import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Outcome;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceKind;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
@@ -327,24 +326,7 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
     }
 
     private UUID activatePaid() {
-      var claim =
-          fixture
-              .service()
-              .claimProvisioning(fixture.creation().requestId(), 1L, UUID.randomUUID())
-              .claim();
-      UUID requestId = UUID.randomUUID();
-      assertThat(
-              fixture
-                  .service()
-                  .reconcile(
-                      requestId,
-                      fixture.creation().requestId(),
-                      claim.subscriptionRowVersion(),
-                      fixture.providerId(),
-                      claim.attemptId())
-                  .outcome())
-          .isEqualTo(Outcome.COMMITTED);
-      return requestId;
+      return fixture.completeFirstInvoice().requestId();
     }
   }
 }

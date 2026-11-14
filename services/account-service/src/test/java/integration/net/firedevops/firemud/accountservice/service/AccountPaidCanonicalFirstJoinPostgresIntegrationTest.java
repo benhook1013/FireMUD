@@ -10,6 +10,7 @@ import integration.net.firedevops.firemud.accountservice.repository.AccountPostg
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -89,8 +90,10 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
     Context c = context(false);
     int reads = c.hosting.transport().reads();
     var first = c.commit(c.observed);
+    var committedAuditRows = c.auditRows();
     var replay = c.commit(c.observed);
     assertThat(replay).isEqualTo(first);
+    assertThat(c.auditRows()).isEqualTo(committedAuditRows);
     assertThat(c.hosting.transport().reads()).isEqualTo(reads);
     assertThat(c.scope.accountId()).isNotEqualTo(c.hosting.accountUuid());
     var retained =
@@ -104,7 +107,7 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
         .containsKey(c.hosting.tenantId().toString());
     assertThat(c.count("account_tenant_membership")).isEqualTo(1);
     assertThat(c.count("account_tenant_membership_role_snapshots")).isEqualTo(1);
-    assertThat(c.count("account_audit_outbox")).isEqualTo(1);
+    c.assertCommittedAudit(first);
     assertThat(c.operation().status()).isEqualTo("COMMITTED");
     assertThat(c.operation().terminalProof()).isEqualTo(first);
   }
@@ -125,7 +128,7 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
     var committed = c.commit(recovered);
     assertThat(committed.entitlementVersion()).isEqualTo(original.entitlementVersion());
     assertThat(c.count("account_tenant_membership")).isEqualTo(1);
-    assertThat(c.count("account_audit_outbox")).isEqualTo(1);
+    c.assertCommittedAudit(committed);
   }
 
   @Test
@@ -206,23 +209,11 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
     private final String requestId = UUID.randomUUID().toString();
     private final ReadFence fence;
     private final StripeHostingSubscriptionObserver.Result observed;
+    private final List<Map<String, Object>> paidAuditRows;
 
     private Context(CanonicalHostingSubscriptionTestFixture.Fixture hosting, boolean wrongPolicy) {
       this.hosting = hosting;
-      var claim =
-          hosting
-              .service()
-              .claimProvisioning(hosting.creation().requestId(), 1, UUID.randomUUID())
-              .claim();
-      var committed =
-          hosting
-              .service()
-              .reconcile(
-                  UUID.randomUUID(),
-                  hosting.creation().requestId(),
-                  claim.subscriptionRowVersion(),
-                  hosting.providerId(),
-                  claim.attemptId());
+      var committed = hosting.completeFirstInvoice();
       assertThat(committed.outcome())
           .isEqualTo(
               net.firedevops.firemud.accountservice.repository
@@ -336,6 +327,8 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
                     receipt.allowPublicJoin(),
                     receipt.entitlementVersion() + (wrongPolicy ? 1 : 0));
               });
+      paidAuditRows = auditRows();
+      assertThat(paidAuditRows).isNotEmpty();
     }
 
     private AccountJoinOperationRepository.CanonicalJoinTerminalProof commit(
@@ -381,12 +374,48 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       return hosting.dsl().fetchCount(DSL.table(table));
     }
 
+    private List<Map<String, Object>> auditRows() {
+      return hosting
+          .dsl()
+          .fetch(
+              "SELECT audit_event_id, row_to_json(audit)::text AS row_image, xmin::text AS row_xmin "
+                  + "FROM account_audit_outbox audit ORDER BY audit_event_id")
+          .intoMaps();
+    }
+
+    private void assertCommittedAudit(
+        AccountJoinOperationRepository.CanonicalJoinTerminalProof proof) {
+      assertThat(
+              hosting
+                  .dsl()
+                  .fetch(
+                      "SELECT audit_event_id, row_to_json(audit)::text AS row_image, xmin::text AS row_xmin "
+                          + "FROM account_audit_outbox audit WHERE audit_event_id <> ? ORDER BY audit_event_id",
+                      proof.auditEventId())
+                  .intoMaps())
+          .isEqualTo(paidAuditRows);
+      var joined =
+          Objects.requireNonNull(
+              hosting
+                  .transaction()
+                  .execute(
+                      status ->
+                          new AccountAuditOutboxRepository(hosting.dsl())
+                              .findCanonicalTenantEnvelopeForUpdate(proof.auditEventId())
+                              .orElseThrow()));
+      assertThat(joined.auditEventId()).isEqualTo(proof.auditEventId());
+      assertThat(joined.eventType()).isEqualTo("ACCOUNT_JOINED_PUBLIC_PRODUCTION");
+      assertThat(joined.tenantUuid()).isEqualTo(scope.tenantId());
+      assertThat(joined.payloadDigest()).isEqualTo(proof.auditPayloadDigest());
+      assertThat(joined.occurredAt()).isEqualTo(proof.auditOccurredAt());
+    }
+
     private void assertRolledBack(
         AccountJoinOperationRepository.CanonicalJoinOperationEvidence original) {
       assertThat(operation()).isEqualTo(original);
       assertThat(count("account_tenant_membership")).isZero();
       assertThat(count("account_tenant_membership_role_snapshots")).isZero();
-      assertThat(count("account_audit_outbox")).isZero();
+      assertThat(auditRows()).isEqualTo(paidAuditRows);
       var checkpoint = hosting.transaction().execute(status -> outbox.readCheckpoint(stream()));
       assertThat(checkpoint).isEmpty();
       var pair =

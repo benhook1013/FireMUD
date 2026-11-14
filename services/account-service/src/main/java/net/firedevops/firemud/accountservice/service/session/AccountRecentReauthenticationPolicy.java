@@ -15,12 +15,25 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 /** Account-owned versioned platform/deployment policy for tenantless game creation reauth. */
 public final class AccountRecentReauthenticationPolicy {
   public static final String PURPOSE = "SELF_SERVICE_GAME_CREATION";
+  public static final String BILLING_PURPOSE = "HOSTING_FIRST_INVOICE_PAYMENT";
+
+  public static boolean supportedPurpose(String purpose) {
+    return PURPOSE.equals(purpose) || BILLING_PURPOSE.equals(purpose);
+  }
+
   public static final long PLATFORM_RECENT_AGE_MAX_SECONDS = 300L;
   public static final long PLATFORM_CLOCK_SKEW_MAX_SECONDS = 30L;
 
   private AccountRecentReauthenticationPolicy() {}
 
   public static Effective resolve(PlatformValue platform, DeploymentValue deployment) {
+    return resolve(PURPOSE, platform, deployment);
+  }
+
+  public static Effective resolve(
+      String purpose, PlatformValue platform, DeploymentValue deployment) {
+    if (!supportedPurpose(purpose))
+      throw new IllegalArgumentException("Unsupported reauthentication purpose");
     Objects.requireNonNull(platform, "Current platform policy is required");
     Objects.requireNonNull(deployment, "Current deployment policy is required");
     requireBounded(platform.version(), platform.recentAgeSeconds(), platform.maxClockSkewSeconds());
@@ -40,7 +53,7 @@ public final class AccountRecentReauthenticationPolicy {
             + HexFormat.of()
                 .formatHex(
                     sha256(
-                        canonicalPolicy(platform, deployment, effectiveAge, effectiveSkew)
+                        canonicalPolicy(purpose, platform, deployment, effectiveAge, effectiveSkew)
                             .getBytes(StandardCharsets.UTF_8)));
     return new Effective(
         platform.version(), deployment.version(), effectiveAge, effectiveSkew, version);
@@ -104,13 +117,14 @@ public final class AccountRecentReauthenticationPolicy {
   }
 
   private static String canonicalPolicy(
+      String purpose,
       PlatformValue platform,
       DeploymentValue deployment,
       long effectiveAgeSeconds,
       long effectiveSkewSeconds) {
     return "account-recent-reauthentication-policy/v1\n"
         + "purpose="
-        + PURPOSE
+        + purpose
         + "\nplatformVersion="
         + platform.version()
         + "\nplatformRecentAgeSeconds="

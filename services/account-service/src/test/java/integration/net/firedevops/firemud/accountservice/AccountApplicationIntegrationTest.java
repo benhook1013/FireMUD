@@ -1430,20 +1430,7 @@ class AccountApplicationIntegrationTest {
         paid =
             integration.net.firedevops.firemud.accountservice.repository
                 .CanonicalHostingSubscriptionTestFixture.create(dataSource);
-        var claim =
-            paid.service()
-                .claimProvisioning(paid.creation().requestId(), 1, UUID.randomUUID())
-                .claim();
-        assertThat(
-                paid.service()
-                    .reconcile(
-                        UUID.randomUUID(),
-                        paid.creation().requestId(),
-                        claim.subscriptionRowVersion(),
-                        paid.providerId(),
-                        claim.attemptId())
-                    .outcome())
-            .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Outcome.COMMITTED);
+        paid.completeFirstInvoice();
         hosting = paid.lifecycleRepository();
         observer = paid.observer();
         tenantId = paid.tenantId();

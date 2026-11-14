@@ -126,3 +126,6 @@ server:
     enabled: true
     mime-types: application/json,application/xml,text/html,text/xml,text/plain
     min-response-size: 1024
+
+# First-invoice checkout remains deliberately unregistered. Its explicit composition requires
+# protected webhook custody and versioned billing policies; no payment or route is enabled here.
