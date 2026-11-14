@@ -915,7 +915,6 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 "controlled-test",
                 "controlled-sha",
                 "controlled-image");
-        var bindingInventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
 
         var callbackEntered = new java.util.concurrent.CountDownLatch(1);
         var callbackRelease = new java.util.concurrent.CountDownLatch(1);
@@ -999,7 +998,6 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 "controlled-test",
                 "controlled-sha",
                 "controlled-image");
-        var bindingInventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
 
         var entered = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
