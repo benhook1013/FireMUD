@@ -978,7 +978,15 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
   }
 
   private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner withDeadline(long deadline) {
-    requireDeadline(clock.millis(), deadline);
+    long now = clock.millis();
+    requireDeadline(now, deadline);
+    long boundedDeadline;
+    try {
+      boundedDeadline = Math.min(deadline, Math.addExact(now, COMMAND_TIMEOUT_MILLIS));
+    } catch (ArithmeticException invalid) {
+      throw unavailable();
+    }
+    if (boundedDeadline == Long.MAX_VALUE) throw unavailable();
     return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
         redisClient,
         catalog,
@@ -987,7 +995,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
         scopedConnection,
         remainingCommandMillis,
         scopedClose,
-        Math.min(operationDeadlineMillis, deadline));
+        Math.min(operationDeadlineMillis, boundedDeadline));
   }
 
   private long commandWaitMillis() {
