@@ -62,6 +62,7 @@ import net.firedevops.firemud.accountservice.repository.AccountSubscriptionInten
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceKind;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.security.AccountPlayerAdmissionEntitlementWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner.Request;
@@ -114,6 +115,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class AccountPlayerAdmissionEntitlementOwnerTest {
   private static final UUID ACCOUNT = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID TENANT = UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID BILLING_OWNER = UUID.fromString("00000000-0000-4000-8000-000000000001");
   private static final String ISSUER = "firemud-account-service";
   private static final String PEER = "spiffe://firemud/ns/prod/sa/game-session-service";
   private static final String PREFIX = "account:auth-authority:v1:";
@@ -124,6 +126,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
   void clearTransactionFlags() {
     TransactionSynchronizationManager.setActualTransactionActive(false);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+    TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(null);
   }
 
   @Test
@@ -165,7 +168,8 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(binding.get("playableStateScope")).isEqualTo("SHARED");
     assertThat(binding.get("characterCreationPolicy")).isEqualTo("PRESEEDED_ONLY");
     assertThat(value.toString()).doesNotContain("controlled-token", f.scope.connectScopeId());
-    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
+    assertThat(f.transactions.events)
+        .containsExactly("begin", "commit", "begin", "commit", "begin", "commit");
     verifyNoInteractions(f.hosting, f.observer);
   }
 
@@ -217,6 +221,75 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     order.verify(f.demos).readCurrent(TENANT);
   }
 
+  @Test
+  void capacityEvidenceFreshnessUsesDatabaseTimeWhenApplicationClockTrails() throws Exception {
+    Fixture f = new Fixture(true);
+    f.time.set(NOW.minusSeconds(1));
+    f.databaseTime.set(NOW);
+
+    var value = f.owner.evaluate(f.request, "controlled-token");
+
+    assertThat(value.evaluatedAt()).isEqualTo(NOW);
+    assertThat(value.evaluatedAt()).isAfter(f.time.get());
+  }
+
+  @Test
+  void capacityCaptureRejectsConnectScopeExpiredAtDatabaseStamp() throws Exception {
+    Fixture f = new Fixture(false);
+    f.databaseTime.set(NOW.plusSeconds(60));
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable")
+        .hasNoCause();
+    assertThat(f.retainedCapacity).isEmpty();
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "rollback");
+  }
+
+  @Test
+  void capacityCaptureRejectsPaidReceiptExpiredAtDatabaseStamp() throws Exception {
+    Fixture f = new Fixture(true);
+    when(f.sources.readCurrentSourceSelection(TENANT))
+        .thenReturn(new SourceSelection(SourceKind.PAID_HOSTING, f.tenantEvent));
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    when(f.hosting.prepareCurrentRead(TENANT)).thenReturn(fence);
+    when(f.observer.observe(fence.binding())).thenReturn(observed);
+    var receipt = f.receipt(Status.ACTIVE);
+    receipt =
+        new AccountHostingSubscriptionCurrentReceipt(
+            receipt.current(),
+            receipt.receiptRequestId(),
+            receipt.subscriptionStatus(),
+            receipt.gameplayAvailable(),
+            receipt.allowPublicJoin(),
+            receipt.allowNewGameplayBindings(),
+            receipt.allowNewInstanceStarts(),
+            receipt.entitlementVersion(),
+            receipt.tenantBillingSequence(),
+            receipt.billingEventId(),
+            receipt.billingEventDigest(),
+            receipt.tenantAuthorityEvent(),
+            receipt.rawProviderStatus(),
+            receipt.currentPeriodStart(),
+            receipt.currentPeriodEnd(),
+            receipt.cancelAtPeriodEnd(),
+            receipt.cancelAt(),
+            receipt.cutoffAt(),
+            receipt.evaluatedAt(),
+            NOW.plusSeconds(1));
+    when(f.hosting.readCurrent(fence, observed)).thenReturn(receipt);
+    f.databaseTime.set(NOW.plusSeconds(1));
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable")
+        .hasNoCause();
+    assertThat(f.retainedCapacity).isEmpty();
+    assertThat(f.transactions.events)
+        .containsExactly("begin", "commit", "begin", "commit", "begin", "rollback");
+  }
+
   @ParameterizedTest
   @EnumSource(Status.class)
   void paidReadRunsProviderOutsideSqlThenCapturesCurrentReceiptAndPlayerInFinalTransaction(
@@ -236,12 +309,14 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .thenAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(f.accountLocks).isEmpty();
               return observed;
             });
     when(f.hosting.readCurrent(fence, observed))
         .thenAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(f.accountLocks).containsExactly(BILLING_OWNER, ACCOUNT);
               return f.receipt(status);
             });
     var value = f.owner.evaluate(f.request, "controlled-token");
@@ -257,12 +332,15 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .containsEntry("allowNewGameplayBindings", available && status != Status.GRACE)
         .containsEntry("allowNewInstanceStarts", available && status != Status.GRACE);
     assertThat(f.transactions.events)
-        .containsExactly("begin", "commit", "begin", "commit", "begin", "commit");
-    var order = inOrder(f.observer, f.accounts, f.hosting);
+        .containsExactly(
+            "begin", "commit", "begin", "commit", "begin", "commit", "begin", "commit");
+    var order = inOrder(f.hosting, f.observer, f.accounts, f.issuances, f.memberships);
     order.verify(f.hosting).prepareCurrentRead(TENANT);
     order.verify(f.observer).observe(fence.binding());
-    order.verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
     order.verify(f.hosting).readCurrent(fence, observed);
+    order.verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
+    order.verify(f.issuances).readCurrentCommittedCandidateByJti(f.identity.tokenJti());
+    order.verify(f.memberships).readCurrent(ACCOUNT, TENANT);
   }
 
   @ParameterizedTest
@@ -472,6 +550,16 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     verifyNoInteractions(f.demos);
+  }
+
+  @Test
+  void callerDeadlineExpiresDuringFinalClockCommit() throws Exception {
+    Fixture f = new Fixture(false);
+    f.transactions.afterThirdCommit = () -> f.time.set(NOW.plusSeconds(60));
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
+    assertThat(f.transactions.events)
+        .containsExactly("begin", "commit", "begin", "commit", "begin", "commit");
   }
 
   @Test
@@ -951,6 +1039,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
 
   private static final class Fixture {
     private final AccountRepository accounts = mock(AccountRepository.class);
+    private final DSLContext dsl = mock(DSLContext.class);
     private final AccountGameplayAdmissionCallerVerifier callers =
         mock(AccountGameplayAdmissionCallerVerifier.class);
     private final AccountGameplayDelegationIssuanceRepository issuances =
@@ -969,10 +1058,13 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     private final CanonicalGameplayAdmissionDecisionReadClient targets =
         mock(CanonicalGameplayAdmissionDecisionReadClient.class);
     private final RecordingTransactions transactions = new RecordingTransactions();
+    private final List<UUID> accountLocks = new ArrayList<>();
     private final Map<String, org.jooq.Record> retainedCapacity = new LinkedHashMap<>();
     private boolean refuseCapacityRetention;
     private boolean missingCapacityRetentionReadback;
     private final java.util.concurrent.atomic.AtomicReference<Instant> time =
+        new java.util.concurrent.atomic.AtomicReference<>(NOW);
+    private final java.util.concurrent.atomic.AtomicReference<Instant> databaseTime =
         new java.util.concurrent.atomic.AtomicReference<>(NOW);
     private final FreshTenantCreationEvidence source = source();
     private final TenantAuthorityEventV1Codec.Event tenantEvent = tenantEvent(source);
@@ -1058,7 +1150,6 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
               scope.connectScopeId(),
               PEER);
       controlledTarget(targets);
-      var dsl = mock(DSLContext.class);
       // Controlled retention content, not physical atomicity or Account source authentication.
       when(dsl.execute(anyString(), any(Object[].class)))
           .thenAnswer(
@@ -1092,11 +1183,30 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
           .thenAnswer(
               invocation -> {
                 String sql = invocation.getArgument(0, String.class);
+                if (sql.startsWith(
+                    "SELECT owner_account_uuid FROM account_tenant_billing_owners ")) {
+                  var owner = mock(org.jooq.Record.class);
+                  when(owner.get("owner_account_uuid", UUID.class)).thenReturn(BILLING_OWNER);
+                  return owner;
+                }
+                if (sql.startsWith("SELECT account_uuid FROM accounts WHERE account_uuid = ?")) {
+                  Object[] values = (Object[]) invocation.getRawArguments()[1];
+                  UUID accountId = (UUID) values[0];
+                  accountLocks.add(accountId);
+                  var accountLock = mock(org.jooq.Record.class);
+                  when(accountLock.get("account_uuid", UUID.class)).thenReturn(accountId);
+                  return accountLock;
+                }
                 if (!sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
                   throw new AssertionError(sql);
                 Object[] values = (Object[]) invocation.getRawArguments()[1];
                 return retainedCapacity.get((String) values[0]);
               });
+      var evaluationTime = mock(org.jooq.Record.class);
+      when(evaluationTime.get("observed_at", java.time.OffsetDateTime.class))
+          .thenAnswer(invocation -> AccountTenantCapacityRepository.at(databaseTime.get()));
+      when(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at"))
+          .thenAnswer(invocation -> evaluationTime);
       var connection = mock(Connection.class);
       when(connection.getTransactionIsolation()).thenReturn(Connection.TRANSACTION_SERIALIZABLE);
       doAnswer(
@@ -1361,6 +1471,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     private final List<String> events = new ArrayList<>();
     private boolean failCommit;
     private Runnable afterSecondCommit = () -> {};
+    private Runnable afterThirdCommit = () -> {};
 
     @Override
     public TransactionStatus getTransaction(
@@ -1375,6 +1486,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
       }
       events.add("begin");
       TransactionSynchronizationManager.setActualTransactionActive(true);
+      if (definition != null) {
+        TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(
+            definition.getIsolationLevel());
+      }
       return new SimpleTransactionStatus();
     }
 
@@ -1382,7 +1497,9 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     public void commit(TransactionStatus status) {
       events.add("commit");
       TransactionSynchronizationManager.setActualTransactionActive(false);
+      TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(null);
       if (events.size() == 4) afterSecondCommit.run();
+      if (events.size() == 6) afterThirdCommit.run();
       if (failCommit && events.size() == 4)
         throw new IllegalStateException("controlled commit failure");
     }
@@ -1391,6 +1508,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     public void rollback(TransactionStatus status) {
       events.add("rollback");
       TransactionSynchronizationManager.setActualTransactionActive(false);
+      TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(null);
     }
   }
 }

@@ -524,21 +524,7 @@ class AccountRepositoryIntegrationTest {
   @Test
   void canonicalSubscriptionOriginalBindingLocksRequiredOwnerChainThroughCommit() throws Exception {
     var fixture = CanonicalHostingSubscriptionTestFixture.create(dataSource);
-    var claim =
-        fixture
-            .service()
-            .claimProvisioning(fixture.creation().requestId(), 1, UUID.randomUUID())
-            .claim();
-    assertThat(
-            fixture
-                .service()
-                .reconcile(
-                    UUID.randomUUID(),
-                    fixture.creation().requestId(),
-                    claim.subscriptionRowVersion(),
-                    fixture.providerId(),
-                    claim.attemptId())
-                .outcome())
+    assertThat(fixture.completeFirstInvoice().outcome())
         .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Outcome.COMMITTED);
     var receipt = fixture.service().readCurrent(fixture.tenantId());
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);

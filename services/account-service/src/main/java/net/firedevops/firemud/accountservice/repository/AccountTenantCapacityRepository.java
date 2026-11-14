@@ -1,7 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -141,10 +140,24 @@ public final class AccountTenantCapacityRepository {
         || history.get("owner_readback", byte[].class) == null) throw conflict();
   }
 
+  /** Fresh database time, not the transaction-start timestamp or an injected application clock. */
+  public void requireFresh(Evidence evidence) {
+    transaction();
+    requireCurrentLifetime(evidence, databaseNow(dsl));
+  }
+
+  /**
+   * Reads PostgreSQL wall time for evidence creation/freshness checks across application clocks.
+   */
+  public static Instant databaseNow(DSLContext exactDsl) {
+    return time(
+        Objects.requireNonNull(exactDsl).fetchSingle("SELECT clock_timestamp() AS observed_at"),
+        "observed_at");
+  }
+
   /** Retains acceptance only after the locked quota check, in the same reservation transaction. */
-  public Optional<Result> createIfQuotaAvailable(Request request, Instant expiresAt, Clock clock) {
-    Record usage = usage(request);
-    requireCurrentLifetime(request.evidence(), clock.instant());
+  public Optional<Result> createIfQuotaAvailable(Request request, Record usage, Instant expiresAt) {
+    requireFresh(request.evidence());
     long delta = Objects.requireNonNull(request.capacityDelta());
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
     if (delta > request.evidence().quota() - occupied) return Optional.empty();

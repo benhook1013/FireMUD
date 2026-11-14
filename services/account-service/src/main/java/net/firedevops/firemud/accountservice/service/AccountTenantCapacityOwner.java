@@ -36,6 +36,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrp
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.postgresql.util.PSQLException;
 import org.springframework.dao.CannotSerializeTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -54,6 +55,8 @@ import org.springframework.transaction.support.TransactionTemplate;
     justification = "Private Account owner collaborators.")
 public final class AccountTenantCapacityOwner {
   private static final int TRANSACTION_TIMEOUT_SECONDS = 5;
+  private static final String CAPACITY_ATTEMPT_FRESHNESS_CONSTRAINT =
+      "account_tenant_capacity_attempt_freshness";
   private static final int MAX_SERIALIZATION_ATTEMPTS = 4;
   private static final long INITIAL_RETRY_DELAY_MILLIS = 5;
 
@@ -111,12 +114,15 @@ public final class AccountTenantCapacityOwner {
               UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
               if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
               lockPlayerAccount(request);
+              capacity.requireRetained(request.evidence());
+              // Acquire the usage lock before qualifying the remaining lifetime.
+              Record usage = capacity.usage(request);
               current(request);
               requireSupportedShape(request);
               if (!request.evidence().permitsCreation())
                 throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
               var reservation =
-                  capacity.createIfQuotaAvailable(request, request.evidence().expiresAt(), clock);
+                  capacity.createIfQuotaAvailable(request, usage, request.evidence().expiresAt());
               if (reservation.isPresent()) {
                 return new CommitDecision(reservation.orElseThrow(), null);
               }
@@ -163,7 +169,7 @@ public final class AccountTenantCapacityOwner {
           current(next);
           requireSupportedShape(next);
           originDecisions.accept(next);
-          requireCurrentLifetime(next.evidence(), clock.instant());
+          capacity.requireFresh(next.evidence());
           int history =
               dsl.execute(
                   "INSERT INTO account_tenant_capacity_attempt_history "
@@ -207,7 +213,7 @@ public final class AccountTenantCapacityOwner {
     var evidence = request.evidence();
     capacity.requireRetained(evidence);
     Instant now = clock.instant();
-    requireCurrentLifetime(evidence, now);
+    requireCurrentLifetime(evidence, AccountTenantCapacityRepository.databaseNow(dsl));
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
     var parsed =
         RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
@@ -341,6 +347,20 @@ public final class AccountTenantCapacityOwner {
     return !caller.isCancelled() && !deadline.isExpired();
   }
 
+  private static boolean capacityAttemptFreshnessFailure(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof PSQLException postgresFailure
+          && "23514".equals(postgresFailure.getSQLState())) {
+        var serverError = postgresFailure.getServerErrorMessage();
+        if (serverError != null
+            && CAPACITY_ATTEMPT_FRESHNESS_CONSTRAINT.equals(serverError.getConstraint())) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   private static boolean serializationFailure(RuntimeException failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
       if (cause instanceof CannotSerializeTransactionException
@@ -354,18 +374,24 @@ public final class AccountTenantCapacityOwner {
   <T> T inTransaction(Supplier<T> action) {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
-    return Objects.requireNonNull(
-        transaction.execute(
-            status -> {
-              AccountTenantCapacityRepository.transaction();
-              dsl.connection(
-                  connection -> {
-                    if (connection.getAutoCommit()
-                        || connection.isReadOnly()
-                        || connection.getTransactionIsolation()
-                            != Connection.TRANSACTION_SERIALIZABLE) throw unavailable();
-                  });
-              return action.get();
-            }));
+    try {
+      return Objects.requireNonNull(
+          transaction.execute(
+              status -> {
+                AccountTenantCapacityRepository.transaction();
+                dsl.connection(
+                    connection -> {
+                      if (connection.getAutoCommit()
+                          || connection.isReadOnly()
+                          || connection.getTransactionIsolation()
+                              != Connection.TRANSACTION_SERIALIZABLE) throw unavailable();
+                    });
+                return action.get();
+              }));
+    } catch (RuntimeException failure) {
+      if (capacityAttemptFreshnessFailure(failure))
+        throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+      throw failure;
+    }
   }
 }

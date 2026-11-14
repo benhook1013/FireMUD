@@ -1,9 +1,13 @@
 package net.firedevops.firemud.accountservice.service;
 
+import com.stripe.exception.StripeException;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.TerminalUnpaidObservation;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
+import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.ObservedSubscription;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionCurrentReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ClaimResult;
@@ -23,16 +27,31 @@ import org.springframework.transaction.support.TransactionTemplate;
 public final class AccountHostingSubscriptionLifecycleService {
   private final AccountHostingSubscriptionLifecycleRepository repository;
   private final StripeHostingSubscriptionObserver observer;
+  private final StripeHostingFirstInvoicePaymentClient firstInvoice;
   private final TransactionTemplate transaction;
+  private final TransactionTemplate unpaidCancellationTransaction;
 
   public AccountHostingSubscriptionLifecycleService(
       AccountHostingSubscriptionLifecycleRepository repository,
       StripeHostingSubscriptionObserver observer,
       PlatformTransactionManager transactions) {
+    this(repository, observer, transactions, null);
+  }
+
+  public AccountHostingSubscriptionLifecycleService(
+      AccountHostingSubscriptionLifecycleRepository repository,
+      StripeHostingSubscriptionObserver observer,
+      PlatformTransactionManager transactions,
+      StripeHostingFirstInvoicePaymentClient firstInvoice) {
     this.repository = Objects.requireNonNull(repository);
     this.observer = Objects.requireNonNull(observer);
+    this.firstInvoice = firstInvoice;
     transaction = new TransactionTemplate(Objects.requireNonNull(transactions));
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    unpaidCancellationTransaction = new TransactionTemplate(transactions);
+    unpaidCancellationTransaction.setPropagationBehavior(
+        TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    unpaidCancellationTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
   }
 
   public ClaimResult claimProvisioning(
@@ -71,6 +90,42 @@ public final class AccountHostingSubscriptionLifecycleService {
     var actualSdkResult = observer.observe(prepared.binding());
     return Objects.requireNonNull(
         transaction.execute(s -> repository.apply(prepared, actualSdkResult)));
+  }
+
+  /** Read-only Stripe reconciliation of an externally canceled first invoice. */
+  public TransitionResult reconcileUnpaidFirstInvoiceCancellation(
+      UUID requestId,
+      UUID creationRequestId,
+      long expectedRowVersion,
+      String providerSubscriptionId) {
+    requireNoAmbientTransaction();
+    var captured =
+        Objects.requireNonNull(
+            transaction.execute(
+                s ->
+                    repository.captureUnpaidFirstInvoiceCancellation(
+                        requestId, creationRequestId, expectedRowVersion, providerSubscriptionId)));
+    if (captured.replayResult() != null) return captured.replayResult();
+    var observed = observer.observe(captured.binding());
+    var invoice = captured.invoiceRequiringTerminalRead();
+    TerminalUnpaidObservation unpaid = null;
+    if (invoice != null
+        && firstInvoice != null
+        && observed instanceof ObservedSubscription subscription
+        && subscription.providerStatusIsCanceled()) {
+      try {
+        unpaid = firstInvoice.observeTerminalUnpaid(invoice);
+      } catch (StripeException | IllegalStateException unproven) {
+        return new TransitionResult(
+            requestId, Outcome.RECONCILING, 0, "UNPAID_CANCELLATION_UNCONFIRMED");
+      }
+    }
+    TerminalUnpaidObservation retainedObservation = unpaid;
+    return Objects.requireNonNull(
+        unpaidCancellationTransaction.execute(
+            s ->
+                repository.applyUnpaidFirstInvoiceCancellation(
+                    captured, observed, retainedObservation)));
   }
 
   /**

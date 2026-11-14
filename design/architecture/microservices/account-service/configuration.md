@@ -69,6 +69,10 @@ The source-only Control-UI issuance preparation reads the configured margin thro
 
 The gRPC schemas for this service live in [`protos/account/v1`](../../../../protos/account/v1). Use `./gradlew generateProto` to regenerate Java stubs when the definitions change.
 
+## Held first-invoice checkout configuration
+
+The prepared [first-invoice owner](./stripe-integration.md#first-invoice-confirmation-and-completion) has no enabling flag or automatically registered bean/controller. Explicit composition requires the Account Stripe client, a protected webhook signing secret (`firemud.payment.hosting-webhook-secret`), a public Stripe publishable key for the provider-authentication client, finite provider transport limits and genuine current Account/control-ui owners. Secrets must not be logged or exposed through property diagnostics. Separate versioned billing-purpose reauthentication policies and exact commercial billing-policy rows are required; absent rows refuse and no migration seeds a default. Configuration alone does not clear registration or custody gates.
+
 ## Canonical Gameplay LOGIN Receiving
 
 Canonical credential envelopes and exact-original retirement share the existing AccountService registration through `AccountGameplayAuthenticateReceiver`. The receiver, complete initial-LOGIN source graph and protected source selection all require `firemud.account.gameplay-login.enabled=true`; they are absent by default. `AccountGameplayLoginSourceConfiguration` composes the existing issuance/evidence/encrypted-response repositories, protected signer and trusted JWKS reader, issuer/account projection publisher, token registry, commit, activation and exact response-recovery owners. Registration supplies no synthetic owner evidence and performs no enrollment, key generation, publication or Redis mutation.
