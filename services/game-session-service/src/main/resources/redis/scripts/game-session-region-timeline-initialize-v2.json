@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.region-timeline-initialize.v2",
   "resourcePath": "redis/lua/game-session-region-timeline-initialize-v2.lua",
-  "sha256": "414d70da8725513438eea21af2ac81984b5c8a79ba96fefb00eee8f41fd98e94",
+  "sha256": "913cff3ab5848534d4f8180778a76c7b41a93bf6dcc1a489a99f7fcf4d51df29",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",

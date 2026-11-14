@@ -17,6 +17,33 @@ local sessionNames = {'schemaVersion', 'admissionState', 'originalCandidate', 'b
   'authTokenIssuedAt', 'authTokenExpiresAt', 'tokenGeneration', 'issuanceFence', 'rebindHandle',
   'continuityBindingExpiresAt', 'membershipBaseline', 'authorityTuple', 'outboxCheckpoints',
   'canonicalSessionDurationMillis', 'capacityExecutionDigest'}
+-- Runtime IDs are opaque Unicode text, not ASCII identifiers. Count valid scalar values.
+local function ownerIdentity(value)
+  if type(value) ~= 'string' or #value == 0 or #value > 480
+      or string.byte(value, 1) <= 32 or string.byte(value, #value) <= 32 then return false end
+  local i, count = 1, 0
+  while i <= #value do
+    local first = string.byte(value, i)
+    local width, cp
+    if first < 128 then width, cp = 1, first
+    elseif first >= 194 and first <= 223 then width, cp = 2, first - 192
+    elseif first >= 224 and first <= 239 then width, cp = 3, first - 224
+    elseif first >= 240 and first <= 244 then width, cp = 4, first - 240
+    else return false end
+    if i + width - 1 > #value then return false end
+    for offset = 1, width - 1 do
+      local byte = string.byte(value, i + offset)
+      if byte < 128 or byte > 191 then return false end
+      cp = cp * 64 + byte - 128
+    end
+    if cp == 0 or (width == 3 and cp < 2048) or (width == 4 and cp < 65536)
+        or (cp >= 55296 and cp <= 57343) or cp > 1114111 then return false end
+    count = count + 1
+    if count > 120 then return false end
+    i = i + width
+  end
+  return true
+end
 local function uuid(value)
   return type(value) == 'string' and #value == 36 and value == string.lower(value)
     and value ~= '00000000-0000-0000-0000-000000000000'
@@ -71,7 +98,7 @@ if not capacity or capacity.schema ~= 'gs-original-new-capacity-execution/v1'
     or not string.match(capacityDigest, '^sha256:[0-9a-f]+$')
     or not uuid(capacity.requestId) or not uuid(capacity.admissionId)
     or not uuid(capacity.admissionAttemptId) or not uuid(capacity.reservationId)
-    or type(capacity.selectedOwnerId) ~= 'string' or #capacity.selectedOwnerId < 1 or #capacity.selectedOwnerId > 120
+    or not ownerIdentity(capacity.selectedOwnerId)
     or not uuid(capacity.transitionId)
     or not positive(capacity.capacityRearmFence) or not positive(capacity.reservationFence)
     or not positive(capacity.selectedOwnerFence) then return -2 end
