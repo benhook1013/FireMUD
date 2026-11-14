@@ -272,6 +272,33 @@ spec:
             summary: World observed unresolved initial-admission holds beyond diagnostic age
             description: Repeated overdue observations require owner-proof and transport triage. This diagnostic alert does not authorize readiness, termination, or hold release; follow the exact owner-evidence procedure in the World initial-admission bind contract.
 
+    - name: firemud.alerts.game-session
+      rules:
+        - alert: OriginalNewCapacitySqlReleaseFailureRetainedOperations
+          expr: original_new_capacity_sql_release_failure_retained_operations > 0
+          for: 0m
+          labels:
+            service: game-session-service
+            component: capacity
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/microservices/game-session-service/operations.md#original-new-capacity-sql-release-failure
+          annotations:
+            summary: Original NEW capacity SQL permits remain in uncertain release custody
+            description: A provider release failed and the affected process retained an operation permit. Preserve original SQL and Redis execution evidence, isolate new capacity work and follow the owner reconciliation procedure; a restart or a zero gauge does not prove that an admission did not commit.
+        - alert: OriginalNewCapacityRedisCloseFailureRetainedOperations
+          expr: original_new_capacity_redis_close_failure_retained_operations > 0
+          for: 0m
+          labels:
+            service: game-session-service
+            component: capacity
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/microservices/game-session-service/operations.md#original-new-capacity-redis-close-failure
+          annotations:
+            summary: Original NEW capacity Redis permits remain in uncertain connection custody
+            description: A Redis connection close failed and the affected process retained an operation permit. Preserve original SQL and Redis execution evidence, isolate new capacity work and follow the owner reconciliation procedure; a restart or a zero gauge does not prove that an admission did not commit.
+
     - name: firemud.recording.automation
       rules:
         - record: automation_retention_dead_letter_blocked_rows:max

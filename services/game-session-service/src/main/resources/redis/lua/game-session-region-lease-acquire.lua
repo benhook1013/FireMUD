@@ -1,10 +1,17 @@
--- Claims only a lease whose separate canonical timeline metadata already matches the expected epoch.
+-- Claims a region lease only when the canonical timeline matches the expected epoch.
+-- gs_region_lease/v2 caps the initial lease at its Redis TIME deadline. Zero omits the cap.
 local leaseKey = KEYS[1]
 local metaKey = KEYS[2]
-if #KEYS ~= 2 or #ARGV ~= 4 or ARGV[1] ~= 'gs_region_lease/v1' then return -1 end
+if #KEYS ~= 2 or #ARGV ~= 5 or ARGV[1] ~= 'gs_region_lease/v2' then return -1 end
 local token = ARGV[2]
 local expectedEpoch = ARGV[3]
 local ttl = ARGV[4]
+local deadlineText = ARGV[5]
+if deadlineText ~= '0' and (not string.match(deadlineText, '^[1-9][0-9]*$')
+    or #deadlineText > 16 or (#deadlineText == 16 and deadlineText > '9007199254740991')) then
+  return -1
+end
+local deadline = tonumber(deadlineText)
 
 local function validUuid(value)
   return string.len(value) == 36
@@ -66,6 +73,13 @@ if keyType == 'string' then
   if redis.call('PTTL', leaseKey) <= 0 then return 0 end
   if redis.call('GET', leaseKey) == token then return 2 end
   return 0
+end
+if deadline > 0 then
+  local now = redis.call('TIME')
+  local nowMillis = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+  local remainingMillis = deadline - nowMillis
+  if remainingMillis <= 0 then return 0 end
+  ttl = string.format('%.0f', math.min(tonumber(ttl), remainingMillis))
 end
 local result = redis.call('SET', leaseKey, token, 'PX', ttl, 'NX')
 if result and result.ok == 'OK' then return 1 end

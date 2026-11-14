@@ -16,11 +16,20 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.Selector;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationLifecycleConsequence;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
+import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRoom;
 
 /** Controlled signer/JWKS inputs; this fixture does not supply Account issuance authority. */
 final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements AutoCloseable {
@@ -125,6 +134,74 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
         candidate, credential, verifier, 120_000L);
   }
 
+  static net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
+      controlledCapacity(
+          CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+          Clock clock) {
+    var candidate = source.candidate();
+    var b = candidate.bindingIdentity();
+    var t = candidate.targetEvidence();
+    UUID requestId = UUID.fromString((String) candidate.leaseEvidence().carrier().get("requestId"));
+    var player =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext(
+            b.accountId(),
+            b.tenantId(),
+            b.playableStateNamespaceId(),
+            b.gameInstanceId(),
+            b.characterId(),
+            UUID.fromString(b.sessionId()),
+            t.realmId(),
+            requestId,
+            "SHARED");
+    var now = clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    Map<String, Object> target = new LinkedHashMap<>();
+    target.put("targetClass", "PUBLIC_PRODUCTION");
+    target.put("characterCreationPolicy", "PRESEEDED_ONLY");
+    target.put("targetNamespace", t.targetNamespace());
+    target.put("tenantId", b.tenantId().toString());
+    target.put("tenantSlug", t.tenantSlug());
+    target.put("worldSlug", t.worldSlug());
+    target.put("realmId", t.realmId().toString());
+    target.put("realmSlug", t.realmSlug());
+    target.put("playableStateNamespaceId", b.playableStateNamespaceId().toString());
+    target.put("playableStateScope", "SHARED");
+    target.put("gameInstanceId", b.gameInstanceId().toString());
+    target.put("canonicalVersionId", t.canonicalVersionId().toString());
+    target.put("catalogRevision", Long.toString(t.catalogRevision()));
+    target.put("pointerVersion", Long.toString(t.pointerVersion()));
+    target.put("activeWorldEpoch", Long.toString(t.activeWorldEpoch()));
+    target.put("evaluatedAt", now.minusSeconds(1).toString());
+    target.put("connectScopeExpiresAt", now.plusSeconds(120).toString());
+    var request =
+        net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture
+            .playerRequestFor(
+                player,
+                candidate.bindingDecisionId(),
+                UUID.randomUUID(),
+                t.targetNamespace(),
+                target,
+                now);
+    var reservation =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result(
+            request.identity(),
+            request.admissionAttemptId(),
+            1,
+            request.mutationDigest(),
+            UUID.randomUUID(),
+            1,
+            request.evidence().expiresAt(),
+            net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State.RESERVED,
+            request.evidence().snapshotIdentity(),
+            request.evidence().evaluationIdentity());
+    return new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
+        request,
+        reservation,
+        candidate.bindingDecisionId(),
+        source.candidateDigest(),
+        "controlled-owner",
+        source.regionAcknowledgement().executorFence().longValueExact());
+  }
+
   Selector selector() throws Exception {
     var lease = candidate.leaseEvidence().carrier();
     return new Selector(
@@ -199,7 +276,18 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
 
   /** Real authenticated client decoding over controlled World/Entity response DTOs and test PKI. */
   static final class ControlledRegionSources implements AutoCloseable {
-    final net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request;
+    enum WorldRead {
+      NONE,
+      PLACEMENT,
+      LIFECYCLE
+    }
+
+    final java.util.concurrent.CountDownLatch withheldReadEntered =
+        new java.util.concurrent.CountDownLatch(1);
+    volatile WorldRead withholdWorldRead = WorldRead.NONE;
+    final CanonicalInitialPlayerLocationRequest request;
+    private final Map<String, Placement> placements = new ConcurrentHashMap<>();
+    private final Placement originalPlacement;
     final net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver
         resolver;
     final net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient
@@ -333,8 +421,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                       .PLAYABLE_STATE_SCOPE_SHARED)
               .build();
       request =
-          net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest
-              .newBuilder()
+          CanonicalInitialPlayerLocationRequest.newBuilder()
               .setSchemaVersion(1)
               .setPlacementOperationUuid(placementId.toString())
               .setExpectedTarget(wireTarget)
@@ -352,11 +439,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
               .setAuditEventId(target.auditEventId())
               .build();
       UUID lifecycleReadId =
-          UUID.nameUUIDFromBytes(
-              ("firemud-world-initial-location-lifecycle-read/v1/" + placementId)
-                  .getBytes(StandardCharsets.US_ASCII));
+          WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(placementId);
       var lifecycleRequest =
-          new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request(
+          new WorldCanonicalInstanceLifecycleEvidence.Request(
               1,
               lifecycleReadId,
               namespace,
@@ -373,7 +458,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
               release.evidenceDigest());
       UUID canonicalRegion = UUID.randomUUID();
       var evidence =
-          new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence(
+          new WorldCanonicalInstanceLifecycleEvidence(
               lifecycleRequest,
               binding,
               selector.startLocation(),
@@ -385,52 +470,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
               selector.graphDigest().substring(7),
               "sha256:" + "e".repeat(64),
               Map.of(canonicalRegion, identity.regionId()));
-      var room = selector.startLocation();
-      var placementResult =
-          net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse
-              .newBuilder()
-              .setSchemaVersion(1)
-              .setPlacementOperationUuid(placementId.toString())
-              .setRequestDigest("sha256:" + "d".repeat(64))
-              .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
-              .setCharacterUuid(request.getCharacterUuid())
-              .setAssignmentUuid(request.getAssignmentUuid())
-              .setAssignmentIntentDigest(request.getAssignmentIntentDigest())
-              .setResultDigest("sha256:" + "f".repeat(64))
-              .setOutcome(
-                  net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationOutcome
-                      .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED)
-              .setStartLocation(
-                  net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRoom
-                      .newBuilder()
-                      .setCanonicalTenantUuid(room.tenantId().toString())
-                      .setCanonicalVersionUuid(room.versionId().toString())
-                      .setRoomTemplateUuid(room.roomTemplateId().toString()))
-              .setPrivateRuntimeRoomKey("1042")
-              .build();
-      var observation =
-          net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse
-              .newBuilder()
-              .setSchemaVersion(1)
-              .setPlacementResult(placementResult)
-              .setExpectedTarget(wireTarget)
-              .setCanonicalRegionInstanceUuid(canonicalRegion.toString())
-              .setOperationalRegionUuid(identity.regionId().toString())
-              .setPrivateWorldInstanceKey(7L)
-              .setObservedRuntimeRoomKey(1042L)
-              .setLifecycle(
-                  net.firedevops.firemud.worldmanagement.v1
-                      .CanonicalInitialPlayerLocationLifecycleConsequence.newBuilder()
-                      .setCanonicalRequestBytes(
-                          com.google.protobuf.ByteString.copyFrom(
-                              lifecycleRequest.canonicalBytes()))
-                      .setLifecycleStatus("ACTIVE")
-                      .setLifecycleEpoch(evidence.lifecycleEpoch())
-                      .setRowVersion(evidence.rowVersion())
-                      .setCaptureUuid(evidence.captureId().toString())
-                      .setGraphSha256(evidence.graphSha256())
-                      .setPreparationInputDigest(evidence.preparationInputDigest()))
-              .build();
+      originalPlacement = registerPlacement(request, evidence, 7301L);
       var worldPlacementService =
           new net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc
               .CanonicalInitialPlayerLocationServiceImplBase() {
@@ -442,11 +482,16 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                         net.firedevops.firemud.worldmanagement.v1
                             .CanonicalInitialPlayerLocationRegionResponse>
                     response) {
-              if (!request.equals(incoming) || !isPeer(caller)) {
+              var placement = placements.get(incoming.getPlacementOperationUuid());
+              if (!isPeer(caller) || placement == null || !placement.request().equals(incoming)) {
                 response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
                 return;
               }
-              response.onNext(observation);
+              if (withholdWorldRead == WorldRead.PLACEMENT) {
+                withheldReadEntered.countDown();
+                return;
+              }
+              response.onNext(placement.observation());
               response.onCompleted();
             }
           };
@@ -462,16 +507,23 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                         net.firedevops.firemud.worldmanagement.v1
                             .ReadWorldCanonicalInstanceLifecycleResponse>
                     response) {
-              if (!isPeer(caller)
-                  || !lifecycleRequest.equals(
-                      net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec
-                          .fromRequest(incoming))) {
+              var requested = WorldCanonicalInstanceLifecycleGrpcCodec.fromRequest(incoming);
+              var evidence =
+                  placements.values().stream()
+                      .map(Placement::lifecycle)
+                      .filter(capture -> capture.request().equals(requested))
+                      .findFirst()
+                      .orElse(null);
+              if (!isPeer(caller) || evidence == null) {
                 response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
                 return;
               }
+              if (withholdWorldRead == WorldRead.LIFECYCLE) {
+                withheldReadEntered.countDown();
+                return;
+              }
               response.onNext(
-                  net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec
-                      .toResponse(lifecycleRequest, evidence));
+                  WorldCanonicalInstanceLifecycleGrpcCodec.toResponse(requested, evidence));
               response.onCompleted();
             }
           };
@@ -487,12 +539,26 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                         net.firedevops.firemud.entitymanagement.v1
                             .ReadPreseededActorRuntimeReferenceResponse>
                     response) {
+              var placement =
+                  placements.values().stream()
+                      .filter(
+                          entry ->
+                              entry
+                                  .request()
+                                  .getAssignmentUuid()
+                                  .equals(incoming.getAssignmentUuid()))
+                      .findFirst()
+                      .orElse(null);
               if (!isPeer(caller)
-                  || !incoming.getExpectedTarget().equals(wireTarget)
-                  || !incoming.getAssignmentUuid().equals(assignment.toString())
-                  || !incoming.getCanonicalAccountUuid().equals(identity.accountId().toString())
-                  || !incoming.getCharacterUuid().equals(identity.characterId().toString())
-                  || !incoming.getIntentDigest().equals(request.getAssignmentIntentDigest())) {
+                  || placement == null
+                  || !incoming.getExpectedTarget().equals(placement.request().getExpectedTarget())
+                  || !incoming
+                      .getCanonicalAccountUuid()
+                      .equals(placement.request().getCanonicalAccountUuid())
+                  || !incoming.getCharacterUuid().equals(placement.request().getCharacterUuid())
+                  || !incoming
+                      .getIntentDigest()
+                      .equals(placement.request().getAssignmentIntentDigest())) {
                 response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
                 return;
               }
@@ -506,7 +572,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                       .setCharacterUuid(incoming.getCharacterUuid())
                       .setIntentDigest(incoming.getIntentDigest())
                       .setPublishedOwnerProofDigest(target.ownerProofDigest().substring(7))
-                      .setRuntimeEntityId(7301L)
+                      .setRuntimeEntityId(placement.runtimeEntityId())
                       .setProjectionGeneration(1L)
                       .setProjectionFence(1L)
                       .setCorePayload(
@@ -547,6 +613,106 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
               new net.firedevops.firemud.gamesession.service
                   .CanonicalRegionBootstrapAssignmentResolver(lifecycle));
     }
+
+    CanonicalInitialPlayerLocationRequest registerSecondPlacement(UUID characterId) {
+      UUID placementId = UUID.randomUUID();
+      var secondRequest =
+          request.toBuilder()
+              .setPlacementOperationUuid(placementId.toString())
+              .setCharacterUuid(characterId.toString())
+              .setAssignmentUuid(UUID.randomUUID().toString())
+              .build();
+      var original = originalPlacement.lifecycle();
+      var selected = original.request();
+      var lifecycleRequest =
+          new WorldCanonicalInstanceLifecycleEvidence.Request(
+              selected.schemaVersion(),
+              WorldCanonicalInstanceLifecycleEvidence.initialLocationReadRequestId(placementId),
+              selected.targetNamespace(),
+              selected.canonicalTenantId(),
+              selected.worldSlug(),
+              selected.canonicalGameInstanceId(),
+              selected.playableStateNamespaceId(),
+              selected.playableStateScope(),
+              selected.publicProduction(),
+              selected.controlPlaneRequestId(),
+              selected.canonicalVersionId(),
+              selected.expectedDescriptorRequestDigest(),
+              selected.expectedDescriptorResultDigest(),
+              selected.expectedReleaseAttestationDigest());
+      var lifecycleEvidence =
+          new WorldCanonicalInstanceLifecycleEvidence(
+              lifecycleRequest,
+              original.launchBinding(),
+              original.startLocation(),
+              original.runtimeRoomInstanceId(),
+              original.lifecycleStatus(),
+              original.lifecycleEpoch(),
+              original.rowVersion(),
+              original.captureId(),
+              original.graphSha256(),
+              original.preparationInputDigest(),
+              original.operationalRegionAssignments());
+      return registerPlacement(secondRequest, lifecycleEvidence, 7302L).request();
+    }
+
+    private Placement registerPlacement(
+        CanonicalInitialPlayerLocationRequest request,
+        WorldCanonicalInstanceLifecycleEvidence evidence,
+        long runtimeEntityId) {
+      var room = evidence.startLocation();
+      var region = evidence.operationalRegionAssignments().entrySet().iterator().next();
+      var placementResult =
+          CanonicalInitialPlayerLocationResponse.newBuilder()
+              .setSchemaVersion(1)
+              .setPlacementOperationUuid(request.getPlacementOperationUuid())
+              .setRequestDigest("sha256:" + "d".repeat(64))
+              .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
+              .setCharacterUuid(request.getCharacterUuid())
+              .setAssignmentUuid(request.getAssignmentUuid())
+              .setAssignmentIntentDigest(request.getAssignmentIntentDigest())
+              .setResultDigest("sha256:" + "f".repeat(64))
+              .setOutcome(
+                  CanonicalInitialPlayerLocationOutcome
+                      .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED)
+              .setStartLocation(
+                  CanonicalInitialPlayerLocationRoom.newBuilder()
+                      .setCanonicalTenantUuid(room.tenantId().toString())
+                      .setCanonicalVersionUuid(room.versionId().toString())
+                      .setRoomTemplateUuid(room.roomTemplateId().toString()))
+              .setPrivateRuntimeRoomKey("1042")
+              .build();
+      var observation =
+          CanonicalInitialPlayerLocationRegionResponse.newBuilder()
+              .setSchemaVersion(1)
+              .setPlacementResult(placementResult)
+              .setExpectedTarget(request.getExpectedTarget())
+              .setCanonicalRegionInstanceUuid(region.getKey().toString())
+              .setOperationalRegionUuid(region.getValue().toString())
+              .setPrivateWorldInstanceKey(7L)
+              .setObservedRuntimeRoomKey(1042L)
+              .setLifecycle(
+                  CanonicalInitialPlayerLocationLifecycleConsequence.newBuilder()
+                      .setCanonicalRequestBytes(
+                          com.google.protobuf.ByteString.copyFrom(
+                              evidence.request().canonicalBytes()))
+                      .setLifecycleStatus(evidence.lifecycleStatus())
+                      .setLifecycleEpoch(evidence.lifecycleEpoch())
+                      .setRowVersion(evidence.rowVersion())
+                      .setCaptureUuid(evidence.captureId().toString())
+                      .setGraphSha256(evidence.graphSha256())
+                      .setPreparationInputDigest(evidence.preparationInputDigest()))
+              .build();
+      var placement = new Placement(request, observation, evidence, runtimeEntityId);
+      placements.put(request.getPlacementOperationUuid(), placement);
+      return placement;
+    }
+
+    private record Placement(
+        CanonicalInitialPlayerLocationRequest request,
+        CanonicalInitialPlayerLocationRegionResponse observation,
+        WorldCanonicalInstanceLifecycleEvidence lifecycle,
+        long runtimeEntityId) {}
 
     private static boolean isPeer(String expected) {
       var peer = net.firedevops.firemud.common.grpc.GrpcPeerIdentity.current();

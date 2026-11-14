@@ -5,42 +5,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import io.lettuce.core.AclSetuserArgs;
-import io.lettuce.core.ClientOptions;
-import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
-import io.lettuce.core.api.StatefulRedisConnection;
-import io.lettuce.core.api.sync.RedisCommands;
-import io.lettuce.core.codec.ByteArrayCodec;
-import io.lettuce.core.protocol.CommandKeyword;
-import io.lettuce.core.protocol.CommandType;
-import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
-import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
-import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
-import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIssuerIndexObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
-import net.firedevops.firemud.test.TestContainerImages;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
@@ -52,110 +27,63 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
-class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
-  private static final Clock CLOCK = Clock.systemUTC();
-  private static final String PRINCIPAL = "gamesession_coord_app";
+class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
+    extends CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
 
-  @Container
-  private static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
-
-  @Container
-  private static final GenericContainer<?> REDIS =
-      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
-
-  @TempDir Path directory;
-
-  private RedisClient administrator;
-  private RedisClient ownerClient;
-  private StatefulRedisConnection<byte[], byte[]> adminConnection;
-  private RedisCommands<byte[], byte[]> admin;
-  private CanonicalGameplayAdmissionAbortCompositionFixture fixture;
-  private CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources sources;
-  private CanonicalGameplayBindingInventoryRepository inventory;
-  private CanonicalGameplayTenantGameplayTagRepository tags;
-  private CanonicalGameplayAdmissionDecision decision;
-  private CanonicalGameplayOriginalNewCandidateRedisOwner.Installation installation;
-  private RedisScriptCatalog catalog;
-
-  @BeforeEach
-  void setUp() throws Exception {
-    administrator = client(null, null);
-    adminConnection = administrator.connect(ByteArrayCodec.INSTANCE);
-    admin = adminConnection.sync();
-    admin.flushdb();
-    String password = UUID.randomUUID().toString();
-    admin.aclSetuser(
-        PRINCIPAL,
-        new AclSetuserArgs()
-            .reset()
-            .on()
-            .addPassword(password)
-            .keyPattern("session:game:*")
-            .keyPattern("tick:*")
-            .keyPattern("tick-executor-lease:*")
-            .addCommand(CommandType.HELLO)
-            .addCommand(CommandType.PING)
-            .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
-            .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
-            .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
-            .addCommand(CommandType.EVALSHA)
-            .addCommand(CommandType.TYPE)
-            .addCommand(CommandType.PTTL)
-            .addCommand(CommandType.GET)
-            .addCommand(CommandType.SET)
-            .addCommand(CommandType.SADD)
-            .addCommand(CommandType.SISMEMBER)
-            .addCommand(CommandType.HGET)
-            .addCommand(CommandType.HGETALL)
-            .addCommand(CommandType.HSET)
-            .addCommand(CommandType.HLEN)
-            .addCommand(CommandType.PEXPIRE)
-            .addCommand(CommandType.TIME));
-    ownerClient = client(PRINCIPAL, password);
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName("org.postgresql.Driver");
-    String jdbcUrl = POSTGRES.getJdbcUrl();
-    dataSource.setUrl(jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=public");
-    dataSource.setUsername(POSTGRES.getUsername());
-    dataSource.setPassword(POSTGRES.getPassword());
-    fixture =
-        new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate(), ownerClient);
-    inventory = new CanonicalGameplayBindingInventoryRepository(fixture.dsl());
-    tags = new CanonicalGameplayTenantGameplayTagRepository(fixture.dsl(), "test", 1);
-    catalog =
-        RedisScriptCatalog.fromContributions(
-            List.of(
-                new net.firedevops.firemud.gamesession.service
-                    .CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
-                new net.firedevops.firemud.gamesession.service
-                    .CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
-                new net.firedevops.firemud.gamesession.service
-                    .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
-                new net.firedevops.firemud.gamesession.service
-                    .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
-    // Allocate test PKI and start controlled source servers before the short lease starts.
-    sources =
-        new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
-            fixture.dsl(), fixture.originalPreparedDecisionWithControlledAccountLease(), directory);
-    decision = fixture.originalPreparedDecisionWithControlledAccountLease();
-    installation = candidateOwner(inventory).installOnce(decision);
-    fixture.acknowledgeOriginalIssuer();
-  }
-
-  @AfterEach
-  void tearDown() throws Exception {
-    try {
-      if (sources != null) sources.close();
-    } finally {
-      try {
-        if (fixture != null) fixture.close();
-      } finally {
-        if (adminConnection != null) adminConnection.close();
-        if (ownerClient != null) ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
-        if (administrator != null) administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
-      }
+  @Test
+  void recreatedCapacityOwnerRecoversCommittedRedisWithoutOriginalCredentialOrGrant()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
+    String finalDigest;
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source, template, account, issuer, controlledCapacity, deadline())) {
+      finalDigest = actual.finalSessionSha256();
     }
+    // Stop before the final SQL receipt. The original private credential is disposed, the grant
+    // expires, and fresh OPEN barriers are unavailable. None may erase the actual positive effect.
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    admin.pexpire(ascii(regionBinding.installation().grant.key()), 0);
+    admin.del(
+        ascii(account.key()),
+        ascii(
+            CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
+                source.candidate().bindingIdentity().issuerId(), assignment)));
+    assertThatThrownBy(() -> replaceRegionOwner("successor-before-reconciliation"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .closeOriginalAttempt(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    var retained =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(retained.disposition()).isEqualTo("COMMITTED");
+    assertThat(retained.physicalDigest()).isEqualTo("sha256:" + finalDigest);
+    assertThat(inventory.readOriginalNewFinalAdmissionSource(decision).transitionStatus())
+        .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+    assertThatThrownBy(() -> replaceRegionOwner("successor-after-reconciliation"))
+        .isInstanceOf(IllegalStateException.class);
+    controlledRemoveServingKeys(source, assignment);
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(retained.canonicalReadback());
   }
 
   @Test
@@ -224,7 +152,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       inventory.commitOriginalNewFinalAdmission(actual);
       String retainedReceiptQuery =
           "SELECT xmin::text || '/' || to_jsonb(transition)::text"
@@ -343,7 +272,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       assertThat(credential.boundJti().toString()).isNotEqualTo(credential.initialLoginJti());
       assertThat(new String(template.finalCasTemplateBytes(), StandardCharsets.UTF_8))
           .doesNotContain(credential.jwt())
@@ -357,6 +287,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                   template,
                   accountOpen,
                   issuerOpen,
+                  controlledCapacity,
                   deadline())) {
         assertThat(provisionalReplay.exactCanonicalBytes())
             .containsExactly(actual.exactCanonicalBytes());
@@ -724,7 +655,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       try (var replay =
           finalOwner()
               .finalizeOriginalNewOnce(
-                  recoveredSource, template, accountOpen, issuerOpen, deadline())) {
+                  recoveredSource,
+                  template,
+                  accountOpen,
+                  issuerOpen,
+                  controlledCapacity,
+                  deadline())) {
         assertThat(replay.exactCanonicalBytes()).containsExactly(actual.exactCanonicalBytes());
         assertThat(recoveredInventory.commitOriginalNewFinalAdmission(replay).status())
             .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
@@ -769,7 +705,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       inventory.commitOriginalNewFinalAdmission(actual);
       var committed = inventory.readOriginalNewFinalAdmissionSource(decision);
       byte[] finalBytes = actual.exactCanonicalBytes();
@@ -787,7 +724,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 () ->
                     finalOwner()
                         .finalizeOriginalNewOnce(
-                            committed, template, accountOpen, issuerOpen, deadline()))
+                            committed,
+                            template,
+                            accountOpen,
+                            issuerOpen,
+                            controlledCapacity,
+                            deadline()))
             .isExactlyInstanceOf(IllegalStateException.class)
             .hasMessage("Original NEW final admission Redis readback is unavailable");
         assertThat(admin.exists(ascii(key))).isZero();
@@ -800,7 +742,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   finalOwner()
                       .finalizeOriginalNewOnce(
-                          committed, template, accountOpen, issuerOpen, deadline()))
+                          committed,
+                          template,
+                          accountOpen,
+                          issuerOpen,
+                          controlledCapacity,
+                          deadline()))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThat(admin.hget(ascii(accountOpen.key()), ascii("state")))
@@ -812,7 +759,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   finalOwner()
                       .finalizeOriginalNewOnce(
-                          committed, template, accountOpen, issuerOpen, deadline()))
+                          committed,
+                          template,
+                          accountOpen,
+                          issuerOpen,
+                          controlledCapacity,
+                          deadline()))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThatThrownBy(
@@ -850,7 +802,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 () ->
                     finalOwner()
                         .finalizeOriginalNewOnce(
-                            source, template, accountOpen, issuerOpen, deadline()))
+                            source,
+                            template,
+                            accountOpen,
+                            issuerOpen,
+                            controlledCapacity,
+                            deadline()))
             .isExactlyInstanceOf(IllegalStateException.class)
             .hasMessage("Original NEW final admission Redis readback is unavailable");
         assertThat(admin.exists(ascii(key))).isZero();
@@ -863,7 +820,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   finalOwner()
                       .finalizeOriginalNewOnce(
-                          source, template, accountOpen, issuerOpen, deadline()))
+                          source,
+                          template,
+                          accountOpen,
+                          issuerOpen,
+                          controlledCapacity,
+                          deadline()))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThat(admin.hget(ascii(issuerKey(issuerOpen)), ascii("state")))
@@ -894,7 +856,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       inventory.commitOriginalNewFinalAdmission(actual);
       var assignment = tags.assignmentForTransition(fixture.transitionId());
       CanonicalGameplayTenantGameplayTagRepository racingTags = mock();
@@ -963,7 +926,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       inventory.commitOriginalNewFinalAdmission(actual);
       var committed =
           new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
@@ -984,7 +948,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   finalOwner()
                       .finalizeOriginalNewOnce(
-                          committed, template, accountOpen, issuerOpen, deadline()))
+                          committed,
+                          template,
+                          accountOpen,
+                          issuerOpen,
+                          controlledCapacity,
+                          deadline()))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThatThrownBy(
@@ -1036,206 +1005,5 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                   .isEqualTo(constraint);
               assertThat(postgresFailure.getServerErrorMessage().getMessage()).isEqualTo(message);
             });
-  }
-
-  private void repairAccountMember() {
-    new CanonicalGameplayAccountMemberRepairOwner(fixture.dsl(), ownerClient, catalog)
-        .repair(fixture.transitionId());
-  }
-
-  private void bridge() {
-    var region =
-        CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
-            fixture.dsl(),
-            ownerClient,
-            fixture.transitionId(),
-            sources.request,
-            sources.resolver,
-            sources.entity);
-    assertThat(region.owner().bridge(region.installation()).obligation())
-        .isEqualTo(region.acknowledgement().obligation());
-  }
-
-  private CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen() {
-    var repository =
-        new CanonicalGameplayIssuerAdmissionBarrierRepository(
-            fixture.dsl(), tags, fixture.currentIssuerSource());
-    return new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
-            ownerClient, catalog, repository, fixture.currentIssuerSource())
-        .initializeAndRead(fixture.originalOperationId());
-  }
-
-  /**
-   * Controlled upstream OPEN record and physical hash, without INITIAL owner/currentness claims.
-   */
-  private CanonicalGameplayAccountInitialOpenProof.CurrentOpen controlledAccountOpen() {
-    var binding = decision.candidate();
-    var assignment = tags.assignmentForTransition(fixture.transitionId());
-    UUID initializer = UUID.randomUUID();
-    String incarnation = "sha256:" + "a".repeat(64);
-    String key =
-        "session:game:account-admission:{"
-            + assignment.tenantGameplayTag()
-            + "}:"
-            + binding.accountId()
-            + ":"
-            + binding.playableStateNamespaceId();
-    Map<String, String> fields =
-        Map.of(
-            "schema",
-            CanonicalGameplayAccountInitialBarrierValue.SCHEMA,
-            "state",
-            "OPEN",
-            "accountId",
-            binding.accountId().toString(),
-            "tenantId",
-            binding.tenantId().toString(),
-            "playableStateNamespaceId",
-            binding.playableStateNamespaceId().toString(),
-            "tenantGameplayTag",
-            assignment.tenantGameplayTag(),
-            "ownerOperationId",
-            initializer.toString(),
-            "ownerFenceEpoch",
-            "1",
-            "incarnationDigest",
-            incarnation);
-    fields.forEach((field, value) -> admin.hset(ascii(key), ascii(field), ascii(value)));
-    long now = CLOCK.millis();
-    return new CanonicalGameplayAccountInitialOpenProof.CurrentOpen(
-        initializer,
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        1L,
-        binding.accountId(),
-        binding.tenantId(),
-        binding.playableStateNamespaceId(),
-        key,
-        BigInteger.ONE,
-        BigInteger.ONE,
-        incarnation,
-        incarnation,
-        incarnation,
-        now,
-        now + 60_000L,
-        fields);
-  }
-
-  private String issuerKey(CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
-    var value = readback.value();
-    return CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
-        value.issuerId(),
-        value.tenantId(),
-        value.playableStateNamespaceId(),
-        value.tenantGameplayTag());
-  }
-
-  private CanonicalGameplayOriginalNewCandidateRedisOwner candidateOwner(
-      CanonicalGameplayBindingInventoryRepository repository) {
-    return CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
-        ownerClient, catalog, repository, tags);
-  }
-
-  private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalOwner() {
-    return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-        ownerClient, catalog, CLOCK, tags);
-  }
-
-  private CanonicalGameplayOriginalNewFinalAdmissionReadRepository reader() {
-    return reader(CLOCK);
-  }
-
-  private CanonicalGameplayOriginalNewFinalAdmissionReadRepository reader(Clock readClock) {
-    return new CanonicalGameplayOriginalNewFinalAdmissionReadRepository(
-        fixture.dsl(),
-        ownerClient,
-        new CanonicalGameplayTenantGameplayTagRepository(fixture.dsl(), "test", 1),
-        "test",
-        readClock);
-  }
-
-  private String sqlImage() {
-    Map<String, List<String>> rows = new LinkedHashMap<>();
-    for (String table :
-        List.of(
-            "game_session_canonical_binding_transition",
-            "game_session_canonical_gameplay_binding_inventory",
-            "game_session_canonical_issuer_partition_reservation",
-            "game_session_canonical_binding_account_index_obligation",
-            "game_session_canonical_binding_issuer_index_obligation",
-            "game_session_canonical_binding_region_bridge_obligation",
-            "game_session_canonical_issuer_binding_local_acknowledgement",
-            "game_session_canonical_account_member_repair_operation",
-            "game_session_region_runtime_status",
-            "game_session_region_timeline_preparation",
-            "game_session_canonical_binding_inventory_clock",
-            "game_session_canonical_issuer_layout_bootstrap_control",
-            "game_session_canonical_issuer_bootstrap_member_op_counter",
-            "game_session_canonical_issuer_bootstrap_coverage_counter",
-            "game_session_canonical_issuer_binding_local_ack_gen_counter",
-            "game_session_canonical_issuer_admission_epoch_counter",
-            "game_session_canonical_account_member_repair_control",
-            "game_session_canonical_account_coverage_control",
-            "game_session_canonical_tenant_gameplay_tag",
-            "game_session_canonical_issuer_admission_initializer",
-            "game_session_canonical_issuer_admission_initializer_receipt")) {
-      rows.put(
-          table,
-          fixture
-              .dsl()
-              .fetch(
-                  "SELECT to_jsonb(t)::text AS image FROM "
-                      + table
-                      + " t ORDER BY to_jsonb(t)::text")
-              .getValues("image", String.class));
-    }
-    return rows.toString();
-  }
-
-  private Map<String, String> physicalImage() {
-    Map<String, String> image = new java.util.TreeMap<>();
-    for (byte[] key : admin.keys("session:game:*")) {
-      image.put(
-          new String(key, StandardCharsets.US_ASCII),
-          java.util.Base64.getEncoder().encodeToString(admin.dump(key)));
-    }
-    return image;
-  }
-
-  private static Candidate candidate() {
-    return new Candidate(
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        "SHARED",
-        UUID.randomUUID(),
-        1L,
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        BigInteger.ONE,
-        GameSessionAccountDelegationProfile.ISSUER,
-        BigInteger.ONE,
-        BigInteger.ONE,
-        BigInteger.ONE,
-        BigInteger.valueOf(64));
-  }
-
-  private RedisClient client(String username, String password) {
-    var uri =
-        RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379))
-            .withTimeout(Duration.ofSeconds(5));
-    if (username != null) uri.withAuthentication(username, password);
-    var client = RedisClient.create(uri.build());
-    client.setOptions(ClientOptions.builder().autoReconnect(false).build());
-    return client;
-  }
-
-  private static long deadline() {
-    return CLOCK.millis() + 10_000L;
-  }
-
-  private static byte[] ascii(String value) {
-    return value.getBytes(StandardCharsets.US_ASCII);
   }
 }

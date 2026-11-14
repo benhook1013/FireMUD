@@ -4,7 +4,6 @@ import io.lettuce.core.RedisFuture;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
-import io.lettuce.core.codec.ByteArrayCodec;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -18,9 +17,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
@@ -35,11 +36,20 @@ import tools.jackson.databind.json.JsonMapper;
  * Unregistered manual Redis owner for the final original-NEW session compare-and-set.
  *
  * <p>The caller supplies the complete flow evidence. This owner checks its exact target and OPEN
- * source values, performs one six-key tenant-slot CAS, then independently reads back the finalized
- * session, three installed indexes, and both unchanged OPEN barriers. A script reply alone never
- * yields a {@link Readback}; this component does not prove the complete Account or issuer flow.
+ * source values, performs one seven-key tenant-slot CAS, then independently reads back the
+ * finalized session, three installed indexes, and both unchanged OPEN barriers. A script reply
+ * alone never yields a {@link Readback}; this component does not prove the complete Account or
+ * issuer flow.
  */
 final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
+  static final long CAPACITY_EXECUTION_AUTHORIZED = 3L;
+  static final long CAPACITY_EXECUTION_CLOSED = 4L;
+  static final long CAPACITY_EXECUTION_FENCED_INDETERMINATE = 5L;
+  static final long CAPACITY_EXECUTION_AUTHORIZED_OBSERVED = 6L;
+  static final long CAPACITY_EXECUTION_CLOSED_OBSERVED = 7L;
+  static final long CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED = 8L;
+  static final long CAPACITY_EXECUTION_COMMITTED_OBSERVED = 9L;
+
   private static final String PRINCIPAL = "gamesession_coord_app";
   private static final int MAX_SCRIPT_BYTES = 48 * 1024;
   private static final int MAX_BARRIER_JSON_BYTES = 16 * 1024;
@@ -67,7 +77,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
           key("accountTenantIndex", "session:game:index:account-tenant:"),
           key("tenantIndex", "session:game:index:tenant:"),
           key("accountAdmissionBarrier", ACCOUNT_PREFIX),
-          key("issuerAdmissionBarrier", ISSUER_PREFIX));
+          key("issuerAdmissionBarrier", ISSUER_PREFIX),
+          key("capacityExecution", "session:game:capacity-execution:"));
   private static final List<RedisScriptDescriptor.ArgumentSpec> EXPECTED_ARGUMENTS =
       List.of(
           argument("tenantId"),
@@ -85,7 +96,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
           argument("accountOpenFieldsJSON"),
           argument("issuerOpenFieldsJSON"),
           argument("absoluteDeadlineMillis"),
-          argument("issuerPayloadBytes"));
+          argument("issuerPayloadBytes"),
+          argument("capacityExecutionBytes"),
+          argument("capacityAction"),
+          argument("capacityExecutionDigest"));
   private static final List<RedisScriptDescriptor.OutcomeSpec> EXPECTED_OUTCOMES =
       List.of(
           outcome(
@@ -94,6 +108,34 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
               RedisScriptDescriptor.MutationEffect.MUTATING),
           outcome(
               "FINAL_ADMISSION_REPLAY",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
+              RedisScriptDescriptor.MutationEffect.NON_MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_AUTHORIZED",
+              RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+              RedisScriptDescriptor.MutationEffect.MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_CLOSED",
+              RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+              RedisScriptDescriptor.MutationEffect.MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_FENCED_INDETERMINATE",
+              RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+              RedisScriptDescriptor.MutationEffect.MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_AUTHORIZED_OBSERVED",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
+              RedisScriptDescriptor.MutationEffect.NON_MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_CLOSED_OBSERVED",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
+              RedisScriptDescriptor.MutationEffect.NON_MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
+              RedisScriptDescriptor.MutationEffect.NON_MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_COMMITTED_OBSERVED",
               RedisScriptDescriptor.OutcomeCategory.REPLAY,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING),
           outcome(
@@ -109,12 +151,57 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
   private final RedisScriptCatalog catalog;
   private final Clock clock;
   private final CanonicalGameplayTenantGameplayTagRepository tenantTags;
+  private final java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>>
+      scopedConnection;
+  private final java.util.function.LongSupplier remainingCommandMillis;
+  private final long operationDeadlineMillis;
+  private final java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>>
+      scopedClose;
 
   CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
       io.lettuce.core.RedisClient redisClient,
       RedisScriptCatalog catalog,
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tenantTags) {
+    this(redisClient, catalog, clock, tenantTags, null, null, null);
+  }
+
+  CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+      io.lettuce.core.RedisClient redisClient,
+      RedisScriptCatalog catalog,
+      Clock clock,
+      CanonicalGameplayTenantGameplayTagRepository tenantTags,
+      java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>> scopedConnection,
+      java.util.function.LongSupplier remainingCommandMillis,
+      java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>> scopedClose) {
+    this(
+        redisClient,
+        catalog,
+        clock,
+        tenantTags,
+        scopedConnection,
+        remainingCommandMillis,
+        scopedClose,
+        Long.MAX_VALUE);
+  }
+
+  private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+      io.lettuce.core.RedisClient redisClient,
+      RedisScriptCatalog catalog,
+      Clock clock,
+      CanonicalGameplayTenantGameplayTagRepository tenantTags,
+      java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>> scopedConnection,
+      java.util.function.LongSupplier remainingCommandMillis,
+      java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>> scopedClose,
+      long operationDeadlineMillis) {
+    this.operationDeadlineMillis = operationDeadlineMillis;
+    if ((scopedConnection == null) != (remainingCommandMillis == null)
+        || (scopedConnection == null) != (scopedClose == null))
+      throw new IllegalArgumentException(
+          "Scoped connection, command budget and close must be supplied together");
+    this.scopedConnection = scopedConnection;
+    this.remainingCommandMillis = remainingCommandMillis;
+    this.scopedClose = scopedClose;
     this.redisClient = Objects.requireNonNull(redisClient, "Configured Redis client is required");
     this.catalog = Objects.requireNonNull(catalog, "Manual Redis script catalog is required");
     this.clock = Objects.requireNonNull(clock, "Clock is required");
@@ -131,8 +218,15 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
       CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
       CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
+      OriginalNewCapacityExecution execution,
       long absoluteDeadlineMillis) {
+    if (operationDeadlineMillis == Long.MAX_VALUE) {
+      return withDeadline(absoluteDeadlineMillis)
+          .finalizeOriginalNewOnce(
+              source, template, accountOpen, issuerOpen, execution, absoluteDeadlineMillis);
+    }
     requireNoAmbientTransaction();
+    Objects.requireNonNull(execution, "Exact Account capacity execution is required");
     Objects.requireNonNull(source, "Durable original NEW final-admission source is required");
     Objects.requireNonNull(template, "Authenticated session template is required");
     Objects.requireNonNull(accountOpen, "Current Account INITIAL OPEN proof is required");
@@ -148,10 +242,11 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     CanonicalGameplayOriginalNewAuthenticatedSession.Finalized finalized = null;
     try {
       CanonicalGameplayOriginalNewCandidate candidate = requireSource(source);
+      requireExecutionBinding(source, execution);
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
           tenantTags.assignmentForTransition(candidate.transition().transitionId());
       requireAssignment(assignment, candidate);
-      Keys keys = requireKeys(candidate, assignment, accountOpen.key());
+      Keys keys = requireKeys(candidate, assignment, accountOpen.key(), execution);
       CanonicalGameplayIssuerAdmissionBarrierValue issuerValue =
           requireIssuerOpen(issuerOpen, candidate, assignment, keys.issuerAdmissionBarrier());
       requireAccountOpen(accountOpen, candidate, assignment, keys.accountAdmissionBarrier());
@@ -192,7 +287,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
               .Status.COMMITTED) {
         // A committed source has an immutable SQL final receipt. It can only recover the exact
         // complete session read-only; it must never recreate or replace from historical bytes.
-        finalBytes = readExactPostimages(keys, candidate, accountOpen, issuerValue, characterBytes);
+        finalBytes =
+            readExactPostimages(
+                keys, candidate, accountOpen, issuerValue, characterBytes, execution);
       } else {
         RedisScriptDescriptor descriptor = requireDescriptor();
         script = scriptSource(descriptor);
@@ -209,9 +306,13 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
                 accountJson,
                 issuerJson,
                 absoluteDeadlineMillis,
-                issuerPayload);
+                issuerPayload,
+                execution,
+                "FINAL");
         if (result != 1L && result != 2L) throw unavailable();
-        finalBytes = readExactPostimages(keys, candidate, accountOpen, issuerValue, characterBytes);
+        finalBytes =
+            readExactPostimages(
+                keys, candidate, accountOpen, issuerValue, characterBytes, execution);
       }
       try {
         requireDeadline(clock.millis(), absoluteDeadlineMillis);
@@ -235,7 +336,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
             throw unavailable();
           }
         }
-        Readback readback = new Readback(source, finalized);
+        Readback readback = new Readback(source, finalized, execution);
         finalized = null;
         return readback;
       } finally {
@@ -253,6 +354,237 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(issuerPayload);
       wipe(script);
     }
+  }
+
+  /**
+   * Recovers only an already-applied original effect for durable SQL receipt/retention. Unlike
+   * admission, recovery requires no fresh OPEN barrier, credential, or live private region grant.
+   * It cannot submit Lua or make the recovered session newly admissible.
+   */
+  Readback readCommittedForRetention(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      OriginalNewCapacityExecution execution) {
+    requireNoAmbientTransaction();
+    var candidate = requireSource(source);
+    requireExecutionBinding(source, execution);
+    var assignment =
+        tenantTags.readAssignmentForRetainedCapacityExecution(execution.transitionId());
+    requireAssignment(assignment, candidate);
+    String accountKey =
+        ACCOUNT_PREFIX
+            + "{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + assignment.accountId()
+            + ":"
+            + assignment.playableStateNamespaceId();
+    var keys = requireKeys(candidate, assignment, accountKey, execution);
+    byte[] bytes =
+        readExactPostimages(keys, candidate, null, null, characterProjection(candidate), execution);
+    CanonicalGameplayOriginalNewAuthenticatedSession.Finalized finalized = null;
+    try {
+      finalized = CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(bytes, clock);
+      if (!candidate.equals(finalized.candidate())) throw unavailable();
+      Readback readback = new Readback(source, finalized, execution);
+      finalized = null;
+      return readback;
+    } catch (RuntimeException failure) {
+      throw unavailable();
+    } finally {
+      if (finalized != null) finalized.close();
+      wipe(bytes);
+    }
+  }
+
+  long closeCapacityExecutionOnce(
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment) {
+    return closeCapacityExecutionOnce(
+        execution, candidate, assignment, Math.addExact(clock.millis(), COMMAND_TIMEOUT_MILLIS));
+  }
+
+  /** Normal-handoff future exclusion only. A result is not an execution outcome. */
+  long fenceCapacityExecutionOnce(
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      UUID dispatchId,
+      long absoluteDeadlineMillis) {
+    if (operationDeadlineMillis == Long.MAX_VALUE) {
+      return withDeadline(absoluteDeadlineMillis)
+          .fenceCapacityExecutionOnce(
+              execution, candidate, assignment, dispatchId, absoluteDeadlineMillis);
+    }
+    requireNoAmbientTransaction();
+    requireAssignment(assignment, candidate);
+    requireExecutionBinding(candidate, execution);
+    String accountKey =
+        ACCOUNT_PREFIX
+            + "{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + assignment.accountId()
+            + ":"
+            + assignment.playableStateNamespaceId();
+    var keys = requireKeys(candidate, assignment, accountKey, execution);
+    byte[] script = scriptSource(requireDescriptor());
+    try {
+      return execute(
+          script,
+          keys,
+          candidate,
+          assignment,
+          candidate.canonicalBytes(),
+          characterProjection(candidate),
+          ascii("{}"),
+          1,
+          ascii("{}"),
+          ascii("{}"),
+          absoluteDeadlineMillis,
+          ascii(dispatchId.toString()),
+          execution,
+          "FENCE");
+    } finally {
+      wipe(script);
+    }
+  }
+
+  long closeCapacityExecutionOnce(
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      long absoluteDeadlineMillis) {
+    if (operationDeadlineMillis == Long.MAX_VALUE) {
+      return withDeadline(absoluteDeadlineMillis)
+          .closeCapacityExecutionOnce(execution, candidate, assignment, absoluteDeadlineMillis);
+    }
+    requireNoAmbientTransaction();
+    requireAssignment(assignment, candidate);
+    requireExecutionBinding(candidate, execution);
+    String accountKey =
+        ACCOUNT_PREFIX
+            + "{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + assignment.accountId()
+            + ":"
+            + assignment.playableStateNamespaceId();
+    var keys = requireKeys(candidate, assignment, accountKey, execution);
+    byte[] script = scriptSource(requireDescriptor());
+    try {
+      return execute(
+          script,
+          keys,
+          candidate,
+          assignment,
+          candidate.canonicalBytes(),
+          characterProjection(candidate),
+          ascii("{}"),
+          1,
+          ascii("{}"),
+          ascii("{}"),
+          absoluteDeadlineMillis,
+          ascii("closure"),
+          execution,
+          "CLOSE");
+    } finally {
+      wipe(script);
+    }
+  }
+
+  long dispatchCapacityAction(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
+      OriginalNewCapacityExecution execution,
+      String action,
+      long deadline) {
+    PreparedInstall prepared =
+        prepareInstall(source, template, accountOpen, issuerOpen, execution, action, deadline);
+    byte[] script = scriptSource(requireDescriptor());
+    byte[] bytes = template.finalCasTemplateBytes();
+    try {
+      return execute(
+          script,
+          prepared.keys(),
+          prepared.candidate(),
+          prepared.assignment(),
+          prepared.candidate().canonicalBytes(),
+          characterProjection(prepared.candidate()),
+          bytes,
+          template.canonicalSessionDurationMillis(),
+          canonicalJson(accountOpen.exactFields()),
+          issuerMetadataJson(prepared.issuerValue()),
+          deadline,
+          issuerOpen.exactPhysicalPayload(),
+          execution,
+          action);
+    } finally {
+      wipe(script);
+      wipe(bytes);
+    }
+  }
+
+  /** Checks deterministic INSTALL inputs without reading or mutating Redis. */
+  void validateInstallInputs(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
+      OriginalNewCapacityExecution execution,
+      long deadline) {
+    prepareInstall(source, template, accountOpen, issuerOpen, execution, "INSTALL", deadline);
+    byte[] script = scriptSource(requireDescriptor());
+    wipe(script);
+  }
+
+  private PreparedInstall prepareInstall(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
+      OriginalNewCapacityExecution execution,
+      String action,
+      long deadline) {
+    requireNoAmbientTransaction();
+    if (!"INSTALL".equals(action)
+        || template == null
+        || accountOpen == null
+        || issuerOpen == null
+        || execution == null) throw unavailable();
+    requireDeadline(clock.millis(), deadline);
+    var candidate = requireSource(source);
+    requireExecutionBinding(source, execution);
+    var assignment = tenantTags.assignmentForTransition(candidate.transition().transitionId());
+    requireAssignment(assignment, candidate);
+    Keys keys = requireKeys(candidate, assignment, accountOpen.key(), execution);
+    requireAccountOpen(accountOpen, candidate, assignment, keys.accountAdmissionBarrier());
+    requireCurrentOpenWindow(accountOpen, clock.millis());
+    CanonicalGameplayIssuerAdmissionBarrierValue issuerValue =
+        requireIssuerOpen(issuerOpen, candidate, assignment, keys.issuerAdmissionBarrier());
+    template.requireCapacityExecutionBinding(candidate, execution);
+    return new PreparedInstall(candidate, assignment, keys, issuerValue);
+  }
+
+  static void requireExecutionBinding(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      OriginalNewCapacityExecution execution) {
+    requireExecutionBinding(source.candidate(), execution);
+    if (!source.candidateDigest().equals(execution.candidateDigest())
+        || execution.selectedOwnerFence()
+            != source.regionAcknowledgement().executorFence().longValueExact()) throw unavailable();
+  }
+
+  private static void requireExecutionBinding(
+      CanonicalGameplayOriginalNewCandidate candidate, OriginalNewCapacityExecution execution) {
+    if (!candidate.bindingDecisionId().equals(execution.transitionId())
+        || !candidate.bindingIdentity().tenantId().equals(execution.request().identity().tenantId())
+        || !execution
+            .candidateDigest()
+            .equals(CanonicalGameplayIssuerMemberV2Codec.sha256(candidate.canonicalBytes())))
+      throw unavailable();
   }
 
   private CanonicalGameplayOriginalNewCandidate requireSource(
@@ -313,7 +645,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
   private static Keys requireKeys(
       CanonicalGameplayOriginalNewCandidate candidate,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
-      String exactAccountOpenKey) {
+      String exactAccountOpenKey,
+      OriginalNewCapacityExecution execution) {
     CanonicalGameplayBindingIdentity binding = candidate.bindingIdentity();
     String session = CanonicalGameplaySessionRedisKeys.session(assignment, binding.bindingRef());
     String character =
@@ -336,7 +669,17 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
         || !candidate.transition().transitionId().equals(assignment.transitionId())) {
       throw unavailable();
     }
-    return new Keys(session, character, accountTenant, tenant, exactAccountOpenKey, issuerBarrier);
+    return new Keys(
+        session,
+        character,
+        accountTenant,
+        tenant,
+        exactAccountOpenKey,
+        issuerBarrier,
+        "session:game:capacity-execution:{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + execution.request().admissionAttemptId());
   }
 
   private static void requireAccountOpen(
@@ -539,38 +882,145 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       byte[] accountJson,
       byte[] issuerJson,
       long absoluteDeadlineMillis,
-      byte[] issuerPayload) {
+      byte[] issuerPayload,
+      OriginalNewCapacityExecution execution,
+      String action) {
     requireNoAmbientTransaction();
-    try (StatefulRedisConnection<byte[], byte[]> connection =
-        redisClient.connect(ByteArrayCodec.INSTANCE)) {
-      RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
-      requirePrincipal(await(commands.aclWhoami()));
-      String sha = await(commands.scriptLoad(script));
-      if (!digest("SHA-1", script).equals(sha)) throw unavailable();
-      Long result =
-          await(
-              commands.evalsha(
-                  sha,
-                  ScriptOutputType.INTEGER,
-                  keyBytes(keys),
-                  ascii(assignment.tenantId().toString()),
-                  ascii(assignment.accountId().toString()),
-                  ascii(assignment.playableStateNamespaceId().toString()),
-                  ascii(candidate.bindingIdentity().characterId().toString()),
-                  ascii(assignment.gameInstanceId().toString()),
-                  ascii(assignment.sessionId()),
-                  ascii(candidate.transition().bindingGeneration().toString()),
-                  ascii(assignment.tenantGameplayTag()),
+    if (scopedConnection == null) {
+      return withinConnectionBudget(
+          absoluteDeadlineMillis,
+          owner ->
+              owner.execute(
+                  script,
+                  keys,
+                  candidate,
+                  assignment,
                   candidateBytes,
                   characterBytes,
                   templateBytes,
-                  ascii(Long.toString(durationMillis)),
+                  durationMillis,
                   accountJson,
                   issuerJson,
-                  ascii(Long.toString(absoluteDeadlineMillis)),
-                  issuerPayload));
+                  absoluteDeadlineMillis,
+                  issuerPayload,
+                  execution,
+                  action));
+    }
+    StatefulRedisConnection<byte[], byte[]> connection = null;
+    try {
+      commandWaitMillis();
+      connection = scopedConnection.get();
+      RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
+      requirePrincipal(awaitCommand(commands::aclWhoami));
+      String sha = awaitCommand(() -> commands.scriptLoad(script));
+      if (!digest("SHA-1", script).equals(sha)) throw unavailable();
+      Long result =
+          awaitCommand(
+              () ->
+                  commands.evalsha(
+                      sha,
+                      ScriptOutputType.INTEGER,
+                      keyBytes(keys),
+                      ascii(assignment.tenantId().toString()),
+                      ascii(assignment.accountId().toString()),
+                      ascii(assignment.playableStateNamespaceId().toString()),
+                      ascii(candidate.bindingIdentity().characterId().toString()),
+                      ascii(assignment.gameInstanceId().toString()),
+                      ascii(assignment.sessionId()),
+                      ascii(candidate.transition().bindingGeneration().toString()),
+                      ascii(assignment.tenantGameplayTag()),
+                      candidateBytes,
+                      characterBytes,
+                      templateBytes,
+                      ascii(Long.toString(durationMillis)),
+                      accountJson,
+                      issuerJson,
+                      ascii(Long.toString(absoluteDeadlineMillis)),
+                      issuerPayload,
+                      execution.canonicalBytes(),
+                      ascii(action),
+                      ascii(execution.digest())));
       return result;
     } catch (RuntimeException failure) {
+      throw unavailable();
+    } finally {
+      if (connection != null) {
+        try {
+          scopedClose.accept(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+        } catch (RuntimeException cleanupFailure) {
+          throw unavailable();
+        }
+      }
+    }
+  }
+
+  private <T> T withinConnectionBudget(
+      long deadline,
+      java.util.function.Function<CanonicalGameplayOriginalNewFinalAdmissionRedisOwner, T>
+          operation) {
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+        clock,
+        Math.min(operationDeadlineMillis, deadline),
+        budget ->
+            operation.apply(
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                    redisClient,
+                    catalog,
+                    clock,
+                    tenantTags,
+                    () ->
+                        CanonicalGameplayOriginalNewCapacityExecutionOwner.connectForRead(
+                            redisClient, budget),
+                    budget::remainingMillis,
+                    budget::awaitAsyncClose,
+                    budget.absoluteDeadlineMillis())));
+  }
+
+  private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner withDeadline(long deadline) {
+    long now = clock.millis();
+    requireDeadline(now, deadline);
+    long boundedDeadline;
+    try {
+      boundedDeadline = Math.min(deadline, Math.addExact(now, COMMAND_TIMEOUT_MILLIS));
+    } catch (ArithmeticException invalid) {
+      throw unavailable();
+    }
+    if (boundedDeadline == Long.MAX_VALUE) throw unavailable();
+    return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+        redisClient,
+        catalog,
+        clock,
+        tenantTags,
+        scopedConnection,
+        remainingCommandMillis,
+        scopedClose,
+        Math.min(operationDeadlineMillis, boundedDeadline));
+  }
+
+  private long commandWaitMillis() {
+    long remaining =
+        remainingCommandMillis == null
+            ? COMMAND_TIMEOUT_MILLIS
+            : remainingCommandMillis.getAsLong();
+    remaining = Math.min(remaining, operationDeadlineMillis - clock.millis());
+    if (remaining <= 0) throw unavailable();
+    return Math.min(COMMAND_TIMEOUT_MILLIS, remaining);
+  }
+
+  private <T> T awaitCommand(java.util.function.Supplier<RedisFuture<T>> command) {
+    long beforeSubmission = commandWaitMillis();
+    RedisFuture<T> future = command.get();
+    if (future == null) throw unavailable();
+    try {
+      T result = future.get(Math.min(beforeSubmission, commandWaitMillis()), TimeUnit.MILLISECONDS);
+      commandWaitMillis();
+      return result;
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw unavailable();
+    } catch (ExecutionException | TimeoutException failure) {
+      // A submitted write is indeterminate. Neither a timeout nor cleanup permits a retry.
       throw unavailable();
     }
   }
@@ -580,8 +1030,16 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       CanonicalGameplayOriginalNewCandidate candidate,
       CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
       CanonicalGameplayIssuerAdmissionBarrierValue issuerOpen,
-      byte[] expectedCharacter) {
+      byte[] expectedCharacter,
+      OriginalNewCapacityExecution execution) {
     requireNoAmbientTransaction();
+    if (scopedConnection == null) {
+      return withinConnectionBudget(
+          operationDeadlineMillis,
+          owner ->
+              owner.readExactPostimages(
+                  keys, candidate, accountOpen, issuerOpen, expectedCharacter, execution));
+    }
     byte[] sessionKey = ascii(keys.session());
     byte[] characterKey = ascii(keys.characterIndex());
     byte[] accountTenantKey = ascii(keys.accountTenantIndex());
@@ -591,35 +1049,55 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     byte[] sessionBytes = null;
     Map<String, byte[]> issuerFields = null;
     Map<String, byte[]> accountFields = new HashMap<>();
-    for (Map.Entry<String, String> entry : accountOpen.exactFields().entrySet()) {
-      accountFields.put(entry.getKey(), ascii(entry.getValue()));
-    }
+    if ((accountOpen == null) != (issuerOpen == null)) throw unavailable();
+    if (accountOpen != null)
+      for (Map.Entry<String, String> entry : accountOpen.exactFields().entrySet()) {
+        accountFields.put(entry.getKey(), ascii(entry.getValue()));
+      }
+    StatefulRedisConnection<byte[], byte[]> connection = null;
     try {
-      issuerFields = CanonicalGameplayIssuerAdmissionBarrierRedisOwner.physicalFields(issuerOpen);
-      try (StatefulRedisConnection<byte[], byte[]> connection =
-          redisClient.connect(ByteArrayCodec.INSTANCE)) {
-        RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
-        requirePrincipal(await(commands.aclWhoami()));
-        if (!persistentString(commands, sessionKey)
-            || !persistentString(commands, characterKey)
-            || !Arrays.equals(expectedCharacter, await(commands.get(characterKey)))
-            || !persistentMember(
-                commands, accountTenantKey, ascii(candidate.bindingIdentity().sessionId()))
-            || !persistentMember(
-                commands, tenantKey, ascii(candidate.bindingIdentity().sessionId()))) {
-          throw unavailable();
-        }
-        sessionBytes = await(commands.get(sessionKey));
+      if (issuerOpen != null)
+        issuerFields = CanonicalGameplayIssuerAdmissionBarrierRedisOwner.physicalFields(issuerOpen);
+      connection = scopedConnection.get();
+      RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
+      requirePrincipal(awaitCommand(commands::aclWhoami));
+      if (!persistentString(commands, sessionKey)
+          || !persistentString(commands, characterKey)
+          || !Arrays.equals(expectedCharacter, awaitCommand(() -> commands.get(characterKey)))
+          || !persistentMember(
+              commands, accountTenantKey, ascii(candidate.bindingIdentity().sessionId()))
+          || !persistentMember(
+              commands, tenantKey, ascii(candidate.bindingIdentity().sessionId()))) {
+        throw unavailable();
+      }
+      sessionBytes = awaitCommand(() -> commands.get(sessionKey));
+      Map<String, byte[]> capacityFields = new LinkedHashMap<>();
+      capacityFields.put("binding", execution.canonicalBytes());
+      capacityFields.put("digest", ascii(execution.digest()));
+      capacityFields.put("state", ascii("COMMITTED"));
+      capacityFields.put("sessionSha1", ascii(digest("SHA-1", sessionBytes)));
+      try (var parsed =
+          CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(sessionBytes, clock)) {
+        capacityFields.put("admissionAt", ascii(Long.toString(parsed.admissionAtMillis())));
+        capacityFields.put(
+            "continuityExpiresAt", ascii(Long.toString(parsed.continuityExpiresAtMillis())));
+      }
+      try {
+        requireExactHash(commands, ascii(keys.capacityExecution()), capacityFields);
+      } finally {
+        wipe(capacityFields);
+      }
+      if (accountOpen != null) {
         requireExactHash(commands, accountBarrierKey, accountFields);
         requireExactHash(commands, issuerBarrierKey, issuerFields);
-        if (sessionBytes == null
-            || sessionBytes.length == 0
-            || sessionBytes.length
-                > CanonicalGameplayOriginalNewAuthenticatedSession.MAX_SESSION_BYTES) {
-          throw unavailable();
-        }
-        return sessionBytes.clone();
       }
+      if (sessionBytes == null
+          || sessionBytes.length == 0
+          || sessionBytes.length
+              > CanonicalGameplayOriginalNewAuthenticatedSession.MAX_SESSION_BYTES) {
+        throw unavailable();
+      }
+      return sessionBytes.clone();
     } catch (RuntimeException failure) {
       throw unavailable();
     } finally {
@@ -632,30 +1110,34 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(tenantKey);
       wipe(accountBarrierKey);
       wipe(issuerBarrierKey);
+      if (connection != null) {
+        scopedClose.accept(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+      }
     }
   }
 
-  private static boolean persistentString(RedisAsyncCommands<byte[], byte[]> commands, byte[] key) {
-    return "string".equals(await(commands.type(key)))
-        && Long.valueOf(-1L).equals(await(commands.pttl(key)));
+  private boolean persistentString(RedisAsyncCommands<byte[], byte[]> commands, byte[] key) {
+    return "string".equals(awaitCommand(() -> commands.type(key)))
+        && Long.valueOf(-1L).equals(awaitCommand(() -> commands.pttl(key)));
   }
 
-  private static boolean persistentMember(
+  private boolean persistentMember(
       RedisAsyncCommands<byte[], byte[]> commands, byte[] key, byte[] member) {
-    return "set".equals(await(commands.type(key)))
-        && Long.valueOf(-1L).equals(await(commands.pttl(key)))
-        && Boolean.TRUE.equals(await(commands.sismember(key, member)));
+    return "set".equals(awaitCommand(() -> commands.type(key)))
+        && Long.valueOf(-1L).equals(awaitCommand(() -> commands.pttl(key)))
+        && Boolean.TRUE.equals(awaitCommand(() -> commands.sismember(key, member)));
   }
 
-  private static void requireExactHash(
+  private void requireExactHash(
       RedisAsyncCommands<byte[], byte[]> commands, byte[] key, Map<String, byte[]> expected) {
-    if (!"hash".equals(await(commands.type(key)))
-        || !Long.valueOf(-1L).equals(await(commands.pttl(key)))) {
+    if (!"hash".equals(awaitCommand(() -> commands.type(key)))
+        || !Long.valueOf(-1L).equals(awaitCommand(() -> commands.pttl(key)))) {
       throw unavailable();
     }
-    Long length = await(commands.hlen(key));
+    Long length = awaitCommand(() -> commands.hlen(key));
     if (length == null || length != expected.size()) throw unavailable();
-    Map<byte[], byte[]> raw = await(commands.hgetall(key));
+    Map<byte[], byte[]> raw = awaitCommand(() -> commands.hgetall(key));
     if (raw == null || raw.size() != expected.size()) throw unavailable();
     Map<String, byte[]> actual = new HashMap<>();
     try {
@@ -683,7 +1165,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       ascii(keys.accountTenantIndex()),
       ascii(keys.tenantIndex()),
       ascii(keys.accountAdmissionBarrier()),
-      ascii(keys.issuerAdmissionBarrier())
+      ascii(keys.issuerAdmissionBarrier()),
+      ascii(keys.capacityExecution())
     };
   }
 
@@ -785,25 +1268,39 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       String accountTenantIndex,
       String tenantIndex,
       String accountAdmissionBarrier,
-      String issuerAdmissionBarrier) {}
+      String issuerAdmissionBarrier,
+      String capacityExecution) {}
+
+  private record PreparedInstall(
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      Keys keys,
+      CanonicalGameplayIssuerAdmissionBarrierValue issuerValue) {}
 
   /**
-   * Private-constructor capability tied to this owner's exact six-key physical readback. Closing it
-   * clears the finalized session and opaque-handle copies held by its typed value.
+   * Private-constructor capability tied to this owner's exact seven-key physical readback. Closing
+   * it clears the finalized session and opaque-handle copies held by its typed value.
    */
   static final class Readback implements AutoCloseable {
     private final CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
         source;
     private CanonicalGameplayOriginalNewAuthenticatedSession.Finalized session;
     private final String finalSessionSha256;
+    private final OriginalNewCapacityExecution execution;
 
     private Readback(
         CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
-        CanonicalGameplayOriginalNewAuthenticatedSession.Finalized session) {
+        CanonicalGameplayOriginalNewAuthenticatedSession.Finalized session,
+        OriginalNewCapacityExecution execution) {
+      this.execution = Objects.requireNonNull(execution);
       this.source = Objects.requireNonNull(source, "durable final-admission source");
       this.session = Objects.requireNonNull(session, "finalized session");
       byte[] exact = session.canonicalBytes();
       try {
+        if (!execution
+            .digest()
+            .equals(JSON.readTree(exact).get("capacityExecutionDigest").textValue()))
+          throw unavailable();
         this.finalSessionSha256 = digest("SHA-256", exact);
       } finally {
         wipe(exact);
@@ -817,6 +1314,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     CanonicalGameplayOriginalNewAuthenticatedSession.Finalized session() {
       if (session == null) throw new IllegalStateException("Final admission readback is closed");
       return session;
+    }
+
+    OriginalNewCapacityExecution execution() {
+      return execution;
     }
 
     String finalSessionSha256() {

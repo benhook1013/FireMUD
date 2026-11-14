@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.world;
 
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import java.io.IOException;
 import java.util.Objects;
@@ -60,16 +61,26 @@ public final class WorldCanonicalInstanceLifecycleClient
   /** Reads and validates World-owned lifecycle evidence for this exact canonical request. */
   public WorldCanonicalInstanceLifecycleEvidence read(
       WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    return read(request, null);
+  }
+
+  /** Reads the exact lifecycle owner evidence within the receiving operation's deadline. */
+  public WorldCanonicalInstanceLifecycleEvidence read(
+      WorldCanonicalInstanceLifecycleEvidence.Request request, Deadline operationDeadline) {
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
           "World canonical lifecycle request must use the configured workload namespace");
     }
+    var stub = requireStub();
+    var timedStub =
+        operationDeadline == null
+            ? stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            : stub.withDeadline(
+                operationDeadline.minimum(Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)));
     var response =
-        requireStub()
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-            .readWorldCanonicalInstanceLifecycle(
-                WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(request));
+        timedStub.readWorldCanonicalInstanceLifecycle(
+            WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(request));
     try {
       return WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException invalid) {

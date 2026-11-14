@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -14,6 +15,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
+import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountCoverageEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberAcknowledgement;
@@ -74,6 +76,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
   private static final String ISSUER_BOOTSTRAP_INTENT =
       "game_session_canonical_issuer_layout_bootstrap_intent";
   private final DSLContext dsl;
+
+  CanonicalGameplayBindingInventoryRepository forBudget(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    return new CanonicalGameplayBindingInventoryRepository(budget.sql(dsl));
+  }
 
   CanonicalGameplayBindingInventoryRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
@@ -889,6 +896,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (!committed && !"PROVISIONAL".equals(status)) {
             throw conflict("Only a provisional or committed original NEW can be a final source");
           }
+          if (committed
+              && row.get("original_new_capacity_execution_digest", String.class) == null) {
+            throw conflict(
+                "Historical original NEW receipt lacks exact capacity execution evidence");
+          }
           Record inventoryRow =
               transaction.fetchOne(
                   "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ? FOR UPDATE",
@@ -1079,6 +1091,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
               expectedEvidence.transition().transitionId(),
               expectedEvidence.candidate().bindingRef().bytes(),
               null);
+          // Region authorization locks region before transition; retain runtime-before-region
+          // ordering and never hold the transition while waiting for the current region owner.
+          requireCurrentRegionOwner(transaction, ownerStatus);
           CanonicalGameplayBindingProvisionalCasEvidence currentEvidence =
               loadProvisionalCasEvidence(
                   transaction, expectedEvidence.transition().transitionId(), true);
@@ -1089,7 +1104,6 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (!inputs.equals(currentInputs) || currentEvidence.expectedPrior() != null) {
             throw conflict("Region bridge source changed or is not a first-NEW transition");
           }
-          requireCurrentRegionOwner(transaction, ownerStatus);
           Record regionRow =
               transaction.fetchOne(
                   "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ? FOR UPDATE",
@@ -1162,6 +1176,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
               prepared.transitionId(),
               expectedEvidence.candidate().bindingRef().bytes(),
               null);
+          // Region authorization locks region before transition; retain runtime-before-region
+          // ordering and never hold the transition while waiting for the current region owner.
+          requireCurrentRegionOwner(transaction, ownerStatus);
           CanonicalGameplayBindingProvisionalCasEvidence currentEvidence =
               loadProvisionalCasEvidence(transaction, prepared.transitionId(), true);
           requireSameProvisionalOperation(expectedEvidence, currentEvidence);
@@ -1171,7 +1188,6 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (!inputs.equals(currentInputs) || currentEvidence.expectedPrior() != null) {
             throw conflict("Region bridge sources changed before durable acknowledgement");
           }
-          requireCurrentRegionOwner(transaction, ownerStatus);
           Record regionRow =
               transaction.fetchOne(
                   "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ? FOR UPDATE",
@@ -2568,13 +2584,39 @@ public final class CanonicalGameplayBindingInventoryRepository {
   }
 
   /**
-   * Accepts only the final owner's separately obtained physical six-key readback. Remote current
-   * sources and admission barriers are checked by the coordinator outside this SQL transaction;
-   * this transaction records their exact original NEW operation, not cross-store atomicity.
+   * Accepts only the final owner's separately obtained physical readback. Remote current sources
+   * and admission barriers are checked by the coordinator outside this SQL transaction; this
+   * transaction records the exact original NEW receipt and positive execution evidence.
    */
   CanonicalGameplayBindingTransitionSnapshot commitOriginalNewFinalAdmission(
       CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual) {
     requireNoAmbientTransaction();
+    return commitVerifiedOriginalNewFinalAdmission(verifyOriginalNewFinalReadback(actual));
+  }
+
+  void commitOriginalNewFinalAdmission(
+      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual,
+      Clock clock,
+      long absoluteDeadlineMillis) {
+    requireNoAmbientTransaction();
+    // Capture only immutable SQL evidence before admitting the resource worker. The caller may
+    // wipe the physical session readback if its deadline expires while SQL is still draining.
+    var verified = verifyOriginalNewFinalReadback(actual);
+    CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+        clock,
+        absoluteDeadlineMillis,
+        budget ->
+            new CanonicalGameplayBindingInventoryRepository(budget.sql(dsl))
+                .commitVerifiedOriginalNewFinalAdmission(verified));
+  }
+
+  private record VerifiedOriginalNewFinalReadback(
+      OriginalNewFinalAdmissionSource source,
+      OriginalNewFinalAdmissionReceipt receipt,
+      OriginalNewCapacityExecution execution) {}
+
+  private static VerifiedOriginalNewFinalReadback verifyOriginalNewFinalReadback(
+      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual) {
     Objects.requireNonNull(actual, "actual");
     var source = actual.source();
     var candidate = source.candidate();
@@ -2600,6 +2642,21 @@ public final class CanonicalGameplayBindingInventoryRepository {
             != actual.admissionAtMillis() + actual.canonicalSessionDurationMillis()) {
       throw conflict("Final controller readback differs from its authenticated original NEW");
     }
+    return new VerifiedOriginalNewFinalReadback(
+        source,
+        new OriginalNewFinalAdmissionReceipt(
+            actual.finalSessionSha256(),
+            actual.admissionAtMillis(),
+            actual.continuityExpiresAtMillis(),
+            actual.canonicalSessionDurationMillis()),
+        actual.execution());
+  }
+
+  private CanonicalGameplayBindingTransitionSnapshot commitVerifiedOriginalNewFinalAdmission(
+      VerifiedOriginalNewFinalReadback verified) {
+    var source = verified.source();
+    var candidate = source.candidate();
+    var receipt = verified.receipt();
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
@@ -2698,7 +2755,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
               || (source.transitionStatus()
                       == CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED
                   && !committed)
-              || BigInteger.valueOf(actual.admissionAtMillis())
+              || BigInteger.valueOf(receipt.admissionAtMillis())
                       .compareTo(decision.leaseExpiresAtEpochMillis())
                   >= 0) {
             throw conflict("Final controller source differs from the retained original NEW");
@@ -2725,7 +2782,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
           }
           requireOriginalNewFinalRegionAcknowledgement(transaction, candidate, transition, entry);
           if (committed) {
-            requireOriginalNewFinalReceipt(row, actual, decision);
+            requireOriginalNewFinalReceipt(row, verified, decision);
+            CanonicalGameplayOriginalNewCapacityExecutionOwner.retainCommittedInTransaction(
+                transaction, verified.execution(), receipt);
             return transition;
           }
           requireNoOriginalNewFinalAdmissionReceipt(row);
@@ -2737,13 +2796,14 @@ public final class CanonicalGameplayBindingInventoryRepository {
                       + TRANSITION
                       + " SET status = 'COMMITTED', inventory_revision = ?,"
                       + " original_new_final_session_sha256 = ?, original_new_admission_at_ms = ?,"
-                      + " original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ?"
+                      + " original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ?, original_new_capacity_execution_digest = ?"
                       + " WHERE transition_id = ? AND status = 'PROVISIONAL' AND inventory_revision = ?",
                   decimal(next),
-                  actual.finalSessionSha256(),
-                  actual.admissionAtMillis(),
-                  actual.continuityExpiresAtMillis(),
-                  actual.canonicalSessionDurationMillis(),
+                  receipt.finalSessionSha256(),
+                  receipt.admissionAtMillis(),
+                  receipt.continuityExpiresAtMillis(),
+                  receipt.sessionDurationMillis(),
+                  verified.execution().digest(),
                   transition.transitionId(),
                   prior),
               "Original NEW final transition CAS changed");
@@ -2804,6 +2864,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
                   prior),
               "Original NEW reservation CAS changed");
           bumpInventoryClock(transaction, revision, next);
+          CanonicalGameplayOriginalNewCapacityExecutionOwner.retainCommittedInTransaction(
+              transaction, verified.execution(), receipt);
           return toTransitionSnapshot(
               Objects.requireNonNull(
                   findTransition(transaction, transition.transitionId()),
@@ -2819,13 +2881,13 @@ public final class CanonicalGameplayBindingInventoryRepository {
 
   private static void requireOriginalNewFinalReceipt(
       Record row,
-      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual,
+      VerifiedOriginalNewFinalReadback verified,
       CanonicalGameplayAdmissionDecision decision) {
-    OriginalNewFinalAdmissionReceipt receipt = readOriginalNewFinalAdmissionReceipt(row, decision);
-    if (!receipt.finalSessionSha256().equals(actual.finalSessionSha256())
-        || receipt.admissionAtMillis() != actual.admissionAtMillis()
-        || receipt.continuityExpiresAtMillis() != actual.continuityExpiresAtMillis()
-        || receipt.sessionDurationMillis() != actual.canonicalSessionDurationMillis()) {
+    if (!verified
+            .execution()
+            .digest()
+            .equals(row.get("original_new_capacity_execution_digest", String.class))
+        || !verified.receipt().equals(readOriginalNewFinalAdmissionReceipt(row, decision))) {
       throw conflict("Committed original NEW has no identical immutable final readback receipt");
     }
   }

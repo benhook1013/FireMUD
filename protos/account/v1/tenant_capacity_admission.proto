@@ -65,6 +65,26 @@ message TenantCapacityAdmissionCommitment {
   repeated string snapshot_identity = 11;
   repeated string evaluation_identity = 12;
 }
+message TenantCapacityAdmissionRefusal {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    TENANT_BILLING_BLOCKED = 1;
+    CAPACITY_QUOTA_EXCEEDED = 2;
+  }
+  repeated string tenant_id = 1;
+  repeated string request_id = 2;
+  repeated string admission_id = 3;
+  repeated string admission_attempt_id = 4;
+  repeated int64 capacity_rearm_fence = 5;
+  repeated string mutation_digest = 6;
+  repeated string snapshot_identity = 7;
+  repeated string evaluation_identity = 8;
+  repeated Code code = 9;
+  // Zero or one canonical UUID. Only an irrevocable Account quota denial can carry this receipt.
+  repeated string durable_denial_id = 10;
+}
+// Exactly one commitment or one produced domain refusal. Transport/pre-domain failure is non-OK.
 message CommitTenantCapacityAdmissionResponse {
   repeated TenantCapacityAdmissionCommitment commitment = 1;
+  repeated TenantCapacityAdmissionRefusal refusal = 2;
 }
