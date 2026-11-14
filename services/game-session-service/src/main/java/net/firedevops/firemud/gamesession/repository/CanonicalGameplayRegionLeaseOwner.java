@@ -386,56 +386,54 @@ final class CanonicalGameplayRegionLeaseOwner {
         // A stable instance ID can survive a restart. The fresh-token acquire establishes
         // scoped lease absence atomically and refuses every live incumbent or competing grant.
         grant = handoffRedisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
-        if (transferOwner != null) {
-          redisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
-          requireSameSource(
-              source,
-              resolveCurrentInstallationSource(
-                  worldRequest,
-                  evidence,
-                  transferSource,
-                  transferTopologyCandidate,
+        redisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
+        requireSameSource(
+            source,
+            resolveCurrentInstallationSource(
+                worldRequest,
+                evidence,
+                transferSource,
+                transferTopologyCandidate,
+                transferOwner,
+                handoffDeadline,
+                worldDeadline));
+        requireSameIncarnation(
+            incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
+        handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
+        if (transferCandidate == null) {
+          transferCandidate =
+              readInstallationInventory(
                   transferOwner,
                   handoffDeadline,
-                  worldDeadline));
-          requireSameIncarnation(
-              incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
-          handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
-          if (transferCandidate == null) {
-            transferCandidate =
-                readInstallationInventory(
+                  inventory ->
+                      inventory.readRegionTransferOriginalCandidate(transitionId, evidence));
+        }
+        CanonicalGameplayOriginalNewCandidate pinnedTransferCandidate = transferCandidate;
+        handoffRedisOwner.requireCurrent(grant);
+        transferId =
+            frozenOriginal == null
+                ? transferOwner.advance(source, prior, handoffDeadline)
+                : transferOwner.resume(frozenOriginal, source, prior, handoffDeadline);
+        // Advance may retain a COMMITTED winner and activate its SQL inventory row. Keep that
+        // exact terminal source separate from provisional binding/bridge authority.
+        transferTopologyCandidate =
+            readInstallationInventory(
                     transferOwner,
                     handoffDeadline,
                     inventory ->
-                        inventory.readRegionTransferOriginalCandidate(transitionId, evidence));
-          }
-          CanonicalGameplayOriginalNewCandidate pinnedTransferCandidate = transferCandidate;
-          handoffRedisOwner.requireCurrent(grant);
-          transferId =
-              frozenOriginal == null
-                  ? transferOwner.advance(source, prior, handoffDeadline)
-                  : transferOwner.resume(frozenOriginal, source, prior, handoffDeadline);
-          // Advance may retain a COMMITTED winner and activate its SQL inventory row. Keep that
-          // exact terminal source separate from provisional binding/bridge authority.
-          transferTopologyCandidate =
-              readInstallationInventory(
-                      transferOwner,
-                      handoffDeadline,
-                      inventory ->
-                          inventory.readRegionTransferAbortedCandidate(
-                              transitionId, pinnedTransferCandidate))
-                  .orElse(null);
-          transferSource =
-              transferTopologyCandidate != null
-                  ? null
-                  : readInstallationInventory(
-                          transferOwner,
-                          handoffDeadline,
-                          inventory ->
-                              inventory.readRegionTransferCommittedSource(
-                                  transitionId, pinnedTransferCandidate))
-                      .orElse(null);
-        }
+                        inventory.readRegionTransferAbortedCandidate(
+                            transitionId, pinnedTransferCandidate))
+                .orElse(null);
+        transferSource =
+            transferTopologyCandidate != null
+                ? null
+                : readInstallationInventory(
+                        transferOwner,
+                        handoffDeadline,
+                        inventory ->
+                            inventory.readRegionTransferCommittedSource(
+                                transitionId, pinnedTransferCandidate))
+                    .orElse(null);
       } else {
         requireReusableRegionGrant(
             existingRegionInstallation,
