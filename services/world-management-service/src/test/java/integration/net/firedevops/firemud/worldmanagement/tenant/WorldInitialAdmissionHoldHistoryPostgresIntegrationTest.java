@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import org.jooq.DSLContext;
@@ -80,6 +81,8 @@ class WorldInitialAdmissionHoldHistoryPostgresIntegrationTest {
     beforeWorld.keySet().forEach(id -> after1020World.put(id, worldRow(sql, id)));
     beforeHold.keySet().forEach(id -> after1020Hold.put(id, holdRow(sql, id)));
     var after1020History = history(sql);
+    assertFreshCanonicalInsertRefusals(sql);
+    assertThat(history(sql)).isEqualTo(after1020History);
     assertPromotionDenied(sql, beforeHold.keySet().iterator().next());
     assertRetained(sql, after1020World, after1020Hold);
 
@@ -89,6 +92,12 @@ class WorldInitialAdmissionHoldHistoryPostgresIntegrationTest {
     assertRetained(sql, after1020World, after1020Hold);
     assertUnmapped(sql, true);
     assertThat(history(sql)).containsAll(after1020History);
+
+    var currentHistory = history(sql);
+    assertFreshCanonicalInsertRefusals(sql);
+    assertThat(history(sql)).isEqualTo(currentHistory);
+    assertRetained(sql, after1020World, after1020Hold);
+    assertUnmapped(sql, true);
 
     // Actual current repository reads of retained rows, not a canonical finalizer or owner call.
     var repository = new InitialAdmissionBindHoldRepository(sql);
@@ -124,6 +133,76 @@ class WorldInitialAdmissionHoldHistoryPostgresIntegrationTest {
             "world_canonical_player_admission_hold")) {
       assertThat(sql.fetchCount(DSL.table(DSL.name(table)))).as(table).isZero();
     }
+  }
+
+  /** Two rejected acquisitions at each schema boundary; no fabricated positive authority. */
+  private void assertFreshCanonicalInsertRefusals(DSLContext sql) {
+    assertThat(sql.fetchValue("SHOW session_replication_role", String.class)).isEqualTo("origin");
+    assertThatThrownBy(
+            () ->
+                sql.execute(
+                    "INSERT INTO initial_admission_bind_hold (hold_id, hold_fence, tenant_id, realm_uuid, "
+                        + "playable_state_namespace_uuid, playable_state_scope, game_instance_id, version_id, "
+                        + "active_lifecycle_epoch, initial_admission_request_id, request_digest, "
+                        + "expected_no_prior_pointer, expected_catalog_revision, status, diagnostic_expires_at, "
+                        + "canonical_target_namespace) VALUES (?::uuid, ?::uuid, 870001, ?::uuid, ?::uuid, "
+                        + "'SHARED', 880001, 71, 4, ?, ?, TRUE, 1, 'PENDING', CURRENT_TIMESTAMP, 'test-space')",
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "partial-canonical-" + UUID.randomUUID(),
+                    "a".repeat(64)))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_initial_admission_bind_canonical_metadata");
+    assertThat(sql.fetchCount(DSL.table(DSL.name("initial_admission_bind_hold")))).isEqualTo(4);
+
+    var request =
+        new WorldCanonicalInitialAdmissionHold.Request(
+            "test-space",
+            UUID.randomUUID(),
+            "test-world",
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "SHARED",
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            4L,
+            "forged-canonical-" + UUID.randomUUID(),
+            "b".repeat(64),
+            WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            1L,
+            null);
+    assertThatThrownBy(
+            () ->
+                sql.execute(
+                    "INSERT INTO initial_admission_bind_hold (hold_id, hold_fence, tenant_id, realm_uuid, "
+                        + "playable_state_namespace_uuid, playable_state_scope, game_instance_id, version_id, "
+                        + "active_lifecycle_epoch, initial_admission_request_id, request_digest, "
+                        + "expected_no_prior_pointer, expected_catalog_revision, status, diagnostic_expires_at, "
+                        + "canonical_target_namespace, canonical_tenant_id, canonical_world_slug, "
+                        + "canonical_game_instance_id, canonical_version_id, initial_admission_origin, "
+                        + "canonical_request_bytes, hold_binding_digest) "
+                        + "VALUES (?::uuid, ?::uuid, 870001, ?::uuid, ?::uuid, 'SHARED', 880001, 71, 4, ?, ?, "
+                        + "TRUE, 1, 'PENDING', CURRENT_TIMESTAMP, 'test-space', ?::uuid, 'test-world', "
+                        + "?::uuid, ?::uuid, 'NO_PRIOR_POINTER', ?::bytea, ?)",
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    request.realmId(),
+                    request.playableStateNamespaceId(),
+                    request.initialAdmissionRequestId(),
+                    request.initialAdmissionRequestDigest(),
+                    request.canonicalTenantId(),
+                    request.canonicalGameInstanceId(),
+                    request.canonicalVersionId(),
+                    request.canonicalRequestBytes(),
+                    request.holdBindingDigest()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining(
+            "Canonical initial-admission hold lacks its actual World association");
+    assertThat(sql.fetchCount(DSL.table(DSL.name("initial_admission_bind_hold")))).isEqualTo(4);
+    assertThat(sql.fetchCount(DSL.table(DSL.name("world_canonical_instance_association"))))
+        .isZero();
   }
 
   private long insertHistoricalWorld(DSLContext sql, long tenant, long instance) {
