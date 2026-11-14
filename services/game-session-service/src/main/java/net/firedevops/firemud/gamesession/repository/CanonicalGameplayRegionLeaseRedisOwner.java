@@ -547,23 +547,40 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
      */
     <T> T runWithinRetainedPermit(
         Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation) {
+      return runWithinRetainedPermit(operation, ignored -> {}, new CompletableFuture<>());
+    }
+
+    <T> T runWithinRetainedPermit(
+        Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+        java.util.function.Consumer<T> undelivered,
+        CompletableFuture<Void> workLifetime) {
       Objects.requireNonNull(operation, "operation");
+      Objects.requireNonNull(undelivered, "undelivered");
+      Objects.requireNonNull(workLifetime, "workLifetime");
       CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget;
-      CompletableFuture<Void> workLifetime = new CompletableFuture<>();
-      synchronized (this) {
-        requireNoAmbientTransaction();
-        if (closed || initialized || retainedWorkInFlight) throw unavailable();
-        retainedWorkInFlight = true;
-        retainedBudget = budget;
-        if (retainedBudget != null) {
-          retainedBudget.retainUntilCompletion(workLifetime);
-          workLifetime.whenComplete(
-              (ignored, failure) -> {
-                synchronized (PreparedTimelineInitialization.this) {
-                  retainedWorkInFlight = false;
-                }
-              });
+      boolean ownsRetainedWork = false;
+      try {
+        synchronized (this) {
+          requireNoAmbientTransaction();
+          if (closed || initialized || retainedWorkInFlight) {
+            workLifetime.complete(null);
+            throw unavailable();
+          }
+          retainedWorkInFlight = true;
+          ownsRetainedWork = true;
+          retainedBudget = budget;
+          if (retainedBudget != null) {
+            retainedBudget.retainUntilCompletion(workLifetime);
+          }
         }
+      } catch (RuntimeException | Error startupFailure) {
+        if (ownsRetainedWork) {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
+        }
+        workLifetime.complete(null);
+        throw startupFailure;
       }
 
       if (retainedBudget == null) {
@@ -573,10 +590,12 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           synchronized (this) {
             retainedWorkInFlight = false;
           }
+          workLifetime.complete(null);
         }
       }
 
       CompletableFuture<T> result = new CompletableFuture<>();
+      CompletableFuture<Boolean> delivered = new CompletableFuture<>();
       AtomicReference<Thread> workerReference = new AtomicReference<>();
       Context.CancellationListener listener =
           ignored -> {
@@ -613,23 +632,41 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
                         } catch (RuntimeException | Error cleanupFailure) {
                           if (failure == null) failure = cleanupFailure;
                           else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
-                        } finally {
+                        }
+                        // The worker owns any produced capability until the caller acknowledges
+                        // delivery. Timeout/cancellation never silently discards an issued claim.
+                        if (failure == null) result.complete(value);
+                        else result.completeExceptionally(failure);
+                        if (!delivered.join() && value != null) {
                           try {
-                            if (previous != null) workerContext.detach(previous);
-                          } finally {
-                            workLifetime.complete(null);
+                            undelivered.accept(value);
+                          } catch (RuntimeException | Error recoveryFailure) {
+                            if (failure == null) failure = recoveryFailure;
+                            else if (failure != recoveryFailure)
+                              failure.addSuppressed(recoveryFailure);
                           }
                         }
+                        try {
+                          if (previous != null) workerContext.detach(previous);
+                        } finally {
+                          synchronized (PreparedTimelineInitialization.this) {
+                            retainedWorkInFlight = false;
+                          }
+                          workLifetime.complete(null);
+                        }
                       }
-                      if (failure == null) result.complete(value);
-                      else result.completeExceptionally(failure);
                     });
         workerReference.set(worker);
         caller.addListener(listener, Runnable::run);
         listenerRegistered = true;
         worker.start();
         workerStarted = true;
-        return result.get(retainedBudget.remainingNanos(), TimeUnit.NANOSECONDS);
+        T value = result.get(retainedBudget.remainingNanos(), TimeUnit.NANOSECONDS);
+        delivered.complete(true);
+        // SQL cleanup already completed before result publication; only context detachment and
+        // retained-state notification remain. Initialization must not race that notification.
+        workLifetime.join();
+        return value;
       } catch (InterruptedException interrupted) {
         if (worker != null) worker.interrupt();
         retainedBudget.cancel();
@@ -644,6 +681,9 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           worker.interrupt();
           retainedBudget.cancel();
         } else {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
           workLifetime.complete(null);
         }
         throw expired instanceof RuntimeException runtime ? runtime : unavailable();
@@ -652,10 +692,14 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           worker.interrupt();
           retainedBudget.cancel();
         } else {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
           workLifetime.complete(null);
         }
         throw unavailable(startupFailure);
       } finally {
+        delivered.complete(false);
         if (listenerRegistered) caller.removeListener(listener);
       }
     }

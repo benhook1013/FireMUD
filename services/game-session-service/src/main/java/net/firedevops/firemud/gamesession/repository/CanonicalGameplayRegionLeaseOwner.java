@@ -45,6 +45,7 @@ final class CanonicalGameplayRegionLeaseOwner {
 
   static final class RetainedNoWriteRecovery {
     private boolean inUse;
+    private int retainedWorkers;
     CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof;
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
   }
@@ -57,7 +58,7 @@ final class CanonicalGameplayRegionLeaseOwner {
         retained = new RetainedNoWriteRecovery();
         noWriteRecoveries.put(operation, retained);
       }
-      if (retained.inUse) throw unavailable();
+      if (retained.inUse || retained.retainedWorkers != 0) throw unavailable();
       retained.inUse = true;
       return retained;
     }
@@ -66,18 +67,39 @@ final class CanonicalGameplayRegionLeaseOwner {
   void releaseNoWriteRecovery(UUID operation, RetainedNoWriteRecovery retained) {
     synchronized (noWriteRecoveries) {
       retained.inUse = false;
-      if (retained.proof == null) {
+      if (retained.proof == null && retained.retainedWorkers == 0) {
         noWriteRecoveries.remove(operation, retained);
       }
     }
+  }
+
+  java.util.concurrent.CompletableFuture<Void> retainNoWriteWorker(
+      UUID operation, RetainedNoWriteRecovery retained) {
+    var lifetime = new java.util.concurrent.CompletableFuture<Void>();
+    synchronized (noWriteRecoveries) {
+      if (noWriteRecoveries.get(operation) != retained || !retained.inUse) throw unavailable();
+      retained.retainedWorkers++;
+    }
+    lifetime.whenComplete(
+        (ignored, failure) -> {
+          synchronized (noWriteRecoveries) {
+            retained.retainedWorkers--;
+            if (!retained.inUse && retained.retainedWorkers == 0 && retained.proof == null) {
+              noWriteRecoveries.remove(operation, retained);
+            }
+          }
+        });
+    return lifetime;
   }
 
   void retainNoWriteProof(
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
       RetainedNoWriteRecovery retained,
       CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof) {
-    retained.preparation = Objects.requireNonNull(preparation, "preparation");
-    retained.proof = Objects.requireNonNull(proof, "proof");
+    synchronized (noWriteRecoveries) {
+      retained.preparation = Objects.requireNonNull(preparation, "preparation");
+      retained.proof = Objects.requireNonNull(proof, "proof");
+    }
   }
 
   /** Cleanup has no admission authority and remains possible after the binding was aborted. */
@@ -89,7 +111,7 @@ final class CanonicalGameplayRegionLeaseOwner {
         if (retained.proof != null
             && retained.preparation != null
             && retained.preparation.transitionId().equals(transitionId)) {
-          if (retained.inUse) throw unavailable();
+          if (retained.inUse || retained.retainedWorkers != 0) throw unavailable();
           retained.inUse = true;
           selected = retained;
           break;
@@ -444,7 +466,18 @@ final class CanonicalGameplayRegionLeaseOwner {
                                           initializationPreparation, retained, proof);
                                       recoverNoWrite(initializationPreparation, retained);
                                     }));
-                      });
+                      },
+                      abandoned ->
+                          abandoned.ifPresent(
+                              unused -> {
+                                retainNoWriteProof(
+                                    initializationPreparation,
+                                    retained,
+                                    CanonicalGameplayRegionLeaseRedisOwner
+                                        .revokeUndispatchedInitialization(unused));
+                                recoverNoWrite(initializationPreparation, retained);
+                              }),
+                      retainNoWriteWorker(initializationPreparation.operationId(), retained));
           grant =
               session.initialize(
                   permit.orElse(null),
@@ -1400,10 +1433,14 @@ final class CanonicalGameplayRegionLeaseOwner {
       long handoffDeadline,
       CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
       java.util.function.Function<CanonicalGameplayBindingInventoryRepository, T> read) {
-    if (transferOwner == null) return read.apply(bindingInventory);
-    return retainedBudget == null
-        ? bindingInventory.withinTransferRead(clock, handoffDeadline, read)
-        : bindingInventory.withinTransferRead(retainedBudget, read);
+    if (retainedBudget != null) {
+      // Do not wrap the ordinary caller's already-budgeted provider: the companion
+      // must own its connections independently until its retained lifetime ends.
+      return this.bindingInventory.withinTransferRead(retainedBudget, read);
+    }
+    return transferOwner == null
+        ? read.apply(bindingInventory)
+        : bindingInventory.withinTransferRead(clock, handoffDeadline, read);
   }
 
   private <T> T withTransferStatusRepository(
@@ -1422,10 +1459,14 @@ final class CanonicalGameplayRegionLeaseOwner {
       long handoffDeadline,
       CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
       java.util.function.Function<CanonicalGameplayRegionRuntimeStatusRepository, T> operation) {
-    if (transferOwner == null) return operation.apply(statusRepository);
-    return retainedBudget == null
-        ? transferOwner.withStatusRepository(handoffDeadline, operation)
-        : transferOwner.withStatusRepository(retainedBudget, operation);
+    if (retainedBudget != null) {
+      return transferOwner == null
+          ? operation.apply(this.statusRepository.forBudget(retainedBudget))
+          : transferOwner.withStatusRepository(retainedBudget, operation);
+    }
+    return transferOwner == null
+        ? operation.apply(statusRepository)
+        : transferOwner.withStatusRepository(handoffDeadline, operation);
   }
 
   private ResolvedBridgeSource resolveExactBridgeSource(
