@@ -896,6 +896,31 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
           "sha256:" + "a".repeat(64),
           id);
       String dispatched = proof.itemImage(id);
+      assertThatThrownBy(
+              () ->
+                  proof.sql.transaction(
+                      configuration -> {
+                        var transaction = org.jooq.impl.DSL.using(configuration);
+                        var changed = "sha256:" + "b".repeat(64);
+                        var round = UUID.randomUUID();
+                        transaction.execute(
+                            "UPDATE game_session_region_owner_transfer SET incarnation_digest=?,verification_round=? WHERE transfer_id=?",
+                            changed,
+                            round,
+                            id);
+                        transaction.execute(
+                            "UPDATE game_session_region_owner_transfer_item SET fence_readback=?,incarnation_digest=?,before_payload_digest=?,after_payload_digest=?,verified_round=? WHERE transfer_id=?",
+                            new byte[] {1},
+                            changed,
+                            changed,
+                            changed,
+                            round,
+                            id);
+                      }))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("gs_region_fence_receipt_dispatch_incarnation");
+      assertThat(proof.itemImage(id)).isEqualTo(dispatched);
+
       assertSqlGuard(
           () ->
               proof.sql.execute(
