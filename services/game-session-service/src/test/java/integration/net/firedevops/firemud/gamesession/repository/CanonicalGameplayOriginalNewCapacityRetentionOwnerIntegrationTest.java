@@ -603,7 +603,9 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
                         CLOCK.millis() + 1000,
                         1000L,
                         fixture.transitionId()))
-        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining(
+            "Original NEW final receipt requires its exact authorized capacity execution");
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(
             capacityOwner()
