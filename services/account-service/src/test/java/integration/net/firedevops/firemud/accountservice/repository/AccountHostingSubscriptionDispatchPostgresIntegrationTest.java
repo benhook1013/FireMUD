@@ -102,7 +102,9 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(completion.requestId()).isEqualTo(checkout.invoice().creationRequestId());
     assertThat(payments.completeSigned(linked.payload(), linked.signature())).isEqualTo(completion);
     assertThat(
-            hosting.dsl().fetchCount(DSL.table("subscription_first_invoice_unconsented_paid_events")))
+            hosting
+                .dsl()
+                .fetchCount(DSL.table("subscription_first_invoice_unconsented_paid_events")))
         .isEqualTo(1);
 
     String unrelatedPayload =
