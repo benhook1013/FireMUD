@@ -104,6 +104,10 @@ final class CanonicalGameplayRegionLeaseOwner {
 
   /** Cleanup has no admission authority and remains possible after the binding was aborted. */
   void recoverRetainedNoWriteForTransition(UUID transitionId) {
+    recoverRetainedNoWriteForTransition(transitionId, Long.MAX_VALUE);
+  }
+
+  private void recoverRetainedNoWriteForTransition(UUID transitionId, long absoluteDeadlineMillis) {
     Objects.requireNonNull(transitionId, "transitionId");
     RetainedNoWriteRecovery selected = null;
     synchronized (noWriteRecoveries) {
@@ -119,10 +123,35 @@ final class CanonicalGameplayRegionLeaseOwner {
       }
     }
     if (selected == null) return;
+    var recovery = selected;
+    var workerOwnsRecovery = new java.util.concurrent.atomic.AtomicBoolean();
     try {
-      recoverNoWrite(selected.preparation, selected);
+      // Retry cleanup observes the caller's deadline. Its reservation follows the actual
+      // SQL worker, not the caller-facing timeout or completion of the SQL callback alone.
+      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          clock,
+          absoluteDeadlineMillis,
+          cleanup -> {
+            if (!workerOwnsRecovery.compareAndSet(false, true)) throw unavailable();
+            cleanup
+                .workerLifetime()
+                .whenComplete(
+                    (ignored, failure) ->
+                        releaseNoWriteRecovery(recovery.preparation.operationId(), recovery));
+            this.statusRepository
+                .forBudget(cleanup)
+                .releaseInitialTimelineNoWrite(
+                    recovery.preparation, recovery.proof, clock.instant());
+            synchronized (noWriteRecoveries) {
+              recovery.proof = null;
+            }
+            return null;
+          });
     } finally {
-      releaseNoWriteRecovery(selected.preparation.operationId(), selected);
+      // If the callback never acquired custody, prevent a late start and release safely.
+      if (workerOwnsRecovery.compareAndSet(false, true)) {
+        releaseNoWriteRecovery(recovery.preparation.operationId(), recovery);
+      }
     }
   }
 
@@ -220,7 +249,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
-    recoverRetainedNoWriteForTransition(transitionId);
+    recoverRetainedNoWriteForTransition(transitionId, absoluteDeadlineMillis);
     if (!deadlineBoundInstallation || transferOwner != null) {
       return installForTransition(
           existingRegionInstallation,

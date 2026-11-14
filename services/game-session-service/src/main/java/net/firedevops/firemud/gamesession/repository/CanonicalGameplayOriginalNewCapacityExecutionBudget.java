@@ -66,6 +66,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private final long absoluteDeadlineMillis;
   private final AtomicBoolean cancelled = new AtomicBoolean();
   private final CompletableFuture<Object> result = new CompletableFuture<>();
+  private final CompletableFuture<Void> workerLifetime = new CompletableFuture<>();
   private final Object resources = new Object();
   private final Object lifecycle = new Object();
   private final Map<Connection, OwnedConnection> connections = new IdentityHashMap<>();
@@ -178,10 +179,14 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                 if (failure == null) failure = cleanupFailure;
                 else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
               }
-              budget.caller.detach(previous);
-              synchronized (budget.lifecycle) {
-                budget.workerDone = true;
-                budget.releaseIfFinished();
+              try {
+                budget.caller.detach(previous);
+              } finally {
+                synchronized (budget.lifecycle) {
+                  budget.workerDone = true;
+                  budget.releaseIfFinished();
+                }
+                budget.workerLifetime.complete(null);
               }
             }
             if (failure != null) budget.result.completeExceptionally(failure);
@@ -276,6 +281,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
             releaseIfFinished();
           }
         });
+  }
+
+  /** Actual worker exit, including SQL resource cleanup; never the caller timeout. */
+  CompletableFuture<Void> workerLifetime() {
+    return workerLifetime;
   }
 
   /** Keeps this operation's permits until borrowed work has actually exited. */
