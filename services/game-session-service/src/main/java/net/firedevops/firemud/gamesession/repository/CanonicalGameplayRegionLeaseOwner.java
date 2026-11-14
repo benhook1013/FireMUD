@@ -440,7 +440,8 @@ final class CanonicalGameplayRegionLeaseOwner {
                                     initializationPreparation,
                                     clock.instant(),
                                     proof -> {
-                                      retainNoWriteProof(initializationPreparation, retained, proof);
+                                      retainNoWriteProof(
+                                          initializationPreparation, retained, proof);
                                       recoverNoWrite(initializationPreparation, retained);
                                     }));
                       });
