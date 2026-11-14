@@ -35,7 +35,9 @@ public final class TcpProxyTlsListenerHealthIndicator implements HealthIndicator
     details.put("configuredPort", properties.getPort());
     details.put("boundPort", listener.boundPort());
     details.put("trustProfile", properties.getTrustProfile());
-    return listener.isRunning()
+    boolean tlsMaterialHealthy = listener.isTlsMaterialHealthy();
+    details.put("tlsMaterial", tlsMaterialHealthy ? "healthy" : "unhealthy");
+    return listener.isRunning() && tlsMaterialHealthy
         ? Health.up().withDetails(details).build()
         : Health.outOfService().withDetails(details).build();
   }

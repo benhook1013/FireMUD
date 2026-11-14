@@ -20,6 +20,11 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
@@ -29,6 +34,7 @@ import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
+import net.firedevops.firemud.gamesession.dto.CanonicalClosedAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionLaunchTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
@@ -46,6 +52,8 @@ import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRe
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.CanonicalClosedPointerConflictException;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.PreparedInitialClosed;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepository;
@@ -100,6 +108,498 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void canonicalClosedRowsStayOutsideNumericReaderAndAuthorityInventory() {
+    Fixture fixture = fixture();
+    var request = closedRequest(fixture, uuid(46), "inventory actor", "inventory reason");
+    fixture.commit(fixture.pointerRepository.prepareInitialClosed(request));
+    var original =
+        fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()).orElseThrow();
+    var numeric =
+        new net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository(
+            fixture.dsl);
+    var events = new GameplayAdmissionPointerEventRepository(fixture.dsl);
+    var authority =
+        new net.firedevops.firemud.gamesession.service.impl
+            .DatabaseGameplayAdmissionPointerAuthorityService(numeric, events);
+    assertThat(numeric.count()).isZero();
+    assertThat(numeric.findAllByOrderByWorldSlugAscRealmSlugAsc()).isEmpty();
+    assertThat(authority.listPointers()).isEmpty();
+    assertThat(
+            numeric.findByTenantIdAndWorldSlugAndRealmSlug(
+                917L, original.worldSlug(), original.realmSlug()))
+        .isEmpty();
+    assertThat(numeric.findAllByTenantIdAndGameInstanceId(917L, 501L)).isEmpty();
+    assertThat(
+            events.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
+                917L, original.worldSlug(), original.realmSlug()))
+        .isEmpty();
+    assertThat(fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()))
+        .contains(original);
+    assertThat(fixture.count("gameplay_admission_pointer")).isEqualTo(1L);
+  }
+
+  @Test
+  void canonicalClosedShapeRejectsRuntimeAndNamespaceAliases() {
+    Fixture fixture = fixture();
+    var request = closedRequest(fixture, uuid(41), "shape actor", "shape reason");
+    var catalog =
+        fixture
+            .catalogRepository
+            .readByRequest(NAMESPACE, request.catalogCreationRequestId())
+            .orElseThrow();
+    String insert =
+        "INSERT INTO gameplay_admission_pointer ("
+            + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+            + "game_instance_id, pointer_version, visible, requires_character_selection, "
+            + "state_scope, character_creation_policy, last_updated_by, last_update_reason, "
+            + "created_at, updated_at, public_production_realm, catalog_revision, realm_id, "
+            + "playable_state_namespace_id, representation_version, target_namespace, "
+            + "canonical_tenant_id, admission_state) "
+            + "SELECT catalog.world_slug, catalog.realm_slug, NULL, NULL, ?, ?, 1, NULL, NULL, "
+            + "NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, "
+            + "catalog.catalog_revision, catalog.realm_id, ?, 2, catalog.target_namespace, "
+            + "catalog.canonical_tenant_id, 'CLOSED' "
+            + "FROM game_session_canonical_realm_catalog catalog "
+            + "WHERE catalog.target_namespace = ? AND catalog.creation_request_id = ?";
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    insert, 917L, 501L, null, NAMESPACE, request.catalogCreationRequestId()))
+        .hasStackTraceContaining("chk_gameplay_admission_pointer_representation");
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    insert,
+                    null,
+                    null,
+                    catalog.playableStateNamespaceId(),
+                    NAMESPACE,
+                    request.catalogCreationRequestId()))
+        .hasStackTraceContaining("chk_gameplay_admission_pointer_representation");
+    assertThat(fixture.count("gameplay_admission_pointer")).isZero();
+    assertThat(fixture.count("gameplay_admission_pointer_event")).isZero();
+    assertThat(fixture.count("game_session_canonical_closed_admission_pointer_request")).isZero();
+    fixture.commit(fixture.pointerRepository.prepareInitialClosed(request));
+    var snapshot =
+        fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()).orElseThrow();
+    assertThat(snapshot.catalogSnapshot()).isEqualTo(catalog);
+    assertThat(snapshot.admissionState()).isEqualTo("CLOSED");
+    assertThat(snapshot.admissibleGameInstanceId()).isNull();
+    assertThat(snapshot.pointerVersion()).isEqualTo(1L);
+    assertThat(snapshot.updatedAt()).isEqualTo(snapshot.updatedAt().truncatedTo(ChronoUnit.MICROS));
+    for (String table : List.of("gameplay_admission_pointer", "gameplay_admission_pointer_event")) {
+      var row =
+          fixture.dsl.fetchSingle("SELECT * FROM " + table + " WHERE representation_version = 2");
+      assertThat(row.get("tenant_id")).isNull();
+      assertThat(row.get("game_instance_id")).isNull();
+      assertThat(row.get("playable_state_namespace_id")).isNull();
+      assertThat(row.get("canonical_tenant_id", UUID.class)).isEqualTo(catalog.tenantId());
+      assertThat(row.get("realm_id", UUID.class)).isEqualTo(catalog.realmId());
+      assertThat(row.get("catalog_revision", Long.class)).isEqualTo(catalog.catalogRevision());
+      assertThat(row.get("admission_state", String.class)).isEqualTo("CLOSED");
+    }
+  }
+
+  @Test
+  void expectedClosedLocksExactOriginAndRejectsUnknownOrChangedSelectors() {
+    Fixture fixture = fixture();
+    var request = closedRequest(fixture, uuid(42), "origin actor", "origin reason");
+    fixture.commit(fixture.pointerRepository.prepareInitialClosed(request));
+    var original =
+        fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()).orElseThrow();
+    var prepared =
+        fixture.pointerRepository.prepareExpectedClosed(NAMESPACE, request.requestId(), 1L, 1L);
+    var locked =
+        fixture.transactions.execute(
+            status -> fixture.pointerRepository.lockExpectedClosed(prepared));
+    assertThat(locked).isNotNull();
+    assertThat(locked.isNeverOpenOrigin()).isTrue();
+    assertThat(locked.originalRequestId()).isEqualTo(original.requestId());
+    assertThat(locked.targetNamespace()).isEqualTo(original.targetNamespace());
+    assertThat(locked.canonicalTenantId()).isEqualTo(original.canonicalTenantId());
+    assertThat(locked.realmId()).isEqualTo(original.realmId());
+    assertThat(locked.auditEventId()).isEqualTo(original.auditEventId());
+    assertThat(locked.requestDigest()).isEqualTo(original.requestDigest());
+    assertThat(locked.receiptDigest()).isEqualTo(original.receiptDigest());
+    assertThat(locked.pointerVersion()).isEqualTo(original.pointerVersion());
+    assertThat(locked.catalogRevision()).isEqualTo(original.catalogRevision());
+    assertThatThrownBy(
+            () -> fixture.pointerRepository.prepareExpectedClosed(NAMESPACE, uuid(998), 1L, 1L))
+        .hasMessageContaining("origin is missing");
+    assertThatThrownBy(
+            () ->
+                fixture.pointerRepository.prepareExpectedClosed(
+                    NAMESPACE + "-other", request.requestId(), 1L, 1L))
+        .hasMessageContaining("origin is missing");
+    assertThatThrownBy(
+            () ->
+                fixture.pointerRepository.prepareExpectedClosed(
+                    NAMESPACE, request.requestId(), 2L, 1L))
+        .hasMessageContaining("versions do not match");
+    assertThatThrownBy(
+            () ->
+                fixture.pointerRepository.prepareExpectedClosed(
+                    NAMESPACE, request.requestId(), 1L, 2L))
+        .hasMessageContaining("versions do not match");
+  }
+
+  @Test
+  void expectedClosedPreparedOriginSurvivesRefusedCorruptionWithoutDisablingGuards() {
+    Fixture fixture = fixture();
+    var request = closedRequest(fixture, uuid(43), "integrity actor", "integrity reason");
+    fixture.commit(fixture.pointerRepository.prepareInitialClosed(request));
+    var prepared =
+        fixture.pointerRepository.prepareExpectedClosed(NAMESPACE, request.requestId(), 1L, 1L);
+    var before =
+        fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()).orElseThrow();
+    // Real SQL integrity refuses both audit drift and partial history. This does not fabricate
+    // committed corrupt rows or claim execution of the defensive corrupted-read branches.
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "UPDATE gameplay_admission_pointer_event SET reason = 'changed after prepare' WHERE id = ?",
+                    before.auditEventId()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "DELETE FROM game_session_canonical_closed_admission_pointer_request WHERE target_namespace = ? AND request_id = ?",
+                    NAMESPACE,
+                    request.requestId()))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "DELETE FROM gameplay_admission_pointer_event WHERE id = ?",
+                    before.auditEventId()))
+        .isInstanceOf(DataAccessException.class);
+    var locked =
+        fixture.transactions.execute(
+            status -> fixture.pointerRepository.lockExpectedClosed(prepared));
+    assertThat(locked).isNotNull();
+    assertThat(locked.receiptDigest()).isEqualTo(before.receiptDigest());
+    assertThat(fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()))
+        .contains(before);
+  }
+
+  @Test
+  void expectedClosedRequiresCommittedPreflightAndWritableReadCommittedLock() {
+    Fixture fixture = fixture();
+    var request = closedRequest(fixture, uuid(44), "lock actor", "lock reason");
+    fixture.commit(fixture.pointerRepository.prepareInitialClosed(request));
+    var prepared =
+        fixture.pointerRepository.prepareExpectedClosed(NAMESPACE, request.requestId(), 1L, 1L);
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.pointerRepository.prepareExpectedClosed(
+                            NAMESPACE, request.requestId(), 1L, 1L)))
+        .hasMessageContaining("committed-outcome owner read");
+    assertThatThrownBy(() -> fixture.pointerRepository.lockExpectedClosed(prepared))
+        .hasMessageContaining("active owner transaction");
+    TransactionTemplate readOnly = new TransactionTemplate(fixture.transactionManager);
+    readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnly.execute(status -> fixture.pointerRepository.lockExpectedClosed(prepared)))
+        .hasMessageContaining("read-write transaction");
+    TransactionTemplate serializable = new TransactionTemplate(fixture.transactionManager);
+    serializable.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_SERIALIZABLE);
+    assertThatThrownBy(
+            () ->
+                serializable.execute(
+                    status -> fixture.pointerRepository.lockExpectedClosed(prepared)))
+        .hasMessageContaining("READ COMMITTED");
+    assertThat(
+            fixture
+                .transactions
+                .execute(status -> fixture.pointerRepository.lockExpectedClosed(prepared))
+                .isNeverOpenOrigin())
+        .isTrue();
+  }
+
+  @Test
+  void canonicalClosedPointerAndImmutableHistoryRejectMutationAndTruncation() {
+    Fixture fixture = fixture();
+    var request = closedRequest(fixture, uuid(45), "immutable actor", "immutable reason");
+    fixture.commit(fixture.pointerRepository.prepareInitialClosed(request));
+    var before =
+        fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()).orElseThrow();
+    for (String statement :
+        List.of(
+            "UPDATE gameplay_admission_pointer SET tenant_id = 917 WHERE representation_version = 2",
+            "UPDATE gameplay_admission_pointer SET admission_state = 'OPEN' WHERE representation_version = 2",
+            "DELETE FROM gameplay_admission_pointer WHERE representation_version = 2",
+            "UPDATE game_session_canonical_closed_admission_pointer_request SET reason = 'rewritten'")) {
+      assertThatThrownBy(() -> fixture.dsl.execute(statement))
+          .isInstanceOf(DataAccessException.class);
+    }
+    for (String table :
+        List.of(
+            "gameplay_admission_pointer",
+            "gameplay_admission_pointer_event",
+            "game_session_canonical_closed_admission_pointer_request")) {
+      assertThatThrownBy(() -> fixture.dsl.execute("TRUNCATE " + table + " CASCADE"))
+          .isInstanceOf(DataAccessException.class);
+    }
+    assertThat(fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()))
+        .contains(before);
+    assertThat(fixture.count("gameplay_admission_pointer")).isEqualTo(1L);
+    assertThat(fixture.count("gameplay_admission_pointer_event")).isEqualTo(1L);
+    assertThat(fixture.count("game_session_canonical_closed_admission_pointer_request"))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void exactRetryAndLostResponseReadbackPreserveTheOriginalOutcomeAndEvent() {
+    Fixture fixture = fixture();
+    CreateCanonicalClosedAdmissionPointerRequest request =
+        closedRequest(fixture, uuid(31), "actor/é", "close/東京");
+    PreparedInitialClosed prepared = fixture.pointerRepository.prepareInitialClosed(request);
+    fixture.commit(prepared);
+    CanonicalClosedAdmissionPointerSnapshot original =
+        fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()).orElseThrow();
+    fixture.commit(fixture.pointerRepository.prepareInitialClosed(request));
+    CanonicalClosedAdmissionPointerSnapshot replay =
+        fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId()).orElseThrow();
+
+    assertThat(replay).isEqualTo(original);
+    assertThat(replay.updatedAt()).isEqualTo(original.updatedAt());
+    assertThat(replay.auditEventId()).isEqualTo(original.auditEventId());
+    assertThat(fixture.count("gameplay_admission_pointer WHERE representation_version = 2"))
+        .isEqualTo(1L);
+    assertThat(fixture.count("gameplay_admission_pointer_event WHERE representation_version = 2"))
+        .isEqualTo(1L);
+    assertThat(fixture.count("game_session_canonical_closed_admission_pointer_request"))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void changedAuditOrCatalogInputUnderTheSameRequestConflictsWithoutAddingRows() {
+    Fixture fixture = fixture();
+    CreateCanonicalClosedAdmissionPointerRequest original =
+        closedRequest(fixture, uuid(32), "actor", "first reason");
+    fixture.commit(fixture.pointerRepository.prepareInitialClosed(original));
+    CreateCanonicalClosedAdmissionPointerRequest changedReason =
+        new CreateCanonicalClosedAdmissionPointerRequest(
+            original.requestId(),
+            original.targetNamespace(),
+            original.canonicalTenantId(),
+            original.realmId(),
+            original.catalogCreationRequestId(),
+            original.catalogRevision(),
+            original.actorPrincipal(),
+            "changed reason");
+    CreateCanonicalClosedAdmissionPointerRequest changedActor =
+        new CreateCanonicalClosedAdmissionPointerRequest(
+            original.requestId(),
+            original.targetNamespace(),
+            original.canonicalTenantId(),
+            original.realmId(),
+            original.catalogCreationRequestId(),
+            original.catalogRevision(),
+            "changed actor",
+            original.reason());
+    PreparedInitialClosed changedReasonPrepared =
+        fixture.pointerRepository.prepareInitialClosed(changedReason);
+    PreparedInitialClosed changedActorPrepared =
+        fixture.pointerRepository.prepareInitialClosed(changedActor);
+    CreateCanonicalClosedAdmissionPointerRequest changedCatalogReference =
+        new CreateCanonicalClosedAdmissionPointerRequest(
+            original.requestId(),
+            original.targetNamespace(),
+            original.canonicalTenantId(),
+            original.realmId(),
+            uuid(999),
+            original.catalogRevision(),
+            original.actorPrincipal(),
+            original.reason());
+
+    assertThatThrownBy(() -> fixture.commit(changedReasonPrepared))
+        .isInstanceOf(CanonicalClosedPointerConflictException.class)
+        .hasMessageContaining("changed input");
+    assertThatThrownBy(() -> fixture.commit(changedActorPrepared))
+        .isInstanceOf(CanonicalClosedPointerConflictException.class)
+        .hasMessageContaining("changed input");
+    assertThatThrownBy(
+            () -> fixture.pointerRepository.prepareInitialClosed(changedCatalogReference))
+        .hasMessageContaining("catalog request is missing");
+    assertThat(fixture.count("gameplay_admission_pointer WHERE representation_version = 2"))
+        .isEqualTo(1L);
+    assertThat(fixture.count("gameplay_admission_pointer_event WHERE representation_version = 2"))
+        .isEqualTo(1L);
+    assertThat(fixture.count("game_session_canonical_closed_admission_pointer_request"))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void concurrentExactCreationLeavesOnePointerEventAndImmutableOutcome() throws Exception {
+    Fixture fixture = fixture();
+    CreateCanonicalClosedAdmissionPointerRequest request =
+        closedRequest(fixture, uuid(33), "concurrent actor", "same intent");
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<Void> first = executor.submit(() -> raceCreate(fixture, request, ready, start));
+      Future<Void> second = executor.submit(() -> raceCreate(fixture, request, ready, start));
+      assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      assertThat(first.get(30, TimeUnit.SECONDS)).isNull();
+      assertThat(second.get(30, TimeUnit.SECONDS)).isNull();
+    }
+
+    assertThat(fixture.count("gameplay_admission_pointer WHERE representation_version = 2"))
+        .isEqualTo(1L);
+    assertThat(fixture.count("gameplay_admission_pointer_event WHERE representation_version = 2"))
+        .isEqualTo(1L);
+    assertThat(fixture.count("game_session_canonical_closed_admission_pointer_request"))
+        .isEqualTo(1L);
+    assertThat(fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId())).isPresent();
+  }
+
+  @Test
+  void rollingBackOwnerTransactionLeavesNoPointerEventOrOutcome() {
+    Fixture fixture = fixture();
+    CreateCanonicalClosedAdmissionPointerRequest request =
+        closedRequest(fixture, uuid(34), "rollback actor", "rollback reason");
+    PreparedInitialClosed prepared = fixture.pointerRepository.prepareInitialClosed(request);
+    Void rolledBack =
+        fixture.transactions.execute(
+            status -> {
+              fixture.pointerRepository.createInitialClosed(prepared);
+              status.setRollbackOnly();
+              return null;
+            });
+
+    assertThat(rolledBack).isNull();
+    assertThat(fixture.count("gameplay_admission_pointer WHERE representation_version = 2"))
+        .isZero();
+    assertThat(fixture.count("gameplay_admission_pointer_event WHERE representation_version = 2"))
+        .isZero();
+    assertThat(fixture.count("game_session_canonical_closed_admission_pointer_request")).isZero();
+    assertThat(fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId())).isEmpty();
+  }
+
+  @Test
+  void committedReadbackRequiresExactOwnerTransactionBoundaries() {
+    Fixture fixture = fixture();
+    CreateCanonicalClosedAdmissionPointerRequest request =
+        closedRequest(fixture, uuid(35), "boundary actor", "boundary reason");
+    PreparedInitialClosed prepared = fixture.pointerRepository.prepareInitialClosed(request);
+
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status -> fixture.pointerRepository.prepareInitialClosed(request)))
+        .hasMessageContaining("committed-outcome owner read");
+    assertThatThrownBy(() -> fixture.pointerRepository.createInitialClosed(prepared))
+        .hasMessageContaining("active owner transaction");
+    TransactionTemplate readOnly = new TransactionTemplate(fixture.transactionManager);
+    readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnly.execute(
+                    status -> {
+                      fixture.pointerRepository.createInitialClosed(prepared);
+                      return null;
+                    }))
+        .hasMessageContaining("read-write transaction");
+    TransactionTemplate serializable = new TransactionTemplate(fixture.transactionManager);
+    serializable.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_SERIALIZABLE);
+    assertThatThrownBy(
+            () ->
+                serializable.execute(
+                    status -> {
+                      fixture.pointerRepository.createInitialClosed(prepared);
+                      return null;
+                    }))
+        .hasMessageContaining("READ COMMITTED");
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId())))
+        .hasMessageContaining("committed-outcome owner read");
+    assertThat(fixture.pointerRepository.readByRequest(NAMESPACE, request.requestId())).isEmpty();
+  }
+
+  @Test
+  void partialPointerCannotCommitWithoutItsAuditAndRequestOutcome() {
+    Fixture fixture = fixture();
+    CreateCanonicalClosedAdmissionPointerRequest request =
+        closedRequest(fixture, uuid(37), "partial actor", "partial reason");
+
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.dsl.execute(
+                            "INSERT INTO gameplay_admission_pointer (world_slug, realm_slug, "
+                                + "world_display_name, realm_display_name, tenant_id, game_instance_id, "
+                                + "pointer_version, visible, requires_character_selection, state_scope, "
+                                + "character_creation_policy, last_updated_by, last_update_reason, "
+                                + "created_at, updated_at, public_production_realm, catalog_revision, "
+                                + "realm_id, playable_state_namespace_id, representation_version, "
+                                + "target_namespace, canonical_tenant_id, admission_state) "
+                                + "SELECT world_slug, realm_slug, NULL, NULL, NULL, NULL, 1, NULL, NULL, "
+                                + "NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, "
+                                + "catalog_revision, realm_id, NULL, 2, target_namespace, "
+                                + "canonical_tenant_id, 'CLOSED' FROM game_session_canonical_realm_catalog "
+                                + "WHERE creation_request_id = ?",
+                            request.catalogCreationRequestId())))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining(
+            "Canonical CLOSED pointer, event, outcome and exact catalog must commit together");
+    assertThat(fixture.count("gameplay_admission_pointer WHERE representation_version = 2"))
+        .isZero();
+    assertThat(fixture.count("gameplay_admission_pointer_event WHERE representation_version = 2"))
+        .isZero();
+    assertThat(fixture.count("game_session_canonical_closed_admission_pointer_request")).isZero();
+  }
+
+  private Void raceCreate(
+      Fixture fixture,
+      CreateCanonicalClosedAdmissionPointerRequest request,
+      CountDownLatch ready,
+      CountDownLatch start)
+      throws Exception {
+    ready.countDown();
+    if (!start.await(10, TimeUnit.SECONDS)) {
+      throw new IllegalStateException("Timed out waiting for canonical closed-pointer race");
+    }
+    var prepared = fixture.pointerRepository.prepareInitialClosed(request);
+    // TransactionAwareDataSourceProxy binds a distinct physical connection to each racer.
+    // Bound server-side lock/statement waits as well as the Future wait and start barrier.
+    fixture.transactions.execute(
+        status -> {
+          fixture.dsl.execute("SET LOCAL lock_timeout = '10s'");
+          fixture.dsl.execute("SET LOCAL statement_timeout = '20s'");
+          fixture.pointerRepository.createInitialClosed(prepared);
+          return null;
+        });
+    return null;
+  }
+
+  // Controlled upstream publication and fresh-association fixtures; real current SQL owners.
+  // These CLOSED primitive cases neither register an owner nor authorize first OPEN.
+  private static CreateCanonicalClosedAdmissionPointerRequest closedRequest(
+      Fixture fixture, UUID requestId, String actor, String reason) {
+    var catalog = fixture.createCatalog(fixture.registerSource());
+    return new CreateCanonicalClosedAdmissionPointerRequest(
+        requestId,
+        NAMESPACE,
+        catalog.tenantId(),
+        catalog.realmId(),
+        catalog.creationRequestId(),
+        catalog.catalogRevision(),
+        actor,
+        reason);
+  }
 
   @Test
   void historicalRealmOriginLookupRetainsExactClosedEvidenceAfterRetainedOpen() throws Exception {
@@ -2953,6 +3453,18 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       GameSessionCanonicalAdmissionPointerRepository pointerRepository,
       CanonicalGameInstanceLaunchAssociationRepository launchRepository,
       CanonicalInitialAdmissionRepository initialAdmissionRepository) {
+    long count(String tableAndPredicate) {
+      return dsl.fetchSingle("SELECT count(*) FROM " + tableAndPredicate).get(0, Long.class);
+    }
+
+    void commit(PreparedInitialClosed prepared) {
+      transactions.execute(
+          status -> {
+            pointerRepository.createInitialClosed(prepared);
+            return null;
+          });
+    }
+
     IntakeReceipt registerSource() {
       return Objects.requireNonNull(
           transactions.execute(status -> sourceRepository.register(INTAKE_REQUEST, freshSource())));

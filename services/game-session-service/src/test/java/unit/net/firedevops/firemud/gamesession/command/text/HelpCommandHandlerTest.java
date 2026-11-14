@@ -96,8 +96,8 @@ class HelpCommandHandlerTest {
             .text()
             .contains(
                 "FRIENDS VISIBILITY shows your current cross-game friend-presence policy, and FRIENDS VISIBILITY <PUBLIC|FRIENDS_ONLY|PRIVATE> updates it."));
-    assertTrue(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_VISIBILITY"));
-    assertTrue(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_SCOPE"));
+    assertFalse(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_VISIBILITY"));
+    assertFalse(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_SCOPE"));
     assertTrue(result.outputs().get(0).text().contains("#entryNumber removal"));
     assertTrue(result.outputs().get(0).text().contains("Private friends do not expose presence."));
     assertFalse(result.outputs().get(0).text().contains("hidden-staff"));

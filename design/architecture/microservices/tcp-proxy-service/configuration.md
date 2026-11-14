@@ -95,6 +95,8 @@ The target hosted preview and dev-demo Helm deployments select direct Telnet TLS
 
 When all three routing defaults are configured coherently, TCP Proxy forwards them as `X-World-Slug`, `X-Realm-Slug`, and positive `X-Pointer-Version` only on the authenticated Proxy -> Gateway WebSocket hop. Gateway rejects a partial or malformed bundle, removes connect-token carriers for that trusted transport, and forwards the validated advisory bundle to Game Session; the headers never bypass direct credential `LOGIN` / `PLAY` or become gameplay-admission authority. The complete trusted-hop header contract is [TCP Proxy API Contracts](./api-contracts.md#correlation-and-header-contract).
 
+Telnet TLS listeners watch certificate/key material as one coherent projection for new handshakes. A missing or unhealthy watcher fails new traffic and route readiness closed; an unsuccessful reload retains the last valid context without declaring the new material healthy. Existing sessions and emergency identity withdrawal remain governed by the separate lifecycle contract. Focused implementation proof and hosted qualification limits are recorded in the [player-access tracker](../../../project-management/implementation-tracking/player-access-and-session.md#old-stack-player-diagnostic-receiving-preparation).
+
 ## WebSocket mTLS to Spring Cloud Gateway
 
 The trust and identity requirements are defined by [Security](../../system-architecture-security.md#tls-termination--internal-encryption) and the [environment and secrets catalog](../../infrastructure/environment-and-secrets-catalog.md#tls--certificates); the TCP Proxy-local wiring is:

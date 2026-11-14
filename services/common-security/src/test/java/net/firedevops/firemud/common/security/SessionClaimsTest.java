@@ -102,6 +102,50 @@ class SessionClaimsTest {
     assertThrows(IllegalArgumentException.class, () -> SessionClaims.fromJwt(jwt(payload)));
   }
 
+  @ParameterizedTest
+  @MethodSource("invalidDirectAccountIdentities")
+  void directConstructionRejectsInvalidAccountIdentity(String accountId) {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new SessionClaims(accountId, List.of(), Map.of(), false, null, null));
+  }
+
+  private static Stream<String> invalidDirectAccountIdentities() {
+    return Stream.of(
+        null,
+        "",
+        " ",
+        "42",
+        "invalid",
+        "00000000-0000-0000-0000-000000000000",
+        ACCOUNT_ID.toUpperCase(java.util.Locale.ROOT),
+        "1-1-1-1-1",
+        " " + ACCOUNT_ID,
+        ACCOUNT_ID + " ");
+  }
+
+  @ParameterizedTest
+  @MethodSource("invalidPresentInternalAccountIdentities")
+  void directInternalConstructionRejectsMalformedPresentAccountIdentity(String accountId) {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new SessionClaims(accountId, List.of(), Map.of(), true, "service", "instance"));
+  }
+
+  private static Stream<String> invalidPresentInternalAccountIdentities() {
+    return invalidDirectAccountIdentities().filter(value -> value != null && !value.isEmpty());
+  }
+
+  @Test
+  void directInternalConstructionPreservesAbsentAndCanonicalAccountIdentities() {
+    for (String accountId : new String[] {null, "", ACCOUNT_ID}) {
+      SessionClaims claims =
+          new SessionClaims(accountId, List.of(), Map.of(), true, "service", "instance");
+      assertEquals(accountId, claims.accountId());
+      assertTrue(claims.internalService());
+    }
+  }
+
   private static Jws<Claims> jwt(Claims payload) {
     @SuppressWarnings("unchecked")
     Jws<Claims> jwt = mock(Jws.class);
@@ -112,7 +156,7 @@ class SessionClaimsTest {
   @Test
   void hasPrivilegedRoleRecognizesGlobalControlPlaneRole() {
     SessionClaims claims =
-        new SessionClaims("11", List.of("platformAdmin"), Map.of(), false, null, null);
+        new SessionClaims(ACCOUNT_ID, List.of("platformAdmin"), Map.of(), false, null, null);
 
     assertTrue(claims.hasPrivilegedRole());
   }
@@ -121,7 +165,12 @@ class SessionClaimsTest {
   void hasPrivilegedRoleRecognizesTenantScopedControlPlaneRoles() {
     SessionClaims claims =
         new SessionClaims(
-            "11", List.of(), Map.of("7", List.of("tenantAdmin", "moderator")), false, null, null);
+            ACCOUNT_ID,
+            List.of(),
+            Map.of("7", List.of("tenantAdmin", "moderator")),
+            false,
+            null,
+            null);
 
     assertTrue(claims.hasPrivilegedRole());
   }
@@ -129,7 +178,7 @@ class SessionClaimsTest {
   @Test
   void hasPrivilegedRoleRejectsNonControlPlaneRoles() {
     SessionClaims claims =
-        new SessionClaims("11", List.of(), Map.of("7", List.of("player")), false, null, null);
+        new SessionClaims(ACCOUNT_ID, List.of(), Map.of("7", List.of("player")), false, null, null);
 
     assertFalse(claims.hasPrivilegedRole());
   }

@@ -21,6 +21,7 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.exception.IntegrityConstraintViolationException;
+import org.jooq.impl.DSL;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,7 +38,10 @@ public class GameplayAdmissionPointerRepository {
   }
 
   public long count() {
-    return dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER);
+    return dsl.fetchCount(
+        GAMEPLAY_ADMISSION_POINTER,
+        DSL.field(DSL.name("gameplay_admission_pointer", "representation_version"), Integer.class)
+            .eq(1));
   }
 
   public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlug(
@@ -86,6 +90,10 @@ public class GameplayAdmissionPointerRepository {
 
   public List<GameplayAdmissionPointer> findAllByOrderByWorldSlugAscRealmSlugAsc() {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(
+            DSL.field(
+                    DSL.name("gameplay_admission_pointer", "representation_version"), Integer.class)
+                .eq(1))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
             GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc(),
