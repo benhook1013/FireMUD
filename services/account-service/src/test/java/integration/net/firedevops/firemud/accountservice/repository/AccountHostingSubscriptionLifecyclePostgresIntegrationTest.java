@@ -2042,7 +2042,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
-  void signedPaymentBeforeCancellationWithoutConsentDemonstratesRecoveryGap() throws Exception {
+  void signedPaymentBeforeCancellationWithoutConsentRetainsOperatorObligation() throws Exception {
     Context c = context("latest");
     Fixture f = fixture(c);
     var checkout =
@@ -2064,7 +2064,6 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     .payments()
                     .ownerRowVersion(
                         checkout.invoice().subscriptionId(), checkout.invoice().ownerAccountId()));
-    f.clock().advanceToAtLeast(checkout.invoice().expiresAt().plusSeconds(1));
     checkout.status("succeeded");
     var signed = checkout.signedSuccess();
     var owner =
@@ -2084,7 +2083,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             new DataSourceTransactionManager(c.source()));
 
     assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
-        .isEqualTo("IGNORED");
+        .isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
     f.transport().json = response(f, "canceled");
     assertThat(
             f.service()
@@ -2093,8 +2092,39 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 .outcome())
         .isEqualTo(Outcome.RECONCILING);
     assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
-        .isEqualTo("IGNORED");
+        .isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
     assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isZero();
+    assertThat(count(c, "subscription_first_invoice_unconsented_paid_events")).isOne();
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).requestId())
+        .isEqualTo(f.creation().requestId());
+    assertThatThrownBy(
+            () ->
+                c.setup().execute("DELETE FROM subscription_first_invoice_unconsented_paid_events"))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(
+            () -> c.setup().execute("TRUNCATE subscription_first_invoice_unconsented_paid_events"))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(
+            () ->
+                c.setup()
+                    .execute(
+                        "UPDATE subscription_first_invoice_unconsented_paid_events SET event_payload_digest = 'sha256:' || repeat('0', 64)"))
+        .isInstanceOf(RuntimeException.class);
+    var second = checkout.signWebhookPayload(signed.payload().replace("evt_", "evt_distinct_"));
+    assertThat(owner.completeSigned(second.payload(), second.signature()).requestId())
+        .isEqualTo(f.creation().requestId());
+    assertThat(count(c, "subscription_first_invoice_unconsented_paid_events")).isEqualTo(2);
+    checkout.status("requires_confirmation");
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).requestId())
+        .isEqualTo(f.creation().requestId());
+    assertThatThrownBy(
+            () ->
+                checkout.prepareConfirmationDispatch(
+                    CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining("Unconsented paid invoice requires operator resolution");
+    assertThat(count(c, "subscription_first_invoice_confirmations")).isZero();
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isZero();
     assertThat(count(c, "subscription_first_invoice_completions")).isZero();
     assertThat(checkout.confirmations()).isZero();
   }

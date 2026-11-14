@@ -166,6 +166,21 @@ class AccountHostingFirstInvoicePaymentServiceTest {
   }
 
   @Test
+  void verifiedUnconsentedPaymentBeforeCancellationReturnsOperatorWithoutProviderWork()
+      throws Exception {
+    var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    UUID operator = UUID.randomUUID();
+    when(verifier.verify("signed", "header")).thenReturn(event);
+    when(payments.retainUnconsentedSignedSuccess(event)).thenReturn(operator);
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(
+            new AccountHostingFirstInvoicePaymentService.Completion(
+                "OPERATOR_RECONCILIATION_REQUIRED", operator));
+    verify(inbox).retainOrReplay(event);
+    verifyNoInteractions(provider, lifecycle, actors, reauthentication);
+  }
+
+  @Test
   void verifiedUnconsentedLatePaymentRecordsOnlyOperatorConflict() throws Exception {
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
     var invoice = mock(AccountHostingFirstInvoicePayment.class);

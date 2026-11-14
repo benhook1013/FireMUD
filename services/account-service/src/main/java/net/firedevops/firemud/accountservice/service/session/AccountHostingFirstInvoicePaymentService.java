@@ -276,6 +276,11 @@ public final class AccountHostingFirstInvoicePaymentService {
     }
     var candidate = transaction.execute(status -> payments.candidateForSignedEvent(event));
     if (candidate == null) {
+      UUID unconsented =
+          transaction.execute(status -> payments.retainUnconsentedSignedSuccess(event));
+      if (unconsented != null) {
+        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", unconsented);
+      }
       var invoice = transaction.execute(status -> payments.unconsentedCanceledInvoice(event));
       if (invoice == null) return new Completion("IGNORED", null);
       var observed = provider.observe(invoice);
