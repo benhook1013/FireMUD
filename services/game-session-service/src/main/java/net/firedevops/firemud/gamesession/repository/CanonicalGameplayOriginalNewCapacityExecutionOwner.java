@@ -793,7 +793,22 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return within(deadline, owner -> owner.fenceForTransfer(item, dispatch, deadline));
     budget.check();
     UUID dispatchId = dispatch.takeSubmission(item);
-    if (dispatchId == null) return readTransferFence(item, deadline);
+    if (dispatchId == null) {
+      // A prior one-use dispatch may have observed a terminal hash before SQL retention.
+      // Reconcile only exact positive/negative evidence; never submit the fence again.
+      var execution = item.execution();
+      Map<String, byte[]> physical =
+          readExecution(execution, item.assignment().tenantGameplayTag());
+      String state = text(physical.get("state"));
+      if ("COMMITTED".equals(state)) {
+        exactPhysicalBinding(physical, execution, state);
+        retainCommittedBeforeCleanup(execution.request(), execution.reservation(), deadline);
+      } else if ("CLOSED".equals(state)) {
+        exactPhysicalBinding(physical, execution, state);
+        closeOriginalAttempt(execution.request(), execution.reservation());
+      }
+      return readTransferFence(item, deadline);
+    }
     var execution = item.execution();
     Record row = find(sql(), execution);
     if (row == null) throw unavailable();

@@ -875,8 +875,9 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
     }
   }
 
-  @Test
-  void interruptedFenceRetentionRecoversExactTerminalProofWithoutDispatchingAgain()
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void interruptedFenceRetentionRecoversExactTerminalProofWithoutDispatchingAgain(boolean committed)
       throws Exception {
     try (var proof = new TransferSqlProof();
         var credential =
@@ -890,16 +891,26 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
           .capacity(proof.sql)
           .authorize(
               proof.admission, template, account, issuer, proof.execution, transferDeadline());
-      try (var physicalCommit =
+      var finalOwner =
           new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                  proof.redis, proof.scripts, proof.clock, proof.tags)
-              .finalizeOriginalNewOnce(
-                  proof.admission,
-                  template,
-                  account,
-                  issuer,
-                  proof.execution,
-                  transferDeadline())) {
+              proof.redis, proof.scripts, proof.clock, proof.tags);
+      var assignment = proof.tags.assignmentForTransition(proof.execution.transitionId());
+      if (!committed) {
+        finalOwner.closeCapacityExecutionOnce(
+            proof.execution, proof.admission.candidate(), assignment, transferDeadline());
+      }
+      try (var physicalCommit =
+          committed
+              ? new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                      proof.redis, proof.scripts, proof.clock, proof.tags)
+                  .finalizeOriginalNewOnce(
+                      proof.admission,
+                      template,
+                      account,
+                      issuer,
+                      proof.execution,
+                      transferDeadline())
+              : null) {
         UUID id = proof.begin();
         long deadline = transferDeadline();
         var item =
@@ -910,13 +921,14 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               var before =
                   proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
               var dispatch = proof.transfers.fenceDispatch(item, before);
-              proof
-                  .capacity(proof.sql)
-                  .forTransferBudget(budget)
-                  .fenceForTransfer(item, dispatch, deadline);
+              UUID submission = dispatch.takeSubmission(item);
+              assertThat(submission).isNotNull();
+              finalOwner.fenceCapacityExecutionOnce(
+                  item.execution(), item.candidate(), item.assignment(), submission, deadline);
+              // Simulate process loss after terminal Redis observation but before SQL retention.
               return null;
             });
-        assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
+        assertThat(proof.executionState(proof.execution)).isEqualTo("AUTHORIZED");
         assertThat(proof.itemImage(id)).contains("\"fence_readback\": null");
         UUID retainedDispatch =
             proof
@@ -927,13 +939,13 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                     id)
                 .get("fence_dispatch_id", UUID.class);
         assertThat(retainedDispatch).isNotNull();
-        String original = proof.originalImage();
         proof.recreateTransferOwners();
         proof.fence(item);
         assertThat(proof.itemImage(id))
             .contains(retainedDispatch.toString())
             .doesNotContain("\"fence_readback\": null");
-        assertThat(proof.originalImage()).isEqualTo(original);
+        assertThat(proof.executionState(proof.execution))
+            .isEqualTo(committed ? "COMMITTED" : "CLOSED");
         proof.verifyPage(id);
         boolean verified =
             proof.transfers.within(
