@@ -1,17 +1,17 @@
 ---
-- id: Maven:io.javaoperatorsdk:operator-framework:5.6.2
+- id: Maven:io.javaoperatorsdk:operator-framework:5.6.3
   curations:
-    comment: 'The parent POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/java-operator-sdk/5.6.2/java-operator-sdk-5.6.2.pom'
+    comment: 'The parent POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/java-operator-sdk/5.6.3/java-operator-sdk-5.6.3.pom'
     declared_license_mapping:
       Apache 2 License: Apache-2.0
-- id: Maven:io.javaoperatorsdk:operator-framework-core:5.6.2
+- id: Maven:io.javaoperatorsdk:operator-framework-core:5.6.3
   curations:
-    comment: 'The parent POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/java-operator-sdk/5.6.2/java-operator-sdk-5.6.2.pom'
+    comment: 'The parent POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/java-operator-sdk/5.6.3/java-operator-sdk-5.6.3.pom'
     declared_license_mapping:
       Apache 2 License: Apache-2.0
-- id: Maven:io.javaoperatorsdk:operator-framework-spring-boot-starter:6.7.1
+- id: Maven:io.javaoperatorsdk:operator-framework-spring-boot-starter:6.7.3
   curations:
-    comment: 'The published POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/operator-framework-spring-boot-starter/6.7.1/operator-framework-spring-boot-starter-6.7.1.pom'
+    comment: 'The published POM declares Apache 2 License and links to Apache 2.0: https://repo.maven.apache.org/maven2/io/javaoperatorsdk/operator-framework-spring-boot-starter/6.7.3/operator-framework-spring-boot-starter-6.7.3.pom'
     declared_license_mapping:
       Apache 2 License: Apache-2.0
 - id: Maven:jaxen:jaxen:2.0.6

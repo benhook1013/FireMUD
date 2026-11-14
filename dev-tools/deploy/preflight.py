@@ -1715,12 +1715,13 @@ def validate_recovery_freshness(
                     "fail",
                     f"Recovery compatibility baseline {disposition} freshness must advance the existing timestamp: {class_name}",
                 )
-        elif disposition in {"rebound", "verified_not_restored"}:
-            if field != previous_field or value_timestamp != previous_value:
-                return (
-                    "fail",
-                    f"Recovery compatibility baseline {disposition} freshness must preserve the existing field/value: {class_name}",
-                )
+        elif disposition in {"rebound", "verified_not_restored"} and (
+            field != previous_field or value_timestamp != previous_value
+        ):
+            return (
+                "fail",
+                f"Recovery compatibility baseline {disposition} freshness must preserve the existing field/value: {class_name}",
+            )
     return ("pass", "")
 
 
