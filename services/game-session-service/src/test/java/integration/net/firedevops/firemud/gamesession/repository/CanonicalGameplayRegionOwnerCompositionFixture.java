@@ -2315,6 +2315,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
               .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
               .addCommand(CommandType.EVALSHA)
+              // The composed deadline-bound region owner must enforce the documented server
+              // deadline.
+              .addCommand(CommandType.TIME)
               .addCommand(CommandType.TYPE)
               .addCommand(CommandType.HGET)
               .addCommand(CommandType.HSET)

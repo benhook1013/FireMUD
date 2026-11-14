@@ -203,7 +203,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       context.cancel(new IllegalStateException("cancelled before installation"));
       context.run(
           () ->
-              assertThatThrownBy(() -> owner.forInstallation(frozenClock))
+              assertThatThrownBy(() -> assertThat(owner.forInstallation(frozenClock)).isNotNull())
                   .isInstanceOf(IllegalStateException.class));
     }
     verifyNoInteractions(client);

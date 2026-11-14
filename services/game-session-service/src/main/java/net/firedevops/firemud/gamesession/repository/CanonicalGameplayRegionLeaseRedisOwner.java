@@ -136,6 +136,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   /** Freeze one deadline before the composed installation performs any source or SQL work. */
   CanonicalGameplayRegionLeaseRedisOwner forInstallation(Clock clock) {
+    return forInstallation(clock, Long.MAX_VALUE);
+  }
+
+  CanonicalGameplayRegionLeaseRedisOwner forInstallation(Clock clock, long installationDeadline) {
     // URI-less owners are the explicitly unbudgeted ordinary installation composition.
     if (coordinationUri == null) return this;
     Context caller = Context.current();
@@ -152,6 +156,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     } catch (ArithmeticException invalid) {
       throw unavailable(invalid);
     }
+    deadline = Math.min(deadline, installationDeadline);
     if (handoffClock != null) deadline = Math.min(deadline, handoffDeadlineMillis);
     if (deadline <= clock.millis()) throw unavailable();
     return forHandoffDeadline(clock, deadline);

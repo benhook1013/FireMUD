@@ -794,6 +794,80 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void installationDeadlineDuringSourceRecheckLeavesPreparedPermission() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var evidence = provisionalEvidence(world.request());
+      var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
+      when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
+      when(inventory.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(inventory);
+      var source = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+      var preparation =
+          statusRepository.prepareInitialTimeline(
+              evidence,
+              world.request(),
+              world.resolver().resolve(world.request()),
+              source,
+              incarnation,
+              redisOwner.requireTimelineAbsent(source, incarnation),
+              NOW);
+      var now = new AtomicReference<>(Instant.now());
+      Clock clock =
+          new Clock() {
+            @Override
+            public java.time.ZoneId getZone() {
+              return ZoneOffset.UTC;
+            }
+
+            @Override
+            public Clock withZone(java.time.ZoneId zone) {
+              return this;
+            }
+
+            @Override
+            public Instant instant() {
+              return now.get();
+            }
+          };
+      world.resetReads();
+      // The second source read occurs after Redis preflight, before the irreversible SQL claim.
+      world.setAfterRead(2, () -> now.updateAndGet(value -> value.plusSeconds(10)));
+      var owner =
+          new CanonicalGameplayRegionLeaseOwner(
+              inventory,
+              statusRepository,
+              redisOwner,
+              incarnationSource,
+              world.resolver(),
+              new RuntimeIdentity(
+                  "game-session-service",
+                  "expired-before-claim",
+                  "localhost",
+                  NOW,
+                  "controlled-test",
+                  "controlled-sha",
+                  "controlled-image"),
+              Duration.ofSeconds(30),
+              clock,
+              true);
+      assertThatThrownBy(() -> owner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+    }
+  }
+
+  @Test
   void timelinePreflightFailuresLeavePreparedPermissionAndAllowLaterFirstClaim() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
