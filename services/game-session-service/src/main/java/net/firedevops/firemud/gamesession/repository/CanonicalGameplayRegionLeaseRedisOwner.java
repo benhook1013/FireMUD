@@ -484,6 +484,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       consumed.set(false);
     }
 
+    boolean consumedFor(
+        CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
+      return consumed.get()
+          && permit.operationId().equals(preparation.operationId())
+          && permit.sourceDigest().equals(preparation.sourceDigest());
+    }
+
     boolean consumeFor(
         CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
       return permit.operationId().equals(preparation.operationId())
