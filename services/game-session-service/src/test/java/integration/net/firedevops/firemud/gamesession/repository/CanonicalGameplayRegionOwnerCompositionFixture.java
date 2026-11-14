@@ -89,7 +89,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     var runtimeIdentity =
         new RuntimeIdentity(
             "game-session-service",
-            "final-owner-composition",
+            "game-session/worker α",
             "localhost",
             Instant.now(),
             "test",
@@ -655,8 +655,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         physical);
   }
 
-  /** Reacquires a real region grant after the bridge ACK and proves that the ACK remains closed. */
-  public static ChangedGrantProof installAndBridgeThenChangedGrantRefuses(
+  /** Refuses compatibility takeover after lease expiry without mutating owner or bridge evidence. */
+  public static CompatibilityTakeoverProof installAndBridgeThenCompatibilityTakeoverRefuses(
       DSLContext dsl,
       String redisHost,
       int redisPort,
@@ -665,7 +665,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient)
       throws Exception {
-    var capture = new AtomicReference<ChangedGrantProof>();
+    var capture = new AtomicReference<CompatibilityTakeoverProof>();
     installAndBridgeInternal(
         dsl,
         redisHost,
@@ -1013,7 +1013,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
       SecondBinding secondBinding,
-      AtomicReference<ChangedGrantProof> changedGrantProofCapture)
+      AtomicReference<CompatibilityTakeoverProof> compatibilityTakeoverProofCapture)
       throws Exception {
     return installAndBridgeInternal(
         dsl,
@@ -1024,7 +1024,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         worldRegionResolver,
         entityReferenceClient,
         secondBinding,
-        changedGrantProofCapture,
+        compatibilityTakeoverProofCapture,
         null,
         null,
         null);
@@ -1039,7 +1039,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
       SecondBinding secondBinding,
-      AtomicReference<ChangedGrantProof> changedGrantProofCapture,
+      AtomicReference<CompatibilityTakeoverProof> compatibilityTakeoverProofCapture,
       CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient,
       java.util.function.Consumer<ExistingBinding> afterBridge,
       BridgeSqlPhaseRunner phaseRunner)
@@ -1182,9 +1182,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         afterBridge.accept(new ExistingBinding(bridgeOwner, installation, firstAcknowledgement));
       }
       if (secondBinding == null) {
-        if (changedGrantProofCapture != null) {
-          changedGrantProofCapture.set(
-              reacquireGrantAfterAcknowledgement(
+        if (compatibilityTakeoverProofCapture != null) {
+          compatibilityTakeoverProofCapture.set(
+              refuseCompatibilityTakeoverAfterAcknowledgement(
                   dsl,
                   redis,
                   scriptCatalog,
@@ -1288,9 +1288,19 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 runtimeIdentity,
                 Duration.ofSeconds(30),
                 Clock.systemUTC());
-        secondInstallation =
-            secondBridgeOwner.installForTransition(
-                secondTransitionId, secondBinding.worldRequest());
+        var beforeTakeover = snapshotRegionOwnerSqlState(
+            dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
+        try {
+          secondBridgeOwner.installForTransition(secondTransitionId, secondBinding.worldRequest());
+          throw new AssertionError("Compatibility takeover unexpectedly succeeded");
+        } catch (IllegalStateException expected) {
+          if (redis.admin().get(redisKey) != null
+              || !beforeTakeover.equals(snapshotRegionOwnerSqlState(
+                  dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))) {
+            throw new AssertionError("Refused compatibility takeover changed region state", expected);
+          }
+          throw expected;
+        }
       } else {
         secondInstallation =
             bridgeOwner.installForTransition(
@@ -1509,7 +1519,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     };
   }
 
-  private static ChangedGrantProof reacquireGrantAfterAcknowledgement(
+  private static CompatibilityTakeoverProof refuseCompatibilityTakeoverAfterAcknowledgement(
       DSLContext dsl,
       RegionRedis redis,
       RedisScriptCatalog scriptCatalog,
@@ -1552,64 +1562,34 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             replacementIdentity,
             Duration.ofSeconds(30),
             Clock.systemUTC());
-    var replacementInstallation =
-        replacementOwner.installForTransition(acknowledged.transitionId(), worldRequest);
-    CanonicalGameplayRegionRuntimeStatus replacementStatus =
-        new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
-            .find(originalInstallation.source)
-            .orElseThrow();
-
-    String acknowledgedRowBeforeRefusal = regionBridgeRowImage(dsl, acknowledged.transitionId());
-    Record acknowledgedRow =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
-                    + " WHERE transition_id = ?",
-                acknowledged.transitionId()),
-            "acknowledged bridge row after grant replacement");
-    RegionBridgeRedisState physicalBridgeBeforeRefusal =
-        snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId());
-    var inventoryBeforeRefusal =
-        new CanonicalGameplayBindingInventoryRepository(dsl).readSnapshot();
-
-    boolean bridgeRefused;
-    String refusalMessage;
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    var beforeInventory = inventory.readSnapshot();
+    var beforeRegion = snapshotRegionOwnerSqlState(
+        dsl, originalInstallation.source.tenantId(), originalInstallation.source.gameInstanceId(),
+        originalInstallation.source.regionId());
+    Record acknowledgedRow = Objects.requireNonNull(dsl.fetchOne(
+        "SELECT * FROM game_session_canonical_binding_region_bridge_obligation WHERE transition_id = ?",
+        acknowledged.transitionId()));
+    var beforePhysical = snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId());
+    String refusalMessage = null;
     try {
-      replacementOwner.bridge(replacementInstallation);
-      bridgeRefused = false;
-      refusalMessage = null;
-    } catch (CanonicalGameplayBindingInventoryConflictException expected) {
-      bridgeRefused = true;
+      replacementOwner.installForTransition(acknowledged.transitionId(), worldRequest);
+    } catch (IllegalStateException expected) {
       refusalMessage = expected.getMessage();
     }
-
-    String acknowledgedRowAfterRefusal = regionBridgeRowImage(dsl, acknowledged.transitionId());
-    var acknowledgedRowAfter =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
-                    + " WHERE transition_id = ?",
-                acknowledged.transitionId()),
-            "acknowledged bridge row after changed-grant bridge refusal");
-    RegionBridgeRedisState physicalBridgeAfterRefusal =
-        snapshotRegionBridgeRedisState(redis, acknowledgedRowAfter, acknowledged.runtimeEntityId());
-    var inventoryAfterRefusal = new CanonicalGameplayBindingInventoryRepository(dsl).readSnapshot();
-    boolean replacementGrantInstalled =
-        replacementStatus.executorFence().compareTo(acknowledged.executorFence()) > 0
-            && !originalStatus
-                .leaseTokenCorrelation()
-                .equals(replacementStatus.leaseTokenCorrelation())
-            && "region-owner-composition-replacement".equals(replacementStatus.ownerInstanceId());
-    return new ChangedGrantProof(
-        acknowledged,
-        replacementStatus.executorFence(),
-        replacementGrantInstalled,
-        bridgeRefused,
-        refusalMessage,
-        acknowledgedRowBeforeGrant.equals(acknowledgedRowBeforeRefusal)
-            && acknowledgedRowBeforeRefusal.equals(acknowledgedRowAfterRefusal),
-        inventoryBeforeRefusal.equals(inventoryAfterRefusal),
-        physicalBridgeBeforeRefusal.equals(physicalBridgeAfterRefusal));
+    var after = new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
+        .find(originalInstallation.source).orElseThrow();
+    if (refusalMessage == null || redis.admin().get(leaseKey) != null
+        || !beforeRegion.equals(snapshotRegionOwnerSqlState(
+            dsl, originalInstallation.source.tenantId(), originalInstallation.source.gameInstanceId(),
+            originalInstallation.source.regionId()))) {
+      throw new IllegalStateException("Compatibility takeover mutated retained owner state");
+    }
+    return new CompatibilityTakeoverProof(
+        acknowledged, after.executorFence(), false, true, refusalMessage,
+        acknowledgedRowBeforeGrant.equals(regionBridgeRowImage(dsl, acknowledged.transitionId())),
+        beforeInventory.equals(inventory.readSnapshot()),
+        beforePhysical.equals(snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId())));
   }
 
   private static String regionBridgeRowImage(DSLContext dsl, UUID transitionId) {
@@ -2238,11 +2218,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       boolean accountControlStatePreserved,
       boolean exactMemberRetryPreservedState) {}
 
-  public record ChangedGrantProof(
+  public record CompatibilityTakeoverProof(
       Proof acknowledgedBridge,
       BigInteger replacementExecutorFence,
       boolean replacementGrantInstalled,
-      boolean bridgeRefused,
+      boolean takeoverRefused,
       String refusalMessage,
       boolean acknowledgementRowPreserved,
       boolean inventoryStatePreserved,

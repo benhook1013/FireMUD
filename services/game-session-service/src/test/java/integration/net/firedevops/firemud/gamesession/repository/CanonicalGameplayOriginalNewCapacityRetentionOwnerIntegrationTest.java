@@ -293,6 +293,51 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
   }
 
   @Test
+  void lostTopologyCannotBeReallocatedDuringPositiveRetention() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    byte[] committed;
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var ignored =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      committed = admin.get(ascii(installation.sessionKey()));
+    }
+    fixture
+        .dsl()
+        .transaction(
+            configuration -> {
+              var damaged = org.jooq.impl.DSL.using(configuration);
+              // Simulate lost durable topology, not an authorized mapping retirement.
+              damaged.execute("SET LOCAL session_replication_role = replica");
+              damaged.execute("DELETE FROM game_session_canonical_tenant_gameplay_tag");
+            });
+    var physical = physicalImage();
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .retainCommittedBeforeCleanup(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(org.jooq.impl.DSL.table("game_session_canonical_tenant_gameplay_tag")))
+        .isZero();
+    assertThat(physicalImage()).isEqualTo(physical);
+    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(committed);
+  }
+
+  @Test
   void committedRedisWinnerMustAcquireFullPositiveSqlRetentionBeforeActualHandoff()
       throws Exception {
     repairAccountMember();
@@ -313,6 +358,10 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
                     deadline())) {
       committed = admin.get(ascii(installation.sessionKey()));
     }
+    // A lost SQL completion keeps the durable provisional fence: STOP cannot race retention.
+    assertThatThrownBy(() -> fixture.dsl().execute("UPDATE game_instances SET status='STOPPED'"))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("runtime row is fenced");
     // No SQL final receipt was retained by the interrupted final caller.
     assertThat(
             fixture

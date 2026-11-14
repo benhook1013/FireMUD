@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import io.grpc.Context;
 import io.grpc.Deadline;
 import java.math.BigInteger;
 import java.time.Clock;
@@ -36,6 +37,7 @@ final class CanonicalGameplayRegionLeaseOwner {
   private final RuntimeIdentity runtimeIdentity;
   private final Duration leaseTtl;
   private final Clock clock;
+  private final boolean deadlineBoundInstallation;
 
   CanonicalGameplayRegionLeaseOwner(
       CanonicalGameplayBindingInventoryRepository bindingInventory,
@@ -46,6 +48,29 @@ final class CanonicalGameplayRegionLeaseOwner {
       RuntimeIdentity runtimeIdentity,
       Duration leaseTtl,
       Clock clock) {
+    this(
+        bindingInventory,
+        statusRepository,
+        redisOwner,
+        incarnationSource,
+        worldRegionResolver,
+        runtimeIdentity,
+        leaseTtl,
+        clock,
+        false);
+  }
+
+  CanonicalGameplayRegionLeaseOwner(
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      RuntimeIdentity runtimeIdentity,
+      Duration leaseTtl,
+      Clock clock,
+      boolean deadlineBoundInstallation) {
+    this.deadlineBoundInstallation = deadlineBoundInstallation;
     this.bindingInventory = Objects.requireNonNull(bindingInventory, "bindingInventory");
     this.statusRepository = Objects.requireNonNull(statusRepository, "statusRepository");
     this.redisOwner = Objects.requireNonNull(redisOwner, "redisOwner");
@@ -91,10 +116,20 @@ final class CanonicalGameplayRegionLeaseOwner {
     Objects.requireNonNull(worldRequest, "worldRequest");
     // Freeze the existing five-second transfer budget once, not once per inventory read.
     long startedAt = clock.millis();
+    long requestedDeadline = absoluteDeadlineMillis;
+    if (transferOwner != null || deadlineBoundInstallation) {
+      if (Context.current().isCancelled()) throw unavailable();
+      if (Context.current().getDeadline() != null) {
+        long remaining = Context.current().getDeadline().timeRemaining(TimeUnit.MILLISECONDS);
+        if (remaining <= 0) throw unavailable();
+        requestedDeadline =
+            Math.min(requestedDeadline, Math.addExact(startedAt, Math.min(5000L, remaining)));
+      }
+    }
     final long handoffDeadline =
-        transferOwner == null
-            ? absoluteDeadlineMillis
-            : Math.min(absoluteDeadlineMillis, Math.addExact(startedAt, 5_000L));
+        transferOwner == null && !deadlineBoundInstallation
+            ? requestedDeadline
+            : Math.min(requestedDeadline, Math.addExact(startedAt, 5_000L));
     Deadline worldDeadline = worldDeadline(startedAt, handoffDeadline);
     // A prior advance may have retained the positive SQL result before a later observation
     // failed. Recover only its captured original, never synthetic provisional authority.
@@ -175,7 +210,9 @@ final class CanonicalGameplayRegionLeaseOwner {
       transferOwner.requireFrozenOriginal(frozenOriginal, source, prior, handoffDeadline);
     }
     CanonicalGameplayRegionLeaseRedisOwner handoffRedisOwner =
-        transferOwner == null ? redisOwner : redisOwner.forHandoffDeadline(clock, handoffDeadline);
+        transferOwner == null && !deadlineBoundInstallation
+            ? redisOwner
+            : redisOwner.forHandoffDeadline(clock, handoffDeadline);
     UUID transferId = null;
     CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource =
         retainedOriginal;
@@ -185,6 +222,7 @@ final class CanonicalGameplayRegionLeaseOwner {
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
     CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant;
     boolean reusingRegionGrant = false;
+    boolean recoveringInitialGrant = false;
     if (prior == null) {
       if (existingRegionInstallation != null) throw unavailable();
       preparation =
@@ -324,7 +362,27 @@ final class CanonicalGameplayRegionLeaseOwner {
       if (!matchesInitialization || !resumablePhase) {
         throw unavailable();
       }
-      if (existingRegionInstallation == null) {
+      if (existingRegionInstallation == null
+          && sameInitializationAttempt
+          && expectedRegionEpoch == 1L
+          && (transferOwner == null
+              || preparation.phase()
+                  == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                      .REDIS_INITIALIZED)) {
+        grant = handoffRedisOwner.readRetainedInitialGrant(preparation, prior, runtimeIdentity);
+        handoffRedisOwner.requireCurrent(grant);
+        handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
+        if (!prior.equals(
+            withTransferStatusRepository(
+                    transferOwner, handoffDeadline, repository -> repository.find(source))
+                .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable))) {
+          throw unavailable();
+        }
+        recoveringInitialGrant = true;
+      } else if (existingRegionInstallation == null) {
+        // Compatibility calls may create the first owner or recover its exact retained live grant,
+        // but replacing an installed owner requires the explicit frozen transfer protocol.
+        if (transferOwner == null) throw unavailable();
         // A stable instance ID can survive a restart. The fresh-token acquire establishes
         // scoped lease absence atomically and refuses every live incumbent or competing grant.
         grant = handoffRedisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
@@ -408,27 +466,30 @@ final class CanonicalGameplayRegionLeaseOwner {
             handoffDeadline,
             worldDeadline);
     requireSameSource(source, afterAcquire);
-    handoffRedisOwner.renew(grant, leaseTtl);
+    if (!recoveringInitialGrant) handoffRedisOwner.renew(grant, leaseTtl);
     handoffRedisOwner.requireCurrent(grant);
     requireSameIncarnation(
         incarnation, readInstallationIncarnation(transferOwner, handoffDeadline, source));
     handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
 
-    if (transferOwner != null && clock.millis() >= handoffDeadline) throw unavailable();
+    if ((transferOwner != null || deadlineBoundInstallation) && clock.millis() >= handoffDeadline)
+      throw unavailable();
     if (transferId == null) {
       var installed =
-          withTransferStatusRepository(
-              transferOwner,
-              handoffDeadline,
-              repository ->
-                  repository.installOwner(
-                      source,
-                      expectedRegionEpoch,
-                      prior,
-                      grant.tokenCorrelation(),
-                      grant.ownerService(),
-                      grant.ownerInstanceId(),
-                      clock.instant()));
+          recoveringInitialGrant
+              ? prior
+              : withTransferStatusRepository(
+                  transferOwner,
+                  handoffDeadline,
+                  repository ->
+                      repository.installOwner(
+                          source,
+                          expectedRegionEpoch,
+                          prior,
+                          grant.tokenCorrelation(),
+                          grant.ownerService(),
+                          grant.ownerInstanceId(),
+                          clock.instant()));
       return verifyInstallation(
           transitionId,
           worldRequest,
@@ -576,7 +637,9 @@ final class CanonicalGameplayRegionLeaseOwner {
       long handoffDeadline,
       Deadline worldDeadline) {
     CanonicalGameplayRegionLeaseRedisOwner handoffRedisOwner =
-        transferOwner == null ? redisOwner : redisOwner.forHandoffDeadline(clock, handoffDeadline);
+        transferOwner == null && !deadlineBoundInstallation
+            ? redisOwner
+            : redisOwner.forHandoffDeadline(clock, handoffDeadline);
     handoffRedisOwner.requireCurrent(grant);
     handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
     CanonicalGameplayRegionRuntimeStatus observed =

@@ -4428,7 +4428,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
     }
     if (currentInventoryRevision != null
         && (completedRevision.compareTo(operation.inventorySnapshotRevision()) <= 0
-            || completedRevision.compareTo(currentInventoryRevision) >= 0
+            || completedRevision.compareTo(currentInventoryRevision) > 0
             || (operation.originalObligation().projectionState()
                     == CanonicalGameplayBindingAccountIndexObligation.ProjectionState.REQUIRED
                 && !completedRevision.equals(obligation.projectionInventoryRevision())))) {
@@ -5561,8 +5561,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             "UPDATE "
                 + ACCOUNT_OBLIGATION
                 + " SET status = 'ACKNOWLEDGED', projection_state = 'PRESENT_AWAITING_COVERAGE',"
-                + " projection_member = ?, projection_inventory_revision = COALESCE("
-                + " projection_inventory_revision, ?), inventory_revision = ?"
+                + " projection_member = ?, projection_inventory_revision = ?, inventory_revision = ?"
                 + " WHERE transition_id = ? AND obligation_ordinal = 0"
                 + " AND binding_ref = ? AND account_id = ? AND tenant_id = ?"
                 + " AND action = 'ADD_OR_RETAIN' AND binding_generation = ?"
@@ -5573,7 +5572,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
                 + " AND projection_inventory_revision IS NULL)"
                 + " OR (projection_state = 'PRESENT_AWAITING_COVERAGE' AND projection_member = ?))",
             member,
-            decimal(nextRevision),
+            decimal(
+                operation.originalObligation().projectionState()
+                        == CanonicalGameplayBindingAccountIndexObligation.ProjectionState.REQUIRED
+                    ? nextRevision
+                    : operation.originalObligation().projectionInventoryRevision()),
             decimal(nextRevision),
             operation.transitionId(),
             operation.bindingRef().bytes(),
