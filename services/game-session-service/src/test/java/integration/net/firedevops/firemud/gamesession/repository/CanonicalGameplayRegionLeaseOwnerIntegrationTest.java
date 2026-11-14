@@ -1317,6 +1317,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
       when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
       when(inventory.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(inventory);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                java.util.function.Function<CanonicalGameplayBindingInventoryRepository, Object>
+                    read = invocation.getArgument(1);
+                return read.apply(inventory);
+              })
+          .when(inventory)
+          .withinTransferRead(
+              org.mockito.ArgumentMatchers.any(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.class),
+              org.mockito.ArgumentMatchers.any());
       var source = source(world.originalEvidence());
       var incarnation =
           incarnationSource.readCurrent(
@@ -1394,6 +1405,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
       when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
       when(inventory.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(inventory);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                java.util.function.Function<CanonicalGameplayBindingInventoryRepository, Object>
+                    read = invocation.getArgument(1);
+                return read.apply(inventory);
+              })
+          .when(inventory)
+          .withinTransferRead(
+              org.mockito.ArgumentMatchers.any(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.class),
+              org.mockito.ArgumentMatchers.any());
       var source = source(world.originalEvidence());
       var incarnation =
           incarnationSource.readCurrent(

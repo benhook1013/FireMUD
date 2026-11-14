@@ -596,6 +596,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
       CompletableFuture<T> result = new CompletableFuture<>();
       CompletableFuture<Boolean> delivered = new CompletableFuture<>();
+      CompletableFuture<Void> readyForInitialization = new CompletableFuture<>();
       AtomicReference<Thread> workerReference = new AtomicReference<>();
       Context.CancellationListener listener =
           ignored -> {
@@ -652,6 +653,9 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
                           synchronized (PreparedTimelineInitialization.this) {
                             retainedWorkInFlight = false;
                           }
+                          // Keep readiness separate from externally registered lifetime callbacks:
+                          // a joining caller may otherwise help execute a blocked callback.
+                          readyForInitialization.complete(null);
                           workLifetime.complete(null);
                         }
                       }
@@ -665,7 +669,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         delivered.complete(true);
         // SQL cleanup already completed before result publication; only context detachment and
         // retained-state notification remain. Initialization must not race that notification.
-        workLifetime.join();
+        readyForInitialization.join();
         return value;
       } catch (InterruptedException interrupted) {
         if (worker != null) worker.interrupt();
