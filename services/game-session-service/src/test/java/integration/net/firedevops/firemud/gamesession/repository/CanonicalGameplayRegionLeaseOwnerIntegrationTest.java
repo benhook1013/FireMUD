@@ -1158,6 +1158,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     assertKnownNoWriteRecovery(3);
   }
 
+  @Test
+  void composedOwnerRetainsNoWriteProofAcrossRefusedCleanupAndExactRetry() throws Exception {
+    assertKnownNoWriteRecovery(4);
+  }
+
   private void assertKnownNoWriteRecovery(int mode) throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
@@ -1197,6 +1202,23 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var bounded = redisOwner.forHandoffDeadline(laggingClock, Long.MAX_VALUE);
       var proof =
           new AtomicReference<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof>();
+      var recoveryRepository = org.mockito.Mockito.spy(repository);
+      org.mockito.Mockito.doThrow(new IllegalStateException("controlled cleanup admission refusal"))
+          .doAnswer(invocation -> repository.forBudget(invocation.getArgument(0)))
+          .when(recoveryRepository)
+          .forBudget(org.mockito.ArgumentMatchers.any());
+      var recoveryOwner =
+          new CanonicalGameplayRegionLeaseOwner(
+              org.mockito.Mockito.mock(),
+              recoveryRepository,
+              redisOwner,
+              incarnationSource,
+              world.resolver(),
+              identity,
+              Duration.ofSeconds(30),
+              Clock.systemUTC());
+      var recoverySlot =
+          mode == 4 ? recoveryOwner.reserveNoWriteRecovery(preparation.operationId()) : null;
       var permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
       try (var session =
           bounded.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
@@ -1207,6 +1229,16 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                         permit,
                         retained -> {
                           proof.set(retained);
+                          if (mode == 4) {
+                            recoverySlot.proof = retained;
+                            try {
+                              recoveryOwner.recoverNoWrite(preparation, recoverySlot);
+                            } finally {
+                              recoveryOwner.releaseNoWriteRecovery(
+                                  preparation.operationId(), recoverySlot);
+                            }
+                            return;
+                          }
                           if (mode == 2) {
                             var rollbackConfiguration =
                                 testSchema
@@ -1291,6 +1323,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             .isInstanceOf(IllegalStateException.class);
       }
       assertThat(proof.get()).isNotNull();
+      if (mode == 4) {
+        assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
+            .isEqualTo(
+                CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                    .INITIALIZING);
+        var retry = recoveryOwner.reserveNoWriteRecovery(preparation.operationId());
+        assertThat(retry).isSameAs(recoverySlot);
+        assertThat(retry.proof).isSameAs(proof.get());
+        recoveryOwner.recoverNoWrite(preparation, retry);
+        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), retry);
+      }
       assertPreparedTimelineUnchanged(testSchema.dsl(), repository, redis, source, preparation);
       var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
       // A stale proof cannot release the next claim, and a previously dispatched creation permit

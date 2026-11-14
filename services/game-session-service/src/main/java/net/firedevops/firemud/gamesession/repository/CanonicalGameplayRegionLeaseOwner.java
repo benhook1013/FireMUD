@@ -38,6 +38,59 @@ final class CanonicalGameplayRegionLeaseOwner {
   private final Duration leaseTtl;
   private final Clock clock;
   private final boolean deadlineBoundInstallation;
+  // Reserve before claiming Redis creation permission: never generate a proof we cannot retain.
+  private final java.util.Map<UUID, RetainedNoWriteRecovery> noWriteRecoveries =
+      new java.util.HashMap<>();
+  private static final int MAX_NO_WRITE_RECOVERIES = 64;
+
+  static final class RetainedNoWriteRecovery {
+    private boolean inUse;
+    CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof;
+  }
+
+  RetainedNoWriteRecovery reserveNoWriteRecovery(UUID operation) {
+    synchronized (noWriteRecoveries) {
+      var retained = noWriteRecoveries.get(operation);
+      if (retained == null) {
+        if (noWriteRecoveries.size() >= MAX_NO_WRITE_RECOVERIES) throw unavailable();
+        retained = new RetainedNoWriteRecovery();
+        noWriteRecoveries.put(operation, retained);
+      }
+      if (retained.inUse) throw unavailable();
+      retained.inUse = true;
+      return retained;
+    }
+  }
+
+  void releaseNoWriteRecovery(UUID operation, RetainedNoWriteRecovery retained) {
+    synchronized (noWriteRecoveries) {
+      retained.inUse = false;
+      if (retained.proof == null) {
+        noWriteRecoveries.remove(operation, retained);
+      }
+    }
+  }
+
+  void recoverNoWrite(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      RetainedNoWriteRecovery retained) {
+    if (retained.proof == null) return;
+    io.grpc.Context previous = io.grpc.Context.ROOT.attach();
+    try {
+      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          Clock.systemUTC(),
+          Long.MAX_VALUE,
+          cleanup -> {
+            this.statusRepository
+                .forBudget(cleanup)
+                .releaseInitialTimelineNoWrite(preparation, retained.proof, clock.instant());
+            return null;
+          });
+      retained.proof = null;
+    } finally {
+      io.grpc.Context.ROOT.detach(previous);
+    }
+  }
 
   CanonicalGameplayRegionLeaseOwner(
       CanonicalGameplayBindingInventoryRepository bindingInventory,
@@ -307,68 +360,62 @@ final class CanonicalGameplayRegionLeaseOwner {
       }
       try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
           handoffRedisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
-        var initializationPreparation = preparation;
-        Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
-            permit =
-                session.runWithinRetainedPermit(
-                    budget -> {
-                      CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
-                          readInstallationInventory(
-                              bindingInventory,
-                              transferOwner,
-                              handoffDeadline,
-                              budget,
-                              inventory -> readCurrentProvisionalEvidence(inventory, transitionId));
-                      bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
-                      ResolvedBridgeSource beforeClaimWorld =
-                          resolveExactBridgeSource(
-                              worldRequest,
-                              beforeClaimEvidence.candidate().identity(),
-                              worldDeadline);
-                      requireSameSource(source, beforeClaimWorld.source);
-                      CanonicalGameplayRegionIncarnationSource.StableEvidence
-                          beforeClaimIncarnation = readCurrentIncarnation(source);
-                      requireSameIncarnation(incarnation, beforeClaimIncarnation);
-                      if (!statusRepository.matchesTimelinePreparation(
-                          initializationPreparation,
-                          beforeClaimEvidence,
-                          worldRequest,
-                          beforeClaimWorld.resolvedRegion,
-                          source,
-                          beforeClaimIncarnation)) {
-                        throw unavailable();
-                      }
-                      return withTransferStatusRepository(
-                          statusRepository,
-                          transferOwner,
-                          handoffDeadline,
-                          budget,
-                          repository ->
-                              repository.beginInitialTimeline(
-                                  initializationPreparation, clock.instant()));
-                    });
-        var claimedPreparation = preparation;
-        grant =
-            session.initialize(
-                permit.orElse(null),
-                proof -> {
-                  // Independently bounded, non-admitting cleanup after definitive no-write only.
-                  io.grpc.Context previous = io.grpc.Context.ROOT.attach();
-                  try {
-                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                        Clock.systemUTC(),
-                        Long.MAX_VALUE,
-                        cleanup -> {
-                          this.statusRepository
-                              .forBudget(cleanup)
-                              .releaseInitialTimelineNoWrite(
-                                  claimedPreparation, proof, clock.instant());
-                          return null;
-                        });
-                  } finally {
-                    io.grpc.Context.ROOT.detach(previous);
-                  }
-                });
+        var retained = reserveNoWriteRecovery(preparation.operationId());
+        try {
+          recoverNoWrite(preparation, retained);
+          var initializationPreparation = preparation;
+          Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
+              permit =
+                  session.runWithinRetainedPermit(
+                      budget -> {
+                        CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
+                            readInstallationInventory(
+                                bindingInventory,
+                                transferOwner,
+                                handoffDeadline,
+                                budget,
+                                inventory ->
+                                    readCurrentProvisionalEvidence(inventory, transitionId));
+                        bindingInventory.requireSameProvisionalSource(
+                            evidence, beforeClaimEvidence);
+                        ResolvedBridgeSource beforeClaimWorld =
+                            resolveExactBridgeSource(
+                                worldRequest,
+                                beforeClaimEvidence.candidate().identity(),
+                                worldDeadline);
+                        requireSameSource(source, beforeClaimWorld.source);
+                        CanonicalGameplayRegionIncarnationSource.StableEvidence
+                            beforeClaimIncarnation = readCurrentIncarnation(source);
+                        requireSameIncarnation(incarnation, beforeClaimIncarnation);
+                        if (!statusRepository.matchesTimelinePreparation(
+                            initializationPreparation,
+                            beforeClaimEvidence,
+                            worldRequest,
+                            beforeClaimWorld.resolvedRegion,
+                            source,
+                            beforeClaimIncarnation)) {
+                          throw unavailable();
+                        }
+                        return withTransferStatusRepository(
+                            statusRepository,
+                            transferOwner,
+                            handoffDeadline,
+                            budget,
+                            repository ->
+                                repository.beginInitialTimeline(
+                                    initializationPreparation, clock.instant()));
+                      });
+          var claimedPreparation = preparation;
+          grant =
+              session.initialize(
+                  permit.orElse(null),
+                  proof -> {
+                    retained.proof = proof;
+                    recoverNoWrite(claimedPreparation, retained);
+                  });
+        } finally {
+          releaseNoWriteRecovery(preparation.operationId(), retained);
+        }
       }
       handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
       requireSameIncarnation(
