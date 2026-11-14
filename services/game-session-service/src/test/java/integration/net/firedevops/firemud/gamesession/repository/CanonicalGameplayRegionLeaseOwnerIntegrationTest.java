@@ -1514,7 +1514,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                                   org.jooq.ExecuteContext context) {
                                                 String statement = context.sql();
                                                 if (statement != null
-                                                    && statement.contains("SET phase = 'PREPARED'")) {
+                                                    && statement.contains(
+                                                        "SET phase = 'PREPARED'")) {
                                                   // The exact capability is already consumed. A
                                                   // second SQL
                                                   // reconciliation now waits for this transaction's
