@@ -486,11 +486,18 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         assertThat(repeated.durableDenialId()).isEqualTo(denialId);
       }
       String retainedDecision = session.capacityDecisionImage();
-      assertThrows(net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException.class,
-          () -> session.serializable.execute(status -> new AccountCapacityRefusalBudgetRepository(session.dsl)
-              .requireReady(request.identity().tenantId(), 1, 1)));
-      session.serializable.executeWithoutResult(status -> new AccountCapacityRefusalBudgetRepository(session.dsl)
-          .provision(request.identity().tenantId(), 1));
+      assertThrows(
+          net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
+              .CapacityException.class,
+          () ->
+              session.serializable.execute(
+                  status ->
+                      new AccountCapacityRefusalBudgetRepository(session.dsl)
+                          .requireReady(request.identity().tenantId(), 1, 1)));
+      session.serializable.executeWithoutResult(
+          status ->
+              new AccountCapacityRefusalBudgetRepository(session.dsl)
+                  .provision(request.identity().tenantId(), 1));
       assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
       var replay =
           assertThrows(
@@ -1144,11 +1151,13 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private void provisionCapacityRefusalBudget() {
-      serializable.executeWithoutResult(status -> {
-        var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
-        budgets.provision(capacityRequest.identity().tenantId(), 1);
-        assertThat(budgets.requireReady(capacityRequest.identity().tenantId(), 1, 1)).isEqualTo(1);
-      });
+      serializable.executeWithoutResult(
+          status -> {
+            var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
+            budgets.provision(capacityRequest.identity().tenantId(), 1);
+            assertThat(budgets.requireReady(capacityRequest.identity().tenantId(), 1, 1))
+                .isEqualTo(1);
+          });
     }
 
     private void stopCapacityServer() throws InterruptedException {

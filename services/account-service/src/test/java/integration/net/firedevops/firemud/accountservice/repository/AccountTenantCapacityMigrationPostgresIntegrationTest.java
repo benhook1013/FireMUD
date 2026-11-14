@@ -10,8 +10,8 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCapacityRefusalBudgetRepository;
-import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapDigest;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.Completion;
@@ -121,20 +121,43 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isZero();
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
       var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
-      assertThatThrownBy(() -> transaction.execute(status ->
-          budgets.requireReady(existing.canonicalTenantId(), 4, 2)))
+      assertThatThrownBy(
+              () ->
+                  transaction.execute(
+                      status -> budgets.requireReady(existing.canonicalTenantId(), 4, 2)))
           .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
-      transaction.executeWithoutResult(status -> budgets.provision(existing.canonicalTenantId(), 4));
-      var beforeBudget = dsl.fetchSingle("SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid=?", existing.canonicalTenantId()).intoMap();
-      transaction.executeWithoutResult(status -> budgets.provision(existing.canonicalTenantId(), 4));
-      assertThat(dsl.fetchSingle("SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid=?", existing.canonicalTenantId()).intoMap()).isEqualTo(beforeBudget);
-      Long readyHeadroom = transaction.execute(status -> budgets.requireReady(existing.canonicalTenantId(), 4, 2));
+      transaction.executeWithoutResult(
+          status -> budgets.provision(existing.canonicalTenantId(), 4));
+      var beforeBudget =
+          dsl.fetchSingle(
+                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid=?",
+                  existing.canonicalTenantId())
+              .intoMap();
+      transaction.executeWithoutResult(
+          status -> budgets.provision(existing.canonicalTenantId(), 4));
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget WHERE tenant_uuid=?",
+                      existing.canonicalTenantId())
+                  .intoMap())
+          .isEqualTo(beforeBudget);
+      Long readyHeadroom =
+          transaction.execute(status -> budgets.requireReady(existing.canonicalTenantId(), 4, 2));
       assertThat(readyHeadroom).isEqualTo(4L);
-      assertThatThrownBy(() -> transaction.executeWithoutResult(status -> budgets.provision(existing.canonicalTenantId(), 5)))
+      assertThatThrownBy(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> budgets.provision(existing.canonicalTenantId(), 5)))
           .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
-      assertThatThrownBy(() -> transaction.execute(status -> budgets.requireReady(later.canonicalTenantId(), 4, 1)))
+      assertThatThrownBy(
+              () ->
+                  transaction.execute(
+                      status -> budgets.requireReady(later.canonicalTenantId(), 4, 1)))
           .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
-      assertThatThrownBy(() -> transaction.executeWithoutResult(status -> budgets.provision(existing.canonicalTenantId(), 0)))
+      assertThatThrownBy(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> budgets.provision(existing.canonicalTenantId(), 0)))
           .isInstanceOf(IllegalArgumentException.class);
       assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isZero();
       assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
