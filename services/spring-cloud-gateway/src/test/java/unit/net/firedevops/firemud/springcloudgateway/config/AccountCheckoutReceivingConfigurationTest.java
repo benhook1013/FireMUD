@@ -3,10 +3,15 @@ package net.firedevops.firemud.springcloudgateway.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
+import io.netty.channel.Channel;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -34,6 +39,8 @@ import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Mono;
+import reactor.netty.Connection;
+import reactor.netty.http.server.HttpServerRequest;
 
 class AccountCheckoutReceivingConfigurationTest {
   @TempDir Path temporaryDirectory;
@@ -153,7 +160,7 @@ class AccountCheckoutReceivingConfigurationTest {
     var responseHolder = new AtomicReference<org.springframework.http.ResponseEntity<byte[]>>();
     trust
         .filter(
-            MockServerWebExchange.from(request),
+            MockServerWebExchange.from(withNativeSocketPeer(request)),
             exchange -> controller.login(exchange).doOnNext(responseHolder::set).then())
         .block();
     var response = responseHolder.get();
@@ -227,6 +234,17 @@ class AccountCheckoutReceivingConfigurationTest {
 
     assertThat(login.getResponse().getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
     assertThat(login.getResponse().getHeaders().getCacheControl()).contains("no-store");
+  }
+
+  private static MockServerHttpRequest withNativeSocketPeer(MockServerHttpRequest request) {
+    HttpServerRequest nativeRequest =
+        mock(HttpServerRequest.class, withSettings().extraInterfaces(Connection.class));
+    Channel channel = mock(Channel.class);
+    when(((Connection) nativeRequest).channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("192.0.2.10", 443));
+    MockServerHttpRequest requestWithNativePeer = spy(request);
+    doReturn(nativeRequest).when(requestWithNativePeer).getNativeRequest();
+    return requestWithNativePeer;
   }
 
   private static AccountCheckoutReceivingProperties receivingProperties() {
