@@ -6,7 +6,7 @@ Player-facing controller binding and takeover are owned by [Session Behavior](..
 
 The manually composed original-NEW final coordinator requires the exact retained `PLAYER_ADMISSION` bundle and obtains the real Account capacity commitment immediately before its final owner CAS. Its supported boundary remains public `SHARED` / `PRESEEDED_ONLY`, one newly created player session. Issuer-partition reservation is a separate obligation and does not satisfy tenant `maxActiveSessions` capacity.
 
-The separate manually composed region-owner handoff can consume current deny-only transfer evidence through the existing acquire/install/revalidate path. `FENCED_INDETERMINATE` remains denying and grants no capacity transition or player admission. The [normal-handoff contract](./runtime-and-data.md#normal-handoff-future-execution-fencing) owns its storage currentness, complete inventory, positive-retention and failure requirements. No default receiver or scheduler is registered.
+Normal region-owner handoff is target state and unavailable at this front: the existing acquire/install/revalidate path refuses replacement of an installed owner. Prepared transfer storage and deny-only evidence do not provide executable successor continuation. `FENCED_INDETERMINATE` remains denying and grants no capacity transition or player admission. The [normal-handoff contract](./runtime-and-data.md#normal-handoff-future-execution-fencing) owns its storage currentness, complete inventory, positive-retention and failure requirements. No default receiver or scheduler is registered.
 
 ## Steady-State Account Public-JWKS Provenance
 
