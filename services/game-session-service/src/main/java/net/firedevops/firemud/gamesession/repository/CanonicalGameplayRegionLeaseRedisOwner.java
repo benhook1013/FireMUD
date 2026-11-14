@@ -606,7 +606,14 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       // A local refusal before dispatch or a completed -3 proves no mutation. Once
       // invocation begins, timeout/cancellation/transport failure remain indeterminate.
       if ((!dispatchInvoked || Long.valueOf(-3L).equals(outcome)) && permit != null) {
-        noWriteRecovery.accept(new InitializationNoWriteProof(permit));
+        try {
+          noWriteRecovery.accept(new InitializationNoWriteProof(permit));
+        } catch (RuntimeException recoveryFailure) {
+          // Preserve the original failure while retaining the exact no-write proof at its owner.
+          if (initializationFailure == null) initializationFailure = recoveryFailure;
+          else if (initializationFailure != recoveryFailure)
+            initializationFailure.addSuppressed(recoveryFailure);
+        }
       }
       if (initializationFailure != null) throw unavailable(initializationFailure);
       if (outcome == null || (outcome != 1L && outcome != 2L)) throw unavailable();

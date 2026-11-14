@@ -71,8 +71,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
   }
 
   @Test
+  @org.junit.jupiter.api.Timeout(10)
   void defaultOwnerBoundsSlowConnectAndDisposesLateConnectionWithoutCommands() throws Exception {
     var fixture = new Fixture();
+    var contextRef = new AtomicReference<io.grpc.Context.CancellableContext>();
     var entered = new java.util.concurrent.CountDownLatch(1);
     var release = new java.util.concurrent.CountDownLatch(1);
     var disposed = new java.util.concurrent.CountDownLatch(1);
@@ -80,6 +82,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
         .thenAnswer(
             ignored -> {
               entered.countDown();
+              contextRef.get().cancel(new TimeoutException("controlled connect-phase expiry"));
               while (release.getCount() != 0) {
                 try {
                   release.await();
@@ -96,8 +99,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
               return CompletableFuture.completedFuture(null);
             });
     var timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
-    try (var context =
-        io.grpc.Context.current().withDeadlineAfter(150, TimeUnit.MILLISECONDS, timer)) {
+    try (var context = io.grpc.Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, timer)) {
+      contextRef.set(context);
       var previous = context.attach();
       try {
         assertThatThrownBy(
@@ -126,6 +129,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
   }
 
   @Test
+  @org.junit.jupiter.api.Timeout(10)
   void defaultOwnerBoundsCloseWithoutReturningSuccessAfterUnknownDisposal() throws Exception {
     var fixture = new Fixture();
     fixture.completeWhoami(() -> {});
@@ -133,10 +137,16 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
     fixture.completeEvaluation();
     when(fixture.redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(fixture.connection);
     var close = new CompletableFuture<Void>();
-    when(fixture.connection.closeAsync()).thenReturn(close);
+    var contextRef = new AtomicReference<io.grpc.Context.CancellableContext>();
+    when(fixture.connection.closeAsync())
+        .thenAnswer(
+            ignored -> {
+              contextRef.get().cancel(new TimeoutException("controlled close-phase expiry"));
+              return close;
+            });
     var timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
-    try (var context =
-        io.grpc.Context.current().withDeadlineAfter(150, TimeUnit.MILLISECONDS, timer)) {
+    try (var context = io.grpc.Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, timer)) {
+      contextRef.set(context);
       var previous = context.attach();
       try {
         assertThatThrownBy(
