@@ -380,6 +380,14 @@ export default function HostingFirstInvoiceCheckout({
         setMessage(
           'Account retained the authorization, but provider confirmation is unresolved. Only status recovery is available. No replacement charge was requested.'
         );
+      } else if (handoff.status === 'requires_payment_method') {
+        setHeld(true);
+        setRenewing(false);
+        setEvidenceReady(false);
+        setAccepted(null);
+        setMessage(
+          'The payment method was refused. Check Account status for this same invoice. No replacement payment or charge was requested.'
+        );
       } else if (handoff.status === 'requires_action' && handoff.clientSecret) {
         const loadedStripe = submittedStripe.stripe;
         if (!loadedStripe || currentStripe.current !== submittedStripe) {
@@ -429,9 +437,16 @@ export default function HostingFirstInvoiceCheckout({
             'Account refused the primary authentication secret. Check the email and secret, then review and authorize this exact charge again.'
           );
         } else if (error.code === 'INVALID_CREDENTIALS') {
+          if (!attempt.current?.dispatched) {
+            attempt.current = null;
+            setHeld(true);
+            setRenewing(false);
+            setEvidenceReady(false);
+          }
           setMessage(
             'Account could not match this reauthentication retry to its original credentials. Check Account status before explicitly renewing authorization.'
           );
+          await query.refetch();
         } else {
           setMessage(
             'The current control-ui session or billing-owner authority was refused. Sign in again through the account flow.'
