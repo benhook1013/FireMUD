@@ -65,11 +65,13 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [status, data]
                 properties:
                   status: {type: string, enum: [SUCCESS]}
                   data:
                     type: object
+                    additionalProperties: false
                     required: [accountId, authToken, expiresAt]
                     properties:
                       accountId: {type: string, format: uuid}
