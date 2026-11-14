@@ -213,8 +213,9 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         new DefaultExecuteListener() {
           @Override
           public void executeEnd(ExecuteContext context) {
-            if (context.sql() != null
-                && context.sql().contains("SET fence_apply_issued=true")
+            String statement = context.sql();
+            if (statement != null
+                && statement.contains("SET fence_apply_issued=true")
                 && context.rows() == 1) issued.incrementAndGet();
           }
         };
