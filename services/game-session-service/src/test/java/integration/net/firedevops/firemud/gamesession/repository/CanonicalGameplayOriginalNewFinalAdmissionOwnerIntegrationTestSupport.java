@@ -1,21 +1,37 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayCapacityOriginCustodyRedisScriptContribution;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.RestoreArgs;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,13 +39,21 @@ import java.util.UUID;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountIndexMember;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIssuerIndexObligation;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 @SuppressWarnings("resource")
 abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSupport {
@@ -55,7 +79,8 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
   CanonicalGameplayAdmissionDecision decision;
   CanonicalGameplayOriginalNewCandidateRedisOwner.Installation installation;
   RedisScriptCatalog catalog;
-  net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution controlledCapacity;
+  net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
+      controlledCapacity;
   CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding regionBinding;
 
   @BeforeEach
@@ -113,6 +138,9 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution(),
+                new CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayRegionLeaseRedisScriptContribution(),
@@ -142,7 +170,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
     }
   }
 
-  static void assertGuardRefusal(
+   static void assertGuardRefusal(
       Throwable failure, String sqlState, String constraint, String message) {
     assertThat(failure)
         .rootCause()
@@ -157,23 +185,23 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
             });
   }
 
-  void repairAccountMember() {
+   void repairAccountMember() {
     new CanonicalGameplayAccountMemberRepairOwner(fixture.dsl(), ownerClient, catalog)
         .repair(fixture.transitionId());
   }
 
-  void bridge() {
+   void bridge() {
     bridge(true);
   }
 
-  void bridge(boolean authorizeCapacity) {
+   void bridge(boolean authorizeCapacity) {
     bridge(
         authorizeCapacity,
         TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
         TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
   }
 
-  void bridge(boolean authorizeCapacity, int maximumRecords, long maximumBindingBytes) {
+   void bridge(boolean authorizeCapacity, int maximumRecords, long maximumBindingBytes) {
     regionBinding =
         CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
             fixture.dsl(),
@@ -237,7 +265,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
     }
   }
 
-  void initializeCapacityEvidenceBudget(
+   void initializeCapacityEvidenceBudget(
       UUID tenantId, int maximumRecords, long maximumBindingBytes) {
     fixture
         .dsl()
@@ -257,8 +285,9 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
             tenantId);
   }
 
-  net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request anotherAttempt(
-      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request) {
+  net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+      anotherAttempt(
+          net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request) {
     return new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
             request.identity(),
             UUID.randomUUID(),
@@ -274,7 +303,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
         .withDigest();
   }
 
-  CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen() {
+   CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen() {
     var repository =
         new CanonicalGameplayIssuerAdmissionBarrierRepository(
             fixture.dsl(), tags, fixture.currentIssuerSource());
@@ -287,6 +316,10 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
    * Controlled upstream OPEN record and physical hash, without INITIAL owner/currentness claims.
    */
   CanonicalGameplayAccountInitialOpenProof.CurrentOpen controlledAccountOpen() {
+    return controlledAccountOpen(CLOCK);
+  }
+
+  CanonicalGameplayAccountInitialOpenProof.CurrentOpen controlledAccountOpen(Clock clock) {
     var binding = decision.candidate();
     var assignment = tags.assignmentForTransition(fixture.transitionId());
     UUID initializer = UUID.randomUUID();
@@ -319,7 +352,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
             "incarnationDigest",
             incarnation);
     fields.forEach((field, value) -> admin.hset(ascii(key), ascii(field), ascii(value)));
-    long now = CLOCK.millis();
+    long now = clock.millis();
     return new CanonicalGameplayAccountInitialOpenProof.CurrentOpen(
         initializer,
         UUID.randomUUID(),
@@ -339,7 +372,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
         fields);
   }
 
-  String issuerKey(CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
+   String issuerKey(CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback readback) {
     var value = readback.value();
     return CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
         value.issuerId(),
@@ -348,14 +381,14 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
         value.tenantGameplayTag());
   }
 
-  CanonicalGameplayOriginalNewCandidateRedisOwner candidateOwner(
+   CanonicalGameplayOriginalNewCandidateRedisOwner candidateOwner(
       CanonicalGameplayBindingInventoryRepository repository) {
     return CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
         ownerClient, catalog, repository, tags);
   }
 
-  net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus replaceRegionOwner(
-      String successor) {
+  net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus
+      replaceRegionOwner(String successor) {
     var original = regionBinding.installation();
     var repository = new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl());
     var current = repository.find(original.source).orElseThrow();
@@ -590,5 +623,43 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
 
   static byte[] ascii(String value) {
     return value.getBytes(StandardCharsets.US_ASCII);
+  }
+
+  CanonicalGameplayCapacityOrigin prepareControlledOrigin(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source)
+      throws java.io.IOException {
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var origin =
+        new CanonicalGameplayCapacityOrigin(
+            controlledCapacity.request(),
+            source.candidate(),
+            assignment.tenantGameplayTag(),
+            controlledCapacity.selectedOwnerId(),
+            controlledCapacity.selectedOwnerFence());
+    assertThat(
+            new CanonicalGameplayCapacityOriginRepository(fixture.dsl())
+                .prepare(origin)
+                .insertedByThisCall())
+        .isTrue();
+    var descriptor =
+        catalog.require(CanonicalGameplayCapacityOriginCustodyRedisScriptContribution.SCRIPT_ID);
+    try (var input = getClass().getClassLoader().getResourceAsStream(descriptor.resourcePath())) {
+      if (input == null) throw new IllegalStateException("Origin custody script is unavailable");
+      new CanonicalGameplayCapacityOriginRedisOwner(
+              () -> ownerClient.connect(ByteArrayCodec.INSTANCE),
+              () -> TimeUnit.SECONDS.toMillis(5),
+              input.readAllBytes(),
+              descriptor.sha256())
+          .apply(
+              origin,
+              CanonicalGameplayCapacityOriginRedisOwner.Action.INIT,
+              origin.selectedOwnerId(),
+              origin.selectedOwnerFence(),
+              origin.selectedOwnerId(),
+              origin.selectedOwnerFence(),
+              CanonicalGameplayCapacityOrigin.State.OPEN,
+              deadline());
+    }
+    return origin;
   }
 }

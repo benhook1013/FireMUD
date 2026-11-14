@@ -23,13 +23,16 @@ import java.util.UUID;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
+import java.util.function.Function;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -88,6 +91,348 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     this.scripts = Objects.requireNonNull(scripts);
     this.budget = budget;
     this.transferReadConnection = transferReadConnection;
+  }
+
+  void requireOrdinaryAdmission(Request request, long deadline) {
+    within(
+        deadline,
+        owner -> {
+          CanonicalGameplayCapacityOriginRepository.requireNoRetainedOrigin(
+              owner.sql(), request.admissionAttemptId());
+          return null;
+        });
+  }
+
+  /** Manual receiving path: persist exact custody and its physical fence before Account RPC. */
+  CanonicalGameplayCapacityOrigin prepareOrigin(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      long deadline) {
+    noSql();
+    if (budget == null)
+      return within(deadline, owner -> owner.prepareOrigin(source, request, deadline));
+    CurrentOwner selected = requireRequestBinding(source, request, deadline);
+    var assignment = scopedTags().assignmentForTransition(source.candidate().bindingDecisionId());
+    var origin =
+        new CanonicalGameplayCapacityOrigin(
+            request,
+            source.candidate(),
+            assignment.tenantGameplayTag(),
+            selected.instanceId(),
+            selected.fence());
+    var repository = new CanonicalGameplayCapacityOriginRepository(sql());
+    var preparation = repository.prepare(origin);
+    var retained = preparation.retained();
+    if (!retained.ownerId().equals(selected.instanceId())
+        || retained.ownerFence() != selected.fence()) throw unavailable();
+    if (retained.state() == CanonicalGameplayCapacityOrigin.State.OPEN) {
+      if (preparation.insertedByThisCall()) {
+        originRedis()
+            .apply(
+                origin,
+                CanonicalGameplayCapacityOriginRedisOwner.Action.INIT,
+                selected.instanceId(),
+                selected.fence(),
+                selected.instanceId(),
+                selected.fence(),
+                retained.state(),
+                Math.min(deadline, budget.absoluteDeadlineMillis()));
+      } else {
+        originRedis()
+            .readExact(origin, retained.ownerId(), retained.ownerFence(), retained.state());
+      }
+    } else if (retained.state() == CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED) {
+      requireResumableOriginReplay(source, origin, retained);
+    } else if (retained.state() != CanonicalGameplayCapacityOrigin.State.DENIED) {
+      throw unavailable();
+    }
+    var after = repository.read(origin);
+    if (!after.ownerId().equals(selected.instanceId())
+        || after.ownerFence() != selected.fence()
+        || after.state() != retained.state()) throw unavailable();
+    return origin;
+  }
+
+  private void requireResumableOriginReplay(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayCapacityOrigin origin,
+      CanonicalGameplayCapacityOriginRepository.Retained retained) {
+    if (retained.state() != CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED
+        || !origin.selectedOwnerId().equals(retained.ownerId())
+        || origin.selectedOwnerFence() != retained.ownerFence()) throw unavailable();
+    var execution =
+        CanonicalGameplayRegionOwnerTransferRepository.decode(retained.accountResolution());
+    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
+    if (!Arrays.equals(
+            CapacityAdmissionDigest.preimage(origin.request()),
+            CapacityAdmissionDigest.preimage(execution.request()))
+        || !origin.selectedOwnerId().equals(execution.selectedOwnerId())
+        || origin.selectedOwnerFence() != execution.selectedOwnerFence()) throw unavailable();
+    Record row = find(sql(), execution);
+    if (row == null) throw unavailable();
+    exact(row, execution);
+    String status = row.get("status", String.class);
+    if (!"AUTHORIZED".equals(status) && !"COMMITTED".equals(status)) throw unavailable();
+    originRedis().readExact(origin, retained.ownerId(), retained.ownerFence(), retained.state());
+    var physical = readExecution(execution, origin.tenantGameplayTag());
+    String state = text(physical.get("state"));
+    boolean canResumeFinal =
+        "AUTHORIZED".equals(state)
+            && "AUTHORIZED".equals(status)
+            && source.transitionStatus()
+                == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+            && execution.reservation().state() == State.RESERVED
+            && clock.instant().isBefore(execution.reservation().expiresAt());
+    if (!"COMMITTED".equals(state) && !canResumeFinal) throw unavailable();
+    exactPhysicalBinding(physical, execution, state);
+  }
+
+  /**
+   * Durably consumes one observation before Account lookup; lost/unknown replies cannot refund it.
+   */
+  public net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation.Permit
+      beginOriginObservation(Request request, long deadline) {
+    noSql();
+    if (budget == null)
+      return withinBackground(deadline, owner -> owner.beginOriginObservation(request, deadline));
+    var repository = new CanonicalGameplayCapacityOriginRepository(sql());
+    return repository.admitObservation(
+        repository.readOrigin(request),
+        clock.instant(),
+        java.time.Instant.ofEpochMilli(budget.absoluteDeadlineMillis()));
+  }
+
+  /** Called only by the separate authenticated receiving composition, never by readExact. */
+  public void receiveOriginResolution(
+      net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution resolution,
+      net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation.Permit
+          permit,
+      long deadline) {
+    noSql();
+    if (budget == null) {
+      withinBackground(
+          deadline,
+          owner -> {
+            owner.receiveOriginResolution(resolution, permit, deadline);
+            return null;
+          });
+      return;
+    }
+    budget.check();
+    var repository = new CanonicalGameplayCapacityOriginRepository(sql());
+    var origin = repository.readOrigin(resolution.request());
+    var before = repository.read(origin);
+    boolean denied =
+        resolution.status()
+            == net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution.Status
+                .NO_ACCEPT_RETAINED;
+    var target =
+        denied
+            ? CanonicalGameplayCapacityOrigin.State.DENIED
+            : CanonicalGameplayCapacityOrigin.State.CLOSURE_CLAIMED;
+    var retained =
+        sql()
+            .transactionResult(
+                configuration -> {
+                  var tx = DSL.using(configuration);
+                  if (!CanonicalGameplayCapacityOriginRepository.requireObservationInTransaction(
+                      tx, origin, permit, clock.instant(), resolution)) return null;
+                  if (resolution.status()
+                      == net.firedevops.firemud.common.account.capacity
+                          .AccountCapacityOriginResolution.Status.UNKNOWN) return null;
+                  var claimed =
+                      CanonicalGameplayCapacityOriginRepository.claimInTransaction(
+                          tx, origin, before.ownerId(), before.ownerFence(), target, resolution);
+                  if (!denied) {
+                    var execution =
+                        new OriginalNewCapacityExecution(
+                            resolution.request(),
+                            resolution.reservation(),
+                            origin.transitionId(),
+                            origin.candidateDigest(),
+                            origin.selectedOwnerId(),
+                            origin.selectedOwnerFence());
+                    CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+                        tx, execution, origin.tenantGameplayTag());
+                    Record existing = find(tx, execution);
+                    if (existing != null) {
+                      exact(existing, execution);
+                      if (!"CLOSURE_CLAIMED".equals(existing.get("status", String.class))
+                          && !"CLOSED".equals(existing.get("status", String.class)))
+                        throw unavailable();
+                    } else if (tx.execute(
+                            "INSERT INTO "
+                                + TABLE
+                                + " (tenant_id,request_id,admission_id,admission_attempt_id,transition_id,capacity_rearm_fence,reservation_id,reservation_fence,mutation_digest,execution_digest,canonical_execution,selected_owner_id,selected_owner_fence,tenant_gameplay_tag,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'CLOSURE_CLAIMED')",
+                            resolution.request().identity().tenantId(),
+                            resolution.request().identity().requestId(),
+                            resolution.request().identity().admissionId(),
+                            resolution.request().admissionAttemptId(),
+                            origin.transitionId(),
+                            resolution.request().capacityRearmFence(),
+                            resolution.reservation().reservationId(),
+                            resolution.reservation().reservationFence(),
+                            resolution.request().mutationDigest(),
+                            execution.digest(),
+                            execution.canonicalBytes(),
+                            origin.selectedOwnerId(),
+                            origin.selectedOwnerFence(),
+                            origin.tenantGameplayTag())
+                        != 1) throw unavailable();
+                  }
+                  return claimed;
+                });
+    if (retained == null) throw unavailable();
+    long physicalDeadline =
+        Math.min(
+            budget.absoluteDeadlineMillis(),
+            Math.min(
+                permit.deadline().toEpochMilli(),
+                resolution.continuationPolicy().deadline().toEpochMilli()));
+    if (clock.millis() >= physicalDeadline) throw unavailable();
+    originRedis()
+        .apply(
+            origin,
+            denied
+                ? CanonicalGameplayCapacityOriginRedisOwner.Action.DENY
+                : CanonicalGameplayCapacityOriginRedisOwner.Action.CLOSE_CUSTODY,
+            retained.ownerId(),
+            retained.ownerFence(),
+            retained.ownerId(),
+            retained.ownerFence(),
+            retained.state(),
+            physicalDeadline);
+    if (denied) {
+      // Retire the origin marker before returning the active execution reserve. A lost reply can
+      // replay the retained denial through this same owner without freeing uncertain attempts.
+      sql()
+          .transaction(
+              configuration ->
+                  CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                      DSL.using(configuration),
+                      origin.request(),
+                      origin.candidateDigest(),
+                      new CurrentOwner(origin.selectedOwnerId(), origin.selectedOwnerFence()),
+                      origin.tenantGameplayTag(),
+                      resolution.denialId()));
+      return;
+    }
+    var execution =
+        new OriginalNewCapacityExecution(
+            resolution.request(),
+            resolution.reservation(),
+            origin.transitionId(),
+            origin.candidateDigest(),
+            origin.selectedOwnerId(),
+            origin.selectedOwnerFence());
+    Record transition = transition(execution);
+    var assignment =
+        "ABORTED".equals(transition.get("status", String.class))
+            ? scopedTags().assignmentForRetainedCapacityExecution(origin.transitionId())
+            : scopedTags().assignmentForTransition(origin.transitionId());
+    long result =
+        scopedFinalOwner()
+            .forOrigin(origin, retained)
+            .closeCapacityExecutionOnce(
+                execution, origin.candidate(), assignment, physicalDeadline);
+    if (result != CAPACITY_EXECUTION_CLOSED && result != CAPACITY_EXECUTION_CLOSED_OBSERVED)
+      throw unavailable();
+    // Existing closure path independently checks physical CLOSED, candidate/index evidence and
+    // immutable SQL proof. The repeat physical CLOSE is a read-only exact CLOSED replay.
+    closeOriginalAttempt(resolution.request(), resolution.reservation());
+  }
+
+  CanonicalGameplayCapacityOriginRedisOwner.Readback transferOriginCustody(
+      CanonicalGameplayCapacityOriginTransferRepository.Item item, long deadline) {
+    if (budget == null)
+      return within(deadline, owner -> owner.transferOriginCustody(item, deadline));
+    budget.check();
+    return originRedis()
+        .apply(
+            item.origin(),
+            CanonicalGameplayCapacityOriginRedisOwner.Action.TRANSFER,
+            item.oldOwner(),
+            item.oldFence(),
+            item.newOwner(),
+            item.newFence(),
+            item.state(),
+            Math.min(deadline, budget.absoluteDeadlineMillis()));
+  }
+
+  CanonicalGameplayCapacityOriginRedisOwner.Readback readOriginTransferCustody(
+      CanonicalGameplayCapacityOriginTransferRepository.Item item, long deadline) {
+    if (budget == null)
+      return within(deadline, owner -> owner.readOriginTransferCustody(item, deadline));
+    budget.check();
+    if (transferReadConnection != null) {
+      return originRedis()
+          .readExact(
+              transferReadConnection.async(),
+              item.origin(),
+              item.newOwner(),
+              item.newFence(),
+              item.state());
+    }
+    return originRedis().readExact(item.origin(), item.newOwner(), item.newFence(), item.state());
+  }
+
+  CanonicalGameplayOriginalNewFinalAdmissionRedisOwner bindFinalOwnerToOrigin(
+      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalOwner,
+      CanonicalGameplayCapacityOrigin origin,
+      long deadline) {
+    if (budget == null)
+      return within(deadline, owner -> owner.bindFinalOwnerToOrigin(finalOwner, origin, deadline));
+    budget.check();
+    return finalOwner.forOrigin(
+        origin, new CanonicalGameplayCapacityOriginRepository(sql()).read(origin));
+  }
+
+  private CanonicalGameplayCapacityOriginRedisOwner originRedis() {
+    var descriptor = scripts.require("game-session.original-new-capacity-origin-custody.v2");
+    var expectedArguments =
+        java.util.List.of(
+                "action",
+                "originDigest",
+                "oldOwner",
+                "oldFence",
+                "newOwner",
+                "newFence",
+                "capturedState",
+                "absoluteDeadlineMillis")
+            .stream()
+            .map(
+                net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.ArgumentSpec
+                    ::new)
+            .toList();
+    if (!"game-session.original-new-capacity-origin-custody.v2".equals(descriptor.scriptId())
+        || !"redis/lua/game-session-original-new-capacity-origin-custody.lua"
+            .equals(descriptor.resourcePath())
+        || !"game-session-service".equals(descriptor.owner())
+        || !"gamesession_coord_app".equals(descriptor.principal())
+        || descriptor.role()
+            != net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.RedisRole
+                .COORDINATION
+        || !descriptor.arguments().equals(expectedArguments)
+        || !descriptor
+            .keys()
+            .equals(
+                java.util.List.of(
+                    new net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.KeySpec(
+                        "capacityOrigin",
+                        "session:game:capacity-origin:",
+                        net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor
+                            .HashTagDeclaration.REQUIRED)))) throw unavailable();
+    try (var input =
+        CanonicalGameplayOriginalNewCapacityExecutionOwner.class
+            .getClassLoader()
+            .getResourceAsStream(descriptor.resourcePath())) {
+      if (input == null) throw unavailable();
+      byte[] script = input.readAllBytes();
+      return new CanonicalGameplayCapacityOriginRedisOwner(
+          this::connectForRead, budget::remainingMillis, script, descriptor.sha256());
+    } catch (java.io.IOException invalid) {
+      throw unavailable();
+    }
   }
 
   OriginalNewCapacityExecution bind(
@@ -200,6 +545,59 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             });
   }
 
+  void retireQuotaDeniedOrigin(
+      CanonicalGameplayCapacityOrigin origin, UUID accountDenialId, long deadline) {
+    within(
+        deadline,
+        owner -> {
+          var resolution =
+              new AccountCapacityOriginResolution(
+                  origin.request(),
+                  AccountCapacityOriginResolution.Status.NO_ACCEPT_RETAINED,
+                  null,
+                  accountDenialId);
+          var repository = new CanonicalGameplayCapacityOriginRepository(owner.sql());
+          var before = repository.read(origin);
+          if (!origin.selectedOwnerId().equals(before.ownerId())
+              || origin.selectedOwnerFence() != before.ownerFence()) throw unavailable();
+          var retained =
+              owner
+                  .sql()
+                  .transactionResult(
+                      configuration ->
+                          CanonicalGameplayCapacityOriginRepository.claimInTransaction(
+                              DSL.using(configuration),
+                              origin,
+                              before.ownerId(),
+                              before.ownerFence(),
+                              CanonicalGameplayCapacityOrigin.State.DENIED,
+                              resolution));
+          owner
+              .originRedis()
+              .apply(
+                  origin,
+                  CanonicalGameplayCapacityOriginRedisOwner.Action.DENY,
+                  retained.ownerId(),
+                  retained.ownerFence(),
+                  retained.ownerId(),
+                  retained.ownerFence(),
+                  retained.state(),
+                  owner.budget.absoluteDeadlineMillis());
+          owner
+              .sql()
+              .transaction(
+                  configuration ->
+                      CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                          DSL.using(configuration),
+                          origin.request(),
+                          origin.candidateDigest(),
+                          new CurrentOwner(origin.selectedOwnerId(), origin.selectedOwnerFence()),
+                          origin.tenantGameplayTag(),
+                          accountDenialId));
+          return null;
+        });
+  }
+
   void settleDeniedCharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,
@@ -234,12 +632,24 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
       OriginalNewCapacityExecution execution,
       long deadline) {
+    authorizeWithOrigin(source, template, accountOpen, issuerOpen, execution, deadline, null);
+  }
+
+  void authorizeWithOrigin(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
+      OriginalNewCapacityExecution execution,
+      long deadline,
+      CanonicalGameplayCapacityOrigin origin) {
     noSql();
     if (budget == null) {
       within(
           deadline,
           owner -> {
-            owner.authorize(source, template, accountOpen, issuerOpen, execution, deadline);
+            owner.authorizeWithOrigin(
+                source, template, accountOpen, issuerOpen, execution, deadline, origin);
             return null;
           });
       return;
@@ -270,11 +680,22 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                   var tx = DSL.using(configuration);
                   // Serialize original effect custody with every durable region-owner replacement.
                   // This lock is released before any Redis command is submitted.
+                  if (origin != null)
+                    CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(tx);
                   requireSelectedOwner(
                       tx,
                       source.candidate(),
                       new CurrentOwner(
                           execution.selectedOwnerId(), execution.selectedOwnerFence()));
+                  if (origin == null) {
+                    // Origin preparation locks the same region before inserting custody. Recheck
+                    // under that lock before an ordinary dispatch or an existing-row replay.
+                    CanonicalGameplayCapacityOriginRepository.requireNoRetainedOrigin(
+                        tx, execution.request().admissionAttemptId());
+                  } else {
+                    CanonicalGameplayCapacityOriginRepository.claimDispatchInTransaction(
+                        tx, origin, execution);
+                  }
                   Record row = find(tx, execution);
                   if (row != null) {
                     exact(row, execution);
@@ -322,17 +743,38 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                   return true;
                 });
     // A lost SQL commit reply intentionally loses dispatch permission; retries only inspect.
+    if (!dispatch && origin != null) {
+      requireResumableOriginReplay(
+          source, origin, new CanonicalGameplayCapacityOriginRepository(sql()).read(origin));
+      return;
+    }
     if (dispatch) {
+      if (origin != null)
+        originRedis()
+            .apply(
+                origin,
+                CanonicalGameplayCapacityOriginRedisOwner.Action.DISPATCH,
+                execution.selectedOwnerId(),
+                execution.selectedOwnerFence(),
+                execution.selectedOwnerId(),
+                execution.selectedOwnerFence(),
+                CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED,
+                Math.min(deadline, budget.absoluteDeadlineMillis()));
+      var finalOwner =
+          origin == null
+              ? scopedFinalOwner()
+              : scopedFinalOwner()
+                  .forOrigin(
+                      origin, new CanonicalGameplayCapacityOriginRepository(sql()).read(origin));
       long result =
-          scopedFinalOwner()
-              .dispatchCapacityAction(
-                  source,
-                  template,
-                  accountOpen,
-                  issuerOpen,
-                  execution,
-                  "INSTALL",
-                  budget.absoluteDeadlineMillis());
+          finalOwner.dispatchCapacityAction(
+              source,
+              template,
+              accountOpen,
+              issuerOpen,
+              execution,
+              "INSTALL",
+              budget.absoluteDeadlineMillis());
       if (result != CAPACITY_EXECUTION_AUTHORIZED
           && result != CAPACITY_EXECUTION_AUTHORIZED_OBSERVED
           && result != CAPACITY_EXECUTION_COMMITTED_OBSERVED) throw unavailable();
@@ -554,7 +996,9 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return;
     }
     if (!("AUTHORIZED".equals(current)
-        || ("CLOSED".equals(status) && "INSTALL_DISPATCHED".equals(current)))) throw unavailable();
+        || ("CLOSED".equals(status)
+            && ("INSTALL_DISPATCHED".equals(current) || "CLOSURE_CLAIMED".equals(current)))))
+      throw unavailable();
     if (tx.execute(
             "UPDATE "
                 + TABLE
@@ -602,15 +1046,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   /** Authenticated transport calls this read-only method. Absence and contradictions throw. */
   public Snapshot readExact(Request request, Result reservation) {
-    noSql();
-    if (budget != null) return readExact(request, reservation, false);
-    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-        clock,
-        Long.MAX_VALUE,
-        scoped ->
-            new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                    dsl, redis, scripts, clock, tags, scoped, null)
-                .readExact(request, reservation, false));
+    return withinBackground(Long.MAX_VALUE, owner -> owner.readExact(request, reservation, false));
   }
 
   private Snapshot readExact(Request request, Result reservation, boolean verifyForRetention) {
@@ -768,14 +1204,14 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   /** Keeps one authenticated non-reconnecting connection for the current transfer readback. */
-  void withTransferReadback(Consumer<CanonicalGameplayOriginalNewCapacityExecutionOwner> read) {
+  <T> T withTransferReadback(Function<CanonicalGameplayOriginalNewCapacityExecutionOwner, T> read) {
     noSql();
     if (budget == null || transferReadConnection != null) throw unavailable();
     budget.check();
     var connection = connectForRead();
     try {
       principal(connection.async());
-      read.accept(
+      return read.apply(
           new CanonicalGameplayOriginalNewCapacityExecutionOwner(
               dsl, redis, scripts, clock, tags, budget, connection));
     } finally {
@@ -1196,6 +1632,22 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return operation.apply(this);
     }
     return CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+        clock,
+        deadline,
+        scoped ->
+            operation.apply(
+                new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+                    dsl, redis, scripts, clock, tags, scoped, null)));
+  }
+
+  private <T> T withinBackground(
+      long deadline, Function<CanonicalGameplayOriginalNewCapacityExecutionOwner, T> operation) {
+    noSql();
+    if (budget != null) {
+      budget.check();
+      return operation.apply(this);
+    }
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
         clock,
         deadline,
         scoped ->

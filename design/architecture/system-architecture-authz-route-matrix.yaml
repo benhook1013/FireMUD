@@ -331,6 +331,12 @@ required_live_check_vocabulary:
   - admission_pointer
   - browser_origin
   - capacity_admission_fence
+  # Exact original-NEW capacity execution read; captured and current owners remain distinct.
+  - original_attempt_payload_and_digest
+  - reservation_identity_and_fence
+  - original_selected_owner_identity_and_fence
+  - current_selected_owner_identity_and_fence
+  - durable_final_receipt_or_irreversible_original_attempt_closure
   - cancellation_window
   # Exact initial-admission owner-ledger and World hold admission checks.
   - aborted_attempt_future_commit_fence
@@ -3200,6 +3206,33 @@ routes:
     canonical_errors:
       any_of: [CAPACITY_ADMISSION_STALE, CAPACITY_QUOTA_EXCEEDED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, FENCE_REJECTED, IDEMPOTENCY_CONFLICT, AUTH_UNAVAILABLE, PERMISSION_DENIED, INVALID_ARGUMENT]
       fence_rejection_requirements: no_accept_no_runtime_mutation_proof
+  - service: game-session-service
+    route: ReadOriginalNewCapacityExecution
+    transport: grpc
+    scope: tenant
+    route_status: target_not_currently_routable
+    classification: internal_workload
+    auth_path: exact_mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [account-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/account-service"]
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    end_user_token_required: false
+    caller_context: exact_original_capacity_attempt_and_reservation
+    response_profile: exact_original_execution_evidence
+    required_live_checks: [original_attempt_payload_and_digest, reservation_identity_and_fence, original_selected_owner_identity_and_fence, current_selected_owner_identity_and_fence, durable_final_receipt_or_irreversible_original_attempt_closure]
+    implementation_status:
+      known_drift:
+        - unregistered_bounded_Account_only_read_and_client_prepared; deployed_PKI_source_custody_and_registration_unqualified
+        - missing_interrupted_or_ambiguous_evidence_returns_RPC_UNAVAILABLE; Account_recovery_treats_failed_reads_as_indeterminate_and_records_SOURCE_UNAVAILABLE_before_exhaustion_or_QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION_on_exhaustion; absence_or_expiry_never_proves_no_execution
   - service: account-service
     route: GetTenantEntitlementsTenant
     scope: tenant

@@ -1,0 +1,30 @@
+syntax = "proto3";
+package game_session.v1;
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+option java_outer_classname = "OriginalNewCapacityExecutionReadProto";
+import "account/v1/tenant_capacity_admission.proto";
+
+// Unregistered, bounded, exact same-namespace Account-only read. Never closes or executes.
+service OriginalNewCapacityExecutionReadService {
+  rpc ReadOriginalNewCapacityExecution(ReadOriginalNewCapacityExecutionRequest)
+      returns (ReadOriginalNewCapacityExecutionResponse);
+}
+message ReadOriginalNewCapacityExecutionRequest {
+  repeated account.v1.CommitTenantCapacityAdmissionRequest attempt = 1;
+  repeated account.v1.CommitTenantCapacityAdmissionResponse reservation = 2;
+}
+message ReadOriginalNewCapacityExecutionResponse {
+  repeated ReadOriginalNewCapacityExecutionRequest selector = 1;
+  repeated string transition_id = 2;
+  repeated string candidate_digest = 3;
+  repeated string selected_owner_id = 4;
+  repeated int64 selected_owner_fence = 5;
+  repeated bytes canonical_execution = 6;
+  repeated string disposition = 7;
+  repeated string physical_digest = 8;
+  repeated string receipt_digest = 9;
+  repeated bytes canonical_readback = 10;
+  repeated string current_owner_id = 11;
+  repeated int64 current_owner_fence = 12;
+}

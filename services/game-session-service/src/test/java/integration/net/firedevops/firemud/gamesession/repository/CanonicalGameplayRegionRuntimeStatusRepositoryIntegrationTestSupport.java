@@ -62,8 +62,6 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
   static final String SECOND_LEASE_CORRELATION = "d".repeat(64);
   static final int TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS = 128;
   static final long TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES = 128L * 1_048_576L;
-  static final int TEST_TRANSFER_HISTORY_MAXIMUM_TRANSFERS = 256;
-  static final int TEST_TRANSFER_HISTORY_MAXIMUM_ITEMS = 1024;
 
   @TempDir Path directory;
 
@@ -316,6 +314,10 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
     }
 
+    TransferSqlProof(int maximumRecords, long maximumBindingBytes) throws Exception {
+      this(maximumRecords, maximumBindingBytes, maximumRecords);
+    }
+
     TransferSqlProof(int maximumRecords, long maximumBindingBytes, int maximumRetainedRecords)
         throws Exception {
       this(
@@ -343,13 +345,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
         long maximumBindingBytes,
         int maximumRetainedRecords)
         throws Exception {
-      this(
-          listener,
-          maximumRecords,
-          maximumBindingBytes,
-          maximumRetainedRecords,
-          TEST_TRANSFER_HISTORY_MAXIMUM_TRANSFERS,
-          TEST_TRANSFER_HISTORY_MAXIMUM_ITEMS);
+      this(listener, maximumRecords, maximumBindingBytes, maximumRetainedRecords, 256, 1024);
     }
 
     TransferSqlProof(
@@ -498,7 +494,8 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           maximumRetainedRecords);
       sql.execute(
           "INSERT INTO game_session_region_transfer_history_budget"
-              + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,?,?)",
+              + " (tenant_id,maximum_transfers,maximum_items) VALUES (?,?,?)"
+              + " ON CONFLICT DO NOTHING",
           assignment.tenantId(),
           maximumTransfers,
           maximumItems);
