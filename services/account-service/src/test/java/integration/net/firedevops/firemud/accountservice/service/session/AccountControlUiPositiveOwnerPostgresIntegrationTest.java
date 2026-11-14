@@ -54,6 +54,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.OwnerKeySource;
 import net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPki;
@@ -121,11 +122,33 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
 
   @Container
   static final PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
+          .withLabel("firemud.proof", "account-shared-abuse")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(60))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(512L * 1024 * 1024)
+                      .withMemorySwap(512L * 1024 * 1024)
+                      .withPidsLimit(256L));
 
   @Container
   static final GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .withNetworkAliases("positive-control-ui-primary")
           .withExposedPorts(6379)
@@ -135,6 +158,10 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -143,6 +170,17 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
   @Container
   static final GenericContainer<?> replica =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .dependsOn(redis)
           .withCommand(
@@ -151,6 +189,10 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -158,6 +200,18 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
               "--replicaof",
               "positive-control-ui-primary",
               "6379");
+
+  @Container
+  static final GenericContainer<?> credentialCache = AccountCredentialAbuseCacheFixture.container();
+
+  @org.junit.jupiter.api.AfterAll
+  static void closeOwnedNetwork() {
+    credentialCache.stop();
+    replica.stop();
+    redis.stop();
+    postgres.stop();
+    NETWORK.close();
+  }
 
   @TempDir Path temporary;
 
@@ -173,6 +227,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
   }
 
   @Test
+  @org.junit.jupiter.api.Timeout(180)
   void realSignerLifecycleIssuesAuthenticatesAndClaimsExactOriginalAccountOrder() throws Exception {
     var f =
         new AccountControlUiOwnerSourcesFixture(
@@ -189,7 +244,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         .isEqualTo(originalSigner.receipt());
     custody("encryption", "enc1", 11);
     custody("request-mac", "mac1", 29);
-    try (var connections = new RedisFixture()) {
+    try (var connections = new RedisFixture();
+        var abuse = new AccountCredentialAbuseCacheFixture(credentialCache)) {
       var admin = connections.admin;
       var accountClient = connections.account;
       try (var connection = admin.connect(ByteArrayCodec.INSTANCE)) {
@@ -256,6 +312,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
       var issuance =
           new AccountControlUiIssuanceService(
               f.primary,
+              abuse.service(),
               operations,
               f.authority,
               f.fences,

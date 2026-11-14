@@ -78,6 +78,16 @@ public final class AccountControlUiAuthenticationGrpcService
       } finally {
         Arrays.fill(compact, (byte) 0);
       }
+    } catch (
+        net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseRefusal refusal) {
+      response.onNext(
+          AccountControlUiAuthenticationGrpcCodec.toRefusalResponse(
+              request,
+              refusal.retryLater()
+                  ? AccountControlUiAuthenticationGrpcCodec.Outcome.RETRY_LATER
+                  : AccountControlUiAuthenticationGrpcCodec.Outcome.ABUSE_UNAVAILABLE,
+              refusal.retryAfterMillis()));
+      response.onCompleted();
     } catch (AuthenticationException
         | AccountControlUiIssuanceService.PermanentRecoveryDenialException denied) {
       response.onNext(AccountControlUiAuthenticationGrpcCodec.toResponse(request, null));
