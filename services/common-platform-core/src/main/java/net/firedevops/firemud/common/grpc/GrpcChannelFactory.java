@@ -6,7 +6,6 @@ import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import java.io.File;
 import java.io.InputStream;
-import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 
 /** Builds outbound gRPC channels with FireMUD's standard TLS and keepalive behavior. */
@@ -89,9 +88,6 @@ public class GrpcChannelFactory {
     if (!keepAlive) {
       return;
     }
-    builder
-        .keepAliveTime(30, TimeUnit.SECONDS)
-        .keepAliveTimeout(5, TimeUnit.SECONDS)
-        .keepAliveWithoutCalls(true);
+    GrpcKeepAlivePolicy.configureClient(builder);
   }
 }

@@ -21,7 +21,9 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.protobuf.ProtoUtils;
 import io.grpc.stub.ClientCalls;
 import io.grpc.stub.ServerCalls;
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,6 +38,8 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 import org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration;
 import org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration;
 import org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryCustomizer;
@@ -73,6 +77,18 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
                   GrpcServerAutoConfiguration.class))
           .withPropertyValues("spring.grpc.server.port=0", "spring.grpc.server.ssl.enabled=false")
           .withUserConfiguration(DiscoveredServiceConfiguration.class);
+
+  @Test
+  void explicitServerPermitIntervalBindsFromConfiguration() {
+    var properties =
+        new Binder(
+                new MapConfigurationPropertySource(
+                    Map.of("spring.grpc.server.keep-alive.permit-time", "30s")))
+            .bind("spring.grpc.server", GrpcServerProperties.class)
+            .get();
+
+    assertThat(properties.getKeepAlive().getPermitTime()).isEqualTo(Duration.ofSeconds(30));
+  }
 
   @Test
   void productionAutoConfigurationDiscoversRegistersAndCallsRealServiceWithOrderedInterceptors() {

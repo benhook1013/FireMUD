@@ -24,6 +24,7 @@ import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCode
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcKeepAlivePolicy;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
@@ -253,7 +254,9 @@ final class WorldPublishedAdmissionSourceComposition {
 
   private static Server server(
       LoopbackMtlsTestPki.Pki pki, String identity, BindableService receiver) throws Exception {
-    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+    var builder = NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0));
+    GrpcKeepAlivePolicy.configureServer(builder);
+    return builder
         .sslContext(
             GrpcSslContexts.configure(
                     io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder.forServer(
