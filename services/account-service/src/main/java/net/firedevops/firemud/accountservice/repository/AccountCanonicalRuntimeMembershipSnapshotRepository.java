@@ -6,7 +6,9 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -20,6 +22,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
@@ -41,9 +44,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Reads one unregistered, Account-local current public-membership evidence snapshot.
  *
- * <p>This component does not authenticate a source or authorize gameplay admission. It performs no
- * writes and returns the existing content-validator carrier only after Account owner readbacks and
- * event bindings agree in the caller's single owner transaction.
+ * <p>Ordinary reads return the existing content-validator carrier only after Account owner
+ * readbacks and event bindings agree in the caller's single owner transaction. The separate paid
+ * acquisition entry point may retain a new authority checkpoint under an independently verified
+ * paid receipt. Neither entry point authenticates the caller or authorizes gameplay admission.
  */
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
@@ -87,6 +91,18 @@ public final class AccountCanonicalRuntimeMembershipSnapshotRepository {
 
   /** Builds and validates one snapshot from exact UUID-qualified Account owner reads. */
   public Snapshot readCurrent(UUID accountUuid, UUID tenantUuid) {
+    return readCurrent(accountUuid, tenantUuid, null);
+  }
+
+  /** Requalifies an unchanged membership only under the exact currently verified paid receipt. */
+  Snapshot requalifyPaidAcquisition(
+      UUID accountUuid, UUID tenantUuid, AccountHostingSubscriptionCurrentReceipt receipt) {
+    Objects.requireNonNull(receipt);
+    return readCurrent(accountUuid, tenantUuid, receipt);
+  }
+
+  private Snapshot readCurrent(
+      UUID accountUuid, UUID tenantUuid, AccountHostingSubscriptionCurrentReceipt paidReceipt) {
     requireOwnerTransaction();
     requireCanonicalUuid(accountUuid, "Account UUID");
     requireCanonicalUuid(tenantUuid, "tenant UUID");
@@ -200,6 +216,7 @@ public final class AccountCanonicalRuntimeMembershipSnapshotRepository {
             tenantCheckpoint.sourceEventDigest(),
             decodeUtf8(tenantEvent.payload(), "tenant authority event")));
 
+    MembershipEvent memberEvent = null;
     Optional<Checkpoint> memberCheckpoint = outbox.readCheckpoint(memberStream);
     if (membership.isPresent()) {
       Checkpoint currentCheckpoint =
@@ -215,7 +232,7 @@ public final class AccountCanonicalRuntimeMembershipSnapshotRepository {
           outbox
               .findEvent(memberStream, currentCheckpoint.outboxSequence())
               .orElseThrow(() -> unavailable("Positive membership source event is absent"));
-      MembershipEvent memberEvent =
+      memberEvent =
           MembershipAuthorityEventV1Codec.verify(
               decodeUtf8(stored.payload(), "membership authority event"));
       requireMembershipEvent(
@@ -286,8 +303,77 @@ public final class AccountCanonicalRuntimeMembershipSnapshotRepository {
             Long.toString(composite.issuanceFence().value()),
             checkpoints,
             sourceEvents);
+    if (paidReceipt != null
+        && memberEvent != null
+        && !memberEvent
+            .authorityTuple()
+            .tenantAuthorityGeneration()
+            .equals(tuple.tenantAuthorityGeneration())) {
+      appendPaidCheckpoint(
+          accountUuid, tenantUuid, paidReceipt, tenantEvent, pair, memberEvent, snapshot);
+      return readCurrent(accountUuid, tenantUuid);
+    }
     RuntimeMembershipAuthorityEvidenceValidator.validate(snapshot);
     return snapshot;
+  }
+
+  private void appendPaidCheckpoint(
+      UUID accountUuid,
+      UUID tenantUuid,
+      AccountHostingSubscriptionCurrentReceipt receipt,
+      TenantAuthorityEventV1Codec.Event tenantEvent,
+      PairAuthority pair,
+      MembershipEvent prior,
+      Snapshot snapshot) {
+    if (!tenantUuid.equals(receipt.current().tenantId())
+        || !Arrays.equals(tenantEvent.payload(), receipt.tenantAuthorityEvent().payload())
+        || !receipt.gameplayAvailable()
+        || !receipt.allowNewGameplayBindings()
+        || !"ACTIVE".equals(snapshot.membershipLifecycleState())
+        || !snapshot.gameplayAdmissionAllowed()
+        || !pair.equals(pairs.readForUpdate(accountUuid, tenantUuid).orElseThrow())) {
+      throw unavailable("Paid membership requalification lacks exact current owner evidence");
+    }
+
+    String requestId =
+        "paid-membership-checkpoint:" + tenantEvent.eventId() + ":" + prior.eventId();
+    String eventId = UUID.nameUUIDFromBytes(requestId.getBytes(StandardCharsets.UTF_8)).toString();
+    Event event =
+        outbox.append(
+            prior.outboxStreamKey(),
+            requestId,
+            sequence -> {
+              if (sequence != Math.incrementExact(pair.eventSequence())) {
+                throw unavailable("Paid membership checkpoint is not the next exact stream event");
+              }
+              Map<String, Object> preimage = new LinkedHashMap<>();
+              preimage.put("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
+              preimage.put(
+                  "eventType", MembershipAuthorityEventV1Codec.AUTHORITY_CHECKPOINT_EVENT_TYPE);
+              preimage.put("eventId", eventId);
+              preimage.put("requestId", requestId);
+              preimage.put("outboxStreamKey", prior.outboxStreamKey());
+              preimage.put("outboxSequence", Long.toString(sequence));
+              preimage.put("sourceScope", prior.sourceScope());
+              preimage.put("accountId", snapshot.accountId());
+              preimage.put("tenantId", snapshot.tenantId());
+              preimage.put("membershipExists", snapshot.membershipExists());
+              preimage.put("membershipLifecycleState", snapshot.membershipLifecycleState());
+              preimage.put("membershipVersion", snapshot.membershipVersion());
+              preimage.put(
+                  "membershipAuthorityGeneration", snapshot.membershipAuthorityGeneration());
+              preimage.put(
+                  "authorityTuple",
+                  AccountGameplayAdmissionCurrentSources.currentAuthorityTuple(snapshot));
+              preimage.put("issuanceFence", snapshot.issuanceFence());
+              preimage.put("roles", snapshot.roles());
+              preimage.put("gameplayAdmissionAllowed", snapshot.gameplayAdmissionAllowed());
+              preimage.put("callerBoundAuthorityInvalidated", false);
+              MembershipEvent checkpoint = MembershipAuthorityEventV1Codec.seal(preimage);
+              return new EventEvidence(
+                  checkpoint.eventId(), checkpoint.eventDigest(), checkpoint.canonicalJsonUtf8());
+            });
+    pairs.commitPaidAuthorityCheckpoint(pair, event);
   }
 
   private static void requireCurrentSource(CurrentSourceEvidence evidence, ScopeState state) {
@@ -421,7 +507,8 @@ public final class AccountCanonicalRuntimeMembershipSnapshotRepository {
             .equals(event.membershipAuthorityGeneration())
         || pair.eventSequence() != stored.outboxSequence()
         || !pair.eventId().equals(stored.eventId())
-        || !pair.eventDigest().equals(stored.eventDigest())) {
+        || !pair.eventDigest().equals(stored.eventDigest())
+        || pair.lastTransitionInvalidated() != event.callerBoundAuthorityInvalidated()) {
       throw unavailable("Committed membership event differs from its current row and pair");
     }
   }

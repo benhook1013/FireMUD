@@ -193,23 +193,61 @@ public final class AccountSelectedGameplayAuthorityProjection {
   /** A source gap is not healed by installing an arbitrary latest-head value. */
   public void requireSuccessorOf(AccountSelectedGameplayAuthorityProjection prior) {
     if (prior == null) {
-      if (!sequence().equals(BigInteger.ONE)) throw invalid();
+      if (!sequence().equals(BigInteger.ONE) || isAuthorityCheckpoint()) throw invalid();
       return;
     }
     if (!key().equals(prior.key())) throw invalid();
     if (Arrays.equals(bytes, prior.bytes)) return;
     if (!sequence().equals(prior.sequence().add(BigInteger.ONE))) throw invalid();
     if (fields.containsKey("accountId")) {
-      BigInteger generationAdvance = generation().subtract(prior.generation());
-      if (generationAdvance.signum() < 0
-          || generationAdvance.compareTo(BigInteger.ONE) > 0
-          || !sourceVersion().equals(generation())
-          || !membershipVersion().equals(prior.membershipVersion().add(BigInteger.ONE)))
-        throw invalid();
+      if (isAuthorityCheckpoint()) {
+        requireAuthorityCheckpointSuccessor(prior);
+      } else {
+        BigInteger generationAdvance = generation().subtract(prior.generation());
+        if (generationAdvance.signum() < 0
+            || generationAdvance.compareTo(BigInteger.ONE) > 0
+            || !sourceVersion().equals(generation())
+            || !membershipVersion().equals(prior.membershipVersion().add(BigInteger.ONE)))
+          throw invalid();
+      }
     } else if (!generation().equals(prior.generation().add(BigInteger.ONE))
         || !sourceVersion().equals(prior.sourceVersion().add(BigInteger.ONE))) {
       throw invalid();
     }
+  }
+
+  private void requireAuthorityCheckpointSuccessor(
+      AccountSelectedGameplayAuthorityProjection prior) {
+    MembershipAuthorityEventV1Codec.MembershipEvent currentEvent = membershipEvent();
+    MembershipAuthorityEventV1Codec.MembershipEvent priorEvent = prior.membershipEvent();
+    if (!generation().equals(prior.generation())
+        || !sourceVersion().equals(prior.sourceVersion())
+        || !membershipVersion().equals(prior.membershipVersion())
+        || !sameMembershipFacts(currentEvent, priorEvent)) {
+      throw invalid();
+    }
+  }
+
+  private boolean isAuthorityCheckpoint() {
+    return fields.containsKey("accountId")
+        && MembershipAuthorityEventV1Codec.AUTHORITY_CHECKPOINT_EVENT_TYPE.equals(
+            membershipEvent().eventType());
+  }
+
+  private MembershipAuthorityEventV1Codec.MembershipEvent membershipEvent() {
+    return MembershipAuthorityEventV1Codec.verify(text(fields, "sourceEvent"));
+  }
+
+  private static boolean sameMembershipFacts(
+      MembershipAuthorityEventV1Codec.MembershipEvent left,
+      MembershipAuthorityEventV1Codec.MembershipEvent right) {
+    // Invalidation belongs to each transition result. The checkpoint records false for itself
+    // without erasing a prior event's true value or lowering the generation it advanced.
+    return left.membershipLifecycleState().equals(right.membershipLifecycleState())
+        && left.membershipVersion().equals(right.membershipVersion())
+        && left.membershipAuthorityGeneration().equals(right.membershipAuthorityGeneration())
+        && left.roles().equals(right.roles())
+        && left.gameplayAdmissionAllowed() == right.gameplayAdmissionAllowed();
   }
 
   private static Map<String, Object> base(

@@ -34,6 +34,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * or runtime route is registered. Stored status rows alone are never a positive internal read.
  */
 public final class AccountHostingSubscriptionLifecycleRepository {
+  private static final String UNPAID_FIRST_INVOICE_CANCELLATION_SCHEMA =
+      "account-hosting-unpaid-first-invoice-cancellation/v1";
+
   private final DSLContext dsl;
   private final AccountSubscriptionIntentRepository intents;
   private final Clock clock;
@@ -447,21 +450,20 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     Objects.requireNonNull(captured);
     if (captured.replayResult() != null) return captured.replayResult();
     Instant evaluated = now();
-    if (!(result instanceof ObservedSubscription observed)
-        || !observed.providerStatusIsCanceled()
+    ObservedSubscription observed = result instanceof ObservedSubscription value ? value : null;
+    boolean incompleteExpired = observed != null && observed.providerStatusIsIncompleteExpired();
+    var cancellationDecision =
+        incompleteExpired
+            ? policy.evaluateIncompleteExpiredFirstInvoiceCancellation(observed, evaluated)
+            : policy.evaluate(result, evaluated, null);
+    boolean terminalInvoiceRequired = captured.confirmationId != null || incompleteExpired;
+    if (observed == null
+        || (!observed.providerStatusIsCanceled() && !incompleteExpired)
         || observed.readStartedAt().isBefore(captured.capturedAt)
         || !evaluated.isBefore(captured.capturedAt.plus(limits.lease()))
-        || policy.evaluate(observed, evaluated, null).status() != Status.CANCELED
-        || (captured.confirmationId != null
-            && (unpaid == null
-                || !captured.invoice.digest().equals(unpaid.tupleDigest())
-                || unpaid.readStartedAt().isBefore(observed.observedAt())
-                || evaluated.isBefore(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS))
-                || !evaluated.isBefore(
-                    unpaid
-                        .readStartedAt()
-                        .truncatedTo(ChronoUnit.MICROS)
-                        .plus(policy.maximumObservationAge()))))) {
+        || cancellationDecision.status() != Status.CANCELED
+        || (terminalInvoiceRequired
+            && !exactTerminalUnpaidObservation(captured, observed, unpaid, evaluated))) {
       return new TransitionResult(
           captured.requestId, Outcome.RECONCILING, 0, "UNPAID_CANCELLATION_UNCONFIRMED");
     }
@@ -515,7 +517,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         Map.of(
             "schemaVersion",
             unpaidCancellation
-                ? "account-hosting-unpaid-first-invoice-cancellation/v1"
+                ? UNPAID_FIRST_INVOICE_CANCELLATION_SCHEMA
                 : "account-hosting-reconciliation-request/v1",
             "requestId",
             requestId.toString(),
@@ -780,12 +782,19 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     Instant origin = retainedPastDueOrigin(oldReceipt);
     // A provider read cannot establish when an uninterrupted payment-failure episode began.
     // Missing retained history must remain unresolved rather than restarting warning/grace.
-    var decision = retainedPolicy(operation).evaluate(result, now, origin);
+    var lifecyclePolicy = retainedPolicy(operation);
+    var decision =
+        unpaidCancellation
+                && result instanceof ObservedSubscription observed
+                && observed.providerStatusIsIncompleteExpired()
+            ? lifecyclePolicy.evaluateIncompleteExpiredFirstInvoiceCancellation(observed, now)
+            : lifecyclePolicy.evaluate(result, now, origin);
     if (unpaidCancellation
         && (!(result instanceof ObservedSubscription observed)
-            || !observed.providerStatusIsCanceled()
+            || (!observed.providerStatusIsCanceled()
+                && !observed.providerStatusIsIncompleteExpired())
             || decision.status() != Status.CANCELED)) {
-      throw new FenceRejectedException("Fresh exact canceled SDK evidence is required");
+      throw new FenceRejectedException("Fresh exact terminal SDK evidence is required");
     }
     byte[] observation = AccountHostingSubscriptionLifecycleEvidence.observation(result);
     String observationDigest = AccountHostingSubscriptionLifecycleEvidence.digest(observation);
@@ -1005,7 +1014,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
           utc(now));
     }
     UUID terminalResolution = current.terminalResolutionId();
-    if (observed.providerStatusIsCanceled() && terminalResolution == null) {
+    boolean terminalProviderCancellation =
+        observed.providerStatusIsCanceled()
+            || (unpaidCancellation && observed.providerStatusIsIncompleteExpired());
+    if (terminalProviderCancellation && terminalResolution == null) {
       terminalResolution = UUID.randomUUID();
       dsl.execute(
           "INSERT INTO subscription_provider_terminal_resolutions (resolution_id, request_id, subscription_id, cleanup_provider_identity, "
@@ -1087,6 +1099,74 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     }
     payments.requireAwaitingPayment(invoice, current.rowVersion());
     return invoice;
+  }
+
+  private boolean exactTerminalUnpaidObservation(
+      UnpaidCancellationCapture captured,
+      ObservedSubscription observed,
+      TerminalUnpaidObservation unpaid,
+      Instant evaluatedAt) {
+    if (captured.invoice == null || unpaid == null) return false;
+    return captured.invoice.invoiceId().equals(unpaid.invoiceId())
+        && captured.invoice.paymentIntentId().equals(unpaid.paymentIntentId())
+        && captured.invoice.digest().equals(unpaid.tupleDigest())
+        && !unpaid.readStartedAt().isBefore(observed.observedAt())
+        && !unpaid.observedAt().isBefore(unpaid.readStartedAt())
+        && !evaluatedAt.isBefore(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS))
+        && evaluatedAt.isBefore(
+            unpaid
+                .readStartedAt()
+                .truncatedTo(ChronoUnit.MICROS)
+                .plus(policy.maximumObservationAge()));
+  }
+
+  private boolean retainedIncompleteExpiredCancellation(
+      AccountSubscriptionCurrentRecord current,
+      AccountSubscriptionCreationRecord original,
+      Record receipt,
+      Record operation,
+      Record observation,
+      ObservedSubscription observed) {
+    if (!Status.CANCELED.storageValue().equals(current.status())
+        || !observed.providerStatusIsIncompleteExpired()
+        || !"incomplete_expired".equals(observation.get("raw_status", String.class))
+        || !"COMMITTED".equals(operation.get("state", String.class))
+        || !operation.get("request_id", UUID.class).equals(receipt.get("request_id", UUID.class))
+        || !Status.CANCELED.storageValue().equals(receipt.get("status", String.class))
+        || operation.get("provisioning_attempt_id", UUID.class) != null
+        || !original.requestId().equals(operation.get("creation_request_id", UUID.class))
+        || !current
+            .providerSubscriptionId()
+            .equals(operation.get("provider_subscription_id", String.class))
+        || !hasUnpaidFirstInvoiceCancellationSchema(operation)
+        || current.terminalResolutionId() == null) {
+      return false;
+    }
+    Record terminal =
+        dsl.fetchOne(
+            "SELECT request_id, subscription_id, provider_subscription_id, outcome, evidence_digest "
+                + "FROM subscription_provider_terminal_resolutions WHERE resolution_id = ?",
+            current.terminalResolutionId());
+    return terminal != null
+        && original.requestId().equals(terminal.get("request_id", UUID.class))
+        && current.subscriptionId().equals(terminal.get("subscription_id", UUID.class))
+        && current
+            .providerSubscriptionId()
+            .equals(terminal.get("provider_subscription_id", String.class))
+        && "CANCELED".equals(terminal.get("outcome", String.class))
+        && receipt
+            .get("observation_digest", String.class)
+            .equals(terminal.get("evidence_digest", String.class));
+  }
+
+  private boolean hasUnpaidFirstInvoiceCancellationSchema(Record operation) {
+    Record schema =
+        dsl.fetchOne(
+            "SELECT convert_from(?::bytea, 'UTF8')::jsonb ->> 'schemaVersion' AS schema_version",
+            operation.get("request_payload", byte[].class));
+    return schema != null
+        && UNPAID_FIRST_INVOICE_CANCELLATION_SCHEMA.equals(
+            schema.get("schema_version", String.class));
   }
 
   private UUID cancellationClaim(UUID subscriptionId) {
@@ -1364,9 +1444,16 @@ public final class AccountHostingSubscriptionLifecycleRepository {
           "ENTITLEMENT_UNAVAILABLE: provider facts differ from the committed receipt");
     }
     Instant evaluatedAt = now();
+    var lifecyclePolicy = retainedPolicy(operation);
+    boolean retainedIncompleteExpiredCancellation =
+        retainedIncompleteExpiredCancellation(
+            current, original, receipt, operation, observation, observed);
     var decision =
-        retainedPolicy(operation)
-            .evaluate(observed, evaluatedAt, nullableInstant(receipt, "past_due_since"));
+        retainedIncompleteExpiredCancellation
+            ? lifecyclePolicy.evaluateIncompleteExpiredFirstInvoiceCancellation(
+                observed, evaluatedAt)
+            : lifecyclePolicy.evaluate(
+                observed, evaluatedAt, nullableInstant(receipt, "past_due_since"));
     if (!decision.resolved() || !decision.status().storageValue().equals(current.status())) {
       throw new FenceRejectedException(
           "ENTITLEMENT_UNAVAILABLE: lifecycle/period requires reconciliation");
@@ -1572,8 +1659,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return replay;
     }
 
-    public AccountHostingFirstInvoicePayment invoiceRequiringTerminalRead() {
-      return confirmationId == null ? null : invoice;
+    public AccountHostingFirstInvoicePayment invoiceRequiringTerminalRead(
+        boolean incompleteExpired) {
+      return confirmationId == null && !incompleteExpired ? null : invoice;
     }
   }
 

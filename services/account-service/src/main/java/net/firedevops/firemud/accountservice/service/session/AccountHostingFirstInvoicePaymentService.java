@@ -276,11 +276,26 @@ public final class AccountHostingFirstInvoicePaymentService {
     }
     var candidate = transaction.execute(status -> payments.candidateForSignedEvent(event));
     if (candidate == null) {
-      boolean needsReconciliation =
-          Boolean.TRUE.equals(
-              transaction.execute(
-                  status -> payments.requiresUnconsentedLatePaymentReconciliation(event)));
-      return new Completion(needsReconciliation ? "RECONCILING" : "IGNORED", null);
+      UUID unconsented =
+          transaction.execute(status -> payments.retainUnconsentedSignedSuccess(event));
+      if (unconsented != null) {
+        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", unconsented);
+      }
+      var invoice = transaction.execute(status -> payments.unconsentedCanceledInvoice(event));
+      if (invoice == null) {
+        boolean linked =
+            Boolean.TRUE.equals(
+                transaction.execute(status -> payments.hasSignedFirstInvoiceLinkage(event)));
+        return new Completion(linked ? "RECONCILING" : "IGNORED", null);
+      }
+      var observed = provider.observe(invoice);
+      var outcome =
+          Objects.requireNonNull(
+              transaction.execute(status -> payments.retainSignedOutcome(event, observed)));
+      if (!outcome.latePaidConflict()) {
+        throw new IllegalStateException("Exact late-payment operator conflict is required");
+      }
+      return new Completion("OPERATOR_RECONCILIATION_REQUIRED", outcome.conflictRequestId());
     }
     boolean alreadyCompleted =
         Boolean.TRUE.equals(
@@ -294,7 +309,7 @@ public final class AccountHostingFirstInvoicePaymentService {
           Objects.requireNonNull(
               transaction.execute(status -> payments.retainSignedOutcome(event, observed)));
       if (signed.latePaidConflict()) {
-        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", candidate.requestId());
+        return new Completion("OPERATOR_RECONCILIATION_REQUIRED", signed.conflictRequestId());
       }
       var transition =
           lifecycle.reconcile(

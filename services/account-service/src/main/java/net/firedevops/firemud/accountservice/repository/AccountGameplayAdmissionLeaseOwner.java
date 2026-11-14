@@ -261,7 +261,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
     // through this executor to reconstruct a late acknowledgement.
     OriginalCommitAcknowledgement acknowledgement;
     try {
-      var observed = prepareCurrentSources(caller, tenantId(lease));
+      var observed = prepareCurrentSources(caller, tenantId(lease), false);
       acknowledgement =
           originalCommitExecutor.executeWithCurrentSources(
               lease,
@@ -771,14 +771,18 @@ public final class AccountGameplayAdmissionLeaseOwner {
     Objects.requireNonNull(caller);
     Objects.requireNonNull(tenantId);
     try {
-      var observed = prepareCurrentSources(caller, tenantId);
+      var observed = prepareCurrentSources(caller, tenantId, true);
       return inWritableSerializableTransaction(
           dsl -> {
             AccountGameplayAdmissionCurrentSources currentSources =
                 AccountGameplayAdmissionCurrentSources.bind(dsl, workloadNamespace);
             var current =
                 currentSources.readCurrentPublicProductionNew(
-                    tenantId, caller.identity().tokenJti(), caller.currentCandidate(), observed);
+                    tenantId,
+                    caller.identity().tokenJti(),
+                    caller.currentCandidate(),
+                    observed,
+                    true);
             return operation.apply(
                 new CurrentAccountOperation(
                     dsl, current, new AccountGameplayAdmissionLeaseRepository(dsl)));
@@ -791,7 +795,7 @@ public final class AccountGameplayAdmissionLeaseOwner {
   }
 
   private AccountGameplayAdmissionCurrentSources.Observed prepareCurrentSources(
-      VerifiedCaller caller, UUID tenantId) {
+      VerifiedCaller caller, UUID tenantId, boolean requalifyPaidMembership) {
     var prepared =
         inWritableSerializableTransaction(
             dsl ->
@@ -800,7 +804,8 @@ public final class AccountGameplayAdmissionLeaseOwner {
                         tenantId,
                         caller.identity().tokenJti(),
                         caller.currentCandidate(),
-                        paidSource));
+                        paidSource,
+                        requalifyPaidMembership));
     requireNoAmbientSql();
     return prepared.observeOutsideSql();
   }

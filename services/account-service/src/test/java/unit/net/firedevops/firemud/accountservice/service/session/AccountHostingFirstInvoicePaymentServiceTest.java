@@ -82,8 +82,7 @@ class AccountHostingFirstInvoicePaymentServiceTest {
               return observed;
             });
     when(payments.retainSignedOutcome(event, observed))
-        .thenReturn(
-            new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, false));
+        .thenReturn(new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, null));
     var committed = new TransitionResult(lifecycleRequestId, Outcome.COMMITTED, 5, null);
     when(lifecycle.reconcile(
             lifecycleRequestId,
@@ -120,8 +119,7 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     when(payments.candidateForSignedEvent(event)).thenReturn(candidate);
     when(provider.observe(invoice)).thenReturn(observed);
     when(payments.retainSignedOutcome(event, observed))
-        .thenReturn(
-            new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, false));
+        .thenReturn(new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(candidate, null));
     when(lifecycle.reconcile(
             lifecycleRequestId,
             invoice.creationRequestId(),
@@ -168,16 +166,42 @@ class AccountHostingFirstInvoicePaymentServiceTest {
   }
 
   @Test
-  void latePaymentWithoutConsentRemainsPendingWithoutProviderOrFulfillment() throws Exception {
+  void verifiedUnconsentedPaymentBeforeCancellationReturnsOperatorWithoutProviderWork()
+      throws Exception {
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    UUID operator = UUID.randomUUID();
     when(verifier.verify("signed", "header")).thenReturn(event);
-    when(payments.requiresUnconsentedLatePaymentReconciliation(event)).thenReturn(true);
-
+    when(payments.retainUnconsentedSignedSuccess(event)).thenReturn(operator);
     assertThat(service.completeSigned("signed", "header"))
-        .isEqualTo(new AccountHostingFirstInvoicePaymentService.Completion("RECONCILING", null));
-
+        .isEqualTo(
+            new AccountHostingFirstInvoicePaymentService.Completion(
+                "OPERATOR_RECONCILIATION_REQUIRED", operator));
     verify(inbox).retainOrReplay(event);
     verifyNoInteractions(provider, lifecycle, actors, reauthentication);
+  }
+
+  @Test
+  void verifiedUnconsentedLatePaymentRecordsOnlyOperatorConflict() throws Exception {
+    var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    var invoice = mock(AccountHostingFirstInvoicePayment.class);
+    var observed = mock(StripeHostingFirstInvoicePaymentClient.Observation.class);
+    UUID cancellationId = UUID.randomUUID();
+    when(verifier.verify("signed", "header")).thenReturn(event);
+    when(payments.unconsentedCanceledInvoice(event)).thenReturn(invoice);
+    when(provider.observe(invoice)).thenReturn(observed);
+    when(payments.retainSignedOutcome(event, observed))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentRepository.SignedOutcome(null, cancellationId));
+
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(
+            new AccountHostingFirstInvoicePaymentService.Completion(
+                "OPERATOR_RECONCILIATION_REQUIRED", cancellationId));
+
+    verify(inbox).retainOrReplay(event);
+    verify(provider).observe(invoice);
+    verify(provider, times(0)).confirm(any(), any());
+    verifyNoInteractions(lifecycle, actors, reauthentication);
   }
 
   @Test

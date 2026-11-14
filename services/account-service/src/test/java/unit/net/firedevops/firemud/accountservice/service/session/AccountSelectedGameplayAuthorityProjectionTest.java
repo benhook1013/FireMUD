@@ -74,6 +74,70 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
   }
 
   @Test
+  void authorityCheckpointAdvancesTheHeadWithoutChangingMembershipFacts() {
+    var prior =
+        AccountSelectedGameplayAuthorityProjection.membership(
+            member(ACCOUNT, TENANT, "1", "7", "2"));
+    var checkpoint =
+        AccountSelectedGameplayAuthorityProjection.membership(
+            authorityCheckpoint(ACCOUNT, TENANT, "2", "7", "2", "3", "player"));
+
+    checkpoint.requireSuccessorOf(prior);
+
+    assertThat(checkpoint.sequence()).isEqualTo(new BigInteger("2"));
+    assertThat(checkpoint.generation()).isEqualTo(prior.generation());
+    assertThat(checkpoint.sourceVersion()).isEqualTo(prior.sourceVersion());
+    assertThat(checkpoint.membershipVersion()).isEqualTo(prior.membershipVersion());
+
+    var sequenceOneCheckpoint =
+        AccountSelectedGameplayAuthorityProjection.membership(
+            authorityCheckpoint(ACCOUNT, TENANT, "1", "7", "2", "3", "player"));
+    assertThatThrownBy(() -> sequenceOneCheckpoint.requireSuccessorOf(null))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var changedVersion =
+        AccountSelectedGameplayAuthorityProjection.membership(
+            authorityCheckpoint(ACCOUNT, TENANT, "2", "8", "2", "3", "player"));
+    assertThatThrownBy(() -> changedVersion.requireSuccessorOf(prior))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var changedRole =
+        AccountSelectedGameplayAuthorityProjection.membership(
+            authorityCheckpoint(ACCOUNT, TENANT, "2", "7", "2", "3", "designer"));
+    assertThatThrownBy(() -> changedRole.requireSuccessorOf(prior))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void invalidatingMembershipTransitionCanBeCheckpointedAndFollowedByOrdinaryChange() {
+    var joined =
+        AccountSelectedGameplayAuthorityProjection.membership(
+            member(ACCOUNT, TENANT, "1", "2", "1"));
+    joined.requireSuccessorOf(null);
+    var roleRemovalEvent = member(ACCOUNT, TENANT, "2", "3", "2", true);
+    var roleRemoved = AccountSelectedGameplayAuthorityProjection.membership(roleRemovalEvent);
+    roleRemoved.requireSuccessorOf(joined);
+
+    var paidCheckpointEvent = authorityCheckpoint(ACCOUNT, TENANT, "3", "3", "2", "3", "player");
+    var paidCheckpoint = AccountSelectedGameplayAuthorityProjection.membership(paidCheckpointEvent);
+    paidCheckpoint.requireSuccessorOf(roleRemoved);
+
+    var ordinaryChange =
+        AccountSelectedGameplayAuthorityProjection.membership(
+            member(ACCOUNT, TENANT, "4", "4", "2"));
+    ordinaryChange.requireSuccessorOf(paidCheckpoint);
+
+    assertThat(roleRemovalEvent.callerBoundAuthorityInvalidated()).isTrue();
+    assertThat(paidCheckpointEvent.callerBoundAuthorityInvalidated()).isFalse();
+    assertThat(paidCheckpoint.generation()).isEqualTo(roleRemoved.generation());
+    assertThat(paidCheckpoint.membershipVersion()).isEqualTo(roleRemoved.membershipVersion());
+    assertThat(ordinaryChange.sequence()).isEqualTo(new BigInteger("4"));
+    assertThat(ordinaryChange.membershipVersion()).isEqualTo(new BigInteger("4"));
+    assertThat(ordinaryChange.generation()).isEqualTo(roleRemoved.generation());
+    assertThat(ordinaryChange.generation()).isGreaterThan(joined.generation());
+  }
+
+  @Test
   void duplicateExtraAliasAndMissingEventFailClosed() {
     var value =
         AccountSelectedGameplayAuthorityProjection.membership(
@@ -142,6 +206,16 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
 
   public static MembershipAuthorityEventV1Codec.MembershipEvent member(
       UUID account, UUID tenant, String sequence, String version, String generation) {
+    return member(account, tenant, sequence, version, generation, false);
+  }
+
+  private static MembershipAuthorityEventV1Codec.MembershipEvent member(
+      UUID account,
+      UUID tenant,
+      String sequence,
+      String version,
+      String generation,
+      boolean callerBoundAuthorityInvalidated) {
     return MembershipAuthorityEventV1Codec.seal(
         Map.ofEntries(
             Map.entry("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION),
@@ -174,6 +248,67 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
                     List.of())),
             Map.entry("issuanceFence", "1"),
             Map.entry("roles", List.of("player")),
+            Map.entry("gameplayAdmissionAllowed", true),
+            Map.entry("callerBoundAuthorityInvalidated", callerBoundAuthorityInvalidated)));
+  }
+
+  private static MembershipAuthorityEventV1Codec.MembershipEvent authorityCheckpoint(
+      UUID account,
+      UUID tenant,
+      String sequence,
+      String version,
+      String membershipGeneration,
+      String tenantGeneration,
+      String role) {
+    String tenantStream = MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "tenant/" + tenant;
+    return MembershipAuthorityEventV1Codec.seal(
+        Map.ofEntries(
+            Map.entry("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION),
+            Map.entry("eventType", MembershipAuthorityEventV1Codec.AUTHORITY_CHECKPOINT_EVENT_TYPE),
+            Map.entry("eventId", "member-checkpoint-event-" + sequence),
+            Map.entry("requestId", "member-checkpoint-request-" + sequence),
+            Map.entry(
+                "outboxStreamKey",
+                MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+                    + "membership/"
+                    + account
+                    + "/"
+                    + tenant),
+            Map.entry("outboxSequence", sequence),
+            Map.entry("sourceScope", "membership/" + account + "/" + tenant),
+            Map.entry("accountId", account.toString()),
+            Map.entry("tenantId", tenant.toString()),
+            Map.entry("membershipExists", true),
+            Map.entry("membershipLifecycleState", "ACTIVE"),
+            Map.entry("membershipVersion", Map.of(tenant.toString(), version)),
+            Map.entry("membershipAuthorityGeneration", membershipGeneration),
+            Map.entry(
+                "authorityTuple",
+                Map.of(
+                    "issuerAuthGeneration",
+                    "1",
+                    "accountAuthorityGeneration",
+                    "1",
+                    "tenantAuthorityGeneration",
+                    Map.of(tenant.toString(), tenantGeneration),
+                    "membershipAuthorityGeneration",
+                    Map.of(tenant.toString(), membershipGeneration),
+                    "privateRealmGrantVersions",
+                    List.of(),
+                    "tenantBillingCutoff",
+                    Map.of(
+                        tenant.toString(),
+                        Map.of(
+                            "tenantAuthorityGeneration",
+                            tenantGeneration,
+                            "tenantBillingSequence",
+                            "5",
+                            "outboxStreamKey",
+                            tenantStream,
+                            "outboxSequence",
+                            "4")))),
+            Map.entry("issuanceFence", "1"),
+            Map.entry("roles", List.of(role)),
             Map.entry("gameplayAdmissionAllowed", true),
             Map.entry("callerBoundAuthorityInvalidated", false)));
   }

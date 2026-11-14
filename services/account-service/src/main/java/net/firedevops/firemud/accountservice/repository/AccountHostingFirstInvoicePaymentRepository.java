@@ -831,16 +831,66 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     return dispatch(row, invoice, false, false);
   }
 
+  public boolean hasSignedFirstInvoiceLinkage(VerifiedEvent verified) {
+    transaction();
+    if (!"payment_intent.succeeded".equals(verified.eventType())) return false;
+    String intent =
+        JSON.readTree(verified.rawPayload()).path("data").path("object").path("id").asText();
+    Record row =
+        dsl.fetchOne(
+            "SELECT subscription_id, captured_at FROM subscription_first_invoices WHERE payment_intent_id = ?",
+            intent);
+    if (row == null) return false;
+    var invoice = Objects.requireNonNull(find(row.get("subscription_id", UUID.class)));
+    requireSignedTuple(verified, instant(row, "captured_at"), invoice);
+    return true;
+  }
+
   public UUID retainedSignedConflictRequestId(VerifiedEvent verified) {
     transaction();
     return new AccountHostingFirstInvoicePaymentConflictRepository(dsl)
         .retainedConflictRequestId(verified);
   }
 
-  /** Selects a retained canceled invoice whose exact signed payment still needs operator work. */
-  public boolean requiresUnconsentedLatePaymentReconciliation(VerifiedEvent verified) {
+  /** Routes exact signed success before consent to durable operator work, never fulfillment. */
+  public UUID retainUnconsentedSignedSuccess(VerifiedEvent verified) {
     transaction();
-    if (!"payment_intent.succeeded".equals(verified.eventType())) return false;
+    UUID replay = retainedSignedConflictRequestId(verified);
+    if (replay != null) return replay;
+    if (!"payment_intent.succeeded".equals(verified.eventType())) return null;
+    var object = JSON.readTree(verified.rawPayload()).path("data").path("object");
+    Record row =
+        dsl.fetchOne(
+            "SELECT i.subscription_id, i.captured_at FROM subscription_first_invoices i "
+                + "JOIN subscription s USING (subscription_id) "
+                + "WHERE i.payment_intent_id = ? AND s.status <> 'canceled' "
+                + "AND NOT EXISTS (SELECT 1 FROM subscription_first_invoice_confirmations c "
+                + "WHERE c.subscription_id = i.subscription_id) "
+                + "AND NOT EXISTS (SELECT 1 FROM subscription_first_invoice_completions c "
+                + "WHERE c.subscription_id = i.subscription_id) FOR UPDATE OF s",
+            object.path("id").asText());
+    if (row == null) return null;
+    var invoice = Objects.requireNonNull(find(row.get("subscription_id", UUID.class)));
+    requireSignedTuple(verified, instant(row, "captured_at"), invoice);
+    var intake = new StripeEventInboxRepository(dsl).retainOrReplay(verified);
+    dsl.execute(
+        "INSERT INTO subscription_first_invoice_unconsented_paid_events "
+            + "(provider_event_id, subscription_id, creation_request_id, tuple_digest, event_payload_digest) "
+            + "VALUES (?, ?, ?, ?, ?) ON CONFLICT (provider_event_id) DO NOTHING",
+        verified.providerEventId(),
+        invoice.subscriptionId(),
+        invoice.creationRequestId(),
+        invoice.digest(),
+        intake.payloadSha256());
+    UUID retained = retainedSignedConflictRequestId(verified);
+    if (!invoice.creationRequestId().equals(retained)) throw refused();
+    return retained;
+  }
+
+  /** Selects operator-only work for an exact canceled invoice with no local confirmation. */
+  public AccountHostingFirstInvoicePayment unconsentedCanceledInvoice(VerifiedEvent verified) {
+    transaction();
+    if (!"payment_intent.succeeded".equals(verified.eventType())) return null;
     var object = JSON.readTree(verified.rawPayload()).path("data").path("object");
     Record row =
         dsl.fetchOne(
@@ -850,10 +900,10 @@ public final class AccountHostingFirstInvoicePaymentRepository {
                 + "AND NOT EXISTS (SELECT 1 FROM subscription_first_invoice_confirmations c "
                 + "WHERE c.subscription_id = i.subscription_id)",
             object.path("id").asText());
-    if (row == null) return false;
+    if (row == null) return null;
     var invoice = Objects.requireNonNull(find(row.get("subscription_id", UUID.class)));
     requireSignedTuple(verified, instant(row, "captured_at"), invoice);
-    return true;
+    return invoice;
   }
 
   public boolean completed(UUID subscriptionId, UUID lifecycleRequestId) {
@@ -905,9 +955,13 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         dsl.fetchOne(
             "SELECT * FROM subscription_first_invoice_confirmations WHERE subscription_id = ? FOR UPDATE",
             subscriptionId);
-    if (row == null) throw refused();
     var invoice = Objects.requireNonNull(find(subscriptionId));
-    requireSignedTuple(verified, row, invoice);
+    if (row == null) {
+      var canceled = unconsentedCanceledInvoice(verified);
+      if (!invoice.equals(canceled)) throw refused();
+    } else {
+      requireSignedTuple(verified, row, invoice);
+    }
     if (!"succeeded".equals(observed.status())
         || !invoice.invoiceId().equals(observed.invoiceId())
         || !invoice.paymentIntentId().equals(observed.paymentIntentId())
@@ -923,11 +977,14 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || now().isBefore(observed.observedAt())
         || Duration.between(observed.readStartedAt(), now()).compareTo(Duration.ofSeconds(20)) >= 0)
       throw refused();
-    var dispatch = dispatch(row, invoice, true, false);
-    if (new AccountHostingFirstInvoicePaymentConflictRepository(dsl)
-        .retainIfCanceled(verified, dispatch, observed)) {
-      return new SignedOutcome(dispatch, true);
+    var dispatch = row == null ? null : dispatch(row, invoice, true, false);
+    UUID conflict =
+        new AccountHostingFirstInvoicePaymentConflictRepository(dsl)
+            .retainIfCanceled(verified, invoice, dispatch, observed);
+    if (conflict != null) {
+      return new SignedOutcome(dispatch, conflict);
     }
+    if (dispatch == null) throw refused();
     var intake = new StripeEventInboxRepository(dsl).retainOrReplay(verified);
     dsl.execute(
         "INSERT INTO subscription_first_invoice_success_evidence (request_id, subscription_id, provider_event_id, event_payload_digest, tuple_digest, observed_at) "
@@ -938,13 +995,17 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         intake.payloadSha256(),
         invoice.digest(),
         utc(observed.observedAt()));
-    return new SignedOutcome(dispatch, false);
+    return new SignedOutcome(dispatch, null);
   }
 
   private record CurrentDispatch(
       Record confirmation, Record authorization, AccountHostingFirstInvoicePayment invoice) {}
 
-  public record SignedOutcome(ConfirmationDispatch dispatch, boolean latePaidConflict) {}
+  public record SignedOutcome(ConfirmationDispatch dispatch, UUID conflictRequestId) {
+    public boolean latePaidConflict() {
+      return conflictRequestId != null;
+    }
+  }
 
   private static void requireSignedTuple(
       VerifiedEvent verified, Record confirmation, AccountHostingFirstInvoicePayment invoice) {
