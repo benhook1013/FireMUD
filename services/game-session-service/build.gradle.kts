@@ -274,4 +274,5 @@ tasks.named<net.firedevops.firemud.WriteJooqConfigTask>("writeJooqConfig") {
 }
 tasks.named("generateJooq") {
     dependsOn(prepareJooqMigrationInputs)
+    inputs.files(prepareJooqMigrationInputs).withPropertyName("stagedJooqMigrations")
 }
