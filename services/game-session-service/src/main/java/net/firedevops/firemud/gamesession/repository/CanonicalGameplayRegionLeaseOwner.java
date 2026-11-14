@@ -523,6 +523,11 @@ final class CanonicalGameplayRegionLeaseOwner {
             handoffDeadline,
             worldDeadline);
     requireSameSource(source, afterAcquire);
+    // Response and SQL latency consume the renewed grant, never extend its authority.
+    long installDeadline =
+        transferOwner == null
+            ? handoffDeadline
+            : renewedGrantDeadline(clock.millis(), leaseTtl, handoffDeadline);
     if (!recoveringInitialGrant) handoffRedisOwner.renew(grant, leaseTtl);
     handoffRedisOwner.requireCurrent(grant);
     requireSameIncarnation(
@@ -591,7 +596,7 @@ final class CanonicalGameplayRegionLeaseOwner {
               grant.tokenCorrelation(),
               grant.ownerService(),
               grant.ownerInstanceId(),
-              handoffDeadline);
+              installDeadline);
       return verifyInstallation(
           bindingInventory,
           statusRepository,
@@ -1406,6 +1411,16 @@ final class CanonicalGameplayRegionLeaseOwner {
         || !expected.scope().equals(actual.scope())
         || !java.util.Arrays.equals(expected.scopeBytes(), actual.scopeBytes())
         || !java.util.Arrays.equals(expected.canonicalBytes(), actual.canonicalBytes())) {
+      throw unavailable();
+    }
+  }
+
+  static long renewedGrantDeadline(long renewalStartedAt, Duration leaseTtl, long deadline) {
+    try {
+      long ttlMillis = leaseTtl.toMillis();
+      if (ttlMillis <= 0L) throw unavailable();
+      return Math.min(deadline, Math.addExact(renewalStartedAt, ttlMillis));
+    } catch (ArithmeticException invalid) {
       throw unavailable();
     }
   }
