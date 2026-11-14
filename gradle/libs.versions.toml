@@ -1,21 +1,22 @@
 [versions]
 spring-boot = "4.1.2"
-jackson-2 = "2.22.4"
-jackson-3 = "3.2.4"
+jackson-2 = "2.23.0"
+jackson-3 = "3.3.0"
 tomcat = "11.0.27"
 jooq = "3.21.9"
-jetbrains-annotations = "26.0.2"
-flyway = "13.12.0"
+jetbrains-annotations = "26.1.0"
+flyway = "13.12.1"
 mapstruct = "1.6.3"
 lombok = "1.18.48"
 lombok-mapstruct-binding = "0.2.0"
 grpc = "1.85.1"
 protobuf = "4.36.2"
 spotbugs = "4.10.5"
-opentelemetry = "1.67.0"
+google-java-format = "1.36.1"
+opentelemetry = "1.68.0"
 micrometer = "1.17.2"
 jjwt = "0.13.0"
-aws-sdk = "2.57.8"
+aws-sdk = "2.57.11"
 argon2 = "2.12"
 h2 = "2.5.252"
 testcontainers = "2.0.5"
@@ -27,7 +28,7 @@ junixsocket = "2.11.1"
 springdoc-openapi = "3.2.0"
 stripe-java = "34.1.0"
 spring-cloud-gateway = "5.0.4"
-java-operator-sdk = "6.7.1"
+java-operator-sdk = "6.7.3"
 fabric8-kubernetes-client = "7.9.0"
 # Keep these pins split: bcprov-jdk18on has 1.85.2, but bcpkix-jdk18on and bcutil-jdk18on 1.85.2 artifacts are unpublished.
 bcprov = "1.86"
@@ -85,6 +86,7 @@ protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "p
 protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf" }
 
 spotbugs-annotations = { module = "com.github.spotbugs:spotbugs-annotations", version.ref = "spotbugs" }
+google-java-format = { module = "com.google.googlejavaformat:google-java-format", version.ref = "google-java-format" }
 jetbrains-annotations = { module = "org.jetbrains:annotations", version.ref = "jetbrains-annotations" }
 
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
@@ -124,4 +126,4 @@ temporal-sdk = { module = "io.temporal:temporal-sdk", version.ref = "temporal" }
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
 flyway = { id = "org.flywaydb.flyway", version.ref = "flyway" }
-protobuf = { id = "com.google.protobuf", version = "0.10.0" }
+protobuf = { id = "com.google.protobuf", version = "0.10.1" }
