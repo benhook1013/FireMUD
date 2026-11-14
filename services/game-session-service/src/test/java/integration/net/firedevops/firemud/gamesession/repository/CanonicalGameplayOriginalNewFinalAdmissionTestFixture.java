@@ -287,15 +287,72 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
         lifecycle;
     private final io.grpc.Server worldServer;
     private final io.grpc.Server entityServer;
+    private final Map<
+            UUID, net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest>
+        requestsByTransition;
 
     ControlledRegionSources(
         org.jooq.DSLContext dsl,
         net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision decision,
         java.nio.file.Path directory)
         throws Exception {
+      this(dsl, List.of(decision), directory);
+    }
+
+    ControlledRegionSources(
+        org.jooq.DSLContext dsl,
+        net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision first,
+        net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision second,
+        java.nio.file.Path directory)
+        throws Exception {
+      this(dsl, List.of(first, second), directory);
+    }
+
+    private ControlledRegionSources(
+        org.jooq.DSLContext dsl,
+        List<net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision>
+            decisions,
+        java.nio.file.Path directory)
+        throws Exception {
+      if (decisions.isEmpty() || decisions.size() > 2) {
+        throw new IllegalArgumentException(
+            "Controlled region sources support one or two candidates");
+      }
+      var decision = decisions.getFirst();
       var target = decision.targetEvidence();
       var identity = decision.candidate();
       String namespace = target.targetNamespace();
+      for (var candidateDecision : decisions) {
+        var candidate = candidateDecision.candidate();
+        var candidateTarget = candidateDecision.targetEvidence();
+        if (!candidateDecision.targetEvidence().targetNamespace().equals(namespace)
+            || !candidate.tenantId().equals(identity.tenantId())
+            || !candidate.gameInstanceId().equals(identity.gameInstanceId())
+            || !candidate.regionId().equals(identity.regionId())
+            || !candidate.playableStateNamespaceId().equals(identity.playableStateNamespaceId())
+            || !candidateTarget.realmId().equals(target.realmId())
+            || !candidateTarget.canonicalVersionId().equals(target.canonicalVersionId())) {
+          throw new IllegalArgumentException(
+              "Controlled region candidates must share one exact tenant/game/region target");
+        }
+      }
+      if (decisions.size() == 2
+          && (decisions
+                  .get(0)
+                  .candidate()
+                  .characterId()
+                  .equals(decisions.get(1).candidate().characterId())
+              || decisions
+                  .get(0)
+                  .candidate()
+                  .sessionId()
+                  .equals(decisions.get(1).candidate().sessionId())
+              || decisions
+                  .get(0)
+                  .bindingDecisionId()
+                  .equals(decisions.get(1).bindingDecisionId()))) {
+        throw new IllegalArgumentException("Controlled region candidates must be independent");
+      }
       String caller = "spiffe://firemud/ns/" + namespace + "/sa/game-session-service";
       var pki =
           net.firedevops.firemud.test.LoopbackMtlsTestPki.create(
@@ -384,14 +441,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
               publishedRelease.commandDefinitions(),
               descriptor.generationConfigRevision(),
               worldSelector);
-      var binding =
-          new net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence(
-              descriptor, release);
       var selector =
           net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence.fromStored(
               worldSelector.selectorReceiptBytes());
-      UUID placementId = UUID.randomUUID();
-      UUID assignment = UUID.randomUUID();
       var wireTarget =
           net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpectedTarget
               .newBuilder()
@@ -409,7 +461,223 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                   net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                       .PLAYABLE_STATE_SCOPE_SHARED)
               .build();
-      request =
+      UUID canonicalRegion = UUID.randomUUID();
+      var lifecycleRequestTemplate =
+          new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request(
+              1,
+              UUID.randomUUID(),
+              namespace,
+              identity.tenantId(),
+              target.worldSlug(),
+              identity.gameInstanceId(),
+              identity.playableStateNamespaceId(),
+              "SHARED",
+              true,
+              descriptor.controlPlaneRequestId(),
+              target.canonicalVersionId(),
+              descriptor.requestDigest(),
+              descriptor.resultDigest(),
+              release.evidenceDigest());
+      var binding =
+          new net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence(
+              descriptor, release);
+      var lifecycleEvidenceTemplate =
+          new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence(
+              lifecycleRequestTemplate,
+              binding,
+              selector.startLocation(),
+              1042L,
+              "ACTIVE",
+              target.activeWorldEpoch(),
+              0L,
+              UUID.randomUUID(),
+              selector.graphDigest().substring(7),
+              "sha256:" + "e".repeat(64),
+              Map.of(canonicalRegion, identity.regionId()));
+      var bindings =
+          java.util.stream.IntStream.range(0, decisions.size())
+              .mapToObj(
+                  index ->
+                      controlledBinding(
+                          decisions.get(index),
+                          selector,
+                          wireTarget,
+                          canonicalRegion,
+                          lifecycleRequestTemplate,
+                          lifecycleEvidenceTemplate,
+                          7301L + index))
+              .toList();
+      var bindingByRequest =
+          new java.util.HashMap<
+              net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest,
+              ControlledBinding>();
+      for (var controlledBinding : bindings) {
+        bindingByRequest.put(controlledBinding.request(), controlledBinding);
+      }
+      var bindingByLifecycleRequest =
+          new java.util.HashMap<
+              net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request,
+              ControlledBinding>();
+      for (var controlledBinding : bindings) {
+        bindingByLifecycleRequest.put(controlledBinding.lifecycleRequest(), controlledBinding);
+      }
+      request = bindings.getFirst().request();
+      requestsByTransition =
+          bindings.stream()
+              .collect(
+                  java.util.stream.Collectors.toUnmodifiableMap(
+                      item -> item.decision().bindingDecisionId(), ControlledBinding::request));
+      var worldPlacementService =
+          new net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc
+              .CanonicalInitialPlayerLocationServiceImplBase() {
+            @Override
+            public void readInitialPlayerLocationRegion(
+                net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest
+                    incoming,
+                io.grpc.stub.StreamObserver<
+                        net.firedevops.firemud.worldmanagement.v1
+                            .CanonicalInitialPlayerLocationRegionResponse>
+                    response) {
+              var controlled = bindingByRequest.get(incoming);
+              if (controlled == null || !isPeer(caller)) {
+                response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
+                return;
+              }
+              if (withholdWorldRead == WorldRead.PLACEMENT) {
+                withheldReadEntered.countDown();
+                return;
+              }
+              response.onNext(controlled.observation());
+              response.onCompleted();
+            }
+          };
+      var worldLifecycleService =
+          new net.firedevops.firemud.worldmanagement.v1
+              .WorldCanonicalInstanceLifecycleReadServiceGrpc
+              .WorldCanonicalInstanceLifecycleReadServiceImplBase() {
+            @Override
+            public void readWorldCanonicalInstanceLifecycle(
+                net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleRequest
+                    incoming,
+                io.grpc.stub.StreamObserver<
+                        net.firedevops.firemud.worldmanagement.v1
+                            .ReadWorldCanonicalInstanceLifecycleResponse>
+                    response) {
+              var incomingRequest =
+                  net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec
+                      .fromRequest(incoming);
+              var controlled = bindingByLifecycleRequest.get(incomingRequest);
+              if (!isPeer(caller) || controlled == null) {
+                response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
+                return;
+              }
+              if (withholdWorldRead == WorldRead.LIFECYCLE) {
+                withheldReadEntered.countDown();
+                return;
+              }
+              response.onNext(
+                  net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec
+                      .toResponse(incomingRequest, controlled.lifecycleEvidence()));
+              response.onCompleted();
+            }
+          };
+      var entityService =
+          new net.firedevops.firemud.entitymanagement.v1
+              .CanonicalPreseededActorAssignmentServiceGrpc
+              .CanonicalPreseededActorAssignmentServiceImplBase() {
+            @Override
+            public void readPreseededActorRuntimeReference(
+                net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest
+                    incoming,
+                io.grpc.stub.StreamObserver<
+                        net.firedevops.firemud.entitymanagement.v1
+                            .ReadPreseededActorRuntimeReferenceResponse>
+                    response) {
+              var controlled =
+                  bindings.stream()
+                      .filter(item -> item.matchesEntityRequest(incoming))
+                      .findFirst()
+                      .orElse(null);
+              if (!isPeer(caller) || controlled == null) {
+                response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
+                return;
+              }
+              response.onNext(
+                  net.firedevops.firemud.entitymanagement.v1
+                      .ReadPreseededActorRuntimeReferenceResponse.newBuilder()
+                      .setSchemaVersion(1)
+                      .setExpectedTarget(controlled.wireTarget())
+                      .setAssignmentUuid(incoming.getAssignmentUuid())
+                      .setCanonicalAccountUuid(incoming.getCanonicalAccountUuid())
+                      .setCharacterUuid(incoming.getCharacterUuid())
+                      .setIntentDigest(incoming.getIntentDigest())
+                      .setPublishedOwnerProofDigest(
+                          controlled.decision().targetEvidence().ownerProofDigest().substring(7))
+                      .setRuntimeEntityId(controlled.runtimeEntityId())
+                      .setProjectionGeneration(1L)
+                      .setProjectionFence(1L)
+                      .setCorePayload(
+                          net.firedevops.firemud.entitymanagement.v1
+                              .PreseededActorAssignmentCorePayload.newBuilder()
+                              .setActorKind(
+                                  net.firedevops.firemud.entitymanagement.v1
+                                      .CanonicalGameplayRosterActorKind
+                                      .CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+                              .setDisplayName("Controlled Final Component Player"))
+                      .build());
+              response.onCompleted();
+            }
+          };
+      worldServer = server(pki, "world", worldPlacementService, worldLifecycleService);
+      entityServer = server(pki, "entity", entityService);
+      var endpoints = new net.firedevops.firemud.common.config.ServiceEndpointsProperties();
+      endpoints.setWorldManagementService("localhost:" + worldServer.getPort());
+      endpoints.setEntityManagementService("localhost:" + entityServer.getPort());
+      var tls = pki.clientProperties(directory, pki.identity("client"));
+      var channels = new net.firedevops.firemud.common.grpc.GrpcChannelFactory();
+      placement =
+          new net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient(
+              endpoints, tls, channels, namespace);
+      lifecycle =
+          new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient(
+              endpoints, tls, channels, namespace);
+      entity =
+          new net.firedevops.firemud.gamesession.client
+              .CanonicalPreseededActorRuntimeReferenceClient(endpoints, tls, channels, namespace);
+      placement.init();
+      lifecycle.init();
+      entity.init();
+      resolver =
+          new net.firedevops.firemud.gamesession.service
+              .CanonicalInitialPlayerLocationRegionResolver(
+              placement,
+              new net.firedevops.firemud.gamesession.service
+                  .CanonicalRegionBootstrapAssignmentResolver(lifecycle));
+    }
+
+    net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request(
+        UUID transitionId) {
+      var result = requestsByTransition.get(transitionId);
+      if (result == null) throw new IllegalArgumentException("Unknown controlled transition");
+      return result;
+    }
+
+    private static ControlledBinding controlledBinding(
+        net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision decision,
+        net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence selector,
+        net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpectedTarget
+            wireTarget,
+        UUID canonicalRegion,
+        net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request
+            lifecycleRequestTemplate,
+        net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
+            lifecycleEvidenceTemplate,
+        long runtimeEntityId) {
+      var target = decision.targetEvidence();
+      var identity = decision.candidate();
+      UUID placementId = UUID.randomUUID();
+      UUID assignment = UUID.randomUUID();
+      var request =
           net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest
               .newBuilder()
               .setSchemaVersion(1)
@@ -428,40 +696,36 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
               .setCommittedPointerVersion(target.pointerVersion())
               .setAuditEventId(target.auditEventId())
               .build();
-      UUID lifecycleReadId =
-          UUID.nameUUIDFromBytes(
-              ("firemud-world-initial-location-lifecycle-read/v1/" + placementId)
-                  .getBytes(StandardCharsets.US_ASCII));
       var lifecycleRequest =
           new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request(
-              1,
-              lifecycleReadId,
-              namespace,
-              identity.tenantId(),
-              target.worldSlug(),
-              identity.gameInstanceId(),
-              identity.playableStateNamespaceId(),
-              "SHARED",
-              true,
-              descriptor.controlPlaneRequestId(),
-              target.canonicalVersionId(),
-              descriptor.requestDigest(),
-              descriptor.resultDigest(),
-              release.evidenceDigest());
-      UUID canonicalRegion = UUID.randomUUID();
-      var evidence =
+              lifecycleRequestTemplate.schemaVersion(),
+              net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
+                  .initialLocationReadRequestId(placementId),
+              lifecycleRequestTemplate.targetNamespace(),
+              lifecycleRequestTemplate.canonicalTenantId(),
+              lifecycleRequestTemplate.worldSlug(),
+              lifecycleRequestTemplate.canonicalGameInstanceId(),
+              lifecycleRequestTemplate.playableStateNamespaceId(),
+              lifecycleRequestTemplate.playableStateScope(),
+              lifecycleRequestTemplate.publicProduction(),
+              lifecycleRequestTemplate.controlPlaneRequestId(),
+              lifecycleRequestTemplate.canonicalVersionId(),
+              lifecycleRequestTemplate.expectedDescriptorRequestDigest(),
+              lifecycleRequestTemplate.expectedDescriptorResultDigest(),
+              lifecycleRequestTemplate.expectedReleaseAttestationDigest());
+      var lifecycleEvidence =
           new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence(
               lifecycleRequest,
-              binding,
-              selector.startLocation(),
-              1042L,
-              "ACTIVE",
-              target.activeWorldEpoch(),
-              0L,
-              UUID.randomUUID(),
-              selector.graphDigest().substring(7),
-              "sha256:" + "e".repeat(64),
-              Map.of(canonicalRegion, identity.regionId()));
+              lifecycleEvidenceTemplate.launchBinding(),
+              lifecycleEvidenceTemplate.startLocation(),
+              lifecycleEvidenceTemplate.runtimeRoomInstanceId(),
+              lifecycleEvidenceTemplate.lifecycleStatus(),
+              lifecycleEvidenceTemplate.lifecycleEpoch(),
+              lifecycleEvidenceTemplate.rowVersion(),
+              lifecycleEvidenceTemplate.captureId(),
+              lifecycleEvidenceTemplate.graphSha256(),
+              lifecycleEvidenceTemplate.preparationInputDigest(),
+              lifecycleEvidenceTemplate.operationalRegionAssignments());
       var room = selector.startLocation();
       var placementResult =
           net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse
@@ -502,135 +766,46 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                           com.google.protobuf.ByteString.copyFrom(
                               lifecycleRequest.canonicalBytes()))
                       .setLifecycleStatus("ACTIVE")
-                      .setLifecycleEpoch(evidence.lifecycleEpoch())
-                      .setRowVersion(evidence.rowVersion())
-                      .setCaptureUuid(evidence.captureId().toString())
-                      .setGraphSha256(evidence.graphSha256())
-                      .setPreparationInputDigest(evidence.preparationInputDigest()))
+                      .setLifecycleEpoch(lifecycleEvidence.lifecycleEpoch())
+                      .setRowVersion(lifecycleEvidence.rowVersion())
+                      .setCaptureUuid(lifecycleEvidence.captureId().toString())
+                      .setGraphSha256(lifecycleEvidence.graphSha256())
+                      .setPreparationInputDigest(lifecycleEvidence.preparationInputDigest()))
               .build();
-      var worldPlacementService =
-          new net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationServiceGrpc
-              .CanonicalInitialPlayerLocationServiceImplBase() {
-            @Override
-            public void readInitialPlayerLocationRegion(
-                net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest
-                    incoming,
-                io.grpc.stub.StreamObserver<
-                        net.firedevops.firemud.worldmanagement.v1
-                            .CanonicalInitialPlayerLocationRegionResponse>
-                    response) {
-              if (!request.equals(incoming) || !isPeer(caller)) {
-                response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
-                return;
-              }
-              if (withholdWorldRead == WorldRead.PLACEMENT) {
-                withheldReadEntered.countDown();
-                return;
-              }
-              response.onNext(observation);
-              response.onCompleted();
-            }
-          };
-      var worldLifecycleService =
-          new net.firedevops.firemud.worldmanagement.v1
-              .WorldCanonicalInstanceLifecycleReadServiceGrpc
-              .WorldCanonicalInstanceLifecycleReadServiceImplBase() {
-            @Override
-            public void readWorldCanonicalInstanceLifecycle(
-                net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleRequest
-                    incoming,
-                io.grpc.stub.StreamObserver<
-                        net.firedevops.firemud.worldmanagement.v1
-                            .ReadWorldCanonicalInstanceLifecycleResponse>
-                    response) {
-              if (!isPeer(caller)
-                  || !lifecycleRequest.equals(
-                      net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec
-                          .fromRequest(incoming))) {
-                response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
-                return;
-              }
-              if (withholdWorldRead == WorldRead.LIFECYCLE) {
-                withheldReadEntered.countDown();
-                return;
-              }
-              response.onNext(
-                  net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec
-                      .toResponse(lifecycleRequest, evidence));
-              response.onCompleted();
-            }
-          };
-      var entityService =
-          new net.firedevops.firemud.entitymanagement.v1
-              .CanonicalPreseededActorAssignmentServiceGrpc
-              .CanonicalPreseededActorAssignmentServiceImplBase() {
-            @Override
-            public void readPreseededActorRuntimeReference(
-                net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest
-                    incoming,
-                io.grpc.stub.StreamObserver<
-                        net.firedevops.firemud.entitymanagement.v1
-                            .ReadPreseededActorRuntimeReferenceResponse>
-                    response) {
-              if (!isPeer(caller)
-                  || !incoming.getExpectedTarget().equals(wireTarget)
-                  || !incoming.getAssignmentUuid().equals(assignment.toString())
-                  || !incoming.getCanonicalAccountUuid().equals(identity.accountId().toString())
-                  || !incoming.getCharacterUuid().equals(identity.characterId().toString())
-                  || !incoming.getIntentDigest().equals(request.getAssignmentIntentDigest())) {
-                response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
-                return;
-              }
-              response.onNext(
-                  net.firedevops.firemud.entitymanagement.v1
-                      .ReadPreseededActorRuntimeReferenceResponse.newBuilder()
-                      .setSchemaVersion(1)
-                      .setExpectedTarget(wireTarget)
-                      .setAssignmentUuid(incoming.getAssignmentUuid())
-                      .setCanonicalAccountUuid(incoming.getCanonicalAccountUuid())
-                      .setCharacterUuid(incoming.getCharacterUuid())
-                      .setIntentDigest(incoming.getIntentDigest())
-                      .setPublishedOwnerProofDigest(target.ownerProofDigest().substring(7))
-                      .setRuntimeEntityId(7301L)
-                      .setProjectionGeneration(1L)
-                      .setProjectionFence(1L)
-                      .setCorePayload(
-                          net.firedevops.firemud.entitymanagement.v1
-                              .PreseededActorAssignmentCorePayload.newBuilder()
-                              .setActorKind(
-                                  net.firedevops.firemud.entitymanagement.v1
-                                      .CanonicalGameplayRosterActorKind
-                                      .CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
-                              .setDisplayName("Controlled Final Component Player"))
-                      .build());
-              response.onCompleted();
-            }
-          };
-      worldServer = server(pki, "world", worldPlacementService, worldLifecycleService);
-      entityServer = server(pki, "entity", entityService);
-      var endpoints = new net.firedevops.firemud.common.config.ServiceEndpointsProperties();
-      endpoints.setWorldManagementService("localhost:" + worldServer.getPort());
-      endpoints.setEntityManagementService("localhost:" + entityServer.getPort());
-      var tls = pki.clientProperties(directory, pki.identity("client"));
-      var channels = new net.firedevops.firemud.common.grpc.GrpcChannelFactory();
-      placement =
-          new net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClient(
-              endpoints, tls, channels, namespace);
-      lifecycle =
-          new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient(
-              endpoints, tls, channels, namespace);
-      entity =
-          new net.firedevops.firemud.gamesession.client
-              .CanonicalPreseededActorRuntimeReferenceClient(endpoints, tls, channels, namespace);
-      placement.init();
-      lifecycle.init();
-      entity.init();
-      resolver =
-          new net.firedevops.firemud.gamesession.service
-              .CanonicalInitialPlayerLocationRegionResolver(
-              placement,
-              new net.firedevops.firemud.gamesession.service
-                  .CanonicalRegionBootstrapAssignmentResolver(lifecycle));
+      return new ControlledBinding(
+          decision,
+          request,
+          lifecycleRequest,
+          lifecycleEvidence,
+          observation,
+          wireTarget,
+          assignment,
+          runtimeEntityId);
+    }
+
+    private record ControlledBinding(
+        net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision decision,
+        net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request,
+        net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request
+            lifecycleRequest,
+        net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
+            lifecycleEvidence,
+        net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse
+            observation,
+        net.firedevops.firemud.entitymanagement.v1.PreseededActorAssignmentExpectedTarget
+            wireTarget,
+        UUID assignment,
+        long runtimeEntityId) {
+      boolean matchesEntityRequest(
+          net.firedevops.firemud.entitymanagement.v1.ReadPreseededActorRuntimeReferenceRequest
+              incoming) {
+        var identity = decision.candidate();
+        return incoming.getExpectedTarget().equals(wireTarget)
+            && incoming.getAssignmentUuid().equals(assignment.toString())
+            && incoming.getCanonicalAccountUuid().equals(identity.accountId().toString())
+            && incoming.getCharacterUuid().equals(identity.characterId().toString())
+            && incoming.getIntentDigest().equals(request.getAssignmentIntentDigest());
+      }
     }
 
     private static boolean isPeer(String expected) {

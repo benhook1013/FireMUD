@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import org.junit.jupiter.api.Test;
 
 /** Pure source contracts only. Controlled objects do not prove SQL/Redis custody or a handoff. */
@@ -197,16 +198,11 @@ class CanonicalGameplayCapacityOriginTransferRepositoryTest {
             new byte[0],
             "mutationDigest/v1".getBytes(StandardCharsets.US_ASCII),
             "0:trailing".getBytes(StandardCharsets.US_ASCII))) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayRegionOwnerTransferRepository.decodeRequest(
-                      bytes, "a".repeat(64)))
-          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() -> CapacityAdmissionDigest.decodeCommittable(bytes, "a".repeat(64)))
+          .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionOwnerTransferRepository.decodeRequest(null, "a".repeat(64)))
-        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> CapacityAdmissionDigest.decodeCommittable(null, "a".repeat(64)))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   private static CanonicalGameplayCapacityOriginTransferRepository.Item item(

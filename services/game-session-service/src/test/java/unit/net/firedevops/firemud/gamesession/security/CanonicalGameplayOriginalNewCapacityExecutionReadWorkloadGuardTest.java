@@ -52,6 +52,21 @@ class CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuardTest {
   }
 
   @Test
+  void historicalFinalUsesTheSameExactAccountWorkloadBoundary() {
+    var method =
+        OriginalNewCapacityExecutionReadServiceGrpc
+            .getReadHistoricalOriginalNewCapacityFinalMethod();
+    Invocation accepted = invoke(method, peer(NAMESPACE, "account-service"));
+    assertThat(accepted.nextStarts()).isEqualTo(1);
+    assertThat(accepted.status()).isNull();
+    assertDenied(invoke(method, null), Status.Code.UNAUTHENTICATED);
+    assertDenied(
+        invoke(method, peer("other-namespace", "account-service")), Status.Code.PERMISSION_DENIED);
+    assertDenied(
+        invoke(method, peer(NAMESPACE, "world-management-service")), Status.Code.PERMISSION_DENIED);
+  }
+
+  @Test
   void refusesMissingForeignAndPlayerOrSyntheticCallerContexts() {
     var method =
         OriginalNewCapacityExecutionReadServiceGrpc.getReadOriginalNewCapacityExecutionMethod();
