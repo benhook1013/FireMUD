@@ -54,30 +54,56 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
   @Test
   void explicitHandoffPreservesAcknowledgementAndRefusesRewritingBridgeForNewGrant()
       throws Exception {
-    regionBinding = CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
-        fixture.dsl(), ownerClient, ownerUri, fixture.transitionId(), sources.request,
-        sources.resolver, sources.entity);
+    regionBinding =
+        CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            fixture.transitionId(),
+            sources.request,
+            sources.resolver,
+            sources.entity);
     var original = regionBinding.installation();
     var before = inventory.readSnapshot();
     var transfers = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
-    var transfer = new CanonicalGameplayRegionOwnerTransferCoordinator(
-        fixture.dsl(), CLOCK, transfers, capacityOwner(),
-        new CanonicalGameplayControlledRegionTransferObservationFixture().receiver(transfers, tags));
-    var successor = CanonicalGameplayRegionLeaseOwnerFactory.compose(
-        fixture.dsl(), ownerClient, ownerUri, catalog, scope -> original.incarnation,
-        sources.resolver,
-        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
-            "game-session-service", "explicit-bridge-successor", "localhost", CLOCK.instant(),
-            "test", "test", "controlled-image"),
-        java.time.Duration.ofSeconds(30), CLOCK);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(),
+            CLOCK,
+            transfers,
+            capacityOwner(),
+            new CanonicalGameplayControlledRegionTransferObservationFixture()
+                .receiver(transfers, tags));
+    var successor =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            catalog,
+            scope -> original.incarnation,
+            sources.resolver,
+            new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+                "game-session-service",
+                "explicit-bridge-successor",
+                "localhost",
+                CLOCK.instant(),
+                "test",
+                "test",
+                "controlled-image"),
+            java.time.Duration.ofSeconds(30),
+            CLOCK);
     assertThat(admin.pexpire(ascii(original.grant.key()), 0)).isTrue();
-    var installed = successor.installForTransition(
-        null, fixture.transitionId(), sources.request, transfer, deadline());
+    var installed =
+        successor.installForTransition(
+            null, fixture.transitionId(), sources.request, transfer, deadline());
     assertThat(installed.status.executorFence()).isGreaterThan(original.status.executorFence());
-    assertThatThrownBy(() -> new CanonicalGameplayRegionBindingBridgeOwner(successor, sources.entity)
-        .bridge(installed))
+    assertThatThrownBy(
+            () ->
+                new CanonicalGameplayRegionBindingBridgeOwner(successor, sources.entity)
+                    .bridge(installed))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-        .hasMessage("A completed region bridge acknowledgement cannot be rewritten for a new grant");
+        .hasMessage(
+            "A completed region bridge acknowledgement cannot be rewritten for a new grant");
     assertThat(inventory.readSnapshot()).isEqualTo(before);
   }
 
@@ -88,16 +114,18 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
     var original = regionBinding.installation();
     // A caller holding the actual live private grant remains a supported compatibility case.
     assertThat(
-            regionBinding.owner().installForTransition(
-                original, fixture.transitionId(), sources.request).grant)
+            regionBinding
+                .owner()
+                .installForTransition(original, fixture.transitionId(), sources.request)
+                .grant)
         .isSameAs(original.grant);
     var statuses = new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl());
     var before = statuses.find(original.source).orElseThrow();
     assertThat(admin.pexpire(ascii(original.grant.key()), 0)).isTrue();
     String rows = sqlImage();
     assertThatThrownBy(
-            () -> regionBinding.owner().installForTransition(
-                fixture.transitionId(), sources.request))
+            () ->
+                regionBinding.owner().installForTransition(fixture.transitionId(), sources.request))
         .isInstanceOf(IllegalStateException.class);
     assertThat(statuses.find(original.source)).contains(before);
     assertThat(sqlImage()).isEqualTo(rows);

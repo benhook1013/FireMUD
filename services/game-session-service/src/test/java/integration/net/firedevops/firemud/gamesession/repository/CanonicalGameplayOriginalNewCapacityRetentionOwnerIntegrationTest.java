@@ -327,7 +327,8 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
                 capacityOwner()
                     .retainCommittedBeforeCleanup(
                         controlledCapacity.request(), controlledCapacity.reservation()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Retained capacity execution mapping is unavailable");
     assertThat(
             fixture
                 .dsl()

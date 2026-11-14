@@ -691,6 +691,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   @Test
   void resumedFenceReceiptCannotChangeDispatchedStorageIncarnation() throws Exception {
     try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
       UUID id = proof.insertRawFrozenTransfer(proof.sql);
       proof.insertRawTransferItem(proof.sql, id, 0);
       proof.sql.execute(

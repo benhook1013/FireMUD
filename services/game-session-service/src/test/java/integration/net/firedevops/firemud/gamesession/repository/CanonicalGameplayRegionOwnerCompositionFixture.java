@@ -655,7 +655,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         physical);
   }
 
-  /** Refuses compatibility takeover after lease expiry without mutating owner or bridge evidence. */
+  /**
+   * Refuses compatibility takeover after lease expiry without mutating owner or bridge evidence.
+   */
   public static CompatibilityTakeoverProof installAndBridgeThenCompatibilityTakeoverRefuses(
       DSLContext dsl,
       String redisHost,
@@ -1288,16 +1290,19 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 runtimeIdentity,
                 Duration.ofSeconds(30),
                 Clock.systemUTC());
-        var beforeTakeover = snapshotRegionOwnerSqlState(
-            dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
+        var beforeTakeover =
+            snapshotRegionOwnerSqlState(
+                dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
         try {
           secondBridgeOwner.installForTransition(secondTransitionId, secondBinding.worldRequest());
           throw new AssertionError("Compatibility takeover unexpectedly succeeded");
         } catch (IllegalStateException expected) {
           if (redis.admin().get(redisKey) != null
-              || !beforeTakeover.equals(snapshotRegionOwnerSqlState(
-                  dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))) {
-            throw new AssertionError("Refused compatibility takeover changed region state", expected);
+              || !beforeTakeover.equals(
+                  snapshotRegionOwnerSqlState(
+                      dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))) {
+            throw new AssertionError(
+                "Refused compatibility takeover changed region state", expected);
           }
           throw expected;
         }
@@ -1564,32 +1569,50 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             Clock.systemUTC());
     var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
     var beforeInventory = inventory.readSnapshot();
-    var beforeRegion = snapshotRegionOwnerSqlState(
-        dsl, originalInstallation.source.tenantId(), originalInstallation.source.gameInstanceId(),
-        originalInstallation.source.regionId());
-    Record acknowledgedRow = Objects.requireNonNull(dsl.fetchOne(
-        "SELECT * FROM game_session_canonical_binding_region_bridge_obligation WHERE transition_id = ?",
-        acknowledged.transitionId()));
-    var beforePhysical = snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId());
+    var beforeRegion =
+        snapshotRegionOwnerSqlState(
+            dsl,
+            originalInstallation.source.tenantId(),
+            originalInstallation.source.gameInstanceId(),
+            originalInstallation.source.regionId());
+    Record acknowledgedRow =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT * FROM game_session_canonical_binding_region_bridge_obligation WHERE transition_id = ?",
+                acknowledged.transitionId()));
+    var beforePhysical =
+        snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId());
     String refusalMessage = null;
     try {
       replacementOwner.installForTransition(acknowledged.transitionId(), worldRequest);
     } catch (IllegalStateException expected) {
       refusalMessage = expected.getMessage();
     }
-    var after = new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
-        .find(originalInstallation.source).orElseThrow();
-    if (refusalMessage == null || redis.admin().get(leaseKey) != null
-        || !beforeRegion.equals(snapshotRegionOwnerSqlState(
-            dsl, originalInstallation.source.tenantId(), originalInstallation.source.gameInstanceId(),
-            originalInstallation.source.regionId()))) {
+    var after =
+        new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
+            .find(originalInstallation.source)
+            .orElseThrow();
+    if (refusalMessage == null
+        || redis.admin().get(leaseKey) != null
+        || !beforeRegion.equals(
+            snapshotRegionOwnerSqlState(
+                dsl,
+                originalInstallation.source.tenantId(),
+                originalInstallation.source.gameInstanceId(),
+                originalInstallation.source.regionId()))) {
       throw new IllegalStateException("Compatibility takeover mutated retained owner state");
     }
     return new CompatibilityTakeoverProof(
-        acknowledged, after.executorFence(), false, true, refusalMessage,
+        acknowledged,
+        after.executorFence(),
+        false,
+        true,
+        refusalMessage,
         acknowledgedRowBeforeGrant.equals(regionBridgeRowImage(dsl, acknowledged.transitionId())),
         beforeInventory.equals(inventory.readSnapshot()),
-        beforePhysical.equals(snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId())));
+        beforePhysical.equals(
+            snapshotRegionBridgeRedisState(
+                redis, acknowledgedRow, acknowledged.runtimeEntityId())));
   }
 
   private static String regionBridgeRowImage(DSLContext dsl, UUID transitionId) {
