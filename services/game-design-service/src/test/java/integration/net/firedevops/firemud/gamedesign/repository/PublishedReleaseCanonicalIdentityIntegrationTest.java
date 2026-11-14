@@ -66,6 +66,34 @@ class PublishedReleaseCanonicalIdentityIntegrationTest {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
   }
 
+  /** Donor #2964 retention proof, adapted to the current complete migration chain. */
+  @Test
+  void migrationLeavesRetainedReleaseTupleAndXminUnchangedAndUnmapped() {
+    Fixture fixture = fixture(V35);
+    Game game = saveGame(fixture, "retained-release-migration-owner");
+    Long retainedVersionId = insertRetainedVersion(fixture.dsl(), game.getTenantId());
+    Long retainedBundleId =
+        insertRetainedBundle(fixture.dsl(), game.getTenantId(), retainedVersionId);
+    Map<String, Object> retainedBefore = releaseBundleTuple(fixture.dsl(), retainedBundleId);
+    String xminBefore = bundleXmin(fixture.dsl(), retainedBundleId);
+
+    migrate(fixture.dataSource(), fixture.schema(), null);
+
+    // Compare every historical column, allowing only new schema columns to appear. Snapshotting
+    // after migration would miss a migration that rewrote the retained tuple or its row version.
+    assertThat(releaseBundleTuple(fixture.dsl(), retainedBundleId)).containsAllEntriesOf(retainedBefore);
+    assertThat(bundleXmin(fixture.dsl(), retainedBundleId)).isEqualTo(xminBefore);
+    PublishedReleaseBundle retained =
+        fixture
+            .releaseBundleRepository()
+            .findByTenantIdAndVersionId(game.getTenantId(), retainedVersionId)
+            .orElseThrow();
+    assertThat(retained.getCanonicalTenantId()).isNull();
+    assertThat(retained.getCanonicalVersionId()).isNull();
+    assertThat(retained.getPublishedReleaseBundleRef()).isNull();
+    assertThat(bundleCount(fixture.dsl())).isEqualTo(1);
+  }
+
   @Test
   void normalSavePersistsExactVersionAndVerifiedGameIdentityAndReadsBackWithinTransaction() {
     Fixture fixture = fixture(null);
