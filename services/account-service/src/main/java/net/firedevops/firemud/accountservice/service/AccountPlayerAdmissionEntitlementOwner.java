@@ -151,6 +151,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       // This final post-commit check only rejects an expired or future source observation.
       throw unavailable();
     }
+    requireCurrentTimes(prepared.player(), now());
     return evidence;
   }
 
