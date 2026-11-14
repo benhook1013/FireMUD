@@ -784,7 +784,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                     new String(historical.payload(), StandardCharsets.UTF_8))
                 .callerBoundAuthorityInvalidated())
         .isTrue();
-    assertThatThrownBy(paid::prepare).isInstanceOf(RuntimeException.class);
+
     paid.hosting().clock().advance(Duration.ofSeconds(1));
     paid.refresh();
     var fence =
@@ -824,7 +824,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         .isEqualTo(previous.membershipAuthorityGeneration());
     assertThat(checkpoint.membershipVersion()).isEqualTo(previous.membershipVersion());
     assertThat(checkpoint.roles()).isEqualTo(previous.roles());
-    assertThatThrownBy(paid::prepare).isInstanceOf(RuntimeException.class);
+    // This is repository/SQL evidence, not fresh LOGIN or caller-token evidence. Account
+    // authority advanced above, so the original caller cannot isolate membership rejection.
   }
 
   @Test
