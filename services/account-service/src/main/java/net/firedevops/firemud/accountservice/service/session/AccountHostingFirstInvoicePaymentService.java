@@ -72,7 +72,7 @@ public final class AccountHostingFirstInvoicePaymentService {
               invoice.expiresAt(),
               confirmationRequestId,
               confirmationRequestId == null && !canceled
-                  ? payments.openingRequestId(invoice, rowVersion)
+                  ? payments.preRowOriginalRequestId(subscriptionId, actor.accountId())
                   : null,
               payments.authorizationVersion(subscriptionId));
         });
@@ -136,6 +136,26 @@ public final class AccountHostingFirstInvoicePaymentService {
                 payments.bindReauthenticationContext(
                     snapshot.accountId(), subscriptionId, context, current));
     return evidence.evidenceId();
+  }
+
+  /** Returns only an exact, credential-bound replay of retained pre-binding billing evidence. */
+  public UUID replayHistoricalUnboundReauthentication(
+      String bearer,
+      UUID reauthenticationRequestId,
+      UUID authorizationRequestId,
+      String email,
+      String secret) {
+    outsideSql();
+    var actor = actors.authenticateAccount(bearer);
+    var request =
+        new AccountRecentReauthenticationService.Request(
+            reauthenticationRequestId,
+            actor.accountId(),
+            AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
+            authorizationRequestId,
+            email,
+            secret);
+    return reauthentication.replayHistoricalUnboundBilling(request, actors, bearer).evidenceId();
   }
 
   /**
@@ -361,7 +381,7 @@ public final class AccountHostingFirstInvoicePaymentService {
       String state,
       java.time.Instant expiresAt,
       UUID confirmationRequestId,
-      UUID openingRequestId,
+      UUID preRowOriginalRequestId,
       long authorizationVersion) {}
 
   public record Completion(String state, UUID requestId) {}

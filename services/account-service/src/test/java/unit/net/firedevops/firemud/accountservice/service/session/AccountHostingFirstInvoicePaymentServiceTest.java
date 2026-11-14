@@ -61,6 +61,35 @@ class AccountHostingFirstInvoicePaymentServiceTest {
   }
 
   @Test
+  void authenticatedOwnerReadExposesOnlyTheVerifiedOriginalReferenceWithoutRestoringProof() {
+    var invoice = signedCandidate().invoice();
+    var original = UUID.randomUUID();
+    var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
+    when(actor.accountId()).thenReturn(invoice.ownerAccountId());
+    when(actors.withCurrentAccount(eq("bearer"), any()))
+        .thenAnswer(
+            call -> {
+              java.util.function.Function<
+                      AccountControlUiActorService.AccountAuthenticatedActor, Object>
+                  action = call.getArgument(1);
+              return action.apply(actor);
+            });
+    when(payments.requireOwner(invoice.subscriptionId(), invoice.ownerAccountId()))
+        .thenReturn(invoice);
+    when(payments.ownerRowVersion(invoice.subscriptionId(), invoice.ownerAccountId()))
+        .thenReturn(3L);
+    when(payments.preRowOriginalRequestId(invoice.subscriptionId(), invoice.ownerAccountId()))
+        .thenReturn(original);
+    var view = service.describeOwner("bearer", invoice.subscriptionId());
+    assertThat(view.preRowOriginalRequestId()).isEqualTo(original);
+    assertThat(view.confirmationRequestId()).isNull();
+    assertThat(view.authorizationVersion()).isZero();
+    assertThat(view.expectedRowVersion()).isEqualTo(3);
+    assertThat(view.tupleDigest()).isEqualTo(invoice.digest());
+    verifyNoInteractions(reauthentication, provider, lifecycle, inbox, verifier);
+  }
+
+  @Test
   void
       delayedSignedSuccessAfterAuthorizationExpiryOrAuthorityAdvanceIsReadOnlyAndAtomicallyReadBack()
           throws Exception {
@@ -155,6 +184,7 @@ class AccountHostingFirstInvoicePaymentServiceTest {
   @Test
   void unrelatedSignedEventIsRetainedWithoutDispatchOrLifecycleWork() throws Exception {
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    when(event.eventType()).thenReturn("customer.updated");
     when(verifier.verify("signed", "header")).thenReturn(event);
 
     assertThat(service.completeSigned("signed", "header"))
@@ -162,6 +192,39 @@ class AccountHostingFirstInvoicePaymentServiceTest {
 
     verify(inbox).retainOrReplay(event);
     verify(payments).candidateForSignedEvent(event);
+    verifyNoInteractions(provider, lifecycle, actors, reauthentication);
+  }
+
+  @Test
+  void linkedFirstInvoiceSuccessRemainsRetryableWithoutLocalConfirmation() throws Exception {
+    var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    when(event.eventType()).thenReturn("payment_intent.succeeded");
+    when(verifier.verify("signed", "header")).thenReturn(event);
+    when(payments.hasSignedFirstInvoiceLinkage(event)).thenReturn(true);
+
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(new AccountHostingFirstInvoicePaymentService.Completion("RECONCILING", null));
+
+    verify(inbox).retainOrReplay(event);
+    verify(payments).retainedSignedConflictRequestId(event);
+    verify(payments).candidateForSignedEvent(event);
+    verify(payments).unconsentedCanceledInvoice(event);
+    verify(payments).hasSignedFirstInvoiceLinkage(event);
+    verifyNoInteractions(provider, lifecycle, actors, reauthentication);
+  }
+
+  @Test
+  void unrelatedPaymentIntentSuccessIsRetainedAndAcknowledged() throws Exception {
+    var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    when(event.eventType()).thenReturn("payment_intent.succeeded");
+    when(verifier.verify("signed", "header")).thenReturn(event);
+    when(payments.hasSignedFirstInvoiceLinkage(event)).thenReturn(false);
+
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(new AccountHostingFirstInvoicePaymentService.Completion("IGNORED", null));
+
+    verify(inbox).retainOrReplay(event);
+    verify(payments).hasSignedFirstInvoiceLinkage(event);
     verifyNoInteractions(provider, lifecycle, actors, reauthentication);
   }
 

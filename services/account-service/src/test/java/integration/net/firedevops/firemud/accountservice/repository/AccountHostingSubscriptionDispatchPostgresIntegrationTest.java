@@ -41,6 +41,9 @@ import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreat
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionProvisioningService;
 import net.firedevops.firemud.accountservice.service.StripeWebhookIntakeService;
+import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService;
+import net.firedevops.firemud.accountservice.service.session.AccountHostingFirstInvoicePaymentService;
+import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
@@ -74,6 +77,53 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void signedSuccessRetriesOnlyWhenItMatchesTheRetainedFirstInvoice() throws Exception {
+    var source = unpaidCancellationDataSource(null);
+    var hosting = CanonicalHostingSubscriptionTestFixture.create(source);
+    var checkout = hosting.awaitFirstInvoice();
+    var payments =
+        new AccountHostingFirstInvoicePaymentService(
+            mock(AccountControlUiActorService.class),
+            mock(AccountRecentReauthenticationService.class),
+            hosting.firstInvoiceRepository(),
+            new StripeEventInboxRepository(hosting.dsl()),
+            checkout.provider(),
+            checkout.verifier(),
+            hosting.service(),
+            new DataSourceTransactionManager(source));
+
+    var invoicesBefore =
+        hosting.dsl().fetch("SELECT *, xmin::text FROM subscription_first_invoices");
+    var linked = checkout.signedSuccess();
+    assertThat(payments.completeSigned(linked.payload(), linked.signature()).state())
+        .isEqualTo("RECONCILING");
+
+    String unrelatedPayload =
+        linked
+            .payload()
+            .replace(checkout.invoice().paymentIntentId(), "pi_unrelated")
+            .replace("evt_" + checkout.invoice().paymentIntentId().substring(3), "evt_unrelated");
+    var unrelated = checkout.signWebhookPayload(unrelatedPayload);
+    assertThat(payments.completeSigned(unrelated.payload(), unrelated.signature()).state())
+        .isEqualTo("IGNORED");
+
+    assertThat(
+            hosting
+                .dsl()
+                .fetch("SELECT raw_payload FROM stripe_event_inbox")
+                .getValues("raw_payload", byte[].class))
+        .extracting(bytes -> new String(bytes, StandardCharsets.UTF_8))
+        .containsExactlyInAnyOrder(linked.payload(), unrelated.payload());
+    assertThat(hosting.dsl().fetch("SELECT *, xmin::text FROM subscription_first_invoices"))
+        .isEqualTo(invoicesBefore);
+    assertThat(hosting.firstInvoiceConfirmations()).isZero();
+    assertThat(hosting.dsl().fetchCount(DSL.table("subscription_first_invoice_success_evidence")))
+        .isZero();
+    assertThat(hosting.dsl().fetchCount(DSL.table("subscription_first_invoice_completions")))
+        .isZero();
+  }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})

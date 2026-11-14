@@ -38,6 +38,232 @@ components:
           items:
             type: string
 paths:
+  /api/account/auth/login:
+    post:
+      operationId: authenticateAccountControlUi
+      x-runtime-status: isolated_only_default_off
+      summary: Authenticate an Account through the verified mTLS Account receiver
+      description: Explicit isolated HTTPS receiving only. No automatic retries. Exact request/context identities bind the durable Account issuance.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, callerContextId, email, secret]
+              properties:
+                requestId: {type: string, format: uuid}
+                callerContextId: {type: string, format: uuid}
+                email: {type: string, maxLength: 254}
+                secret: {type: string, maxLength: 1024, writeOnly: true}
+      responses:
+        '200':
+          description: No-store Account identity and memory-only control-ui credential
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, data]
+                properties:
+                  status: {type: string, enum: [SUCCESS]}
+                  data:
+                    type: object
+                    additionalProperties: false
+                    required: [accountId, authToken, expiresAt]
+                    properties:
+                      accountId: {type: string, format: uuid}
+                      authToken: {type: string, maxLength: 16384}
+                      expiresAt: {type: string, format: date-time}
+        '400': {description: Invalid bounded request or actual HTTPS required}
+        '401': {description: Primary authentication denied}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
+        '409': {description: Account login request conflicts with retained idempotency evidence}
+        '413': {description: Login request exceeds the Gateway body limit}
+        '415': {description: Login requires an application/json request}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway could not safely complete the Account authentication call}
+        '503': {description: Account authentication or receiving rate-limit authority unavailable}
+  /api/account/billing/hosting/subscriptions/{subscriptionId}/first-invoice:
+    parameters:
+      - name: subscriptionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getAccountHostingFirstInvoice
+      summary: Read the exact first-invoice checkout state
+      x-runtime-status: isolated_only_default_off
+      description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
+      responses:
+        '200': {description: No-store Account owner result under the Account first-invoice API contract}
+        '400': {description: Malformed request}
+        '401': {description: Current control-ui owner authority required}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
+        '409': {description: Exact retained evidence refused or outcome uncertain}
+        '413': {description: Request exceeds the subscription-operation body limit}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome uncertain; never automatically resend}
+        '503': {description: Account authentication/reconciliation or Gateway rate-limit authority unavailable; no automatic retry}
+  /api/account/billing/hosting/subscriptions/{subscriptionId}/first-invoice/reauthenticate:
+    parameters:
+      - name: subscriptionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      operationId: reauthenticateAccountHostingFirstInvoice
+      summary: Reauthenticate the first-invoice billing owner
+      x-runtime-status: isolated_only_default_off
+      description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result. Account validates the typed billingBinding against the retained invoice and authorization attempt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, confirmationRequestId, email, secret, billingBinding]
+              properties:
+                requestId: {type: string, format: uuid}
+                confirmationRequestId: {type: string, format: uuid}
+                email: {type: string, format: email}
+                secret: {type: string, format: password, writeOnly: true}
+                billingBinding:
+                  type: object
+                  additionalProperties: false
+                  description: Required for a new billing proof. Bind the exact retained invoice and original operation; unbound historical evidence cannot authorize new consent.
+                  required: [originalRequestId, expectedRowVersion, expectedAuthorizationVersion, acceptedTupleDigest, invoiceExpiresAt, authorizationPurpose]
+                  properties:
+                    originalRequestId: {type: string, format: uuid}
+                    expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                    expectedAuthorizationVersion: {type: integer, format: int64, minimum: 0}
+                    acceptedTupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                    invoiceExpiresAt: {type: string, format: date-time}
+                    authorizationPurpose: {type: string, enum: [INITIAL_CONFIRMATION, PRE_ROW_RENEWAL, FOLLOWUP_RENEWAL]}
+      responses:
+        '200': {description: No-store Account owner result under the Account first-invoice API contract}
+        '400': {description: Malformed request}
+        '401': {description: Current control-ui owner authority required}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
+        '409': {description: Exact retained evidence refused or outcome uncertain}
+        '413': {description: Request exceeds the subscription-operation body limit}
+        '415': {description: Action requires an application/json request}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome uncertain; never automatically resend}
+        '503': {description: Account authentication/reconciliation or Gateway rate-limit authority unavailable; no automatic retry}
+  /api/account/billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm:
+    parameters:
+      - name: subscriptionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      operationId: confirmAccountHostingFirstInvoice
+      summary: Confirm the original first-invoice payment
+      x-runtime-status: isolated_only_default_off
+      description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, expectedRowVersion, reauthenticationEvidenceId, acceptedTupleDigest, acceptCharge]
+              properties:
+                requestId: {type: string, format: uuid}
+                expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                reauthenticationEvidenceId: {type: string, format: uuid}
+                acceptedTupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                acceptCharge: {type: boolean, enum: [true]}
+      responses:
+        '200': {description: No-store Account owner result under the Account first-invoice API contract}
+        '400': {description: Malformed request}
+        '401': {description: Current control-ui owner authority required}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
+        '409': {description: Exact retained evidence refused or outcome uncertain}
+        '413': {description: Request exceeds the subscription-operation body limit}
+        '415': {description: Action requires an application/json request}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome uncertain; never automatically resend}
+        '503': {description: Account authentication/reconciliation or Gateway rate-limit authority unavailable; no automatic retry}
+  /api/account/billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew:
+    parameters:
+      - name: subscriptionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      operationId: renewAccountHostingFirstInvoice
+      summary: Renew authorization for the original first-invoice checkout
+      x-runtime-status: isolated_only_default_off
+      description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, authorizationRequestId, expectedAuthorizationVersion, expectedRowVersion, reauthenticationEvidenceId, acceptedTupleDigest, acceptCharge]
+              properties:
+                requestId: {type: string, format: uuid}
+                authorizationRequestId: {type: string, format: uuid}
+                expectedAuthorizationVersion: {type: integer, format: int64, minimum: 0}
+                expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                reauthenticationEvidenceId: {type: string, format: uuid}
+                acceptedTupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                acceptCharge: {type: boolean, enum: [true]}
+      responses:
+        '200': {description: No-store Account owner result under the Account first-invoice API contract}
+        '400': {description: Malformed request}
+        '401': {description: Current control-ui owner authority required}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
+        '409': {description: Exact retained evidence refused or outcome uncertain}
+        '413': {description: Request exceeds the subscription-operation body limit}
+        '415': {description: Action requires an application/json request}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome uncertain; never automatically resend}
+        '503': {description: Account authentication/reconciliation or Gateway rate-limit authority unavailable; no automatic retry}
+  /api/account/billing/hosting/webhook:
+    post:
+      operationId: receiveAccountHostingFirstInvoiceSignedEvent
+      summary: Forward an exact raw provider-signed first-invoice event
+      x-runtime-status: isolated_only_default_off
+      security: []
+      description: Separately authenticated exact-byte provider signed event, at most 256 KiB. Forwards one signature header over verified HTTPS without retry or redirects.
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: {type: string, maxLength: 4096}
+      requestBody:
+        required: true
+        description: >-
+          Exact raw UTF-8 JSON provider event authenticated by Stripe-Signature.
+          The raw request body must not exceed 262144 bytes (256 KiB), enforced
+          before forwarding. This is a byte limit, not a JSON character limit.
+          Forward the original bytes unchanged without parsing or reserialization,
+          automatic retries, or redirects.
+        x-max-body-bytes: 262144
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': {description: No-store Account completion state}
+        '400': {description: Invalid signed event}
+        '401': {description: Account rejected provider-event authentication}
+        '408': {description: Gateway did not receive the complete request body within five seconds}
+        '409': {description: Account could not accept this event against retained state}
+        '413': {description: Request exceeds the webhook body limit}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome remains uncertain}
+        '503': {description: Account reconciliation or Gateway rate-limit authority unavailable; provider delivery may be retried}
   /ping:
     get:
       summary: Health check

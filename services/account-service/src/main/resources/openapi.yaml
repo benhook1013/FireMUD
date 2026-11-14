@@ -339,6 +339,203 @@ components:
           type: string
       required: [token]
 paths:
+  /billing/hosting/webhook:
+    post:
+      operationId: receiveHostingFirstInvoiceSignedEvent
+      x-runtime-status: isolated_only_default_off
+      summary: Receive an exact raw provider-signed first-invoice event
+      description: Actual HTTPS only. Single bounded signature and exact raw UTF-8 body; provider signature is independent of user authentication. This handler is default-off and registered only for controlled-fixture source integration. Actual provider/customer data intake requires separate live-provider and customer-data qualification plus the applicable retention, custody and deployment prerequisites; production registration remains closed.
+      security: []
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: {type: string, maxLength: 4096}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: 'JSON object; signature verification uses exact original raw UTF-8 bytes, at most 262144 bytes'
+      responses:
+        '200': {description: Original Account completion state; no-store}
+        '400': {description: 'Missing, ambiguous, malformed or invalid signed event'}
+        '401': {description: Actual HTTPS required}
+        '409': {description: Exact retained event or billing evidence refused}
+        '413': {description: Event body exceeds the bound}
+        '502': {description: Provider outcome remains uncertain}
+        '503': {description: Retained completion is still reconciling; same signed event may be redelivered}
+  /billing/hosting/subscriptions/{subscriptionId}/first-invoice:
+    parameters:
+      - name: subscriptionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      summary: Retrieve the exact retained first invoice for its current billing owner
+      operationId: getHostingFirstInvoice
+      x-runtime-status: isolated_only_default_off
+      description: Current HTTPS control-ui billing owner only. No-store exact existing first invoice; never a client secret.
+      responses:
+        '200':
+          description: Existing invoice and non-authorizing payment or independently committed state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subscriptionId, invoiceId, paymentIntentId, paymentInstrumentId, amount, currency, tupleDigest, expectedRowVersion, state, expiresAt, confirmationRequestId, preRowOriginalRequestId, authorizationVersion]
+                properties:
+                  subscriptionId: {type: string, format: uuid}
+                  invoiceId: {type: string}
+                  paymentIntentId: {type: string}
+                  paymentInstrumentId: {type: string, format: uuid}
+                  amount: {type: string, pattern: '^[1-9][0-9]*$', description: Exact integer Stripe minor units}
+                  currency: {type: string, pattern: '^[a-z]{3}$'}
+                  tupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                  expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                  state: {type: string, enum: [AWAITING_PAYMENT, COMMITTED, CANCELED]}
+                  expiresAt: {type: string, format: date-time}
+                  confirmationRequestId: {type: string, format: uuid, nullable: true}
+                  preRowOriginalRequestId: {type: string, format: uuid, nullable: true, description: Server-verified original operation identity before a confirmation row exists. Observational only; requires fresh explicit consent and PRE_ROW_RENEWAL authentication. Null once a confirmation exists.}
+                  authorizationVersion: {type: integer, format: int64, minimum: 0}
+        '401': {description: Protected current control-ui owner authentication required}
+        '409': {description: Exact evidence refused; prior provider outcome may remain uncertain}
+        '503': {description: AUTH_UNAVAILABLE; Account authentication authority is temporarily unavailable}
+  /billing/hosting/subscriptions/{subscriptionId}/first-invoice/reauthenticate:
+    parameters:
+      - name: subscriptionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      summary: Reauthenticate the current billing owner for first-invoice payment
+      operationId: reauthenticateHostingFirstInvoice
+      x-runtime-status: isolated_only_default_off
+      description: Actual ordinary primary authentication for HOSTING_FIRST_INVOICE_PAYMENT. A new billing proof requires an exact billingBinding. Omitting billingBinding only replays an exact previously retained unbound historical request; a fresh unbound billing request returns 409 without creating evidence, and historical unbound evidence cannot authorize consent. No gameplay or game-creation proof accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, confirmationRequestId, email, secret]
+              properties:
+                requestId: {type: string, format: uuid}
+                confirmationRequestId: {type: string, format: uuid}
+                email: {type: string, format: email}
+                secret: {type: string, format: password, writeOnly: true}
+                billingBinding:
+                  type: object
+                  additionalProperties: false
+                  description: Required for a new billing proof. Bind the exact retained invoice and original operation. Omission permits only exact replay of a previously retained unbound historical request and cannot create new evidence or authorize consent.
+                  required: [originalRequestId, expectedRowVersion, expectedAuthorizationVersion, acceptedTupleDigest, invoiceExpiresAt, authorizationPurpose]
+                  properties:
+                    originalRequestId: {type: string, format: uuid}
+                    expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                    expectedAuthorizationVersion: {type: integer, format: int64, minimum: 0}
+                    acceptedTupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                    invoiceExpiresAt: {type: string, format: date-time}
+                    authorizationPurpose: {type: string, enum: [INITIAL_CONFIRMATION, PRE_ROW_RENEWAL, FOLLOWUP_RENEWAL]}
+      responses:
+        '200':
+          description: Retained purpose-specific ordinary reauthentication evidence
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [evidenceId]
+                properties:
+                  evidenceId: {type: string, format: uuid}
+        '401': {description: Current owner authentication or ordinary secret refused}
+        '409':
+          description: Fresh unbound billing request without evidence creation, exact binding refused, or exact current evidence unavailable
+        '503': {description: AUTH_UNAVAILABLE; Account authentication authority is temporarily unavailable}
+  /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm:
+    parameters:
+      - name: subscriptionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      summary: Confirm explicit consent for the retained first-invoice payment
+      operationId: confirmHostingFirstInvoice
+      x-runtime-status: isolated_only_default_off
+      description: Exact explicit consent and one durable existing-intent command; repeat requests reconcile read-only and never create or confirm another payment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, expectedRowVersion, reauthenticationEvidenceId, acceptedTupleDigest, acceptCharge]
+              properties:
+                requestId: {type: string, format: uuid}
+                expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                reauthenticationEvidenceId: {type: string, format: uuid}
+                acceptedTupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                acceptCharge: {type: boolean, enum: [true]}
+      responses:
+        '200':
+          description: No-store provider status; browser success is not Account fulfillment
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, enum: [requires_action, processing, succeeded, requires_confirmation, requires_payment_method, AUTHORIZED_NOT_CONFIRMED]}
+                  clientSecret: {type: string, nullable: true, description: Present only for current owner requires_action handoff; never persisted or logged}
+        '400': {description: Missing explicit charge consent}
+        '401': {description: Protected current control-ui owner authentication required}
+        '409': {description: Exact evidence refused; preserve the original operation and uncertain outcome}
+        '502': {description: FIRST_INVOICE_PROVIDER_UNCERTAIN; preserve original operation and poll status}
+        '503': {description: AUTH_UNAVAILABLE; Account authentication authority is temporarily unavailable}
+  /billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew:
+    parameters:
+      - name: subscriptionId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      summary: Renew authorization for the same first-invoice payment operation
+      operationId: renewHostingFirstInvoiceAuthorization
+      x-runtime-status: isolated_only_default_off
+      description: Fresh primary reauthentication and explicit unchanged consent renew authorization on the original operation. Use expectedAuthorizationVersion zero for PRE_ROW_RENEWAL before a confirmation exists. A prior durable command claim is never resent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, authorizationRequestId, expectedAuthorizationVersion, expectedRowVersion, reauthenticationEvidenceId, acceptedTupleDigest, acceptCharge]
+              properties:
+                requestId: {type: string, format: uuid}
+                authorizationRequestId: {type: string, format: uuid}
+                expectedAuthorizationVersion: {type: integer, format: int64, minimum: 0}
+                expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                reauthenticationEvidenceId: {type: string, format: uuid}
+                acceptedTupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                acceptCharge: {type: boolean, enum: [true]}
+      responses:
+        '200':
+          description: No-store provider status; browser success is not Account fulfillment
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, enum: [requires_action, processing, succeeded, requires_confirmation, requires_payment_method, AUTHORIZED_NOT_CONFIRMED]}
+                  clientSecret: {type: string, nullable: true, description: Present only for current owner requires_action handoff; never persisted or logged}
+        '400': {description: Missing explicit charge consent}
+        '401': {description: Protected current control-ui owner authentication required}
+        '409': {description: Exact evidence refused; preserve the original operation and uncertain outcome}
+        '502': {description: FIRST_INVOICE_PROVIDER_UNCERTAIN; preserve original operation and poll status}
+        '503': {description: AUTH_UNAVAILABLE; Account authentication authority is temporarily unavailable}
   /ping:
     get:
       summary: Health check endpoint
@@ -360,7 +557,8 @@ paths:
           description: Bad request
   /auth/login:
     post:
-      summary: Authenticate and return JWT
+      summary: Legacy Account HTTP login outside isolated checkout receiving
+      description: Isolated checkout receiving rejects this direct handler. Its canonical Gateway login uses verified mTLS Account issuance, with no HMAC checkout fallback.
       operationId: login
       security: []
       requestBody:

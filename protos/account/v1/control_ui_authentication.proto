@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Workload-authenticated Control-UI login handoff from Gateway to Account.
+service AccountControlUiAuthenticationService {
+  rpc AuthLogin(AuthLoginRequest) returns (AuthLoginResponse);
+}
+
+enum AccountControlUiAuthLoginStatus {
+  ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_UNSPECIFIED = 0;
+  ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_SUCCESS = 1;
+  ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_DENIED = 2;
+}
+
+enum AccountControlUiCredentialTransportClass {
+  ACCOUNT_CONTROL_UI_CREDENTIAL_TRANSPORT_CLASS_UNSPECIFIED = 0;
+  ACCOUNT_CONTROL_UI_CREDENTIAL_TRANSPORT_CLASS_HTTP = 1;
+}
+
+// Repeated scalar members intentionally let the shared closed codec reject duplicate wire fields.
+message AuthLoginRequest {
+  repeated uint32 schema_version = 1;
+  repeated string target_namespace = 2;
+  repeated string request_id = 3;
+  repeated string caller_context_id = 4;
+  repeated string email = 5;
+  // Transient primary credential. Never persist, log, echo, or include in an error.
+  repeated string secret = 6;
+  // Gateway-derived source, accepted only from the authenticated Gateway workload.
+  repeated string canonical_client_address = 7;
+  repeated AccountControlUiCredentialTransportClass transport_class = 8;
+}
+
+// Account echoes stable request context, never the primary credential.
+message AuthLoginResponse {
+  repeated uint32 schema_version = 1;
+  repeated string target_namespace = 2;
+  repeated string request_id = 3;
+  repeated string caller_context_id = 4;
+  repeated AccountControlUiAuthLoginStatus status = 5;
+  // Present exactly once only for SUCCESS.
+  repeated string account_id = 6;
+  // Compact Control-UI JWT. Present exactly once only for SUCCESS.
+  repeated string auth_token = 7;
+  // Whole UTC epoch seconds. Present exactly once only for SUCCESS.
+  repeated int64 expires_at_epoch_seconds = 8;
+}

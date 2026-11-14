@@ -49,6 +49,28 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void retainsPrivateHttpOriginIndependentlyOfMutableHeadersAndRedactsIt() {
+    var request =
+        MockServerHttpRequest.post("/api/account/auth/login")
+            .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+            .header("X-Client-IP", "198.51.100.20")
+            .build();
+    var original = MockServerWebExchange.from(request);
+    assertThat(VerifiedHttpClientOrigin.from(original)).isNull();
+    var canonical = filterThroughChain(legacyFilter(new GatewayHeaderTrustProperties()), original);
+    var changed =
+        canonical
+            .mutate()
+            .request(
+                builder -> builder.headers(headers -> headers.set("X-Client-IP", "203.0.113.1")))
+            .build();
+    var origin = VerifiedHttpClientOrigin.from(changed);
+    assertThat(origin).isNotNull();
+    assertThat(origin.sourceContext().canonicalClientAddress()).isEqualTo("192.0.2.10");
+    assertThat(origin.toString()).doesNotContain("192.0.2.10");
+  }
+
+  @Test
   void stripsSpoofedRoutingBundleFromPublicGameplayIngress() {
     HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
 

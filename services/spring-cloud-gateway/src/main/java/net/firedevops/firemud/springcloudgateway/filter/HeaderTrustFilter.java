@@ -60,6 +60,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
+    VerifiedHttpClientOrigin.clear(exchange);
     PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
     boolean isGameplayRoute = GameplayRouteClassifier.classify(path).gameplayRoute();
     boolean isSessionRoute = isGameplayRoute || GameplayRouteClassifier.sessionApiRoute(path);
@@ -85,6 +86,10 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
       LOG.debug("Rejecting session route: missing or invalid trusted proxy client IP");
       exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
       return exchange.getResponse().setComplete();
+    }
+
+    if (!dedicatedTcpProxyListener && !isGameplayRoute) {
+      VerifiedHttpClientOrigin.retain(exchange, canonicalClientIp);
     }
 
     String incomingProxyConnectionId =
