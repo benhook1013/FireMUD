@@ -66,7 +66,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SessionCallback;
@@ -157,7 +157,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @MockitoBean private ScreenBufferService screenBufferService;
 
-  @MockitoBean private RedisConnectionFactory redisConnectionFactory;
+  // Preserve both Redis factory interfaces used by Boot health auto-configuration.
+  @MockitoBean private LettuceConnectionFactory redisConnectionFactory;
 
   @MockitoBean private RedisTemplate<String, Object> redisTemplate;
 

@@ -345,6 +345,10 @@ required_live_check_vocabulary:
   - csrf
   # Live Account-owned generation reread for control-plane authority.
   - current_account_generation
+  # Account-owned first-invoice recovery re-reads the exact subscription owner and held instrument.
+  - current_subscription_owner
+  - exact_reserved_instrument
+  - retained_first_invoice_binding
   - current_account_roles
   - current_automation_policy
   - current_global_role
@@ -1756,6 +1760,30 @@ routes:
       known_drift:
         - current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
     required_live_checks: [account_state_login_eligible]
+  - service: account-service
+    route: AccountControlUiAuthenticationService/AuthLogin
+    transport: grpc
+    scope: account
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    issued_token_profile: control-ui
+    issued_token_audience: control-ui
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [spring-cloud-gateway]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/spring-cloud-gateway"]
+    end_user_token_required: false
+    required_live_checks: [account_state_login_eligible]
+    implementation_status:
+      known_drift:
+        - Registered only by explicit isolated checkout receiving; production remains closed.
   - service: account-service
     route: PlayerBootstrapLogin
     http_route: POST /auth/player-bootstrap
@@ -3205,6 +3233,78 @@ routes:
     required_live_checks: [issuer_generation, account_generation, current_global_role, role_appropriate_assurance]
     roles:
       any_of: [support, platformAdmin]
+  - service: account-service
+    route: GET /billing/hosting/subscriptions/{subscriptionId}/first-invoice
+    scope: account
+    classification: account_scoped
+    route_status: target_not_currently_routable
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    subject_binding: authenticated_current_subscription_billing_owner
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    required_live_checks: [issuer_generation, account_generation, current_subscription_owner, retained_first_invoice_binding]
+    mutation_contract: current_owner_read_only_exact_retained_invoice_and_reservation
+    implementation_status:
+      known_drift:
+        - Owner controller is registered only in explicit isolated receiving; production provider, retention, deletion, backup and custody activation gates remain held.
+  - service: account-service
+    route: POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/reauthenticate
+    scope: account
+    classification: account_scoped
+    route_status: target_not_currently_routable
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    subject_binding: authenticated_current_subscription_billing_owner
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    required_live_checks: [issuer_generation, account_generation, current_subscription_owner, exact_reserved_instrument]
+    mutation_contract: current_owner_and_actual_billing_purpose_primary_authentication
+    implementation_status:
+      known_drift:
+        - Owner controller is registered only in explicit isolated receiving; production provider, retention, deletion, backup and custody activation gates remain held.
+  - service: account-service
+    route: POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm
+    scope: account
+    classification: account_scoped
+    route_status: target_not_currently_routable
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    subject_binding: authenticated_current_subscription_billing_owner
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    required_live_checks: [issuer_generation, account_generation, current_subscription_owner, exact_reserved_instrument]
+    mutation_contract: current_owner_billing_purpose_reauthentication_explicit_exact_tuple_consent_single_dispatch
+    implementation_status:
+      known_drift:
+        - Owner controller is registered only in explicit isolated receiving; production provider, retention, deletion, backup and custody activation gates remain held.
+  - service: account-service
+    route: POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew
+    scope: account
+    classification: account_scoped
+    route_status: target_not_currently_routable
+    accepted_token_profiles: [control-ui]
+    issued_token_state: current_exact_active_control_ui_registry_record
+    token_type: control_plane_user
+    token_issuer: firemud-account-service
+    token_audience: control-ui
+    subject_binding: authenticated_current_subscription_billing_owner
+    tenant_billing_authority_generation_applies: false
+    membership_authority_generation_applies: false
+    required_live_checks: [issuer_generation, account_generation, current_subscription_owner, exact_reserved_instrument]
+    mutation_contract: current_owner_fresh_billing_reauthentication_explicit_unchanged_consent_authorization_version_fence_no_command_replay
+    implementation_status:
+      known_drift:
+        - Owner controller is registered only in explicit isolated receiving; production provider, retention, deletion, backup and custody activation gates remain held.
   - service: account-service
     route: GetSubscriptionTenantHighLevel
     scope: tenant

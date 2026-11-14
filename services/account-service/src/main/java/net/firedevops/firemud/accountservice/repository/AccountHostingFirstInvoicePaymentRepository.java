@@ -284,15 +284,36 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     return row == null ? null : row.get("request_id", UUID.class);
   }
 
-  public UUID openingRequestId(AccountHostingFirstInvoicePayment invoice, long rowVersion) {
+  /** Observational recovery identity only; never restores consent, proof or command permission. */
+  public UUID preRowOriginalRequestId(UUID subscriptionId, UUID actor) {
     transaction();
-    Record fence = operationFence(invoice.subscriptionId(), false);
+    var invoice = requireOwner(subscriptionId, actor);
+    // Existing confirmations own their scoped recovery, including historical rows without a fence.
+    if (confirmationRequestId(subscriptionId) != null) return null;
+    Record fence = operationFence(subscriptionId, true);
+    if (authorizationVersion(subscriptionId) != 0L
+        || dsl.fetchOne(
+                "SELECT 1 FROM subscription_first_invoice_dispatches WHERE subscription_id = ? LIMIT 1",
+                subscriptionId)
+            != null
+        || dsl.fetchOne(
+                "SELECT 1 FROM subscription_first_invoice_command_claims WHERE subscription_id = ? LIMIT 1",
+                subscriptionId)
+            != null) throw refused();
     if (fence == null) return null;
-    if (!invoice.ownerAccountId().equals(fence.get("account_uuid", UUID.class))
+    long rowVersion = ownerRowVersion(subscriptionId, actor);
+    UUID originalRequestId = fence.get("request_id", UUID.class);
+    OffsetDateTime fenceExpiry = fence.get("invoice_expires_at", OffsetDateTime.class);
+    AccountBillingCustomerRecord.requireUuid(originalRequestId);
+    if (!subscriptionId.equals(fence.get("subscription_id", UUID.class))
+        || !actor.equals(fence.get("account_uuid", UUID.class))
         || !invoice.digest().equals(fence.get("tuple_digest", String.class))
-        || rowVersion != fence.get("expected_row_version", Long.class)
-        || !invoice.expiresAt().equals(instant(fence, "invoice_expires_at"))) throw refused();
-    return fence.get("request_id", UUID.class);
+        || !Long.valueOf(rowVersion).equals(fence.get("expected_row_version", Long.class))
+        || fenceExpiry == null
+        || !invoice.expiresAt().equals(fenceExpiry.toInstant())) throw refused();
+    requireAwaitingPayment(invoice, rowVersion);
+    // Expired invoices may still be inspected; mutation owners independently enforce expiry.
+    return originalRequestId;
   }
 
   public long authorizationVersion(UUID subscriptionId) {
@@ -831,6 +852,7 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     return dispatch(row, invoice, false, false);
   }
 
+  /** Verifies retained first-invoice linkage without establishing consent or payment authority. */
   public boolean hasSignedFirstInvoiceLinkage(VerifiedEvent verified) {
     transaction();
     if (!"payment_intent.succeeded".equals(verified.eventType())) return false;

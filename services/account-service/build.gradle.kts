@@ -101,6 +101,10 @@ dependencies {
     integrationTestImplementation(entityBootstrapProof)
     integrationTestImplementation(testFixtures(project(":common-test-support")))
     integrationTestImplementation(project(":social-groups-service"))
+    integrationTestImplementation(project(":spring-cloud-gateway"))
+    integrationTestImplementation(libs.spring.cloud.gateway)
+    integrationTestImplementation(libs.spring.boot.starter.webflux)
+    integrationTestImplementation(libs.spring.boot.starter.data.redis.reactive)
     integrationTestImplementation(testFixtures(project(":account-service")))
     integrationTestImplementation(testFixtures(project(":logging-admin-service")))
 }
@@ -131,6 +135,22 @@ val socialIntegrationTestArtifacts = configurations
                 && componentId.projectPath == ":social-groups-service"
         }
     }.artifacts
+
+// The registered checkout proof imports Gateway handlers, not its application or Flyway resources.
+val gatewayIntegrationTestArtifacts = configurations
+    .getByName("integrationTestRuntimeClasspath")
+    .incoming.artifactView {
+        componentFilter { componentId ->
+            componentId is ProjectComponentIdentifier
+                && componentId.projectPath == ":spring-cloud-gateway"
+        }
+    }.artifacts
+
+val extractGatewayIntegrationTestClasses = tasks.register<ExtractClassFilesFromArchives>("extractGatewayIntegrationTestClasses") {
+    dependsOn(gatewayIntegrationTestArtifacts.artifactFiles)
+    archives.from(gatewayIntegrationTestArtifacts.artifactFiles)
+    destinationDirectory.set(layout.buildDirectory.dir("account-test-classpath/gateway-integration"))
+}
 
 val extractSocialIntegrationTestClasses = tasks.register<ExtractClassFilesFromArchives>("extractSocialIntegrationTestClasses") {
     dependsOn(socialIntegrationTestArtifacts.artifactFiles)
@@ -167,6 +187,11 @@ tasks.named<ProcessResources>("processIntegrationTestResources") {
 }
 
 tasks.named<Test>("integrationTest") {
+    // This JVM belongs to Account MVC. The checkout proof imports Gateway's explicit receiving
+    // configuration, not SCG's foreign application/route auto-configuration (which rejects MVC).
+    systemProperty("spring.cloud.gateway.server.webflux.enabled", "false")
+    // SCG Redis auto-configuration has a separate switch and must also stay outside Account.
+    systemProperty("spring.cloud.gateway.server.webflux.redis.enabled", "false")
     // Isolate fixture statics in separate JVMs; JUnit methods remain serial within each suite.
     // Keep other platforms' existing single-fork behavior and respect a one-worker invocation.
     if (System.getProperty("os.name").lowercase().startsWith("linux")) {
@@ -185,6 +210,8 @@ tasks.named<Test>("integrationTest") {
     classpath = classpath.filter { it !in loggingArtifacts } + files(extractLoggingAdminIntegrationTestClasses)
     val socialArtifacts = socialIntegrationTestArtifacts.artifactFiles
     classpath = classpath.filter { it !in socialArtifacts } + files(extractSocialIntegrationTestClasses)
+    val gatewayArtifacts = gatewayIntegrationTestArtifacts.artifactFiles
+    classpath = classpath.filter { it !in gatewayArtifacts } + files(extractGatewayIntegrationTestClasses)
 }
 
 // Owner proof exports classes and required registry/projection resources without Account application or

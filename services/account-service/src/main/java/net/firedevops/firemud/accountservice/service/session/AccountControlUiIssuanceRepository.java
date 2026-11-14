@@ -48,6 +48,43 @@ public class AccountControlUiIssuanceRepository {
     return row == null ? null : decodeStored(row);
   }
 
+  /** Serialize the bounded credential-replay budget without locking an Account source row. */
+  void lockReplayRequest(UUID requestId) {
+    requireTransaction();
+    dsl.fetch(
+        "SELECT pg_advisory_xact_lock(hashtextextended(?::text, ?))",
+        Objects.requireNonNull(requestId),
+        "control-ui-issuance-replay".hashCode());
+  }
+
+  int countReplayFailures(Stored original) {
+    requireTransaction();
+    Record row =
+        dsl.fetchOne(
+            "SELECT count(*)::integer AS failures FROM account_control_ui_issuance_replay_failures"
+                + " WHERE operation_id = ? AND request_id = ?",
+            original.operationId,
+            original.requestId);
+    Integer failures = row == null ? null : row.get("failures", Integer.class);
+    if (failures == null || failures < 0 || failures > 5) throw denied();
+    return failures;
+  }
+
+  void recordReplayFailure(Stored original) {
+    requireTransaction();
+    int next = countReplayFailures(original) + 1;
+    if (next > 5
+        || dsl.execute(
+                "INSERT INTO account_control_ui_issuance_replay_failures"
+                    + " (operation_id, request_id, failure_number) VALUES (?, ?, ?)",
+                original.operationId,
+                original.requestId,
+                next)
+            != 1) {
+      throw denied();
+    }
+  }
+
   Stored findToken(String tokenHash) {
     requireTransaction();
     Record row = dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE token_hash = ?", tokenHash);

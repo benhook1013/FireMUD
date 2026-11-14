@@ -54,7 +54,14 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
+import org.springframework.cloud.gateway.support.ConfigurationService;
 import org.springframework.context.ApplicationContext;
+import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.grpc.server.GrpcServerFactory;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -150,6 +157,20 @@ class AccountRuntimeEntitlementNoWriteIntegrationTest {
 
   @BeforeEach
   void assertActualDefaultRegistration() {
+    assertThat(context.getBeansOfType(ConfigurationService.class)).isEmpty();
+    assertThat(context.getBeansOfType(RedisRateLimiter.class)).isEmpty();
+    var redisConnectionFactory = context.getBean(LettuceConnectionFactory.class);
+    assertThat(mockingDetails(redisConnectionFactory).isMock()).isFalse();
+    assertThat(context.getBean(RedisConnectionFactory.class)).isSameAs(redisConnectionFactory);
+    assertThat(context.getBean(ReactiveRedisConnectionFactory.class))
+        .isSameAs(redisConnectionFactory);
+    var reactiveRedisTemplate =
+        context.getBean("reactiveRedisTemplate", ReactiveRedisTemplate.class);
+    var reactiveStringRedisTemplate = context.getBean(ReactiveStringRedisTemplate.class);
+    assertThat(mockingDetails(reactiveRedisTemplate).isMock()).isFalse();
+    assertThat(mockingDetails(reactiveStringRedisTemplate).isMock()).isFalse();
+    assertThat(reactiveRedisTemplate.getConnectionFactory()).isSameAs(redisConnectionFactory);
+    assertThat(reactiveStringRedisTemplate.getConnectionFactory()).isSameAs(redisConnectionFactory);
     assertThat(listener.isRunning()).isTrue();
     assertThat(listener.getPort()).isPositive();
     assertThat(listener.getFactory()).isSameAs(context.getBean(GrpcServerFactory.class));

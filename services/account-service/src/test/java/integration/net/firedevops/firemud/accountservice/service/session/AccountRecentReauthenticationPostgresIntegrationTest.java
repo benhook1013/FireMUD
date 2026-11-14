@@ -2,10 +2,14 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2Factory;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +30,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
@@ -1273,6 +1278,23 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     UUID requestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
     String purpose = AccountRecentReauthenticationPolicy.BILLING_PURPOSE;
+    byte[] identity =
+        AccountRecentReauthenticationRepository.requestPayload(
+            requestId, account.getAccountUuid(), purpose, operationId);
+    byte[] email = account.getEmail().getBytes(StandardCharsets.UTF_8);
+    byte[] secret = PASSWORD.getBytes(StandardCharsets.UTF_8);
+    byte[] credentials =
+        ByteBuffer.allocate(12 + identity.length + email.length + secret.length)
+            .putInt(identity.length)
+            .put(identity)
+            .putInt(email.length)
+            .put(email)
+            .putInt(secret.length)
+            .put(secret)
+            .array();
+    var crypto =
+        new AccountControlUiResponseCryptography(new AccountControlUiKeyring(c.custody), c.clock);
+    String mac = crypto.recentReauthenticationRequestMac("mac1", credentials);
     UUID evidenceId =
         c.tx(
             () -> {
@@ -1286,7 +1308,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
                   account.getAccountUuid(),
                   purpose,
                   operationId,
-                  "a".repeat(64));
+                  mac);
               return id;
             });
     Record original = c.evidenceRow(evidenceId);
@@ -1297,6 +1319,36 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     var retained = c.tx(() -> repository.findByRequest(requestId).orElseThrow());
     assertThat(retained.evidenceId()).isEqualTo(evidenceId);
     assertThat(retained.billingContext()).isNull();
+
+    var actors = mock(AccountControlUiActorService.class);
+    var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
+    when(actor.accountId()).thenReturn(account.getAccountUuid());
+    when(actors.<Object>withCurrentAccount(eq("current-token"), any()))
+        .thenAnswer(
+            invocation -> {
+              Function<AccountControlUiActorService.AccountAuthenticatedActor, Object> action =
+                  invocation.getArgument(1);
+              return c.tx(() -> action.apply(actor));
+            });
+    var exact =
+        new AccountRecentReauthenticationService.Request(
+            requestId,
+            account.getAccountUuid(),
+            purpose,
+            operationId,
+            account.getEmail(),
+            PASSWORD);
+    assertThat(
+            c.service.replayHistoricalUnboundBilling(exact, actors, "current-token").evidenceId())
+        .isEqualTo(evidenceId);
+    var wrongSecret =
+        new AccountRecentReauthenticationService.Request(
+            requestId, account.getAccountUuid(), purpose, operationId, account.getEmail(), "wrong");
+    assertThatThrownBy(
+            () -> c.service.replayHistoricalUnboundBilling(wrongSecret, actors, "current-token"))
+        .isInstanceOf(AuthenticationException.class);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isOne();
 
     var binding =
         new AccountRecentReauthenticationEvidence.BillingContext(

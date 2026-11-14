@@ -12,6 +12,7 @@ import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutat
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutationRequest.SourceKind;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepository;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -69,7 +70,11 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
     var original = fixture.installGlobalOtp(account, OTP);
     var request =
         new AccountControlUiIssuanceService.AccountSignInRequest(
-            UUID.randomUUID(), account.getEmail(), OTP, UUID.randomUUID());
+            UUID.randomUUID(),
+            account.getEmail(),
+            OTP,
+            UUID.randomUUID(),
+            new SourceContext("192.0.2.10"));
 
     try (var ignored =
         AccountControlUiOwnerSourcesFixture.withPeer(AccountControlUiOwnerSourcesFixture.CALLER)) {
@@ -147,8 +152,9 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
     assertThat(
             Objects.requireNonNull(
                     fixture.dsl.fetchOne(
-                        "SELECT count(*) AS result_count FROM account_platform_restriction_current_projections "
-                            + "WHERE account_uuid = ?",
+                        "SELECT count(*) AS result_count FROM"
+                            + " account_platform_restriction_current_projections WHERE account_uuid"
+                            + " = ?",
                         account.getAccountUuid()))
                 .get("result_count", Long.class))
         .isZero();
@@ -185,7 +191,8 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
     assertThat(
             Objects.requireNonNull(
                     fixture.dsl.fetchOne(
-                        "SELECT count(*) AS result_count FROM account_tenant_membership WHERE account_id = ?",
+                        "SELECT count(*) AS result_count FROM account_tenant_membership WHERE"
+                            + " account_id = ?",
                         account.getId()))
                 .get("result_count", Long.class))
         .isZero();

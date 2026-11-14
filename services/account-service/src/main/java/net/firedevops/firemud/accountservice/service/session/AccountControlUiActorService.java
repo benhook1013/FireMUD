@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAccountAuthority;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
@@ -22,7 +23,11 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Genuine creator actor/currentness and same-transaction original Draft ordering; unregistered. */
+/**
+ * Genuine Account and creator currentness with same-transaction original Draft ordering. Only the
+ * Account actor is selected by isolated checkout receiving; default production activation stays
+ * closed.
+ */
 public final class AccountControlUiActorService {
   private static final AccountAsymmetricJwtVerifier.ExplicitRouteProfilePolicy POLICY =
       new AccountAsymmetricJwtVerifier.ExplicitRouteProfilePolicy(
@@ -38,7 +43,7 @@ public final class AccountControlUiActorService {
           16384,
           claims -> ControlUiJwtProfileValidator.validateClaims(claims, 1));
   private final AccountControlUiIssuanceRepository operations;
-  private final AccountControlUiAuthority authority;
+  private final AccountControlUiAccountAuthority authority;
   private final AccountControlUiSignerOwner signers;
   private final AccountControlUiCoordination registry;
   private final AccountJwtJwksTrustedSource publicSource;
@@ -54,7 +59,7 @@ public final class AccountControlUiActorService {
           "Injected Draft fence repository is an internal Account owner transaction collaborator.")
   public AccountControlUiActorService(
       AccountControlUiIssuanceRepository operations,
-      AccountControlUiAuthority authority,
+      AccountControlUiAccountAuthority authority,
       AccountControlUiSignerOwner signers,
       AccountControlUiCoordination registry,
       AccountJwtJwksTrustedSource publicSource,
@@ -78,6 +83,7 @@ public final class AccountControlUiActorService {
 
   public AuthenticatedActor authenticate(
       String compactJwt, UUID selectedTenant, CapturedEnvironmentBoundary environment) {
+    tenantAuthority();
     return withCurrent(
         compactJwt,
         selectedTenant,
@@ -203,6 +209,7 @@ public final class AccountControlUiActorService {
       CapturedEnvironmentBoundary environment,
       Function<Current, T> action) {
     outsideSql();
+    if (scopeKind == AccountControlUiAuthority.ScopeKind.TENANT) tenantAuthority();
     var signed = verifySigned(compactJwt);
     var acceptedKey = readAcceptedSignerKey(signed.claims.keyId());
     String tokenHash =
@@ -227,7 +234,8 @@ public final class AccountControlUiActorService {
           var current =
               switch (scopeKind) {
                 case ACCOUNT -> authority.captureAccount(stored.accountId);
-                case TENANT -> authority.capture(stored.accountId, selectedTenant, environment);
+                case TENANT ->
+                    tenantAuthority().capture(stored.accountId, selectedTenant, environment);
               };
           if (current.scopeKind() != scopeKind) throw denied();
           if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
@@ -267,6 +275,7 @@ public final class AccountControlUiActorService {
     Objects.requireNonNull(selectedTenant, "selected tenant is required");
     Objects.requireNonNull(tokenJti, "control-ui token jti is required");
     Objects.requireNonNull(environment, "captured Account environment is required");
+    tenantAuthority();
     Objects.requireNonNull(action, "current actor action is required");
     var original = transaction.execute(ignored -> operations.findTokenJti(tokenJti));
     if (original == null
@@ -298,7 +307,7 @@ public final class AccountControlUiActorService {
           }
           requireStoredActorIdentity(observed, actorAccountId, selectedTenant, tokenJti);
           signers.requireOriginal(observed.signerReceipt);
-          var current = authority.capture(actorAccountId, selectedTenant, environment);
+          var current = tenantAuthority().capture(actorAccountId, selectedTenant, environment);
           if (!Arrays.equals(current.evidence(), observed.sources)
               || !clock.instant().isBefore(observed.expiresAt)) {
             throw denied();
@@ -611,6 +620,11 @@ public final class AccountControlUiActorService {
         || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException("Signature/registry/JWKS reads must precede owner SQL locks");
     }
+  }
+
+  private AccountControlUiAuthority tenantAuthority() {
+    if (authority instanceof AccountControlUiAuthority tenantAuthority) return tenantAuthority;
+    throw denied();
   }
 
   private static IllegalStateException denied() {
