@@ -19,7 +19,6 @@ EXPECTED_FIRST_INVOICE_LIVE_CHECKS = {
     "issuer_generation",
     "account_generation",
     "current_subscription_owner",
-    "exact_reserved_instrument",
 }
 EXPECTED_FIRST_INVOICE_ROUTES = (
     "GET /billing/hosting/subscriptions/{subscriptionId}/first-invoice",
@@ -162,26 +161,28 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         )
         for route_name in EXPECTED_FIRST_INVOICE_ROUTES:
             with self.subTest(route=route_name):
-                document = self.validator.yaml.safe_load(
-                    MATRIX.read_text(encoding="utf-8")
-                )
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
                 route = route_for(document, "account-service", route_name)
-                self.assertEqual(
-                    "target_not_currently_routable", route["route_status"]
-                )
+                self.assertEqual("target_not_currently_routable", route["route_status"])
                 self.assertTrue(
-                    EXPECTED_FIRST_INVOICE_LIVE_CHECKS.issubset(
-                        route["required_live_checks"]
-                    )
+                    (
+                        EXPECTED_FIRST_INVOICE_LIVE_CHECKS
+                        | {
+                            "retained_first_invoice_binding"
+                            if route_name.startswith("GET ")
+                            else "exact_reserved_instrument"
+                        }
+                    ).issubset(route["required_live_checks"])
                 )
 
     def test_first_invoice_live_checks_cannot_be_omitted_or_aliased(self):
         for route_name in EXPECTED_FIRST_INVOICE_ROUTES:
-            for required_check in EXPECTED_FIRST_INVOICE_LIVE_CHECKS:
+            required = EXPECTED_FIRST_INVOICE_LIVE_CHECKS | {
+                "retained_first_invoice_binding" if route_name.startswith("GET ") else "exact_reserved_instrument"
+            }
+            for required_check in required:
                 with self.subTest(route=route_name, check=required_check):
-                    document = self.validator.yaml.safe_load(
-                        MATRIX.read_text(encoding="utf-8")
-                    )
+                    document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
                     route = route_for(document, "account-service", route_name)
                     route["required_live_checks"].remove(required_check)
                     route["required_live_checks"].append(
@@ -194,12 +195,37 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
                     self.assertTrue(
                         any(
-                            f"account-service {route_name} is missing required "
-                            "first-invoice live checks" in error
+                            f"account-service {route_name} is missing required first-invoice live checks" in error
                             for error in errors
                         ),
                         errors,
                     )
+
+    def test_first_invoice_read_binding_cannot_be_made_a_live_instrument_gate(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        route = route_for(document, "account-service", EXPECTED_FIRST_INVOICE_ROUTES[0])
+        route["required_live_checks"].append("exact_reserved_instrument")
+        self.assertTrue(
+            any("must use retained read binding" in error for error in validate_document(self.validator, document))
+        )
+        route["required_live_checks"].remove("exact_reserved_instrument")
+        route["mutation_contract"] = "current_owner_exact_subscription_and_instrument"
+        self.assertTrue(
+            any("read-only exact invoice/reservation" in error for error in validate_document(self.validator, document))
+        )
+
+    def test_first_invoice_mutations_cannot_reuse_read_binding(self):
+        for route_name in EXPECTED_FIRST_INVOICE_ROUTES[1:]:
+            with self.subTest(route=route_name):
+                document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+                route = route_for(document, "account-service", route_name)
+                route["required_live_checks"].append("retained_first_invoice_binding")
+                self.assertTrue(
+                    any(
+                        "cannot substitute retained read binding" in error
+                        for error in validate_document(self.validator, document)
+                    )
+                )
 
     def test_first_invoice_routes_cannot_be_promoted_while_held(self):
         for route_name in EXPECTED_FIRST_INVOICE_ROUTES:

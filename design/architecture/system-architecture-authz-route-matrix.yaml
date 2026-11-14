@@ -348,6 +348,7 @@ required_live_check_vocabulary:
   # Account-owned first-invoice recovery re-reads the exact subscription owner and held instrument.
   - current_subscription_owner
   - exact_reserved_instrument
+  - retained_first_invoice_binding
   - current_account_roles
   - current_automation_policy
   - current_global_role
@@ -3245,8 +3246,8 @@ routes:
     subject_binding: authenticated_current_subscription_billing_owner
     tenant_billing_authority_generation_applies: false
     membership_authority_generation_applies: false
-    required_live_checks: [issuer_generation, account_generation, current_subscription_owner, exact_reserved_instrument]
-    mutation_contract: current_owner_exact_subscription_and_instrument
+    required_live_checks: [issuer_generation, account_generation, current_subscription_owner, retained_first_invoice_binding]
+    mutation_contract: current_owner_read_only_exact_retained_invoice_and_reservation
     implementation_status:
       known_drift:
         - Owner controller is registered only in explicit isolated receiving; production provider, retention, deletion, backup and custody activation gates remain held.
