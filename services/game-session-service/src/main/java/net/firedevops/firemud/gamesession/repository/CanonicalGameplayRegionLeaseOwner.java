@@ -194,7 +194,28 @@ final class CanonicalGameplayRegionLeaseOwner {
         }
         Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
             permit = statusRepository.beginInitialTimeline(preparation, clock.instant());
-        grant = session.initialize(permit.orElse(null));
+        var claimedPreparation = preparation;
+        grant =
+            session.initialize(
+                permit.orElse(null),
+                proof -> {
+                  // Independently bounded, non-admitting cleanup after definitive no-write only.
+                  io.grpc.Context previous = io.grpc.Context.ROOT.attach();
+                  try {
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                        Clock.systemUTC(),
+                        Long.MAX_VALUE,
+                        cleanup -> {
+                          this.statusRepository
+                              .forBudget(cleanup)
+                              .releaseInitialTimelineNoWrite(
+                                  claimedPreparation, proof, clock.instant());
+                          return null;
+                        });
+                  } finally {
+                    io.grpc.Context.ROOT.detach(previous);
+                  }
+                });
       }
       redisOwner.verifyInitializedTimeline(grant, preparation);
       requireSameIncarnation(incarnation, readCurrentIncarnation(source));

@@ -614,6 +614,82 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void installationReleasesDefinitiveRedisExpiryAndFreshOwnerRetries() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var evidence = provisionalEvidence(world.request());
+      var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
+      when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
+      when(inventory.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(inventory);
+      var source = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+      var preparation =
+          statusRepository.prepareInitialTimeline(
+              evidence,
+              world.request(),
+              world.resolver().resolve(world.request()),
+              source,
+              incarnation,
+              redisOwner.requireTimelineAbsent(source, incarnation),
+              NOW);
+      Clock clock = Clock.fixed(Instant.now().minusMillis(3_000), ZoneOffset.UTC);
+      world.resetReads();
+      // The second source read occurs after Redis preflight, before the irreversible SQL claim.
+      world.setAfterRead(
+          2,
+          () -> {
+            try {
+              Thread.sleep(2_500);
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException(interrupted);
+            }
+          });
+      var owner =
+          new CanonicalGameplayRegionLeaseOwner(
+              inventory,
+              statusRepository,
+              redisOwner,
+              incarnationSource,
+              world.resolver(),
+              new RuntimeIdentity(
+                  "game-session-service",
+                  "definitive-expiry-after-claim",
+                  "localhost",
+                  NOW,
+                  "controlled-test",
+                  "controlled-sha",
+                  "controlled-image"),
+              Duration.ofSeconds(30),
+              clock,
+              true);
+      assertThatThrownBy(() -> owner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+      world.setAfterRead(2, () -> {});
+      var retry =
+          owner(
+              inventory,
+              statusRepository,
+              redisOwner,
+              world,
+              "fresh-after-definitive-no-write",
+              incarnationSource);
+      assertThat(retry.installForTransition(TRANSITION_ID, world.request())).isNotNull();
+    }
+  }
+
+  @Test
   void timelinePreflightFailuresLeavePreparedPermissionAndAllowLaterFirstClaim() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
@@ -801,6 +877,85 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(redis.admin().type(ascii(metaKey))).isEqualTo("hash");
     } finally {
       dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
+  void definitiveExpiredInitializeReleasesOnlyItsConsumedClaimAndAllowsFreshRetry()
+      throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var repository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var evidence = provisionalEvidence(world.request());
+      var source = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+      var preparation =
+          repository.prepareInitialTimeline(
+              evidence,
+              world.request(),
+              world.resolver().resolve(world.request()),
+              source,
+              incarnation,
+              redisOwner.requireTimelineAbsent(source, incarnation),
+              NOW);
+      var identity =
+          new RuntimeIdentity(
+              "game-session-service",
+              "exact-no-write-recovery",
+              "localhost",
+              NOW,
+              "controlled-test",
+              "controlled-sha",
+              "controlled-image");
+      // Redis and the local monotonic timer are real. A lagging caller clock lets Redis return
+      // the definitive deadline refusal while the caller still has time to observe that result.
+      Clock laggingClock = Clock.fixed(Instant.now().minusMillis(3_000), ZoneOffset.UTC);
+      var bounded = redisOwner.forHandoffDeadline(laggingClock, Long.MAX_VALUE);
+      var proof =
+          new AtomicReference<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof>();
+      var permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
+      try (var session =
+          bounded.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
+        Thread.sleep(2_500);
+        assertThatThrownBy(
+                () ->
+                    session.initialize(
+                        permit,
+                        retained -> {
+                          proof.set(retained);
+                          repository.releaseInitialTimelineNoWrite(preparation, retained, NOW);
+                        }))
+            .isInstanceOf(IllegalStateException.class);
+      }
+      assertThat(proof.get()).isNotNull();
+      assertPreparedTimelineUnchanged(testSchema.dsl(), repository, redis, source, preparation);
+      var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
+      // A stale proof cannot release the next claim, and a previously dispatched creation permit
+      // cannot be replayed through a different Redis session after PREPARED is restored.
+      assertThatThrownBy(
+              () -> repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
+          .isEqualTo(
+              CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INITIALIZING);
+      try (var stale =
+          redisOwner.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
+        assertThatThrownBy(() -> stale.initialize(permit))
+            .isInstanceOf(IllegalStateException.class);
+      }
+      try (var retry =
+          redisOwner.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
+        var grant = retry.initialize(retryPermit);
+        redisOwner.verifyInitializedTimeline(grant, preparation);
+      }
     }
   }
 
