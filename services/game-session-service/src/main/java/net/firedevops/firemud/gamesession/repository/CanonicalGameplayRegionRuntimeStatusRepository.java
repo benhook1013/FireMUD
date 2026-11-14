@@ -300,51 +300,131 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   /** The durable PREPARED-to-INITIALIZING transition grants the sole permission to create meta. */
   Optional<InitialInitializationPermit> beginInitialTimeline(
       TimelinePreparation preparation, Instant now) {
+    return beginInitialTimeline(preparation, now, ignored -> {}, false);
+  }
+
+  Optional<InitialInitializationPermit> beginInitialTimeline(
+      TimelinePreparation preparation,
+      Instant now,
+      java.util.function.Consumer<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof>
+          noWriteRecovery) {
+    return beginInitialTimeline(preparation, now, noWriteRecovery, true);
+  }
+
+  private Optional<InitialInitializationPermit> beginInitialTimeline(
+      TimelinePreparation preparation,
+      Instant now,
+      java.util.function.Consumer<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof>
+          noWriteRecovery,
+      boolean retainCommitWitness) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(preparation, "preparation");
     Objects.requireNonNull(now, "now");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          lockRegionScope(transaction, preparation.tenantRegionTag);
-          if (transaction.fetchOne(
-                  "SELECT 1 FROM "
-                      + TABLE
-                      + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
-                  preparation.source.tenantId(),
-                  preparation.source.gameInstanceId(),
-                  preparation.source.regionId())
-              != null) {
-            throw unavailable();
+    Objects.requireNonNull(noWriteRecovery, "noWriteRecovery");
+    var acknowledgedCommit = new AtomicBoolean();
+    var issued = new java.util.concurrent.atomic.AtomicReference<InitialInitializationPermit>();
+    var provider = dsl.configuration().connectionProvider();
+    var originals = new java.util.IdentityHashMap<java.sql.Connection, java.sql.Connection>();
+    var observed =
+        new org.jooq.ConnectionProvider() {
+          @Override
+          public java.sql.Connection acquire() {
+            var original = provider.acquire();
+            var proxy =
+                (java.sql.Connection)
+                    java.lang.reflect.Proxy.newProxyInstance(
+                        java.sql.Connection.class.getClassLoader(),
+                        new Class<?>[] {java.sql.Connection.class},
+                        (ignored, method, args) -> {
+                          try {
+                            Object result = method.invoke(original, args);
+                            // Record only an actual acknowledged commit, before transaction cleanup
+                            // can fail.
+                            // A thrown commit remains unknown, even if it might have reached
+                            // PostgreSQL.
+                            if (method.getName().equals("commit")) acknowledgedCommit.set(true);
+                            return result;
+                          } catch (java.lang.reflect.InvocationTargetException failure) {
+                            throw failure.getCause();
+                          }
+                        });
+            originals.put(proxy, original);
+            return proxy;
           }
-          Record row =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + PREPARATION_TABLE
-                      + " WHERE initialization_operation_id = ? FOR UPDATE",
-                  preparation.operationId);
-          if (row == null) throw unavailable();
-          TimelinePreparation current = toTimelinePreparation(row);
-          if (!samePreparation(preparation, current)) throw unavailable();
-          if (current.phase == TimelinePreparationPhase.INSTALLED) {
-            return Optional.empty();
+
+          @Override
+          public void release(java.sql.Connection connection) {
+            var original = originals.remove(connection);
+            if (original == null) throw unavailable();
+            provider.release(original);
           }
-          if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
-          // Lock waits and source checks cannot consume the installation deadline and still
-          // grant irreversible permission to create Redis meta.
-          if (installationBudget != null) installationBudget.check();
-          int updated =
-              transaction.execute(
-                  "UPDATE "
-                      + PREPARATION_TABLE
-                      + " SET phase = 'INITIALIZING', updated_at = ?"
-                      + " WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
-                  java.sql.Timestamp.from(now),
-                  current.operationId);
-          if (updated != 1) throw unavailable();
-          return Optional.of(
-              new InitialInitializationPermit(current.operationId, current.sourceDigest()));
-        });
+        };
+    try {
+      DSLContext claim =
+          retainCommitWitness
+              ? DSL.using(
+                  dsl.configuration()
+                      .derive(observed)
+                      .derive(new org.jooq.impl.DefaultTransactionProvider(observed)))
+              : dsl;
+      return claim.transactionResult(
+          configuration -> {
+            DSLContext transaction = DSL.using(configuration);
+            lockRegionScope(transaction, preparation.tenantRegionTag);
+            if (transaction.fetchOne(
+                    "SELECT 1 FROM "
+                        + TABLE
+                        + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
+                    preparation.source.tenantId(),
+                    preparation.source.gameInstanceId(),
+                    preparation.source.regionId())
+                != null) {
+              throw unavailable();
+            }
+            Record row =
+                transaction.fetchOne(
+                    "SELECT * FROM "
+                        + PREPARATION_TABLE
+                        + " WHERE initialization_operation_id = ? FOR UPDATE",
+                    preparation.operationId);
+            if (row == null) throw unavailable();
+            TimelinePreparation current = toTimelinePreparation(row);
+            if (!samePreparation(preparation, current)) throw unavailable();
+            if (current.phase == TimelinePreparationPhase.INSTALLED) {
+              return Optional.empty();
+            }
+            if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
+            // Lock waits and source checks cannot consume the installation deadline and still
+            // grant irreversible permission to create Redis meta.
+            if (installationBudget != null) installationBudget.check();
+            int updated =
+                transaction.execute(
+                    "UPDATE "
+                        + PREPARATION_TABLE
+                        + " SET phase = 'INITIALIZING', updated_at = ?"
+                        + " WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
+                    java.sql.Timestamp.from(now),
+                    current.operationId);
+            if (updated != 1) throw unavailable();
+            var permit =
+                new InitialInitializationPermit(current.operationId, current.sourceDigest());
+            issued.set(permit);
+            return Optional.of(permit);
+          });
+    } catch (RuntimeException failure) {
+      // The capability has not escaped this call. Revoke it before issuing no-dispatch proof.
+      // Do not recover a rolled-back or unacknowledged claim by inspecting Redis absence.
+      if (acknowledgedCommit.get() && issued.get() != null) {
+        try {
+          noWriteRecovery.accept(
+              CanonicalGameplayRegionLeaseRedisOwner.revokeUndispatchedInitialization(
+                  issued.get()));
+        } catch (RuntimeException recoveryFailure) {
+          if (failure != recoveryFailure) failure.addSuppressed(recoveryFailure);
+        }
+      }
+      throw failure;
+    }
   }
 
   /** Releases only a retained, exact, single-dispatch definitive Redis no-write result. */

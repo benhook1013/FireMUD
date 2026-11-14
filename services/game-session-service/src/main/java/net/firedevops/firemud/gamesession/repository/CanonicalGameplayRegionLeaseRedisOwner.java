@@ -471,6 +471,12 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
    * Holds the one ACL-verified connection across the SQL creation-permission claim and its sole
    * timeline EVALSHA. Closing without initialize leaves the timeline untouched.
    */
+  static InitializationNoWriteProof revokeUndispatchedInitialization(
+      CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
+    if (!Objects.requireNonNull(permit, "permit").consumeDispatch()) throw unavailable();
+    return new InitializationNoWriteProof(permit);
+  }
+
   static final class InitializationNoWriteProof {
     private final CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit;
     private final AtomicBoolean consumed = new AtomicBoolean();

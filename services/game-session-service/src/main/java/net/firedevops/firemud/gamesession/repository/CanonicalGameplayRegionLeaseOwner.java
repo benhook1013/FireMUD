@@ -43,6 +43,7 @@ final class CanonicalGameplayRegionLeaseOwner {
   static final class RetainedNoWriteRecovery {
     private boolean inUse;
     CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof;
+    CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
   }
 
   RetainedNoWriteRecovery reserveNoWriteRecovery(UUID operation) {
@@ -65,6 +66,38 @@ final class CanonicalGameplayRegionLeaseOwner {
       if (retained.proof == null) {
         noWriteRecoveries.remove(operation, retained);
       }
+    }
+  }
+
+  void retainNoWriteProof(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      RetainedNoWriteRecovery retained,
+      CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof) {
+    retained.preparation = Objects.requireNonNull(preparation, "preparation");
+    retained.proof = Objects.requireNonNull(proof, "proof");
+  }
+
+  /** Cleanup has no admission authority and remains possible after the binding was aborted. */
+  void recoverRetainedNoWriteForTransition(UUID transitionId) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    RetainedNoWriteRecovery selected = null;
+    synchronized (noWriteRecoveries) {
+      for (var retained : noWriteRecoveries.values()) {
+        if (retained.proof != null
+            && retained.preparation != null
+            && retained.preparation.transitionId().equals(transitionId)) {
+          if (retained.inUse) throw unavailable();
+          retained.inUse = true;
+          selected = retained;
+          break;
+        }
+      }
+    }
+    if (selected == null) return;
+    try {
+      recoverNoWrite(selected.preparation, selected);
+    } finally {
+      releaseNoWriteRecovery(selected.preparation.operationId(), selected);
     }
   }
 
@@ -149,6 +182,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       UUID transitionId,
       CanonicalInitialPlayerLocationRequest worldRequest) {
     requireNoAmbientTransaction();
+    recoverRetainedNoWriteForTransition(transitionId);
     if (!deadlineBoundInstallation) {
       return installForTransition(
           existingRegionInstallation,
@@ -252,14 +286,21 @@ final class CanonicalGameplayRegionLeaseOwner {
         var retained = reserveNoWriteRecovery(preparation.operationId());
         try {
           recoverNoWrite(preparation, retained);
-          Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
-              permit = statusRepository.beginInitialTimeline(preparation, clock.instant());
           var claimedPreparation = preparation;
+          Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
+              permit =
+                  statusRepository.beginInitialTimeline(
+                      preparation,
+                      clock.instant(),
+                      proof -> {
+                        retainNoWriteProof(claimedPreparation, retained, proof);
+                        recoverNoWrite(claimedPreparation, retained);
+                      });
           grant =
               session.initialize(
                   permit.orElse(null),
                   proof -> {
-                    retained.proof = proof;
+                    retainNoWriteProof(claimedPreparation, retained, proof);
                     recoverNoWrite(claimedPreparation, retained);
                   });
         } finally {

@@ -909,6 +909,203 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     assertKnownNoWriteRecovery(4);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
+  void committedClaimCompletionFailureRecoversOnlyAcknowledgedUndispatchedPermit(int mode)
+      throws Exception {
+    boolean uncertainCommit = mode == 1;
+    boolean lateWorker = mode == 2;
+    var cleanupEntered = new java.util.concurrent.CountDownLatch(1);
+    var releaseCleanup = new java.util.concurrent.CountDownLatch(1);
+    var proofReady = new java.util.concurrent.CountDownLatch(1);
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema schema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var repository = new CanonicalGameplayRegionRuntimeStatusRepository(schema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var source = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+      var preparation =
+          repository.prepareInitialTimeline(
+              provisionalEvidence(world.request()),
+              world.request(),
+              world.resolver().resolve(world.request()),
+              source,
+              incarnation,
+              redisOwner.requireTimelineAbsent(source, incarnation),
+              NOW);
+      var provider = schema.dsl().configuration().connectionProvider();
+      var originals = new java.util.IdentityHashMap<Connection, Connection>();
+      var fault = new java.util.concurrent.atomic.AtomicBoolean(true);
+      var committed = new java.util.concurrent.atomic.AtomicBoolean();
+      var failing =
+          new org.jooq.ConnectionProvider() {
+            @Override
+            public Connection acquire() {
+              Connection raw = provider.acquire();
+              Connection wrapped =
+                  (Connection)
+                      java.lang.reflect.Proxy.newProxyInstance(
+                          Connection.class.getClassLoader(),
+                          new Class<?>[] {Connection.class},
+                          (ignored, method, args) -> {
+                            try {
+                              Object result = method.invoke(raw, args);
+                              if (method.getName().equals("commit")) {
+                                committed.set(true);
+                                if (uncertainCommit && fault.compareAndSet(true, false))
+                                  throw new java.sql.SQLException(
+                                      "controlled lost commit acknowledgement");
+                              }
+                              if (!uncertainCommit
+                                  && committed.get()
+                                  && method.getName().equals("setAutoCommit")
+                                  && Boolean.TRUE.equals(args[0])
+                                  && fault.compareAndSet(true, false)) {
+                                if (lateWorker) {
+                                  cleanupEntered.countDown();
+                                  if (!releaseCleanup.await(10, TimeUnit.SECONDS))
+                                    throw new IllegalStateException(
+                                        "controlled cleanup release timed out");
+                                }
+                                throw new java.sql.SQLException(
+                                    "controlled post-commit completion failure");
+                              }
+                              return result;
+                            } catch (java.lang.reflect.InvocationTargetException failure) {
+                              throw failure.getCause();
+                            }
+                          });
+              originals.put(wrapped, raw);
+              return wrapped;
+            }
+
+            @Override
+            public void release(Connection connection) {
+              provider.release(originals.remove(connection));
+            }
+          };
+      var faultRepository =
+          new CanonicalGameplayRegionRuntimeStatusRepository(
+              DSL.using(schema.dsl().configuration().derive(failing)));
+      var proof =
+          new AtomicReference<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof>();
+      Runnable call =
+          () ->
+              assertThatThrownBy(
+                      () ->
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                              Clock.systemUTC(),
+                              Long.MAX_VALUE,
+                              budget ->
+                                  faultRepository
+                                      .forBudget(budget)
+                                      .beginInitialTimeline(
+                                          preparation,
+                                          NOW,
+                                          retained -> {
+                                            proof.set(retained);
+                                            proofReady.countDown();
+                                          })))
+                  .isInstanceOf(RuntimeException.class);
+      if (lateWorker) {
+        try (var caller = io.grpc.Context.current().withCancellation()) {
+          var returned = CompletableFuture.runAsync(() -> caller.run(call));
+          try {
+            assertThat(cleanupEntered.await(10, TimeUnit.SECONDS)).isTrue();
+            caller.cancel(new IllegalStateException("controlled caller cancellation"));
+            returned.get(5, TimeUnit.SECONDS);
+            assertThat(proof.get()).isNull();
+          } finally {
+            releaseCleanup.countDown();
+          }
+          assertThat(proofReady.await(10, TimeUnit.SECONDS)).isTrue();
+        }
+      } else {
+        call.run();
+      }
+      assertThat(committed.get()).isTrue();
+      assertThat(fault.get()).isFalse();
+      assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
+          .isEqualTo(
+              CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INITIALIZING);
+      if (uncertainCommit) {
+        assertThat(proof.get()).isNull();
+        assertThat(repository.beginInitialTimeline(preparation, NOW)).isEmpty();
+      } else {
+        assertThat(proof.get()).isNotNull();
+        var aborted = org.mockito.Mockito.mock(CanonicalGameplayBindingTransitionSnapshot.class);
+        org.mockito.Mockito.when(aborted.status())
+            .thenReturn(CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED);
+        var rejectedEvidence =
+            org.mockito.Mockito.mock(CanonicalGameplayBindingProvisionalCasEvidence.class);
+        org.mockito.Mockito.when(rejectedEvidence.transition()).thenReturn(aborted);
+        var inventory = org.mockito.Mockito.mock(CanonicalGameplayBindingInventoryRepository.class);
+        org.mockito.Mockito.when(inventory.readProvisionalCasEvidence(preparation.transitionId()))
+            .thenReturn(rejectedEvidence);
+        var cleanupIdentity =
+            new RuntimeIdentity(
+                "game-session-service",
+                "aborted-claim-cleanup",
+                "localhost",
+                NOW,
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image");
+        var owner =
+            new CanonicalGameplayRegionLeaseOwner(
+                inventory,
+                repository,
+                redisOwner,
+                incarnationSource,
+                world.resolver(),
+                cleanupIdentity,
+                Duration.ofSeconds(30),
+                Clock.systemUTC());
+        var slot = owner.reserveNoWriteRecovery(preparation.operationId());
+        owner.retainNoWriteProof(preparation, slot, proof.get());
+        owner.releaseNoWriteRecovery(preparation.operationId(), slot);
+        // Retained cleanup runs before the unchanged PROVISIONAL admission gate.
+        assertThatThrownBy(
+                () -> owner.installForTransition(preparation.transitionId(), world.request()))
+            .isInstanceOf(IllegalStateException.class);
+        org.mockito.Mockito.verify(inventory)
+            .readProvisionalCasEvidence(preparation.transitionId());
+        assertThat(slot.proof).isNull();
+        var replacement = owner.reserveNoWriteRecovery(preparation.operationId());
+        assertThat(replacement).isNotSameAs(slot);
+        owner.releaseNoWriteRecovery(preparation.operationId(), replacement);
+        assertPreparedTimelineUnchanged(schema.dsl(), repository, redis, source, preparation);
+        var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
+        assertThatThrownBy(
+                () -> repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW))
+            .isInstanceOf(IllegalStateException.class);
+        var identity =
+            new RuntimeIdentity(
+                "game-session-service",
+                "claim-completion-retry",
+                "localhost",
+                NOW,
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image");
+        try (var session =
+            redisOwner.prepareTimelineInitialization(
+                preparation, Duration.ofSeconds(30), identity)) {
+          redisOwner.verifyInitializedTimeline(session.initialize(retryPermit), preparation);
+        }
+      }
+    } finally {
+      dropSchema(schema.schema());
+    }
+  }
+
   private void assertKnownNoWriteRecovery(int mode) throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
