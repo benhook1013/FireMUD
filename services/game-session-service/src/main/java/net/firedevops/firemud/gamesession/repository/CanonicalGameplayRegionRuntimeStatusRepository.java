@@ -344,37 +344,69 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     Objects.requireNonNull(preparation, "preparation");
     Objects.requireNonNull(now, "now");
     if (proof == null || !proof.consumeFor(preparation)) throw unavailable();
-    dsl.transaction(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          lockRegionScope(transaction, preparation.tenantRegionTag);
-          Record row =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + PREPARATION_TABLE
-                      + " WHERE initialization_operation_id = ? FOR UPDATE",
-                  preparation.operationId);
-          if (row == null) throw unavailable();
-          TimelinePreparation current = toTimelinePreparation(row);
-          if (!samePreparation(preparation, current)
-              || current.phase != TimelinePreparationPhase.INITIALIZING
-              || transaction.fetchExists(
-                  DSL.selectOne()
-                      .from(DSL.table(TABLE))
-                      .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
-                      .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
-                      .and(DSL.field("region_id").eq(preparation.source.regionId()))))
-            throw unavailable();
-          int changed =
-              transaction.execute(
-                  "UPDATE "
-                      + PREPARATION_TABLE
-                      + " SET phase = 'PREPARED', updated_at = ?"
-                      + " WHERE initialization_operation_id = ? AND phase = 'INITIALIZING'",
-                  java.sql.Timestamp.from(now),
-                  preparation.operationId);
-          if (changed != 1) throw unavailable();
-        });
+    var provider = dsl.configuration().transactionProvider();
+    var guardedProvider =
+        new org.jooq.TransactionProvider() {
+          private boolean commitAttempted;
+
+          @Override
+          public void begin(org.jooq.TransactionContext context) {
+            try {
+              provider.begin(context);
+            } catch (RuntimeException failure) {
+              // No transaction body or preparation mutation has executed yet.
+              proof.restoreAfterConfirmedRollback();
+              throw failure;
+            }
+          }
+
+          @Override
+          public void commit(org.jooq.TransactionContext context) {
+            commitAttempted = true;
+            provider.commit(context);
+          }
+
+          @Override
+          public void rollback(org.jooq.TransactionContext context) {
+            provider.rollback(context);
+            // A successful rollback before any commit attempt proves the claim did not
+            // release. Never restore after an ambiguous commit, even if rollback returns.
+            if (!commitAttempted) proof.restoreAfterConfirmedRollback();
+          }
+        };
+    DSL.using(dsl.configuration().derive(guardedProvider))
+        .transaction(
+            configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              lockRegionScope(transaction, preparation.tenantRegionTag);
+              Record row =
+                  transaction.fetchOne(
+                      "SELECT * FROM "
+                          + PREPARATION_TABLE
+                          + " WHERE initialization_operation_id = ? FOR UPDATE",
+                      preparation.operationId);
+              if (row == null) throw unavailable();
+              TimelinePreparation current = toTimelinePreparation(row);
+              if (!samePreparation(preparation, current)
+                  || current.phase != TimelinePreparationPhase.INITIALIZING
+                  || transaction.fetchExists(
+                      DSL.selectOne()
+                          .from(DSL.table(TABLE))
+                          .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
+                          .and(
+                              DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
+                          .and(DSL.field("region_id").eq(preparation.source.regionId()))))
+                throw unavailable();
+              int changed =
+                  transaction.execute(
+                      "UPDATE "
+                          + PREPARATION_TABLE
+                          + " SET phase = 'PREPARED', updated_at = ?"
+                          + " WHERE initialization_operation_id = ? AND phase = 'INITIALIZING'",
+                      java.sql.Timestamp.from(now),
+                      preparation.operationId);
+              if (changed != 1) throw unavailable();
+            });
   }
 
   TimelinePreparation markRedisInitialized(
