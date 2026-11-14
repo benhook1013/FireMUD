@@ -1,5 +1,9 @@
 # Player Access and Session
 
+## Bounded region-transfer dispatch recovery qualification
+
+The private forward-only dispatch correction retains at most sixteen acknowledged PostgreSQL preparation nonces, seals only the winning nonce actually observed in Redis, and durably issues APPLY once. Reconstructed owners observe only after issuance; receipt loss, restored PREPARED state, missing execution targets, historical UUID-only rows, and uncertain SQL commit acknowledgements do not authorize replay. The 27-case physical PostgreSQL/Redis class passes, including missing-effect and restored-receipt refusal; two subsequently added commit-ack-loss and competing-owner cases also pass. Final static checks, current-parent integration, combined-tree qualification and publication remain pending. These controlled fixtures do not establish deployed storage continuity, runtime activation, or a guarantee of recovery after every pre-send failure. The canonical protocol is documented in [Game Session runtime](../../architecture/microservices/game-session-service/runtime-and-data.md).
+
 ## Target-State Authority
 
 This is a non-normative implementation tracker for player access and session. Canonical target-state authentication, admission, session, and reconnection contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, and does not redefine those contracts.

@@ -43,62 +43,254 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   @Test
-  void sealedReceiptPrototypeRecoversUnsentButNeverRecreatesLostAppliedFence() throws Exception {
+  void restoredPreparedReceiptCannotReapplyAfterDurableIssuance() throws Exception {
     try (var proof = new TransferSqlProof();
         var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
-      byte[] script;
-      try (var input =
-          getClass().getResourceAsStream("/redis/transfer-dispatch-receipt-prototype.lua")) {
-        assertThat(input).isNotNull();
-        script = input.readAllBytes();
-      }
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var item =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.capture(id).getFirst());
+      long deadline = transferDeadline();
+      proof.transfers.within(
+          deadline,
+          budget -> {
+            var before = proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+            var dispatch = proof.transfers.fenceDispatch(item, before);
+            proof
+                .capacity(proof.sql)
+                .forTransferBudget(budget)
+                .fenceForTransfer(item, dispatch, deadline);
+            return null;
+          });
+      byte[] receipt =
+          ascii(
+              "session:game:capacity-transfer-receipt:{"
+                  + item.assignment().tenantGameplayTag()
+                  + "}:"
+                  + item.execution().request().admissionAttemptId());
       var commands = connection.sync();
-      byte[][] keys = {
-        ascii("session:game:capacity-execution:{same}:prototype"),
-        ascii("session:game:capacity-transfer-receipt:{same}:prototype")
-      };
-      commands.del(keys);
-      String receiptSha = commands.scriptLoad(script);
-      String timeSha =
-          commands.scriptLoad(
-              "local t=redis.call('TIME'); return tonumber(t[1])*1000+math.floor(tonumber(t[2])/1000)");
-      java.util.function.LongSupplier redisNow =
-          () -> commands.evalsha(timeSha, io.lettuce.core.ScriptOutputType.INTEGER);
-      long cutoff = redisNow.getAsLong() + 150;
-      String id = UUID.randomUUID().toString();
-      String digest = "sha256:" + "1".repeat(64);
-      String incarnation = "sha256:" + "2".repeat(64);
-      java.util.function.Function<String, Long> invoke =
-          action ->
-              commands.evalsha(
-                  receiptSha,
-                  io.lettuce.core.ScriptOutputType.INTEGER,
-                  keys,
-                  ascii(action),
-                  ascii("exact-execution-binding"),
-                  ascii(digest),
-                  ascii(id),
-                  ascii(incarnation),
-                  ascii(Long.toString(cutoff)),
-                  ascii(Long.toString(redisNow.getAsLong() + 5000)));
-      assertThat(invoke.apply("PREPARE")).isEqualTo(1);
-      assertThat(commands.exists(keys[0])).isZero();
-      while (redisNow.getAsLong() <= cutoff) Thread.sleep(10);
-      assertThat(invoke.apply("OBSERVE")).isEqualTo(2);
-      // No in-memory one-use permission survives here: exact retained receipt is the only input.
-      assertThat(invoke.apply("APPLY")).isEqualTo(5);
-      String applied = new String(commands.hget(keys[0], ascii("state")), StandardCharsets.UTF_8);
-      assertThat(applied).isEqualTo("FENCED_INDETERMINATE");
-      assertThat(invoke.apply("APPLY")).isEqualTo(8);
-      // Even after key loss, delayed application/preparation cannot recreate either authority.
-      commands.del(keys[0]);
-      assertThat(invoke.apply("APPLY")).isEqualTo(-1);
-      assertThat(invoke.apply("PREPARE")).isEqualTo(-1);
-      assertThat(commands.exists(keys[0])).isZero();
-      commands.del(keys[1]);
-      assertThat(invoke.apply("APPLY")).isEqualTo(-1);
-      assertThat(invoke.apply("PREPARE")).isEqualTo(-1);
-      assertThat(commands.exists(keys)).isZero();
+      assertThat(new String(commands.hget(receipt, ascii("state")), StandardCharsets.US_ASCII))
+          .isEqualTo("APPLIED");
+      // Simulate same-incarnation rollback, not a detectable reset. It must never grant APPLY
+      // again.
+      commands.hset(receipt, ascii("state"), ascii("PREPARED"));
+      proof.losePhysicalExecution(item.execution());
+      String retained = proof.itemImage(id);
+      proof.recreateTransferOwners();
+      assertThatThrownBy(() -> proof.fence(item)).isInstanceOf(IllegalStateException.class);
+      assertThat(proof.physicalExecutionExists(item.execution())).isFalse();
+      assertThat(proof.itemImage(id)).isEqualTo(retained);
+      assertThatThrownBy(
+              () ->
+                  proof.sql.execute(
+                      "UPDATE game_session_region_owner_transfer_item SET fence_apply_issued=false WHERE transfer_id=?",
+                      id))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    }
+  }
+
+  @Test
+  void preparationSubmissionIsOneUseAndHistoryIsBounded() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var item =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.capture(id).getFirst());
+      long deadline = transferDeadline();
+      proof.transfers.within(
+          deadline,
+          budget -> {
+            var before = proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+            var dispatch = proof.transfers.fenceDispatch(item, before);
+            var submission = dispatch.issuePreparation();
+            assertThat(submission.takeSubmission(item, dispatch.receiptId())).isNotNull();
+            assertThatThrownBy(() -> submission.takeSubmission(item, dispatch.receiptId()))
+                .isInstanceOf(IllegalStateException.class);
+            for (int index = 1; index < 16; index++) dispatch.issuePreparation();
+            assertThatThrownBy(dispatch::issuePreparation)
+                .isInstanceOf(IllegalStateException.class);
+            return null;
+          });
+      assertThat(proof.physicalExecutionExists(item.execution())).isFalse();
+    }
+  }
+
+  @Test
+  void lostApplyIssuanceCommitAcknowledgementNeverDispatchesOrRearms() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var item =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.capture(id).getFirst());
+      var failed = new AtomicBoolean();
+      var delegate = proof.sql.configuration().connectionProvider();
+      var connections =
+          java.util.Collections.synchronizedMap(
+              new java.util.IdentityHashMap<java.sql.Connection, java.sql.Connection>());
+      var provider =
+          new org.jooq.ConnectionProvider() {
+            public java.sql.Connection acquire() {
+              var actual = delegate.acquire();
+              var proxy =
+                  (java.sql.Connection)
+                      java.lang.reflect.Proxy.newProxyInstance(
+                          java.sql.Connection.class.getClassLoader(),
+                          new Class<?>[] {java.sql.Connection.class},
+                          (object, method, args) -> {
+                            Object result;
+                            try {
+                              result = method.invoke(actual, args);
+                            } catch (java.lang.reflect.InvocationTargetException error) {
+                              throw error.getCause();
+                            }
+                            if (method.getName().equals("commit")
+                                && !failed.get()
+                                && Boolean.TRUE.equals(
+                                    proof
+                                        .sql
+                                        .fetchOne(
+                                            "SELECT fence_apply_issued FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+                                            id)
+                                        .get(0, Boolean.class))
+                                && failed.compareAndSet(false, true)) {
+                              throw new java.sql.SQLException(
+                                  "Controlled lost APPLY issuance commit acknowledgement");
+                            }
+                            return result;
+                          });
+              connections.put(proxy, actual);
+              return proxy;
+            }
+
+            public void release(java.sql.Connection connection) {
+              delegate.release(connections.remove(connection));
+            }
+          };
+      var broken =
+          new CanonicalGameplayRegionOwnerTransferRepository(
+              DSL.using(proof.sql.configuration().derive(provider)), proof.clock, proof.tags);
+      long deadline = transferDeadline();
+      assertThatThrownBy(
+              () ->
+                  broken.within(
+                      deadline,
+                      budget -> {
+                        var before =
+                            proof.receiver.observeForRegionOwnerTransfer(
+                                id, item.ordinal(), deadline);
+                        var dispatch = broken.fenceDispatch(item, before);
+                        return proof
+                            .capacity(proof.sql)
+                            .forTransferBudget(budget)
+                            .fenceForTransfer(item, dispatch, deadline);
+                      }))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(failed).isTrue();
+      assertThat(
+              proof
+                  .sql
+                  .fetchOne(
+                      "SELECT fence_apply_issued FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+                      id)
+                  .get(0, Boolean.class))
+          .isTrue();
+      assertThat(proof.physicalExecutionExists(item.execution())).isFalse();
+      String retained = proof.itemImage(id);
+      proof.recreateTransferOwners();
+      assertThatThrownBy(() -> proof.fence(item)).isInstanceOf(IllegalStateException.class);
+      assertThat(proof.itemImage(id)).isEqualTo(retained);
+      assertThat(proof.physicalExecutionExists(item.execution())).isFalse();
+    }
+  }
+
+  @Test
+  void competingOwnersIssueApplyExactlyOnce() throws Exception {
+    var issued = new java.util.concurrent.atomic.AtomicInteger();
+    var listener =
+        new DefaultExecuteListener() {
+          @Override
+          public void executeEnd(ExecuteContext context) {
+            if (context.sql() != null
+                && context.sql().contains("SET fence_apply_issued=true")
+                && context.rows() == 1) issued.incrementAndGet();
+          }
+        };
+    try (var proof = new TransferSqlProof(listener)) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var item =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.capture(id).getFirst());
+      var ready = new java.util.concurrent.CountDownLatch(2);
+      var start = new java.util.concurrent.CountDownLatch(1);
+      try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+        java.util.concurrent.Callable<Boolean> race =
+            () -> {
+              ready.countDown();
+              if (!start.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                throw new AssertionError("race start timed out");
+              try {
+                proof.fence(item);
+                return true;
+              } catch (IllegalStateException held) {
+                return false;
+              }
+            };
+        var first = executor.submit(race);
+        var second = executor.submit(race);
+        assertThat(ready.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        start.countDown();
+        boolean firstCompleted = first.get(15, java.util.concurrent.TimeUnit.SECONDS);
+        boolean secondCompleted = second.get(15, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(firstCompleted || secondCompleted).isTrue();
+      }
+      assertThat(issued.get()).isEqualTo(1);
+      assertThat(proof.physicalExecutionExists(item.execution())).isTrue();
+      assertThat(proof.itemImage(id)).contains("\"fence_apply_issued\": true");
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void sealedDispatchRestartRecoversNeverSentButPreservesAppliedThenLost(boolean appliedThenLost)
+      throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var item =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.capture(id).getFirst());
+      long deadline = transferDeadline();
+      proof.transfers.within(
+          deadline,
+          budget -> {
+            var before = proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+            var dispatch = proof.transfers.fenceDispatch(item, before);
+            if (appliedThenLost) {
+              proof
+                  .capacity(proof.sql)
+                  .forTransferBudget(budget)
+                  .fenceForTransfer(item, dispatch, deadline);
+              assertThat(proof.physicalExecutionExists(item.execution())).isTrue();
+              proof.losePhysicalExecution(item.execution());
+            }
+            return null;
+          });
+      String retained = proof.itemImage(id);
+      proof.recreateTransferOwners();
+      if (appliedThenLost) {
+        assertThatThrownBy(() -> proof.fence(item)).isInstanceOf(IllegalStateException.class);
+        assertThat(proof.physicalExecutionExists(item.execution())).isFalse();
+        assertThat(proof.itemImage(id)).isEqualTo(retained);
+      } else {
+        proof.fence(item);
+        assertThat(proof.physicalExecutionExists(item.execution())).isTrue();
+        assertThat(proof.itemImage(id)).doesNotContain("\"fence_readback\": null");
+      }
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
     }
   }
 
@@ -979,7 +1171,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
             var before = proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
             var dispatch = proof.transfers.fenceDispatch(item, before);
             var competing = proof.transfers.fenceDispatch(item, before);
-            assertThat(competing.takeSubmission(item)).isNull();
+            assertThat(competing.hasReceipt(item)).isTrue();
             var owner = proof.capacity(proof.sql).forTransferBudget(budget);
             owner.fenceForTransfer(item, dispatch, deadline);
             return null;

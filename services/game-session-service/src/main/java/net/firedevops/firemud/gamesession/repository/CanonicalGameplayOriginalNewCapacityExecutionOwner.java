@@ -792,6 +792,33 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (budget == null)
       return within(deadline, owner -> owner.fenceForTransfer(item, dispatch, deadline));
     budget.check();
+    if (dispatch.hasReceipt(item)) {
+      var execution = item.execution();
+      Record retained = find(sql(), execution);
+      if (retained == null) throw unavailable();
+      exact(retained, execution);
+      CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+          sql(), execution, item.assignment().tenantGameplayTag());
+      var finalOwner = scopedFinalOwner();
+      if (!dispatch.sealed()) {
+        var prepared =
+            finalOwner.prepareTransferReceipt(
+                execution, item.candidate(), item.assignment(), dispatch, deadline);
+        dispatch.seal(prepared);
+      }
+      long result =
+          finalOwner.applyTransferReceipt(
+              execution, item.candidate(), item.assignment(), dispatch, deadline);
+      if (result == CAPACITY_EXECUTION_COMMITTED_OBSERVED) {
+        retainCommittedBeforeCleanup(execution.request(), execution.reservation(), deadline);
+      } else if (result == CAPACITY_EXECUTION_CLOSED_OBSERVED) {
+        if ("CLOSED".equals(retained.get("status", String.class)))
+          readExact(execution.request(), execution.reservation(), false);
+        else closeOriginalAttempt(execution.request(), execution.reservation());
+      } else if (result != CAPACITY_EXECUTION_FENCED_INDETERMINATE
+          && result != CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED) throw unavailable();
+      return readTransferFence(item, deadline);
+    }
     UUID dispatchId = dispatch.takeSubmission(item);
     if (dispatchId == null) {
       // A prior one-use dispatch may have observed a terminal hash before SQL retention.
