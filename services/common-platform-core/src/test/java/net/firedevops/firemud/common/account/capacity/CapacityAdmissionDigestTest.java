@@ -297,6 +297,59 @@ class CapacityAdmissionDigestTest {
   }
 
   @Test
+  void originalExecutionPreservesAndEscapesOpaqueRuntimeOwnerIdentity() throws Exception {
+    Request request = CapacityAdmissionTestFixture.playerRequest();
+    var reservation =
+        new TenantCapacityAdmission.Result(
+            request.identity(),
+            request.admissionAttemptId(),
+            request.capacityRearmFence(),
+            request.mutationDigest(),
+            UUID.fromString("b1111111-1111-4111-8111-111111111111"),
+            1,
+            request.evidence().expiresAt(),
+            TenantCapacityAdmission.State.RESERVED,
+            request.evidence().snapshotIdentity(),
+            request.evidence().evaluationIdentity());
+    for (String owner :
+        List.of("owner-1", "game-session/worker α", "worker\"\\α", "😀".repeat(120))) {
+      var execution =
+          new OriginalNewCapacityExecution(
+              request,
+              reservation,
+              request.identity().admissionId(),
+              "sha256:" + "a".repeat(64),
+              owner,
+              1);
+      var json = JsonMapper.builder().build().readTree(execution.canonicalBytes());
+      assertThat(json.get("selectedOwnerId").asText()).isEqualTo(owner);
+      if (owner.equals("owner-1")) {
+        // Fixed pre-change ASCII v1 vector: a serializer change must not silently rebind evidence.
+        try (var expected =
+            getClass().getResourceAsStream("/capacity/original-new-execution-v1-ascii.json")) {
+          assertThat(expected).isNotNull();
+          assertThat(execution.canonicalBytes()).containsExactly(expected.readAllBytes());
+        }
+        assertThat(execution.digest())
+            .isEqualTo("sha256:9637a55ec42dd112eea2fab0d937e0fffe9df4ead7ab31a0905e1a57646e8f7a");
+      }
+    }
+    for (String owner :
+        List.of("", " ", " owner", "owner\t", "😀".repeat(121), "bad\u0000id", "bad\uD800id")) {
+      assertThatThrownBy(
+              () ->
+                  new OriginalNewCapacityExecution(
+                      request,
+                      reservation,
+                      request.identity().admissionId(),
+                      "sha256:" + "a".repeat(64),
+                      owner,
+                      1))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
   void boundReleasedAndQuarantinedResultsCannotAuthorizeOriginalExecution() {
     Request request = CapacityAdmissionTestFixture.playerRequest();
     for (var state :

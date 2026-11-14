@@ -29,7 +29,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 final class CanonicalGameplayRegionRuntimeStatusRepository {
   private static final String TABLE = "game_session_region_runtime_status";
   private static final String PREPARATION_TABLE = "game_session_region_timeline_preparation";
-  private static final String TRANSFER_TABLE = "game_session_region_owner_transfer";
   private static final String FENCE_SEQUENCE = "game_session_region_executor_fence_seq";
   private final DSLContext dsl;
 
@@ -48,17 +47,6 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   CanonicalGameplayRegionRuntimeStatusRepository forBudget(
       CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
     return new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl), budget);
-  }
-
-  static boolean hasFrozenTransfer(
-      DSLContext transaction, UUID tenantId, UUID gameId, UUID regionId) {
-    return transaction.fetchExists(
-        DSL.selectOne()
-            .from(DSL.table(TRANSFER_TABLE))
-            .where(DSL.field("tenant_id").eq(tenantId))
-            .and(DSL.field("game_instance_id").eq(gameId))
-            .and(DSL.field("region_id").eq(regionId))
-            .and(DSL.field("state").eq("FROZEN")));
   }
 
   Optional<CanonicalGameplayRegionRuntimeStatus> find(Source source) {
@@ -808,7 +796,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     }
   }
 
-  /** Installs the first durable fence for an acquired and source-bound Redis grant. */
+  /** Installs a new durable fence for an already acquired and source-bound Redis grant. */
   CanonicalGameplayRegionRuntimeStatus installOwner(
       Source source,
       long expectedRegionEpoch,
@@ -817,6 +805,26 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       String ownerService,
       String ownerInstanceId,
       Instant now) {
+    return installOwner(
+        source,
+        expectedRegionEpoch,
+        prior,
+        leaseTokenCorrelation,
+        ownerService,
+        ownerInstanceId,
+        now,
+        null);
+  }
+
+  CanonicalGameplayRegionRuntimeStatus installOwner(
+      Source source,
+      long expectedRegionEpoch,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String leaseTokenCorrelation,
+      String ownerService,
+      String ownerInstanceId,
+      Instant now,
+      CanonicalGameplayRegionOwnerTransferRepository.Completion transferProof) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(source, "source");
     requireDigest(leaseTokenCorrelation);
@@ -866,45 +874,133 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                 }
                 throw unavailable();
               }
-              // This parent keeps replacement held under the existing owner and scope locks.
-              throw unavailable();
+              if (prior == null || !current.equals(prior)) throw unavailable();
+              // Past-outcome custody remains with the original. Only exact terminal retention
+              // or privately qualified future exclusion permits this normal owner handoff.
+              // Lease expiry alone cannot satisfy either condition.
+              // Capacity authorization takes this same row lock before creating that custody.
+              if (transaction.fetchExists(
+                      DSL.selectOne()
+                          .from(
+                              DSL.table("game_session_original_new_capacity_execution")
+                                  .as("execution"))
+                          .join(
+                              DSL.table("game_session_canonical_binding_region_bridge_obligation")
+                                  .as("binding"))
+                          .on(
+                              DSL.field("binding.transition_id")
+                                  .eq(DSL.field("execution.transition_id")))
+                          .where(DSL.field("binding.tenant_id").eq(source.tenantId()))
+                          .and(DSL.field("binding.game_instance_id").eq(source.gameInstanceId()))
+                          .and(DSL.field("binding.region_id").eq(source.regionId()))
+                          .and(
+                              DSL.field("execution.status").in("INSTALL_DISPATCHED", "AUTHORIZED")))
+                  && transferProof == null) {
+                throw unavailable();
+              }
             } else if (prior != null || expectedRegionEpoch != 1L) {
               throw unavailable();
             }
 
+            if (transferProof != null) transferProof.requireFresh();
             Record fenceRow =
                 transaction.fetchOne("SELECT nextval('" + FENCE_SEQUENCE + "') AS fence");
             Long fence = fenceRow == null ? null : fenceRow.get("fence", Long.class);
             if (fence == null || fence <= 0L) throw unavailable();
-            Record installed =
-                transaction.fetchOne(
-                    "INSERT INTO "
-                        + TABLE
-                        + " (tenant_id, game_instance_id, canonical_region_id, region_id,"
-                        + " tenant_region_tag, lifecycle_epoch, lifecycle_row_version, capture_id,"
-                        + " lifecycle_request_bytes, graph_sha256, preparation_input_digest,"
-                        + " region_epoch, executor_fence,"
-                        + " lease_token_correlation, owner_service, owner_instance_id, paused,"
-                        + " last_committed_tick_id, updated_at)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, false, -1, ?)"
-                        + " ON CONFLICT (tenant_id, game_instance_id, region_id) DO NOTHING"
-                        + " RETURNING *",
-                    source.tenantId(),
-                    source.gameInstanceId(),
-                    source.canonicalRegionId(),
-                    source.regionId(),
-                    expectedTag,
-                    source.lifecycleEpoch(),
-                    source.lifecycleRowVersion(),
-                    source.captureId(),
-                    source.lifecycleRequest().canonicalBytes(),
-                    source.graphSha256(),
-                    source.preparationInputDigest(),
-                    fence,
-                    leaseTokenCorrelation,
-                    ownerService,
-                    ownerInstanceId,
-                    localDateTime(now));
+            if (transferProof != null) {
+              if (current == null) throw unavailable();
+              CanonicalGameplayRegionOwnerTransferRepository.requireAndComplete(
+                  transaction,
+                  transferProof,
+                  source,
+                  current,
+                  ownerInstanceId,
+                  fence,
+                  leaseTokenCorrelation);
+            } else if (current != null
+                && CanonicalGameplayRegionOwnerTransferRepository.frozen(
+                    transaction,
+                    current.tenantId(),
+                    current.gameInstanceId(),
+                    current.regionId())) {
+              CanonicalGameplayRegionOwnerTransferRepository.completeTerminalOnly(
+                  transaction, current, ownerInstanceId, fence, leaseTokenCorrelation);
+            }
+            Record installed;
+            if (current == null) {
+              if (expectedRegionEpoch != 1L) throw unavailable();
+              installed =
+                  transaction.fetchOne(
+                      "INSERT INTO "
+                          + TABLE
+                          + " (tenant_id, game_instance_id, canonical_region_id, region_id,"
+                          + " tenant_region_tag, lifecycle_epoch, lifecycle_row_version, capture_id,"
+                          + " lifecycle_request_bytes, graph_sha256, preparation_input_digest,"
+                          + " region_epoch, executor_fence,"
+                          + " lease_token_correlation, owner_service, owner_instance_id, paused,"
+                          + " last_committed_tick_id, updated_at)"
+                          + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, false, -1, ?)"
+                          + " ON CONFLICT (tenant_id, game_instance_id, region_id) DO NOTHING"
+                          + " RETURNING *",
+                      source.tenantId(),
+                      source.gameInstanceId(),
+                      source.canonicalRegionId(),
+                      source.regionId(),
+                      expectedTag,
+                      source.lifecycleEpoch(),
+                      source.lifecycleRowVersion(),
+                      source.captureId(),
+                      source.lifecycleRequest().canonicalBytes(),
+                      source.graphSha256(),
+                      source.preparationInputDigest(),
+                      fence,
+                      leaseTokenCorrelation,
+                      ownerService,
+                      ownerInstanceId,
+                      localDateTime(now));
+            } else {
+              installed =
+                  transaction.fetchOne(
+                      "UPDATE "
+                          + TABLE
+                          + " SET executor_fence = ?, lease_token_correlation = ?,"
+                          + " owner_service = ?, owner_instance_id = ?, updated_at = ?"
+                          + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
+                          + " AND tenant_region_tag = ? AND canonical_region_id = ?"
+                          + " AND lifecycle_epoch = ? AND lifecycle_row_version = ?"
+                          + " AND capture_id = ? AND lifecycle_request_bytes = ?"
+                          + " AND graph_sha256 = ?"
+                          + " AND preparation_input_digest = ? AND region_epoch = ?"
+                          + " AND executor_fence = ? AND lease_token_correlation = ?"
+                          + " AND owner_service = ? AND owner_instance_id = ? AND paused = ?"
+                          + " AND last_committed_tick_id = ?"
+                          + " AND last_committed_tick_batch_id IS NOT DISTINCT FROM ?"
+                          + " RETURNING *",
+                      fence,
+                      leaseTokenCorrelation,
+                      ownerService,
+                      ownerInstanceId,
+                      localDateTime(now),
+                      current.tenantId(),
+                      current.gameInstanceId(),
+                      current.regionId(),
+                      current.tenantRegionTag(),
+                      current.canonicalRegionId(),
+                      current.lifecycleEpoch(),
+                      current.lifecycleRowVersion(),
+                      current.captureId(),
+                      current.lifecycleRequest().canonicalBytes(),
+                      current.graphSha256(),
+                      current.preparationInputDigest(),
+                      current.regionEpoch(),
+                      current.executorFence().longValueExact(),
+                      current.leaseTokenCorrelation(),
+                      current.ownerService(),
+                      current.ownerInstanceId(),
+                      current.paused(),
+                      current.lastCommittedTickId(),
+                      current.lastCommittedTickBatchId());
+            }
             if (installed == null) throw unavailable();
             CanonicalGameplayRegionRuntimeStatus result = toStatus(installed);
             if (!matchesSource(result, source)
@@ -914,6 +1010,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                 || !result.tenantRegionTag().equals(expectedTag)) {
               throw unavailable();
             }
+            if (transferProof != null) transferProof.requireFresh();
             return result;
           });
     } catch (RuntimeException failure) {

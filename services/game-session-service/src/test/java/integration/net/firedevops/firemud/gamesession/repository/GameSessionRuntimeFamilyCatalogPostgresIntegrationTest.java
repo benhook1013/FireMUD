@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(20);
+      assertThat(catalog.catalogEpoch()).isEqualTo(22);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -210,7 +210,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.8",
               "catalog-installation:1065.0.9",
               "catalog-installation:1065.0.10",
-              "catalog-installation:1065.0.11")
+              "catalog-installation:1065.0.11",
+              "catalog-installation:1065.0.12",
+              "catalog-installation:1065.0.13")
           .noneMatch(
               identity ->
                   identity.contains(":1057:")
@@ -232,7 +234,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       || identity.contains(":1065.0.8:")
                       || identity.contains(":1065.0.9:")
                       || identity.contains(":1065.0.10:")
-                      || identity.contains(":1065.0.11:"));
+                      || identity.contains(":1065.0.11:")
+                      || identity.contains(":1065.0.12:")
+                      || identity.contains(":1065.0.13:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -775,7 +779,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(20);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(22);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -930,7 +934,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.8",
             "1065.0.9",
             "1065.0.10",
-            "1065.0.11")) {
+            "1065.0.11",
+            "1065.0.12",
+            "1065.0.13")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -978,7 +984,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.8",
             "1065.0.9",
             "1065.0.10",
-            "1065.0.11")) {
+            "1065.0.11",
+            "1065.0.12",
+            "1065.0.13")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "
@@ -1893,6 +1901,38 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
+  void opaqueRuntimeOwnerIdentityUpgradePreservesRetainedRowsAndCatalogEvidence() {
+    try (Fixture f = fixture("1065.0.11")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      var before = f.rows(f.tables());
+      before.remove(f.history);
+      before.remove(EPOCHS);
+      var history = f.historyRows(false);
+      var evidence = f.evidence(original.request());
+      migration(f.source, f.schema, f.history, "1065.0.12").migrate();
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.historyRows(false).subList(0, history.size())).isEqualTo(history);
+      assertThat(f.historyRows(false)).hasSize(history.size() + 1);
+      assertThat(f.evidence(original.request())).isEqualTo(evidence);
+      assertThat(f.dsl.fetchSingle("SELECT max(catalog_epoch) FROM " + EPOCHS).get(0, Long.class))
+          .isEqualTo(21L);
+      for (String table :
+          List.of(
+              "game_session_original_new_capacity_execution",
+              "game_session_capacity_evidence_charge")) {
+        var definition =
+            f.dsl
+                .fetchSingle(
+                    "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='selected_owner_id' WHERE c.conrelid=?::regclass AND c.contype='c' AND c.conkey=ARRAY[a.attnum]::smallint[]",
+                    table)
+                .get(0, String.class);
+        assertThat(definition).contains("btrim").doesNotContain("A-Za-z0-9");
+      }
+    }
+  }
+
+  @Test
   void capacityClosureReceiptLookupUpgradePreservesPopulatedCatalogAtEpochNineteen() {
     try (Fixture f = fixture("1065.0.9")) {
       assertCapacityCatalogGuardUpgrade(
@@ -1922,6 +1962,21 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           Map.of(
               "game_session_region_owner_transfer_item.gs_region_fence_receipt_dispatch_incarnation",
               List.of("fence_dispatch_incarnation")),
+          Map.of());
+    }
+  }
+
+  @Test
+  void projectionRepairUpgradePreservesPopulatedCatalogAtEpochTwentyTwo() {
+    try (Fixture f = fixture("1065.0.12")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.13",
+          21,
+          "V1065.0.13__repair_frozen_required_member_projection.sql",
+          Map.of(),
+          Map.of(),
+          Map.of(),
           Map.of());
     }
   }
