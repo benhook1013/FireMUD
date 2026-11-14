@@ -96,7 +96,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 .dsl()
                 .resultQuery(
                     "SELECT count(*) FROM flyway_schema_history "
-                        + "WHERE version::numeric BETWEEN 74 AND 98 AND success")
+                        + "WHERE version IN (SELECT generate_series(74, 98)::text) AND success")
                 .fetchOne(0, Long.class))
         .isEqualTo(25L);
 
