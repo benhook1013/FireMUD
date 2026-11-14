@@ -449,8 +449,8 @@ final class CanonicalGameplayRegionLeaseOwner {
               session.initialize(
                   permit.orElse(null),
                   proof -> {
-                    retainNoWriteProof(claimedPreparation, retained, proof);
-                    recoverNoWrite(claimedPreparation, retained);
+                    retainNoWriteProof(initializationPreparation, retained, proof);
+                    recoverNoWrite(initializationPreparation, retained);
                   });
         } finally {
           releaseNoWriteRecovery(preparation.operationId(), retained);
