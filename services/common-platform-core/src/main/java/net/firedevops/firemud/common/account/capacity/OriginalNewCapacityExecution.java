@@ -20,24 +20,30 @@ public record OriginalNewCapacityExecution(
     String selectedOwnerId,
     long selectedOwnerFence) {
   public OriginalNewCapacityExecution {
-    Objects.requireNonNull(request).requireCommittable();
+    requireOriginalNewRequest(request);
     Objects.requireNonNull(reservation).requireBinding(request);
     TenantCapacityAdmission.uuid(transitionId);
     if (selectedOwnerId == null || !selectedOwnerId.matches("[A-Za-z0-9._:-]{1,120}"))
       throw new IllegalArgumentException("Exact selected owner instance required");
-    if (!(request.context() instanceof TenantCapacityAdmission.PlayerContext player)
-        || !"SHARED".equals(player.playableStateScope())
-        || request.operation() != TenantCapacityAdmission.Operation.CAPACITY_CREATING
-        || !Long.valueOf(1).equals(request.capacityDelta())
-        || !request.priorShape().equals(new TenantCapacityAdmission.Shape(0, 0, 0))
-        || !request.requestedShape().equals(new TenantCapacityAdmission.Shape(1, 0, 0))
-        || (reservation.state() != TenantCapacityAdmission.State.RESERVED
+    if ((reservation.state() != TenantCapacityAdmission.State.RESERVED
             && reservation.state() != TenantCapacityAdmission.State.FINALIZED)
         || !request.identity().admissionId().equals(transitionId)
         || selectedOwnerFence <= 0
         || candidateDigest == null
         || !candidateDigest.matches("sha256:[0-9a-f]{64}"))
       throw new IllegalArgumentException("Exact original NEW capacity execution required");
+  }
+
+  public static void requireOriginalNewRequest(TenantCapacityAdmission.Request request) {
+    Objects.requireNonNull(request).requireCommittable();
+    if (!(request.context() instanceof TenantCapacityAdmission.PlayerContext player)
+        || !"SHARED".equals(player.playableStateScope())
+        || request.operation() != TenantCapacityAdmission.Operation.CAPACITY_CREATING
+        || !Long.valueOf(1).equals(request.capacityDelta())
+        || !request.priorShape().equals(new TenantCapacityAdmission.Shape(0, 0, 0))
+        || !request.requestedShape().equals(new TenantCapacityAdmission.Shape(1, 0, 0))) {
+      throw new IllegalArgumentException("Exact original NEW capacity request required");
+    }
   }
 
   /** All strings have closed grammars; the complete canonical attempt includes Account evidence. */

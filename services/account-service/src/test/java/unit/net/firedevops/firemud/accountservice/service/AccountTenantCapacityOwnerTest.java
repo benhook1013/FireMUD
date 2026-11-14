@@ -80,15 +80,14 @@ class AccountTenantCapacityOwnerTest {
         request.requireCommittable();
         TransactionSynchronizationManager.setActualTransactionActive(true);
         try {
-          assertThatThrownBy(
-                  () ->
-                      new AccountTenantCapacityRepository(dsl)
-                          .create(
-                              request,
-                              request.evidence().expiresAt(),
-                              Clock.fixed(request.evidence().evaluatedAt(), ZoneOffset.UTC)))
+          assertThat(
+                  new AccountTenantCapacityRepository(dsl)
+                      .createIfQuotaAvailable(
+                          request,
+                          request.evidence().expiresAt(),
+                          Clock.fixed(request.evidence().evaluatedAt(), ZoneOffset.UTC)))
               .as(vector.path("name").asText())
-              .hasMessage(vector.path("expected").asText());
+              .isEmpty();
           verify(dsl, never()).execute(anyString(), any(Object[].class));
         } finally {
           TransactionSynchronizationManager.setActualTransactionActive(false);
@@ -114,7 +113,7 @@ class AccountTenantCapacityOwnerTest {
     assertThatThrownBy(
             () ->
                 new AccountTenantCapacityRepository(dsl)
-                    .create(request, request.evidence().expiresAt(), clock))
+                    .createIfQuotaAvailable(request, request.evidence().expiresAt(), clock))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
             failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
@@ -128,6 +127,35 @@ class AccountTenantCapacityOwnerTest {
     var result = f.owner.commit(f.request, f.request.evidence().callerWorkload());
     assertThat(result.reservationId()).isEqualTo(f.reservation);
     assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload())).isEqualTo(result);
+    verifyNoInteractions(f.accounts, f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void genericNoAcceptCannotReplayAsQuotaDenial() throws Exception {
+    var f = new Fixture(false);
+    f.existing = false;
+    Record genericRefusal = mock(Record.class);
+    UUID decisionId = UUID.randomUUID();
+    when(genericRefusal.get("tenant_uuid", UUID.class)).thenReturn(f.request.identity().tenantId());
+    when(genericRefusal.get("request_id", UUID.class)).thenReturn(f.request.identity().requestId());
+    when(genericRefusal.get("admission_id", UUID.class))
+        .thenReturn(f.request.identity().admissionId());
+    when(genericRefusal.get("admission_attempt_id", UUID.class))
+        .thenReturn(f.request.admissionAttemptId());
+    when(genericRefusal.get("mutation_digest", String.class))
+        .thenReturn(f.request.mutationDigest());
+    when(genericRefusal.get("canonical_payload", byte[].class))
+        .thenReturn(CapacityAdmissionDigest.preimage(f.request));
+    when(genericRefusal.get("decision", String.class)).thenReturn("NO_ACCEPT");
+    when(genericRefusal.get("decision_id", UUID.class)).thenReturn(decisionId);
+    when(genericRefusal.get("refusal_code", String.class)).thenReturn(null);
+    f.originDecision = genericRefusal;
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.IDEMPOTENCY_CONFLICT));
     verifyNoInteractions(f.accounts, f.memberships, f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
@@ -450,6 +478,7 @@ class AccountTenantCapacityOwnerTest {
     private final AccountTenantCapacityOwner owner;
     private boolean existing = true;
     private boolean retained;
+    private Record originDecision;
 
     private Fixture(boolean expired) throws Exception {
       this(expired, CapacityAdmissionTestFixture.playerRequest());
@@ -509,6 +538,8 @@ class AccountTenantCapacityOwnerTest {
                 String sql = invocation.getArgument(0, String.class);
                 if (sql.startsWith("SELECT * FROM account_tenant_capacity_reservations "))
                   return existing ? row : null;
+                if (sql.startsWith("SELECT * FROM account_capacity_origin_decisions "))
+                  return originDecision;
                 if (sql.startsWith(
                     "SELECT snapshot_identity FROM account_tenant_capacity_evaluations "))
                   return evaluation;
