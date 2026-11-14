@@ -8,10 +8,11 @@
     "build": "tsc -b && vite build",
     "lint": "node ./node_modules/eslint/bin/eslint.js .",
     "preview": "vite preview",
-    "format": "prettier --check \"src/**/*.{ts,tsx}\"",
-    "format:fix": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "format": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.mjs\"",
+    "format:fix": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.mjs\"",
     "accessibility": "npm run build && npx serve dist -l 5000 & npx wait-on http://localhost:5000/index.html && npx axe http://localhost:5000/index.html --chrome-options=\"--no-sandbox\" --exit",
-    "test:checkout": "vitest run src/billing/HostingFirstInvoiceCheckout.test.tsx src/api/hostingFirstInvoice.test.ts src/api/accountControlUi.test.ts src/account/controlUiSession.test.ts src/account/AccountCheckoutRoute.test.tsx"
+    "test:checkout": "vitest run src/billing/HostingFirstInvoiceCheckout.test.tsx src/api/hostingFirstInvoice.test.ts src/api/accountControlUi.test.ts src/account/controlUiSession.test.ts src/account/AccountCheckoutRoute.test.tsx",
+    "test:email-link": "node --experimental-strip-types --test tests/email-link.test.mjs"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

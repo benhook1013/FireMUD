@@ -292,23 +292,37 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         assertThat(wrongOwner.body())
             .doesNotContain(tuple.path("invoiceId").asText(), "clientSecret", PASSWORD);
 
-        // The fixture uses fixed 60-second windows. If setup crossed a window boundary, the
-        // first phase's source failures may have expired; keep issuing fresh requests until this
-        // distinct candidate reaches its bounded threshold in one window.
-        denied.put("email", account.getEmail());
-        HttpResponse<String> throttled = null;
-        for (int attempt = 0; attempt < 8; attempt++) {
-          denied.put("requestId", UUID.randomUUID());
-          var response = receiving.request("POST", "/api/account/auth/login", null, denied);
-          if (response.statusCode() == 429) {
-            throttled = response;
-            break;
-          }
-          assertThat(response.statusCode()).isEqualTo(401);
+        // The fixture owns a unique policy scope with real 60-second fixed windows. Start a
+        // new window so earlier source/candidate failures cannot supply threshold credit.
+        long windowMillis = Duration.ofSeconds(60).toMillis();
+        long previousWindow = Math.floorDiv(System.currentTimeMillis(), windowMillis);
+        long windowWaitDeadline = System.nanoTime() + Duration.ofSeconds(65).toNanos();
+        while (Math.floorDiv(System.currentTimeMillis(), windowMillis) <= previousWindow) {
+          assertThat(System.nanoTime()).isLessThan(windowWaitDeadline);
+          Thread.sleep(25);
         }
-        assertThat(throttled)
-            .as("Shared Cache throttles within the bounded retry phase")
-            .isNotNull();
+        long failureWindow = Math.floorDiv(System.currentTimeMillis(), windowMillis);
+        long failurePhaseDeadline = System.nanoTime() + Duration.ofSeconds(50).toNanos();
+        // Admission precedes failure accounting: three failures populate source >= 3 and
+        // candidate >= 2, and only the following new request is throttled.
+        for (int failure = 0; failure < 3; failure++) {
+          assertThat(System.nanoTime()).isLessThan(failurePhaseDeadline);
+          assertThat(Math.floorDiv(System.currentTimeMillis(), windowMillis))
+              .isEqualTo(failureWindow);
+          denied.put("requestId", UUID.randomUUID());
+          assertThat(
+                  receiving.request("POST", "/api/account/auth/login", null, denied).statusCode())
+              .isEqualTo(401);
+          assertThat(Math.floorDiv(System.currentTimeMillis(), windowMillis))
+              .isEqualTo(failureWindow);
+        }
+        assertThat(System.nanoTime()).isLessThan(failurePhaseDeadline);
+        denied.put("requestId", UUID.randomUUID());
+        var throttled = receiving.request("POST", "/api/account/auth/login", null, denied);
+        assertThat(Math.floorDiv(System.currentTimeMillis(), windowMillis))
+            .isEqualTo(failureWindow);
+        assertThat(System.nanoTime()).isLessThan(failurePhaseDeadline);
+        assertThat(throttled.statusCode()).isEqualTo(429);
         assertThat(throttled.headers().firstValue("retry-after")).contains("1");
         assertThat(throttled.body()).contains("AUTH_RETRY_LATER");
 

@@ -57,6 +57,35 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   private final Path temporary;
   private IssuedCreator originalCreator;
 
+  /**
+   * Explicit test-only shared-abuse owner. The caller owns its separate Cache/Rate-Limit Redis
+   * lifecycle; this fixture neither provisions it nor supplies an admitting fallback. Controlled
+   * policy/key inputs do not establish deployed authority or production activation.
+   */
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      AccountCredentialAbuseService credentialAbuse)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        UUID.randomUUID(),
+        Clock.systemUTC(),
+        null,
+        Clock.systemUTC(),
+        false,
+        Objects.requireNonNull(credentialAbuse, "Explicit shared-abuse owner required"));
+  }
+
   public AccountControlUiOriginalOrderFixture(
       String jdbcUrl,
       String username,
@@ -246,7 +275,37 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
         migrationTarget,
         serviceClock,
         ownedCompositionConnections,
-        AccountControlUiOwnerSourcesFixture.defaultCreation(gameDesignTenant));
+        (AccountCredentialAbuseService) null);
+  }
+
+  private AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock,
+      String migrationTarget,
+      Clock serviceClock,
+      boolean ownedCompositionConnections,
+      AccountCredentialAbuseService credentialAbuse)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        actorClock,
+        migrationTarget,
+        serviceClock,
+        ownedCompositionConnections,
+        AccountControlUiOwnerSourcesFixture.defaultCreation(gameDesignTenant),
+        credentialAbuse);
   }
 
   private AccountControlUiOriginalOrderFixture(
@@ -262,6 +321,37 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       Clock serviceClock,
       boolean ownedCompositionConnections,
       FreshTenantCreationEvidence creationEvidence)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        actorClock,
+        migrationTarget,
+        serviceClock,
+        ownedCompositionConnections,
+        creationEvidence,
+        null);
+  }
+
+  private AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock,
+      String migrationTarget,
+      Clock serviceClock,
+      boolean ownedCompositionConnections,
+      FreshTenantCreationEvidence creationEvidence,
+      AccountCredentialAbuseService credentialAbuse)
       throws Exception {
     this.temporary = temporary;
     Objects.requireNonNull(actorClock, "actorClock");
@@ -282,7 +372,10 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     try {
       allocatedAbuseKey = new DigestKey("fixture-key", new byte[32]);
       credentialAbuseKey = allocatedAbuseKey;
-      credentialAbuse = testCredentialAbuseService(credentialAbuseKey);
+      this.credentialAbuse =
+          credentialAbuse != null
+              ? credentialAbuse
+              : testCredentialAbuseService(credentialAbuseKey);
       signerFixture = new AccountControlUiSignerFixture(f, temporary, serviceClock);
       var lifecycle = signerFixture;
       lifecycle.commit();
@@ -376,7 +469,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       issuance =
           new AccountControlUiIssuanceService(
               f.primary,
-              credentialAbuse,
+              this.credentialAbuse,
               operations,
               f.authority,
               f.fences,

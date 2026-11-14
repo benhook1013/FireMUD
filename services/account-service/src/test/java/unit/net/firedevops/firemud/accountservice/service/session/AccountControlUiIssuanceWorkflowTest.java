@@ -265,6 +265,85 @@ class AccountControlUiIssuanceWorkflowTest {
   }
 
   @Test
+  void changedOriginalSourceDeniesReplayWithoutRecapturingOrTerminalizing() {
+    Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    var original = fixture.existing();
+    var changed = fixture.tenantSource();
+    when(changed.evidence()).thenReturn(new byte[] {99});
+    when(fixture.authority.capture(original.accountId, original.tenantId, fixture.environment))
+        .thenReturn(changed);
+
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .service()
+                      .issue(
+                          fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
+                          fixture.environment))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Control-ui original issuance/current recovery unavailable");
+    }
+    verify(fixture.operations, never()).beginRecoveryFailure(any());
+    verify(fixture.authority, never()).captureInitial(any(), any());
+    verifyNoInteractions(fixture.registry, fixture.primary, fixture.signers);
+  }
+
+  @Test
+  void uncertainPreparedCommitNeverReachesSigningOrRegistry() {
+    Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    fixture.allowControlledAttempt();
+    var source = fixture.accountSource();
+    var authenticated = mock(AccountServiceImpl.ControlUiPrimaryIdentity.class);
+    when(authenticated.accountId()).thenReturn(fixture.account);
+    when(fixture.primary.authenticateControlUiPrimaryIdentity(anyString(), anyString()))
+        .thenReturn(authenticated);
+    when(fixture.authority.captureAccount(fixture.account)).thenReturn(source);
+    when(fixture.signers.captureCurrent())
+        .thenReturn(mock(AccountControlUiSignerOwner.Capture.class));
+    when(fixture.cryptography.currentKeyId()).thenReturn("test-only-mac-key");
+    when(fixture.cryptography.requestDigest(anyString(), any(byte[].class)))
+        .thenReturn("original-request-digest");
+    var prepared = fixture.storedAccount("PREPARED", fixture.recoveryExpiry, null);
+    var preparedWritten = new java.util.concurrent.atomic.AtomicBoolean();
+    when(fixture.operations.prepare(
+            any(),
+            anyString(),
+            any(),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            any(),
+            any(),
+            anyLong()))
+        .thenAnswer(
+            call -> {
+              preparedWritten.set(true);
+              return prepared;
+            });
+    var uncertain = new IllegalStateException("test-only PREPARED commit acknowledgement lost");
+    doAnswer(
+            call -> {
+              TransactionSynchronizationManager.clear();
+              if (preparedWritten.get()) throw uncertain;
+              return null;
+            })
+        .when(fixture.transactions)
+        .commit(any());
+
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> fixture.service().issueAccount(fixture.accountRequest()))
+          .isSameAs(uncertain);
+    }
+    assertThat(preparedWritten).isTrue();
+    verify(fixture.signers, never()).sign(any(), any(), any());
+    verify(fixture.operations, never()).bindCandidate(any(), anyString(), any(), any(), any());
+    verify(fixture.operations, never()).beginRecoveryFailure(any());
+    verifyNoInteractions(fixture.registry, fixture.actors);
+  }
+
+  @Test
   void committedRecoveryReturnsTheExactOriginalCredentialWithoutPrimaryAuthenticationOrSigning() {
     Fixture fixture = new Fixture(NOW.plusSeconds(30));
     byte[] exactCredential = "test-only-original-compact-jwt".getBytes(StandardCharsets.US_ASCII);

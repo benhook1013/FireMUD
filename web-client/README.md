@@ -50,3 +50,15 @@ The accessibility audit depends on Google Chrome. See [Developer Setup](../DEVEL
 - Treat this module as FireMUD application code, not a generic Vite template.
 - Keep browser auth/session handling aligned with the canonical architecture docs.
 - When frontend architecture changes, update both this README and the high-level docs in `design/architecture/`.
+
+## Account email links
+
+`/verify-email#token=…` and `/reset-password#token=…` capture and scrub the fragment before mounting. A user must explicitly submit the verification or new password; loading the document never dispatches a mutation. Completion uses the public Account POSTs via `/api/account/auth/`, with local Vite forwarding `/api` to Gateway on port 8080. Existing `/account/` hosting checkout routes remain separate. Run `npm run test:email-link` for the focused token, request and uncertain-result tests.
+
+The owning [Account contract](../design/architecture/microservices/account-service/api-contracts.md) defines the behavior. Hosted static delivery and browser/SMTP proof are separate from these unit tests.
+
+### Disabled static-host preparation
+
+The recovered unprivileged static image and Helm host remain default-off behind both `previewStack.enabled` and `previewStack.frontend.enabled`. Only an explicit frontend enablement selects the SPA/API/WebSocket split; existing Gateway ingress is unchanged by default. Image publication and fresh browser/edge qualification remain prerequisites to activation. Nginx logs the path without query strings, emits no-referrer, refuses reserved API/asset/WebSocket paths and uses immutable content-hash caching.
+
+The CSP permits only Stripe.js script/frame origins and its API connection needed by the existing next-action checkout adapter, following the [Stripe integration security guide](https://docs.stripe.com/security/guide#content-security-policy). It does not enable Link, Maps, Checkout-hosted or unrelated third-party scripts. These headers are prepared configuration, not deployed CSP/browser proof.
