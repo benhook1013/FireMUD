@@ -133,6 +133,29 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         deadline);
   }
 
+  /** Freeze one deadline before the composed installation performs any source or SQL work. */
+  CanonicalGameplayRegionLeaseRedisOwner forInstallation(Clock clock) {
+    // URI-less owners are the explicitly unbudgeted ordinary installation composition.
+    if (coordinationUri == null) return this;
+    Context caller = Context.current();
+    if (caller.isCancelled()) throw unavailable();
+    long remainingMillis = COMMAND_TIMEOUT_MILLIS;
+    if (caller.getDeadline() != null) {
+      remainingMillis =
+          Math.min(remainingMillis, caller.getDeadline().timeRemaining(TimeUnit.MILLISECONDS));
+    }
+    if (remainingMillis <= 0) throw unavailable();
+    long deadline;
+    try {
+      deadline = Math.addExact(clock.millis(), remainingMillis);
+    } catch (ArithmeticException invalid) {
+      throw unavailable(invalid);
+    }
+    if (handoffClock != null) deadline = Math.min(deadline, handoffDeadlineMillis);
+    if (deadline <= clock.millis()) throw unavailable();
+    return forHandoffDeadline(clock, deadline);
+  }
+
   LeaseGrant acquire(
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       long regionEpoch,
@@ -306,6 +329,71 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
               CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
       }
       throw unavailable(failure);
+    }
+  }
+
+  /** Recovers the same live first-owner grant; never acquires or replaces a lease. */
+  LeaseGrant readRetainedInitialGrant(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      CanonicalGameplayRegionRuntimeStatus status,
+      RuntimeIdentity identity) {
+    requireNoAmbientTransaction();
+    if (status.paused()
+        || status.regionEpoch() != 1L
+        || preparation.regionEpoch() != 1L
+        || !requireOwnerService(identity).equals(status.ownerService())
+        || !requireOwnerInstance(identity).equals(status.ownerInstanceId())
+        || !Objects.equals(preparation.leaseTokenCorrelation(), status.leaseTokenCorrelation())) {
+      throw unavailable();
+    }
+    if (handoffClock != null) {
+      return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          handoffClock,
+          handoffDeadlineMillis,
+          budget -> readRetainedInitialGrant(preparation, status, budget));
+    }
+    return readRetainedInitialGrant(
+        preparation, status, (CanonicalGameplayOriginalNewCapacityExecutionBudget) null);
+  }
+
+  private LeaseGrant readRetainedInitialGrant(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      CanonicalGameplayRegionRuntimeStatus status,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    StatefulRedisConnection<byte[], byte[]> connection = null;
+    byte[] tokenBytes = null;
+    try {
+      connection =
+          budget == null ? redisClient.connect(ByteArrayCodec.INSTANCE) : openConnection(budget);
+      var commands = connection.async();
+      requirePrincipal(await(commands::aclWhoami, budget));
+      var source = preparation.source();
+      byte[] key =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  source.tenantId(), source.gameInstanceId(), source.regionId()));
+      tokenBytes = await(() -> commands.get(key), budget);
+      Long ttl = await(() -> commands.pttl(key), budget);
+      if (tokenBytes == null || tokenBytes.length != 36 || ttl == null || ttl <= 0)
+        throw unavailable();
+      String token = new String(tokenBytes, StandardCharsets.US_ASCII);
+      UUID parsed = UUID.fromString(token);
+      if (!parsed.toString().equals(token) || parsed.equals(new UUID(0L, 0L))) throw unavailable();
+      var grant =
+          new LeaseGrant(
+              source, status.regionEpoch(), token, status.ownerService(), status.ownerInstanceId());
+      if (!grant.tokenCorrelation().equals(status.leaseTokenCorrelation())) throw unavailable();
+      return grant;
+    } catch (RuntimeException failure) {
+      throw unavailable(failure);
+    } finally {
+      if (tokenBytes != null) Arrays.fill(tokenBytes, (byte) 0);
+      if (connection != null) {
+        if (budget == null) connection.close();
+        else
+          budget.awaitAsyncClose(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+      }
     }
   }
 

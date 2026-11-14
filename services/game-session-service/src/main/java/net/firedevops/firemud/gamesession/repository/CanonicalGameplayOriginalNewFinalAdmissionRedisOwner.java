@@ -341,7 +341,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     requireNoAmbientTransaction();
     var candidate = requireSource(source);
     requireExecutionBinding(source, execution);
-    var assignment = tenantTags.assignmentForTransition(execution.transitionId());
+    var assignment =
+        tenantTags.readAssignmentForRetainedCapacityExecution(execution.transitionId());
     requireAssignment(assignment, candidate);
     String accountKey =
         ACCOUNT_PREFIX

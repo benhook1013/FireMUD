@@ -34,6 +34,7 @@ final class CanonicalGameplayRegionLeaseOwner {
   private final RuntimeIdentity runtimeIdentity;
   private final Duration leaseTtl;
   private final Clock clock;
+  private final boolean deadlineBoundInstallation;
 
   CanonicalGameplayRegionLeaseOwner(
       CanonicalGameplayBindingInventoryRepository bindingInventory,
@@ -44,6 +45,29 @@ final class CanonicalGameplayRegionLeaseOwner {
       RuntimeIdentity runtimeIdentity,
       Duration leaseTtl,
       Clock clock) {
+    this(
+        bindingInventory,
+        statusRepository,
+        redisOwner,
+        incarnationSource,
+        worldRegionResolver,
+        runtimeIdentity,
+        leaseTtl,
+        clock,
+        false);
+  }
+
+  CanonicalGameplayRegionLeaseOwner(
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      RuntimeIdentity runtimeIdentity,
+      Duration leaseTtl,
+      Clock clock,
+      boolean deadlineBoundInstallation) {
+    this.deadlineBoundInstallation = deadlineBoundInstallation;
     this.bindingInventory = Objects.requireNonNull(bindingInventory, "bindingInventory");
     this.statusRepository = Objects.requireNonNull(statusRepository, "statusRepository");
     this.redisOwner = Objects.requireNonNull(redisOwner, "redisOwner");
@@ -74,6 +98,8 @@ final class CanonicalGameplayRegionLeaseOwner {
     requireNoAmbientTransaction();
     Objects.requireNonNull(transitionId, "transitionId");
     Objects.requireNonNull(worldRequest, "worldRequest");
+    CanonicalGameplayRegionLeaseRedisOwner redisOwner =
+        deadlineBoundInstallation ? this.redisOwner.forInstallation(clock) : this.redisOwner;
     CanonicalGameplayBindingProvisionalCasEvidence evidence =
         readCurrentProvisionalEvidence(transitionId);
     ResolvedBridgeSource initialResolved = resolveExactBridgeSource(worldRequest, evidence);
@@ -89,6 +115,7 @@ final class CanonicalGameplayRegionLeaseOwner {
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
     CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant;
     boolean reusingRegionGrant = false;
+    boolean recoveringInitialGrant = false;
     if (prior == null) {
       if (existingRegionInstallation != null) throw unavailable();
       preparation = statusRepository.findTimelinePreparation(source).orElse(null);
@@ -189,13 +216,25 @@ final class CanonicalGameplayRegionLeaseOwner {
         throw unavailable();
       }
       if (existingRegionInstallation == null) {
-        // A prior owner requires normal handoff before any fresh Redis grant may be acquired.
-        throw unavailable();
+        // Only recover the exact original live grant after a lost installation completion.
+        // No new token, lease acquisition or durable executor fence is permitted here.
+        if (!sameInitializationAttempt || expectedRegionEpoch != 1L) throw unavailable();
+        grant = redisOwner.readRetainedInitialGrant(preparation, prior, runtimeIdentity);
+        redisOwner.requireCurrent(grant);
+        redisOwner.verifyInitializedTimeline(grant, preparation);
+        if (!prior.equals(
+            statusRepository
+                .find(source)
+                .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable))) {
+          throw unavailable();
+        }
+        recoveringInitialGrant = true;
+      } else {
+        requireReusableRegionGrant(
+            existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
+        grant = existingRegionInstallation.grant;
+        reusingRegionGrant = true;
       }
-      requireReusableRegionGrant(
-          existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
-      grant = existingRegionInstallation.grant;
-      reusingRegionGrant = true;
     }
     if (reusingRegionGrant) {
       redisOwner.requireGrantScope(
@@ -206,21 +245,23 @@ final class CanonicalGameplayRegionLeaseOwner {
     CanonicalGameplayRegionRuntimeStatusRepository.Source afterAcquire =
         resolveExactSource(worldRequest, readCurrentProvisionalEvidence(transitionId));
     requireSameSource(source, afterAcquire);
-    redisOwner.renew(grant, leaseTtl);
+    if (!recoveringInitialGrant) redisOwner.renew(grant, leaseTtl);
     redisOwner.requireCurrent(grant);
     requireSameIncarnation(incarnation, readCurrentIncarnation(source));
     redisOwner.verifyInitializedTimeline(grant, preparation);
 
     Instant installedAt = clock.instant();
     CanonicalGameplayRegionRuntimeStatus installed =
-        statusRepository.installOwner(
-            source,
-            expectedRegionEpoch,
-            prior,
-            grant.tokenCorrelation(),
-            grant.ownerService(),
-            grant.ownerInstanceId(),
-            installedAt);
+        recoveringInitialGrant
+            ? prior
+            : statusRepository.installOwner(
+                source,
+                expectedRegionEpoch,
+                prior,
+                grant.tokenCorrelation(),
+                grant.ownerService(),
+                grant.ownerInstanceId(),
+                installedAt);
 
     redisOwner.requireCurrent(grant);
     redisOwner.verifyInitializedTimeline(grant, preparation);

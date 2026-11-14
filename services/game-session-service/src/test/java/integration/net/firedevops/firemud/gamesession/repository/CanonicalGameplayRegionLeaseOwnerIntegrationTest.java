@@ -156,7 +156,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
 
     try (RedisFixture redis = RedisFixture.open()) {
       var redisOwner =
-          new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+          org.mockito.Mockito.spy(
+              new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog()));
       WorldFixture world = WorldFixture.open();
       ControlledStableIncarnationSource incarnationSource = new ControlledStableIncarnationSource();
       var bindingEvidence = provisionalEvidence(world.request());
@@ -286,7 +287,34 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       incarnationSource.restoreRecoveryEvidence();
       assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
 
+      var loseFirstCompletion = new java.util.concurrent.atomic.AtomicBoolean(true);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                invocation.callRealMethod();
+                if (statusRepository.find(qualifiedSource).isPresent()
+                    && loseFirstCompletion.getAndSet(false)) {
+                  throw new IllegalStateException("controlled lost first installation completion");
+                }
+                return null;
+              })
+          .when(redisOwner)
+          .requireCurrent(org.mockito.ArgumentMatchers.any());
+      assertThatThrownBy(() -> firstOwner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      var retainedFirstOwner = statusRepository.find(qualifiedSource).orElseThrow();
+      assertThat(statusRepository.findTimelinePreparation(qualifiedSource).orElseThrow().phase())
+          .isEqualTo(
+              CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                  .REDIS_INITIALIZED);
+      incarnationSource.changeStorageGeneration("changed-before-lost-completion-retry");
+      assertThatThrownBy(() -> firstOwner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(statusRepository.find(qualifiedSource).orElseThrow())
+          .isEqualTo(retainedFirstOwner);
+      incarnationSource.restoreStorageGeneration();
       var firstInstallation = firstOwner.installForTransition(TRANSITION_ID, world.request());
+      assertThat(statusRepository.find(qualifiedSource).orElseThrow())
+          .isEqualTo(retainedFirstOwner);
       var firstStatus = statusRepository.find(qualifiedSource).orElseThrow();
       assertThat(firstStatus.regionEpoch()).isEqualTo(1L);
       assertThat(firstStatus.lifecycleEpoch()).isEqualTo(7L);
