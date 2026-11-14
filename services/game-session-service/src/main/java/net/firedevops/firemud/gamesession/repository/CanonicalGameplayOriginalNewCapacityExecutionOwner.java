@@ -1065,9 +1065,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (budget == null)
       return within(
           Long.MAX_VALUE, CanonicalGameplayOriginalNewCapacityExecutionOwner::connectForRead);
+    return connectForRead(redis, budget);
+  }
+
+  /** Shared bounded connector; late physical completion retains the original budget custody. */
+  static StatefulRedisConnection<byte[], byte[]> connectForRead(
+      RedisClient redis, CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
     var opened =
         new java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>>();
-    long initialRemainingMillis = remainingMillis();
+    long initialRemainingMillis = budget.remainingMillis();
     var attempt = new ConnectAttempt(redis, opened);
     try {
       CONNECTS.execute(attempt);
@@ -1080,14 +1086,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     }
     try {
       var connection =
-          opened.get(Math.min(initialRemainingMillis, remainingMillis()), TimeUnit.MILLISECONDS);
+          opened.get(
+              Math.min(initialRemainingMillis, budget.remainingMillis()), TimeUnit.MILLISECONDS);
       if (!connection.isOpen()
           || connection.getOptions() == null
           || connection.getOptions().isAutoReconnect()) {
         throw unavailable();
       }
       // Failure before ownership is returned is disposed by the attempt's connection handoff.
-      remainingMillis();
+      budget.remainingMillis();
       return connection;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
