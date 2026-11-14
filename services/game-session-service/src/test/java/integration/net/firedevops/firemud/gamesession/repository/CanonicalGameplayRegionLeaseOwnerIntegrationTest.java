@@ -801,6 +801,62 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void leaseLostDuringFinalStatusReadCannotReturnInstallation() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema schema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var status =
+          org.mockito.Mockito.spy(new CanonicalGameplayRegionRuntimeStatusRepository(schema.dsl()));
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnation = new ControlledStableIncarnationSource();
+      var evidence = provisionalEvidence(world.request());
+      var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
+      when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
+      var source = source(world.originalEvidence());
+      var installed = new java.util.concurrent.atomic.AtomicBoolean();
+      var expired = new java.util.concurrent.atomic.AtomicBoolean();
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                Object result = invocation.callRealMethod();
+                installed.set(true);
+                return result;
+              })
+          .when(status)
+          .markTimelineInstalled(
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.any());
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                Object result = invocation.callRealMethod();
+                if (installed.get() && expired.compareAndSet(false, true)) {
+                  // Deterministically model lease expiry while the final blocking SQL read is in
+                  // flight.
+                  String key =
+                      CanonicalGameplayRegionRedisKeys.lease(
+                          source.tenantId(), source.gameInstanceId(), source.regionId());
+                  assertThat(redis.admin().pexpire(ascii(key), 0L)).isTrue();
+                }
+                return result;
+              })
+          .when(status)
+          .find(source);
+      var owner = owner(inventory, status, redisOwner, world, "lease-lost-final-read", incarnation);
+      assertThatThrownBy(() -> owner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(expired.get()).isTrue();
+      assertThat(status.findTimelinePreparation(source).orElseThrow().phase())
+          .isEqualTo(
+              CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INSTALLED);
+    } finally {
+      dropSchema(schema.schema());
+    }
+  }
+
+  @Test
   void installationDeadlineDuringSourceRecheckLeavesPreparedPermission() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();

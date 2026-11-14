@@ -840,6 +840,9 @@ final class CanonicalGameplayRegionLeaseOwner {
     if (!installed.equals(finalStatus)
         || finalStatus.paused()
         || transferOwner != null && clock.millis() >= handoffDeadline) throw unavailable();
+    // The final World/incarnation/SQL reads may outlive a short Redis lease. Recheck using
+    // the same bounded owner and original deadline; never return a stale installation grant.
+    handoffRedisOwner.requireCurrent(grant);
     return new Installation(
         transitionId, worldRequest, evidence, source, incarnation, preparation, grant, installed);
   }
