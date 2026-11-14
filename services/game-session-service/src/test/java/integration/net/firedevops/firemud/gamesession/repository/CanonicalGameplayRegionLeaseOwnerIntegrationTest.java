@@ -1318,18 +1318,14 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                                 if (context
                                                     .sql()
                                                     .contains("SET phase = 'PREPARED'")) {
-                                                  java.util.concurrent.CompletableFuture.runAsync(
-                                                          () ->
-                                                              assertThatThrownBy(
-                                                                      () ->
-                                                                          repository
-                                                                              .releaseInitialTimelineNoWrite(
-                                                                                  preparation,
-                                                                                  retained,
-                                                                                  NOW))
-                                                                  .isInstanceOf(
-                                                                      IllegalStateException.class))
-                                                      .join();
+                                                  // The exact capability is already consumed. A
+                                                  // second SQL
+                                                  // reconciliation now waits for this transaction's
+                                                  // row lock;
+                                                  // joining it here would deadlock the rollback
+                                                  // injector.
+                                                  assertThat(retained.consumeFor(preparation))
+                                                      .isFalse();
                                                   throw new IllegalStateException(
                                                       "forced SQL rollback");
                                                 }
@@ -2123,7 +2119,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .thenAnswer(ignored -> first.original.preparationInputDigest());
       when(secondEvidence.operationalRegionAssignments())
           .thenAnswer(ignored -> first.original.operationalRegionAssignments());
-      var second = new WorldFixture(secondEvidence, secondRequest);
+      // One retained owner uses one resolver, with both exact World placements routed through it.
+      var secondResponse = regionResponse(secondRequest, secondEvidence);
+      when(first.initialClient.readInitialPlayerLocationRegion(secondRequest))
+          .thenReturn(secondResponse);
+      when(first.lifecycleClient.read(secondLifecycle)).thenReturn(secondEvidence);
       assertThat(secondLifecycle.readRequestId()).isNotEqualTo(original.readRequestId());
       try (var entity = EntityReferenceFixture.open(secondRequest.getCharacterUuid())) {
         assertThatThrownBy(
@@ -2137,9 +2137,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                         first.resolver(),
                         entity.client(),
                         new CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding(
-                            second.request(),
+                            secondRequest,
                             target.playableTarget(),
-                            second.resolver(),
+                            first.resolver(),
                             entity.client(),
                             true)))
             .isInstanceOf(IllegalStateException.class)
