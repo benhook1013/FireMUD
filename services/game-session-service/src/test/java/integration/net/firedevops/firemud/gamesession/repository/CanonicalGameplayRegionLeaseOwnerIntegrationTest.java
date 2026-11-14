@@ -1273,7 +1273,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var recoveryOwner =
           new CanonicalGameplayRegionLeaseOwner(
               org.mockito.Mockito.mock(),
-              recoveryRepository,
+              mode == 4 ? recoveryRepository : repository,
               redisOwner,
               incarnationSource,
               world.resolver(),
@@ -1281,7 +1281,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               Duration.ofSeconds(30),
               Clock.systemUTC());
       var recoverySlot =
-          mode == 4 ? recoveryOwner.reserveNoWriteRecovery(preparation.operationId()) : null;
+          (mode == 3 || mode == 4)
+              ? recoveryOwner.reserveNoWriteRecovery(preparation.operationId())
+              : null;
       var permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
       try (var session =
           bounded.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
@@ -1351,6 +1353,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                         .TimelinePreparationPhase.INITIALIZING);
                           }
                           if (mode == 3) {
+                            recoverySlot.proof = retained;
                             var delegate = testSchema.dsl().configuration().transactionProvider();
                             var ambiguous =
                                 new org.jooq.TransactionProvider() {
@@ -1386,6 +1389,18 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
             .isInstanceOf(IllegalStateException.class);
       }
       assertThat(proof.get()).isNotNull();
+      if (mode == 3) {
+        // The commit reached PREPARED but its caller saw failure. The owner retains the
+        // consumed capability and reconciles durable state without restoring mutation authority.
+        assertThat(proof.get().consumedFor(preparation)).isTrue();
+        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), recoverySlot);
+        var retry = recoveryOwner.reserveNoWriteRecovery(preparation.operationId());
+        assertThat(retry).isSameAs(recoverySlot);
+        recoveryOwner.recoverNoWrite(preparation, retry);
+        assertThat(retry.proof).isNull();
+        assertThat(proof.get().consumedFor(preparation)).isTrue();
+        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), retry);
+      }
       if (mode == 4) {
         assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
             .isEqualTo(

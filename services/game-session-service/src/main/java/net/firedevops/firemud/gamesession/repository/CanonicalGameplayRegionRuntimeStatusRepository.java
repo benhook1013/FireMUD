@@ -343,7 +343,37 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     requireNoAmbientTransaction();
     Objects.requireNonNull(preparation, "preparation");
     Objects.requireNonNull(now, "now");
-    if (proof == null || !proof.consumeFor(preparation)) throw unavailable();
+    if (proof == null) throw unavailable();
+    if (!proof.consumeFor(preparation)) {
+      // A commit may have succeeded before its completion signal failed. Reconcile only an
+      // already-consumed exact capability against durable PREPARED state; never restore or
+      // re-use it to mutate a later INITIALIZING claim.
+      if (!proof.consumedFor(preparation)) throw unavailable();
+      dsl.transaction(
+          configuration -> {
+            DSLContext transaction = DSL.using(configuration);
+            lockRegionScope(transaction, preparation.tenantRegionTag);
+            Record row =
+                transaction.fetchOne(
+                    "SELECT * FROM "
+                        + PREPARATION_TABLE
+                        + " WHERE initialization_operation_id = ? FOR UPDATE",
+                    preparation.operationId);
+            if (row == null) throw unavailable();
+            TimelinePreparation current = toTimelinePreparation(row);
+            if (!samePreparation(preparation, current)
+                || current.phase != TimelinePreparationPhase.PREPARED
+                || transaction.fetchExists(
+                    DSL.selectOne()
+                        .from(DSL.table(TABLE))
+                        .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
+                        .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
+                        .and(DSL.field("region_id").eq(preparation.source.regionId())))) {
+              throw unavailable();
+            }
+          });
+      return;
+    }
     var provider = dsl.configuration().transactionProvider();
     var guardedProvider =
         new org.jooq.TransactionProvider() {
