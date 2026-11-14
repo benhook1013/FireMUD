@@ -42,6 +42,66 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
+  @Test
+  void sealedReceiptPrototypeRecoversUnsentButNeverRecreatesLostAppliedFence() throws Exception {
+    try (var proof = new TransferSqlProof();
+        var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+      byte[] script;
+      try (var input =
+          getClass().getResourceAsStream("/redis/transfer-dispatch-receipt-prototype.lua")) {
+        assertThat(input).isNotNull();
+        script = input.readAllBytes();
+      }
+      var commands = connection.sync();
+      byte[][] keys = {
+        ascii("session:game:capacity-execution:{same}:prototype"),
+        ascii("session:game:capacity-transfer-receipt:{same}:prototype")
+      };
+      commands.del(keys);
+      String receiptSha = commands.scriptLoad(script);
+      String timeSha =
+          commands.scriptLoad(
+              "local t=redis.call('TIME'); return tonumber(t[1])*1000+math.floor(tonumber(t[2])/1000)");
+      java.util.function.LongSupplier redisNow =
+          () -> commands.evalsha(timeSha, io.lettuce.core.ScriptOutputType.INTEGER);
+      long cutoff = redisNow.getAsLong() + 150;
+      String id = UUID.randomUUID().toString();
+      String digest = "sha256:" + "1".repeat(64);
+      String incarnation = "sha256:" + "2".repeat(64);
+      java.util.function.Function<String, Long> invoke =
+          action ->
+              commands.evalsha(
+                  receiptSha,
+                  io.lettuce.core.ScriptOutputType.INTEGER,
+                  keys,
+                  ascii(action),
+                  ascii("exact-execution-binding"),
+                  ascii(digest),
+                  ascii(id),
+                  ascii(incarnation),
+                  ascii(Long.toString(cutoff)),
+                  ascii(Long.toString(redisNow.getAsLong() + 5000)));
+      assertThat(invoke.apply("PREPARE")).isEqualTo(1);
+      assertThat(commands.exists(keys[0])).isZero();
+      while (redisNow.getAsLong() <= cutoff) Thread.sleep(10);
+      assertThat(invoke.apply("OBSERVE")).isEqualTo(2);
+      // No in-memory one-use permission survives here: exact retained receipt is the only input.
+      assertThat(invoke.apply("APPLY")).isEqualTo(5);
+      String applied = new String(commands.hget(keys[0], ascii("state")), StandardCharsets.UTF_8);
+      assertThat(applied).isEqualTo("FENCED_INDETERMINATE");
+      assertThat(invoke.apply("APPLY")).isEqualTo(8);
+      // Even after key loss, delayed application/preparation cannot recreate either authority.
+      commands.del(keys[0]);
+      assertThat(invoke.apply("APPLY")).isEqualTo(-1);
+      assertThat(invoke.apply("PREPARE")).isEqualTo(-1);
+      assertThat(commands.exists(keys[0])).isZero();
+      commands.del(keys[1]);
+      assertThat(invoke.apply("APPLY")).isEqualTo(-1);
+      assertThat(invoke.apply("PREPARE")).isEqualTo(-1);
+      assertThat(commands.exists(keys)).isZero();
+    }
+  }
+
   @Override
   PostgreSQLContainer<?> postgresContainer() {
     return POSTGRES;
