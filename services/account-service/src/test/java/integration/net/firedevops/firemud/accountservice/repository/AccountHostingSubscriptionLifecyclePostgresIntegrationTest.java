@@ -2042,6 +2042,94 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void signedPaymentBeforeCancellationWithoutConsentRetainsOperatorObligation() throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    UUID cancellationId = UUID.randomUUID();
+    long version =
+        in(
+            c,
+            () ->
+                checkout
+                    .payments()
+                    .ownerRowVersion(
+                        checkout.invoice().subscriptionId(), checkout.invoice().ownerAccountId()));
+    checkout.status("succeeded");
+    var signed = checkout.signedSuccess();
+    var owner =
+        new net.firedevops.firemud.accountservice.service.session
+            .AccountHostingFirstInvoicePaymentService(
+            mock(
+                net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.service.session
+                    .AccountRecentReauthenticationService.class),
+            checkout.payments(),
+            new StripeEventInboxRepository(c.dsl()),
+            checkout.provider(),
+            checkout.verifier(),
+            f.service(),
+            new DataSourceTransactionManager(c.source()));
+
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
+        .isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
+    f.transport().json = response(f, "canceled");
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    cancellationId, f.creation().requestId(), version, f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.RECONCILING);
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
+        .isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
+    assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isZero();
+    assertThat(count(c, "subscription_first_invoice_unconsented_paid_events")).isOne();
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).requestId())
+        .isEqualTo(f.creation().requestId());
+    assertThatThrownBy(
+            () ->
+                c.setup().execute("DELETE FROM subscription_first_invoice_unconsented_paid_events"))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(
+            () -> c.setup().execute("TRUNCATE subscription_first_invoice_unconsented_paid_events"))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(
+            () ->
+                c.setup()
+                    .execute(
+                        "UPDATE subscription_first_invoice_unconsented_paid_events SET event_payload_digest = 'sha256:' || repeat('0', 64)"))
+        .isInstanceOf(RuntimeException.class);
+    var second = checkout.signWebhookPayload(signed.payload().replace("evt_", "evt_distinct_"));
+    assertThat(owner.completeSigned(second.payload(), second.signature()).requestId())
+        .isEqualTo(f.creation().requestId());
+    assertThat(count(c, "subscription_first_invoice_unconsented_paid_events")).isEqualTo(2);
+    checkout.status("requires_confirmation");
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).requestId())
+        .isEqualTo(f.creation().requestId());
+    assertThatThrownBy(
+            () ->
+                checkout.prepareConfirmationDispatch(
+                    CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining("Unconsented paid invoice requires operator resolution");
+    assertThat(count(c, "subscription_first_invoice_confirmations")).isZero();
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isZero();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(checkout.confirmations()).isZero();
+  }
+
+  @Test
   void unavailableReservedInstrumentRefusesFirstInvoiceCommandWithoutClaimOrProviderPost()
       throws Exception {
     Context c = context("latest");
