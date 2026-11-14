@@ -282,7 +282,12 @@ public final class AccountHostingFirstInvoicePaymentService {
         return new Completion("OPERATOR_RECONCILIATION_REQUIRED", unconsented);
       }
       var invoice = transaction.execute(status -> payments.unconsentedCanceledInvoice(event));
-      if (invoice == null) return new Completion("IGNORED", null);
+      if (invoice == null) {
+        boolean linked =
+            Boolean.TRUE.equals(
+                transaction.execute(status -> payments.hasSignedFirstInvoiceLinkage(event)));
+        return new Completion(linked ? "RECONCILING" : "IGNORED", null);
+      }
       var observed = provider.observe(invoice);
       var outcome =
           Objects.requireNonNull(

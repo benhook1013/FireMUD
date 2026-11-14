@@ -2042,6 +2042,69 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void signedPaymentRacingCommittedConfirmationRemainsRetryable() throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var signed = checkout.signedSuccess();
+    var verified = checkout.verifier().verify(signed.payload(), signed.signature());
+    var payments = org.mockito.Mockito.spy(checkout.payments());
+    var injected = new java.util.concurrent.atomic.AtomicBoolean();
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                Object candidate = invocation.callRealMethod();
+                if (injected.compareAndSet(false, true)) {
+                  assertThat(candidate).isNull();
+                  // Independent connection commits consent after the first selector read, before
+                  // fallback.
+                  executor
+                      .submit(
+                          () ->
+                              checkout.prepareConfirmationDispatch(
+                                  CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD))
+                      .get(20, TimeUnit.SECONDS);
+                }
+                return candidate;
+              })
+          .when(payments)
+          .candidateForSignedEvent(org.mockito.ArgumentMatchers.any());
+      var owner =
+          new net.firedevops.firemud.accountservice.service.session
+              .AccountHostingFirstInvoicePaymentService(
+              mock(
+                  net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService
+                      .class),
+              mock(
+                  net.firedevops.firemud.accountservice.service.session
+                      .AccountRecentReauthenticationService.class),
+              payments,
+              new StripeEventInboxRepository(c.dsl()),
+              checkout.provider(),
+              checkout.verifier(),
+              f.service(),
+              new DataSourceTransactionManager(c.source()));
+      assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
+          .isEqualTo("RECONCILING");
+    }
+    assertThat(count(c, "subscription_first_invoice_confirmations")).isOne();
+    assertThat(count(c, "subscription_first_invoice_unconsented_paid_events")).isZero();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(in(c, () -> checkout.payments().candidateForSignedEvent(verified))).isNotNull();
+    assertThat(count(c, "stripe_event_inbox")).isOne();
+    assertThat(checkout.confirmations()).isZero();
+  }
+
+  @Test
   void signedPaymentBeforeCancellationWithoutConsentRetainsOperatorObligation() throws Exception {
     Context c = context("latest");
     Fixture f = fixture(c);
