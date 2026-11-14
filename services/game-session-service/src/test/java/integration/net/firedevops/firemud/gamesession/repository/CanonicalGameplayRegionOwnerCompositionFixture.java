@@ -962,7 +962,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     }
   }
 
-  /** Runs the real first owner chain, then exercises a second candidate under its private grant. */
+  /**
+   * Runs both candidates through one owner and its retained private grant. Both bindings must use
+   * the same resolver instance, configured to route each exact request (including deadline-aware
+   * reads). A separate preliminary resolution is not proof that the retained owner can resolve it.
+   */
   public static TwoBindingProof installAndBridgeTwoCandidates(
       DSLContext dsl,
       String redisHost,
@@ -973,6 +977,12 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalPreseededActorRuntimeReferenceClient firstEntityReferenceClient,
       SecondBinding secondBinding)
       throws Exception {
+    java.util.Objects.requireNonNull(firstWorldRegionResolver, "firstWorldRegionResolver");
+    java.util.Objects.requireNonNull(secondBinding, "secondBinding");
+    if (firstWorldRegionResolver != secondBinding.worldRegionResolver()) {
+      throw new IllegalArgumentException(
+          "Both bindings require the same resolver routing their exact World requests");
+    }
     return installAndBridgeInternal(
         dsl,
         redisHost,

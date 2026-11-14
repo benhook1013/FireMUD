@@ -472,6 +472,12 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
    * Holds the one ACL-verified connection across the SQL creation-permission claim and its sole
    * timeline EVALSHA. Closing without initialize leaves the timeline untouched.
    */
+  static InitializationNoWriteProof revokeUndispatchedInitialization(
+      CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
+    if (!Objects.requireNonNull(permit, "permit").consumeDispatch()) throw unavailable();
+    return new InitializationNoWriteProof(permit);
+  }
+
   static final class InitializationNoWriteProof {
     private final CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit;
     private final AtomicBoolean consumed = new AtomicBoolean();
@@ -479,6 +485,17 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     private InitializationNoWriteProof(
         CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
       this.permit = permit;
+    }
+
+    void restoreAfterConfirmedRollback() {
+      consumed.set(false);
+    }
+
+    boolean consumedFor(
+        CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
+      return consumed.get()
+          && permit.operationId().equals(preparation.operationId())
+          && permit.sourceDigest().equals(preparation.sourceDigest());
     }
 
     boolean consumeFor(
@@ -530,23 +547,40 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
      */
     <T> T runWithinRetainedPermit(
         Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation) {
+      return runWithinRetainedPermit(operation, ignored -> {}, new CompletableFuture<>());
+    }
+
+    <T> T runWithinRetainedPermit(
+        Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+        java.util.function.Consumer<T> undelivered,
+        CompletableFuture<Void> workLifetime) {
       Objects.requireNonNull(operation, "operation");
+      Objects.requireNonNull(undelivered, "undelivered");
+      Objects.requireNonNull(workLifetime, "workLifetime");
       CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget;
-      CompletableFuture<Void> workLifetime = new CompletableFuture<>();
-      synchronized (this) {
-        requireNoAmbientTransaction();
-        if (closed || initialized || retainedWorkInFlight) throw unavailable();
-        retainedWorkInFlight = true;
-        retainedBudget = budget;
-        if (retainedBudget != null) {
-          retainedBudget.retainUntilCompletion(workLifetime);
-          workLifetime.whenComplete(
-              (ignored, failure) -> {
-                synchronized (PreparedTimelineInitialization.this) {
-                  retainedWorkInFlight = false;
-                }
-              });
+      boolean ownsRetainedWork = false;
+      try {
+        synchronized (this) {
+          requireNoAmbientTransaction();
+          if (closed || initialized || retainedWorkInFlight) {
+            workLifetime.complete(null);
+            throw unavailable();
+          }
+          retainedWorkInFlight = true;
+          ownsRetainedWork = true;
+          retainedBudget = budget;
+          if (retainedBudget != null) {
+            retainedBudget.retainUntilCompletion(workLifetime);
+          }
         }
+      } catch (RuntimeException | Error startupFailure) {
+        if (ownsRetainedWork) {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
+        }
+        workLifetime.complete(null);
+        throw startupFailure;
       }
 
       if (retainedBudget == null) {
@@ -556,10 +590,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           synchronized (this) {
             retainedWorkInFlight = false;
           }
+          workLifetime.complete(null);
         }
       }
 
       CompletableFuture<T> result = new CompletableFuture<>();
+      CompletableFuture<Boolean> delivered = new CompletableFuture<>();
+      CompletableFuture<Void> readyForInitialization = new CompletableFuture<>();
       AtomicReference<Thread> workerReference = new AtomicReference<>();
       Context.CancellationListener listener =
           ignored -> {
@@ -596,23 +633,44 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
                         } catch (RuntimeException | Error cleanupFailure) {
                           if (failure == null) failure = cleanupFailure;
                           else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
-                        } finally {
+                        }
+                        // The worker owns any produced capability until the caller acknowledges
+                        // delivery. Timeout/cancellation never silently discards an issued claim.
+                        if (failure == null) result.complete(value);
+                        else result.completeExceptionally(failure);
+                        if (!delivered.join() && value != null) {
                           try {
-                            if (previous != null) workerContext.detach(previous);
-                          } finally {
-                            workLifetime.complete(null);
+                            undelivered.accept(value);
+                          } catch (RuntimeException | Error recoveryFailure) {
+                            if (failure == null) failure = recoveryFailure;
+                            else if (failure != recoveryFailure)
+                              failure.addSuppressed(recoveryFailure);
                           }
                         }
+                        try {
+                          if (previous != null) workerContext.detach(previous);
+                        } finally {
+                          synchronized (PreparedTimelineInitialization.this) {
+                            retainedWorkInFlight = false;
+                          }
+                          // Keep readiness separate from externally registered lifetime callbacks:
+                          // a joining caller may otherwise help execute a blocked callback.
+                          readyForInitialization.complete(null);
+                          workLifetime.complete(null);
+                        }
                       }
-                      if (failure == null) result.complete(value);
-                      else result.completeExceptionally(failure);
                     });
         workerReference.set(worker);
         caller.addListener(listener, Runnable::run);
         listenerRegistered = true;
         worker.start();
         workerStarted = true;
-        return result.get(retainedBudget.remainingNanos(), TimeUnit.NANOSECONDS);
+        T value = result.get(retainedBudget.remainingNanos(), TimeUnit.NANOSECONDS);
+        delivered.complete(true);
+        // SQL cleanup already completed before result publication; only context detachment and
+        // retained-state notification remain. Initialization must not race that notification.
+        readyForInitialization.join();
+        return value;
       } catch (InterruptedException interrupted) {
         if (worker != null) worker.interrupt();
         retainedBudget.cancel();
@@ -627,6 +685,9 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           worker.interrupt();
           retainedBudget.cancel();
         } else {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
           workLifetime.complete(null);
         }
         throw expired instanceof RuntimeException runtime ? runtime : unavailable();
@@ -635,10 +696,14 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           worker.interrupt();
           retainedBudget.cancel();
         } else {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
           workLifetime.complete(null);
         }
         throw unavailable(startupFailure);
       } finally {
+        delivered.complete(false);
         if (listenerRegistered) caller.removeListener(listener);
       }
     }
@@ -692,10 +757,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       caller.addListener(listener, Runnable::run);
       RuntimeException initializationFailure = null;
       Long outcome = null;
+      boolean dispatchInvoked = false;
       try {
         long timeout = Math.min(COMMAND_TIMEOUT_MILLIS, budget.remainingMillis());
         evalArguments[evalArguments.length - 1] =
             ascii(Long.toString(budget.absoluteDeadlineMillis()));
+        // Set before invocation: a thrown dispatch can still have unknown remote effects.
+        dispatchInvoked = true;
         RedisFuture<Long> future =
             commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, evalArguments);
         initialization.set(future);
@@ -717,10 +785,17 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
             initializationFailure.addSuppressed(disposalFailure);
         }
       }
-      // Only a completed -3 response proves no mutation. Timeout, cancellation,
-      // transport failure and Redis absence alone never mint this capability.
-      if (Long.valueOf(-3L).equals(outcome) && permit != null) {
-        noWriteRecovery.accept(new InitializationNoWriteProof(permit));
+      // A local refusal before dispatch or a completed -3 proves no mutation. Once
+      // invocation begins, timeout/cancellation/transport failure remain indeterminate.
+      if ((!dispatchInvoked || Long.valueOf(-3L).equals(outcome)) && permit != null) {
+        try {
+          noWriteRecovery.accept(new InitializationNoWriteProof(permit));
+        } catch (RuntimeException recoveryFailure) {
+          // Preserve the original failure while retaining the exact no-write proof at its owner.
+          if (initializationFailure == null) initializationFailure = recoveryFailure;
+          else if (initializationFailure != recoveryFailure)
+            initializationFailure.addSuppressed(recoveryFailure);
+        }
       }
       if (initializationFailure != null) throw unavailable(initializationFailure);
       if (outcome == null || (outcome != 1L && outcome != 2L)) throw unavailable();

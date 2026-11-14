@@ -4,7 +4,6 @@ import io.lettuce.core.RedisFuture;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
-import io.lettuce.core.codec.ByteArrayCodec;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -406,6 +405,188 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
   }
 
   /** Normal-handoff future exclusion only. A result is not an execution outcome. */
+  PreparedTransferReceipt prepareTransferReceipt(
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      CanonicalGameplayRegionOwnerTransferRepository.FenceDispatch dispatch,
+      long deadline) {
+    ReceiptResult observed =
+        receiptAction("PREPARE", execution, candidate, assignment, dispatch, deadline);
+    if (observed.code() != 1 || observed.applied()) throw unavailable();
+    return new PreparedTransferReceipt(
+        execution.digest(),
+        dispatch.receiptId(),
+        observed.nonce(),
+        dispatch.incarnationDigest(),
+        observed.applied(),
+        deadline,
+        clock);
+  }
+
+  long applyTransferReceipt(
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      CanonicalGameplayRegionOwnerTransferRepository.FenceDispatch dispatch,
+      long deadline) {
+    if (!dispatch.sealed()) throw unavailable();
+    ReceiptResult result =
+        receiptAction("APPLY_ONCE", execution, candidate, assignment, dispatch, deadline);
+    if (!result.applied()) throw unavailable();
+    return result.code();
+  }
+
+  private ReceiptResult receiptAction(
+      String action,
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      CanonicalGameplayRegionOwnerTransferRepository.FenceDispatch dispatch,
+      long deadline) {
+    requireNoAmbientTransaction();
+    if (scopedConnection == null)
+      return withinConnectionBudget(
+          deadline,
+          owner ->
+              owner.receiptAction(action, execution, candidate, assignment, dispatch, deadline));
+    requireAssignment(assignment, candidate);
+    requireExecutionBinding(candidate, execution);
+    RedisScriptDescriptor descriptor = catalog.require("game-session.region-transfer-receipt.v1");
+    if (!"game-session-service".equals(descriptor.owner())
+        || !PRINCIPAL.equals(descriptor.principal())
+        || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
+        || !"redis/lua/game-session-region-transfer-receipt.lua".equals(descriptor.resourcePath())
+        || !List.of(
+                key("capacityExecution", "session:game:capacity-execution:"),
+                key("transferReceipt", "session:game:capacity-transfer-receipt:"))
+            .equals(descriptor.keys())
+        || !List.of(
+                argument("action"),
+                argument("capacityExecutionBytes"),
+                argument("executionDigest"),
+                argument("dispatchId"),
+                argument("incarnationDigest"),
+                argument("preparationNonce"),
+                argument("absoluteDeadlineMillis"),
+                argument("tenantGameplayTag"),
+                argument("tenantId"))
+            .equals(descriptor.arguments())
+        || descriptor.category() != RedisScriptDescriptor.ScriptCategory.SESSION_CAS
+        || descriptor.resetSensitivity() != RedisScriptDescriptor.ResetSensitivity.CLUSTER
+        || descriptor.lossClass()
+            != RedisScriptDescriptor.LossClass.EMPTY_REDIS_COLD_START_OR_RESET) throw unavailable();
+    byte[] script = scriptSource(descriptor);
+    StatefulRedisConnection<byte[], byte[]> connection = null;
+    try {
+      commandWaitMillis();
+      connection = scopedConnection.get();
+      var commands = requireCommands(connection);
+      requirePrincipal(awaitCommand(commands::aclWhoami));
+      String sha = awaitCommand(() -> commands.scriptLoad(script));
+      if (!digest("SHA-1", script).equals(sha)) throw unavailable();
+      String suffix =
+          "{" + assignment.tenantGameplayTag() + "}:" + execution.request().admissionAttemptId();
+      if (connection.getOptions() == null || connection.getOptions().isAutoReconnect())
+        throw unavailable();
+      String actualAction = action;
+      UUID nonce;
+      if ("PREPARE".equals(action)) {
+        var submission = dispatch.issuePreparation();
+        nonce = submission.takeSubmission(dispatch.receiptItem(), dispatch.receiptId());
+      } else {
+        nonce = dispatch.sealedNonce();
+        actualAction = dispatch.claimApply() ? "APPLY" : "OBSERVE";
+      }
+      final String submittedAction = actualAction;
+      Object result =
+          awaitCommand(
+              () ->
+                  commands.evalsha(
+                      sha,
+                      ScriptOutputType.MULTI,
+                      new byte[][] {
+                        ascii("session:game:capacity-execution:" + suffix),
+                        ascii("session:game:capacity-transfer-receipt:" + suffix)
+                      },
+                      ascii(submittedAction),
+                      execution.canonicalBytes(),
+                      ascii(execution.digest()),
+                      ascii(dispatch.receiptId().toString()),
+                      ascii(dispatch.incarnationDigest()),
+                      ascii(nonce.toString()),
+                      ascii(Long.toString(Math.min(deadline, operationDeadlineMillis))),
+                      ascii(assignment.tenantGameplayTag()),
+                      ascii(assignment.tenantId().toString())));
+      if (!(result instanceof List<?> values)
+          || values.size() != 3
+          || !(values.get(0) instanceof Long code)
+          || !(values.get(1) instanceof byte[] nonceBytes)
+          || !(values.get(2) instanceof byte[] stateBytes)) throw unavailable();
+      String returnedNonce = new String(nonceBytes, StandardCharsets.US_ASCII);
+      UUID winner;
+      try {
+        winner = UUID.fromString(returnedNonce);
+      } catch (IllegalArgumentException invalid) {
+        throw unavailable();
+      }
+      if (!winner.toString().equals(returnedNonce)) throw unavailable();
+      String state = new String(stateBytes, StandardCharsets.US_ASCII);
+      if (!"PREPARED".equals(state) && !"APPLIED".equals(state)) throw unavailable();
+      if (!"PREPARE".equals(action) && !winner.equals(nonce)) throw unavailable();
+      return new ReceiptResult(code, winner, "APPLIED".equals(state));
+    } finally {
+      wipe(script);
+      if (connection != null)
+        scopedClose.accept(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+    }
+  }
+
+  private record ReceiptResult(long code, UUID nonce, boolean applied) {}
+
+  static final class PreparedTransferReceipt {
+    private final String executionDigest;
+    private final UUID dispatchId;
+    private final UUID nonce;
+    private final String incarnation;
+    private final boolean applied;
+    private final long deadline;
+    private final Clock clock;
+
+    private PreparedTransferReceipt(
+        String executionDigest,
+        UUID dispatchId,
+        UUID nonce,
+        String incarnation,
+        boolean applied,
+        long deadline,
+        Clock clock) {
+      this.executionDigest = executionDigest;
+      this.dispatchId = dispatchId;
+      this.nonce = nonce;
+      this.incarnation = incarnation;
+      this.applied = applied;
+      this.deadline = deadline;
+      this.clock = clock;
+    }
+
+    void requireExact(OriginalNewCapacityExecution execution, UUID id, String expectedIncarnation) {
+      if (!execution.digest().equals(executionDigest)
+          || !dispatchId.equals(id)
+          || !incarnation.equals(expectedIncarnation)
+          || clock.millis() >= deadline) throw unavailable();
+    }
+
+    UUID nonce() {
+      return nonce;
+    }
+
+    boolean applied() {
+      return applied;
+    }
+  }
+
   long fenceCapacityExecutionOnce(
       OriginalNewCapacityExecution execution,
       CanonicalGameplayOriginalNewCandidate candidate,
@@ -887,13 +1068,30 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       OriginalNewCapacityExecution execution,
       String action) {
     requireNoAmbientTransaction();
+    if (scopedConnection == null) {
+      return withinConnectionBudget(
+          absoluteDeadlineMillis,
+          owner ->
+              owner.execute(
+                  script,
+                  keys,
+                  candidate,
+                  assignment,
+                  candidateBytes,
+                  characterBytes,
+                  templateBytes,
+                  durationMillis,
+                  accountJson,
+                  issuerJson,
+                  absoluteDeadlineMillis,
+                  issuerPayload,
+                  execution,
+                  action));
+    }
     StatefulRedisConnection<byte[], byte[]> connection = null;
     try {
       commandWaitMillis();
-      connection =
-          scopedConnection == null
-              ? redisClient.connect(ByteArrayCodec.INSTANCE)
-              : scopedConnection.get();
+      connection = scopedConnection.get();
       RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
       requirePrincipal(awaitCommand(commands::aclWhoami));
       String sha = awaitCommand(() -> commands.scriptLoad(script));
@@ -930,10 +1128,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     } finally {
       if (connection != null) {
         try {
-          if (scopedConnection == null) connection.close();
-          else
-            scopedClose.accept(
-                CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+          scopedClose.accept(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
         } catch (RuntimeException cleanupFailure) {
           throw unavailable();
         }
@@ -941,8 +1137,38 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     }
   }
 
+  private <T> T withinConnectionBudget(
+      long deadline,
+      java.util.function.Function<CanonicalGameplayOriginalNewFinalAdmissionRedisOwner, T>
+          operation) {
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+        clock,
+        Math.min(operationDeadlineMillis, deadline),
+        budget ->
+            operation.apply(
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                    redisClient,
+                    catalog,
+                    clock,
+                    tenantTags,
+                    () ->
+                        CanonicalGameplayOriginalNewCapacityExecutionOwner.connectForRead(
+                            redisClient, budget),
+                    budget::remainingMillis,
+                    budget::awaitAsyncClose,
+                    budget.absoluteDeadlineMillis())));
+  }
+
   private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner withDeadline(long deadline) {
-    requireDeadline(clock.millis(), deadline);
+    long now = clock.millis();
+    requireDeadline(now, deadline);
+    long boundedDeadline;
+    try {
+      boundedDeadline = Math.min(deadline, Math.addExact(now, COMMAND_TIMEOUT_MILLIS));
+    } catch (ArithmeticException invalid) {
+      throw unavailable();
+    }
+    if (boundedDeadline == Long.MAX_VALUE) throw unavailable();
     return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
         redisClient,
         catalog,
@@ -951,7 +1177,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
         scopedConnection,
         remainingCommandMillis,
         scopedClose,
-        Math.min(operationDeadlineMillis, deadline));
+        Math.min(operationDeadlineMillis, boundedDeadline));
   }
 
   private long commandWaitMillis() {
@@ -989,6 +1215,13 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       byte[] expectedCharacter,
       OriginalNewCapacityExecution execution) {
     requireNoAmbientTransaction();
+    if (scopedConnection == null) {
+      return withinConnectionBudget(
+          operationDeadlineMillis,
+          owner ->
+              owner.readExactPostimages(
+                  keys, candidate, accountOpen, issuerOpen, expectedCharacter, execution));
+    }
     byte[] sessionKey = ascii(keys.session());
     byte[] characterKey = ascii(keys.characterIndex());
     byte[] accountTenantKey = ascii(keys.accountTenantIndex());
@@ -1007,10 +1240,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     try {
       if (issuerOpen != null)
         issuerFields = CanonicalGameplayIssuerAdmissionBarrierRedisOwner.physicalFields(issuerOpen);
-      connection =
-          scopedConnection == null
-              ? redisClient.connect(ByteArrayCodec.INSTANCE)
-              : scopedConnection.get();
+      connection = scopedConnection.get();
       RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
       requirePrincipal(awaitCommand(commands::aclWhoami));
       if (!persistentString(commands, sessionKey)
@@ -1063,10 +1293,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(accountBarrierKey);
       wipe(issuerBarrierKey);
       if (connection != null) {
-        if (scopedConnection == null) connection.close();
-        else
-          scopedClose.accept(
-              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+        scopedClose.accept(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
       }
     }
   }

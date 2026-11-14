@@ -416,38 +416,141 @@ final class CanonicalGameplayRegionOwnerTransferRepository
               String incarnation = transfer.get("incarnation_digest", String.class);
               if (incarnation != null && !incarnation.equals(before.incarnationDigest()))
                 throw unavailable();
-              Record dispatched =
+              Record prior =
                   tx.fetchOne(
-                      "SELECT fence_dispatch_incarnation FROM "
+                      "SELECT * FROM "
                           + ITEM
                           + " WHERE execution_digest=? AND fence_dispatch_id IS NOT NULL",
                       item.execution().digest());
-              if (dispatched != null
-                  && !before
-                      .incarnationDigest()
-                      .equals(dispatched.get("fence_dispatch_incarnation"))) throw unavailable();
-              if (dispatched != null
-                  || exists(
-                      tx,
-                      "SELECT 1 FROM "
-                          + ITEM
-                          + " WHERE execution_digest=? AND fence_readback IS NOT NULL",
-                      item.execution().digest())) return new FenceDispatch(item, null);
+              if (prior != null) {
+                if (!before.incarnationDigest().equals(prior.get("fence_dispatch_incarnation")))
+                  throw unavailable();
+                if (prior.get("fence_prepare_ids", UUID[].class) == null
+                    || !item.transferId().equals(prior.get("transfer_id", UUID.class))
+                    || item.ordinal() != prior.get("target_ordinal", Long.class)
+                    || prior.get("fence_readback", byte[].class) != null)
+                  return new FenceDispatch(item, null);
+                return new FenceDispatch(
+                    item,
+                    prior.get("fence_dispatch_id", UUID.class),
+                    before.incarnationDigest(),
+                    prior.get("fence_prepare_seal", UUID.class),
+                    this);
+              }
+              if (exists(
+                  tx,
+                  "SELECT 1 FROM "
+                      + ITEM
+                      + " WHERE execution_digest=? AND fence_readback IS NOT NULL",
+                  item.execution().digest())) return new FenceDispatch(item, null);
               if (clock.millis() >= before.expiresAtEpochMillis()) throw unavailable();
               UUID dispatchId = UUID.randomUUID();
               if (tx.execute(
                       "UPDATE "
                           + ITEM
-                          + " SET fence_dispatch_id=?,fence_dispatch_incarnation=?"
-                          + " WHERE transfer_id=? AND target_ordinal=?"
-                          + " AND execution_digest=? AND fence_readback IS NULL AND fence_dispatch_id IS NULL",
+                          + " SET fence_dispatch_id=?,fence_dispatch_incarnation=?,fence_prepare_ids=ARRAY[]::uuid[] WHERE transfer_id=? AND target_ordinal=? AND execution_digest=? AND fence_readback IS NULL AND fence_dispatch_id IS NULL",
                       dispatchId,
                       before.incarnationDigest(),
                       item.transferId(),
                       item.ordinal(),
                       item.execution().digest())
                   != 1) throw unavailable();
-              return new FenceDispatch(item, dispatchId);
+              return new FenceDispatch(item, dispatchId, before.incarnationDigest(), null, this);
+            });
+  }
+
+  private PreparationSubmission issuePreparation(FenceDispatch dispatch) {
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              current(tx, dispatch.item.transferId(), true);
+              Record row = lockedDispatch(tx, dispatch);
+              UUID[] issued = row.get("fence_prepare_ids", UUID[].class);
+              if (issued == null
+                  || issued.length >= 16
+                  || row.get("fence_prepare_seal", UUID.class) != null
+                  || row.get("fence_readback", byte[].class) != null) throw unavailable();
+              UUID nonce = UUID.randomUUID();
+              if (tx.execute(
+                      "UPDATE "
+                          + ITEM
+                          + " SET fence_prepare_ids=array_append(fence_prepare_ids,?::uuid) WHERE transfer_id=? AND target_ordinal=? AND fence_prepare_seal IS NULL",
+                      nonce,
+                      dispatch.item.transferId(),
+                      dispatch.item.ordinal())
+                  != 1) throw unavailable();
+              // Only this acknowledged transaction creator gets the non-reconstructible one-use
+              // capability.
+              return new PreparationSubmission(dispatch.item, dispatch.id, nonce);
+            });
+  }
+
+  private Record lockedDispatch(DSLContext tx, FenceDispatch dispatch) {
+    Record row =
+        tx.fetchOne(
+            "SELECT * FROM " + ITEM + " WHERE transfer_id=? AND target_ordinal=? FOR UPDATE",
+            dispatch.item.transferId(),
+            dispatch.item.ordinal());
+    if (row == null
+        || !dispatch.id.equals(row.get("fence_dispatch_id", UUID.class))
+        || !dispatch.incarnation.equals(row.get("fence_dispatch_incarnation", String.class)))
+      throw unavailable();
+    return row;
+  }
+
+  private void sealDispatch(
+      FenceDispatch dispatch,
+      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.PreparedTransferReceipt receipt) {
+    receipt.requireExact(dispatch.item.execution(), dispatch.id, dispatch.incarnation);
+    sql()
+        .transaction(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              current(tx, dispatch.item.transferId(), true);
+              Record row = lockedDispatch(tx, dispatch);
+              UUID[] issued = row.get("fence_prepare_ids", UUID[].class);
+              if (issued == null || !Arrays.asList(issued).contains(receipt.nonce()))
+                throw unavailable();
+              UUID sealed = row.get("fence_prepare_seal", UUID.class);
+              if (sealed != null) {
+                if (!sealed.equals(receipt.nonce())) throw unavailable();
+                return;
+              }
+              if (receipt.applied() || row.get("fence_readback", byte[].class) != null)
+                throw unavailable();
+              if (tx.execute(
+                      "UPDATE "
+                          + ITEM
+                          + " SET fence_prepare_seal=? WHERE transfer_id=? AND target_ordinal=? AND fence_prepare_seal IS NULL",
+                      receipt.nonce(),
+                      dispatch.item.transferId(),
+                      dispatch.item.ordinal())
+                  != 1) throw unavailable();
+            });
+    dispatch.sealedNonce = receipt.nonce();
+  }
+
+  private boolean claimApply(FenceDispatch dispatch) {
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              current(tx, dispatch.item.transferId(), true);
+              Record row = lockedDispatch(tx, dispatch);
+              if (!dispatch.sealedNonce().equals(row.get("fence_prepare_seal", UUID.class)))
+                throw unavailable();
+              if (Boolean.TRUE.equals(row.get("fence_apply_issued", Boolean.class))) return false;
+              if (tx.execute(
+                      "UPDATE "
+                          + ITEM
+                          + " SET fence_apply_issued=true WHERE transfer_id=? AND target_ordinal=? AND NOT fence_apply_issued",
+                      dispatch.item.transferId(),
+                      dispatch.item.ordinal())
+                  != 1) throw unavailable();
+              // Only the acknowledged issuer may submit APPLY. Every reconstructed owner observes
+              // only.
+              return true;
             });
   }
 
@@ -1185,14 +1288,91 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       CanonicalGameplayOriginalNewCandidate candidate,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment) {}
 
+  static final class PreparationSubmission {
+    private final Item item;
+    private final UUID dispatch;
+    private final UUID nonce;
+    private boolean consumed;
+
+    private PreparationSubmission(Item item, UUID dispatch, UUID nonce) {
+      this.item = item;
+      this.dispatch = dispatch;
+      this.nonce = nonce;
+    }
+
+    synchronized UUID takeSubmission(Item expected, UUID expectedDispatch) {
+      if (consumed || item != expected || !dispatch.equals(expectedDispatch)) throw unavailable();
+      consumed = true;
+      return nonce;
+    }
+  }
+
   static final class FenceDispatch {
     private final Item item;
     private final UUID id;
+    private final String incarnation;
+    private final CanonicalGameplayRegionOwnerTransferRepository repository;
+    private UUID sealedNonce;
     private boolean submitted;
 
     private FenceDispatch(Item item, UUID id) {
+      this(item, id, null, null, null);
+    }
+
+    private FenceDispatch(
+        Item item,
+        UUID id,
+        String incarnation,
+        UUID sealedNonce,
+        CanonicalGameplayRegionOwnerTransferRepository repository) {
       this.item = item;
       this.id = id;
+      this.incarnation = incarnation;
+      this.sealedNonce = sealedNonce;
+      this.repository = repository;
+    }
+
+    boolean hasReceipt(Item expected) {
+      if (item != expected) throw unavailable();
+      return repository != null && id != null;
+    }
+
+    UUID receiptId() {
+      return id;
+    }
+
+    Item receiptItem() {
+      return item;
+    }
+
+    String incarnationDigest() {
+      return incarnation;
+    }
+
+    boolean sealed() {
+      return sealedNonce != null;
+    }
+
+    UUID sealedNonce() {
+      if (sealedNonce == null) throw unavailable();
+      return sealedNonce;
+    }
+
+    PreparationSubmission issuePreparation() {
+      if (repository == null || sealed()) throw unavailable();
+      return repository.issuePreparation(this);
+    }
+
+    void seal(CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.PreparedTransferReceipt proof) {
+      if (repository == null) throw unavailable();
+      repository.sealDispatch(this, proof);
+    }
+
+    synchronized boolean claimApply() {
+      if (repository == null || !sealed()) throw unavailable();
+      if (submitted) return false;
+      submitted = true;
+      return repository.claimApply(this);
     }
 
     synchronized UUID takeSubmission(Item expected) {

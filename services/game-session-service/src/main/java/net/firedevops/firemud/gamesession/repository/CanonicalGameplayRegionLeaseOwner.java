@@ -38,6 +38,143 @@ final class CanonicalGameplayRegionLeaseOwner {
   private final Duration leaseTtl;
   private final Clock clock;
   private final boolean deadlineBoundInstallation;
+  // Reserve before claiming Redis creation permission: never generate a proof we cannot retain.
+  private final java.util.Map<UUID, RetainedNoWriteRecovery> noWriteRecoveries =
+      new java.util.HashMap<>();
+  private static final int MAX_NO_WRITE_RECOVERIES = 64;
+
+  static final class RetainedNoWriteRecovery {
+    private boolean inUse;
+    private int retainedWorkers;
+    CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof;
+    CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
+  }
+
+  RetainedNoWriteRecovery reserveNoWriteRecovery(UUID operation) {
+    synchronized (noWriteRecoveries) {
+      var retained = noWriteRecoveries.get(operation);
+      if (retained == null) {
+        if (noWriteRecoveries.size() >= MAX_NO_WRITE_RECOVERIES) throw unavailable();
+        retained = new RetainedNoWriteRecovery();
+        noWriteRecoveries.put(operation, retained);
+      }
+      if (retained.inUse || retained.retainedWorkers != 0) throw unavailable();
+      retained.inUse = true;
+      return retained;
+    }
+  }
+
+  void releaseNoWriteRecovery(UUID operation, RetainedNoWriteRecovery retained) {
+    synchronized (noWriteRecoveries) {
+      retained.inUse = false;
+      if (retained.proof == null && retained.retainedWorkers == 0) {
+        noWriteRecoveries.remove(operation, retained);
+      }
+    }
+  }
+
+  java.util.concurrent.CompletableFuture<Void> retainNoWriteWorker(
+      UUID operation, RetainedNoWriteRecovery retained) {
+    var lifetime = new java.util.concurrent.CompletableFuture<Void>();
+    synchronized (noWriteRecoveries) {
+      if (noWriteRecoveries.get(operation) != retained || !retained.inUse) throw unavailable();
+      retained.retainedWorkers++;
+    }
+    lifetime.whenComplete(
+        (ignored, failure) -> {
+          synchronized (noWriteRecoveries) {
+            retained.retainedWorkers--;
+            if (!retained.inUse && retained.retainedWorkers == 0 && retained.proof == null) {
+              noWriteRecoveries.remove(operation, retained);
+            }
+          }
+        });
+    return lifetime;
+  }
+
+  void retainNoWriteProof(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      RetainedNoWriteRecovery retained,
+      CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof) {
+    synchronized (noWriteRecoveries) {
+      retained.preparation = Objects.requireNonNull(preparation, "preparation");
+      retained.proof = Objects.requireNonNull(proof, "proof");
+    }
+  }
+
+  /** Cleanup has no admission authority and remains possible after the binding was aborted. */
+  void recoverRetainedNoWriteForTransition(UUID transitionId) {
+    recoverRetainedNoWriteForTransition(transitionId, Long.MAX_VALUE);
+  }
+
+  private void recoverRetainedNoWriteForTransition(UUID transitionId, long absoluteDeadlineMillis) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    RetainedNoWriteRecovery selected = null;
+    synchronized (noWriteRecoveries) {
+      for (var retained : noWriteRecoveries.values()) {
+        if (retained.proof != null
+            && retained.preparation != null
+            && retained.preparation.transitionId().equals(transitionId)) {
+          if (retained.inUse || retained.retainedWorkers != 0) throw unavailable();
+          retained.inUse = true;
+          selected = retained;
+          break;
+        }
+      }
+    }
+    if (selected == null) return;
+    var recovery = selected;
+    var workerOwnsRecovery = new java.util.concurrent.atomic.AtomicBoolean();
+    try {
+      // Retry cleanup observes the caller's deadline. Its reservation follows the actual
+      // SQL worker, not the caller-facing timeout or completion of the SQL callback alone.
+      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          clock,
+          absoluteDeadlineMillis,
+          cleanup -> {
+            if (!workerOwnsRecovery.compareAndSet(false, true)) throw unavailable();
+            cleanup
+                .workerLifetime()
+                .whenComplete(
+                    (ignored, failure) ->
+                        releaseNoWriteRecovery(recovery.preparation.operationId(), recovery));
+            this.statusRepository
+                .forBudget(cleanup)
+                .releaseInitialTimelineNoWrite(
+                    recovery.preparation, recovery.proof, clock.instant());
+            synchronized (noWriteRecoveries) {
+              recovery.proof = null;
+            }
+            return null;
+          });
+    } finally {
+      // If the callback never acquired custody, prevent a late start and release safely.
+      if (workerOwnsRecovery.compareAndSet(false, true)) {
+        releaseNoWriteRecovery(recovery.preparation.operationId(), recovery);
+      }
+    }
+  }
+
+  void recoverNoWrite(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      RetainedNoWriteRecovery retained) {
+    if (retained.proof == null) return;
+    io.grpc.Context previous = io.grpc.Context.ROOT.attach();
+    try {
+      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          Clock.systemUTC(),
+          Long.MAX_VALUE,
+          cleanup -> {
+            this.statusRepository
+                .forBudget(cleanup)
+                .releaseInitialTimelineNoWrite(preparation, retained.proof, clock.instant());
+            return null;
+          });
+      retained.proof = null;
+    } finally {
+      io.grpc.Context.ROOT.detach(previous);
+    }
+  }
 
   CanonicalGameplayRegionLeaseOwner(
       CanonicalGameplayBindingInventoryRepository bindingInventory,
@@ -112,6 +249,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
+    recoverRetainedNoWriteForTransition(transitionId, absoluteDeadlineMillis);
     if (!deadlineBoundInstallation || transferOwner != null) {
       return installForTransition(
           existingRegionInstallation,
@@ -307,68 +445,78 @@ final class CanonicalGameplayRegionLeaseOwner {
       }
       try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
           handoffRedisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
-        var initializationPreparation = preparation;
-        Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
-            permit =
-                session.runWithinRetainedPermit(
-                    budget -> {
-                      CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
-                          readInstallationInventory(
-                              bindingInventory,
-                              transferOwner,
-                              handoffDeadline,
-                              budget,
-                              inventory -> readCurrentProvisionalEvidence(inventory, transitionId));
-                      bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
-                      ResolvedBridgeSource beforeClaimWorld =
-                          resolveExactBridgeSource(
-                              worldRequest,
-                              beforeClaimEvidence.candidate().identity(),
-                              worldDeadline);
-                      requireSameSource(source, beforeClaimWorld.source);
-                      CanonicalGameplayRegionIncarnationSource.StableEvidence
-                          beforeClaimIncarnation = readCurrentIncarnation(source);
-                      requireSameIncarnation(incarnation, beforeClaimIncarnation);
-                      if (!statusRepository.matchesTimelinePreparation(
-                          initializationPreparation,
-                          beforeClaimEvidence,
-                          worldRequest,
-                          beforeClaimWorld.resolvedRegion,
-                          source,
-                          beforeClaimIncarnation)) {
-                        throw unavailable();
-                      }
-                      return withTransferStatusRepository(
-                          statusRepository,
-                          transferOwner,
-                          handoffDeadline,
-                          budget,
-                          repository ->
-                              repository.beginInitialTimeline(
-                                  initializationPreparation, clock.instant()));
-                    });
-        var claimedPreparation = preparation;
-        grant =
-            session.initialize(
-                permit.orElse(null),
-                proof -> {
-                  // Independently bounded, non-admitting cleanup after definitive no-write only.
-                  io.grpc.Context previous = io.grpc.Context.ROOT.attach();
-                  try {
-                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                        Clock.systemUTC(),
-                        Long.MAX_VALUE,
-                        cleanup -> {
-                          this.statusRepository
-                              .forBudget(cleanup)
-                              .releaseInitialTimelineNoWrite(
-                                  claimedPreparation, proof, clock.instant());
-                          return null;
-                        });
-                  } finally {
-                    io.grpc.Context.ROOT.detach(previous);
-                  }
-                });
+        var retained = reserveNoWriteRecovery(preparation.operationId());
+        try {
+          recoverNoWrite(preparation, retained);
+          var initializationPreparation = preparation;
+          Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
+              permit =
+                  session.runWithinRetainedPermit(
+                      budget -> {
+                        CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
+                            readInstallationInventory(
+                                bindingInventory,
+                                transferOwner,
+                                handoffDeadline,
+                                budget,
+                                inventory ->
+                                    readCurrentProvisionalEvidence(inventory, transitionId));
+                        bindingInventory.requireSameProvisionalSource(
+                            evidence, beforeClaimEvidence);
+                        ResolvedBridgeSource beforeClaimWorld =
+                            resolveExactBridgeSource(
+                                worldRequest,
+                                beforeClaimEvidence.candidate().identity(),
+                                worldDeadline);
+                        requireSameSource(source, beforeClaimWorld.source);
+                        CanonicalGameplayRegionIncarnationSource.StableEvidence
+                            beforeClaimIncarnation = readInstallationIncarnation(budget, source);
+                        requireSameIncarnation(incarnation, beforeClaimIncarnation);
+                        if (!statusRepository.matchesTimelinePreparation(
+                            initializationPreparation,
+                            beforeClaimEvidence,
+                            worldRequest,
+                            beforeClaimWorld.resolvedRegion,
+                            source,
+                            beforeClaimIncarnation)) {
+                          throw unavailable();
+                        }
+                        return withTransferStatusRepository(
+                            statusRepository,
+                            transferOwner,
+                            handoffDeadline,
+                            budget,
+                            repository ->
+                                repository.beginInitialTimeline(
+                                    initializationPreparation,
+                                    clock.instant(),
+                                    proof -> {
+                                      retainNoWriteProof(
+                                          initializationPreparation, retained, proof);
+                                      recoverNoWrite(initializationPreparation, retained);
+                                    }));
+                      },
+                      abandoned ->
+                          abandoned.ifPresent(
+                              unused -> {
+                                retainNoWriteProof(
+                                    initializationPreparation,
+                                    retained,
+                                    CanonicalGameplayRegionLeaseRedisOwner
+                                        .revokeUndispatchedInitialization(unused));
+                                recoverNoWrite(initializationPreparation, retained);
+                              }),
+                      retainNoWriteWorker(initializationPreparation.operationId(), retained));
+          grant =
+              session.initialize(
+                  permit.orElse(null),
+                  proof -> {
+                    retainNoWriteProof(initializationPreparation, retained, proof);
+                    recoverNoWrite(initializationPreparation, retained);
+                  });
+        } finally {
+          releaseNoWriteRecovery(preparation.operationId(), retained);
+        }
       }
       handoffRedisOwner.verifyInitializedTimeline(grant, preparation);
       requireSameIncarnation(
@@ -793,6 +941,9 @@ final class CanonicalGameplayRegionLeaseOwner {
     if (!installed.equals(finalStatus)
         || finalStatus.paused()
         || transferOwner != null && clock.millis() >= handoffDeadline) throw unavailable();
+    // The final World/incarnation/SQL reads may outlive a short Redis lease. Recheck using
+    // the same bounded owner and original deadline; never return a stale installation grant.
+    handoffRedisOwner.requireCurrent(grant);
     return new Installation(
         transitionId, worldRequest, evidence, source, incarnation, preparation, grant, installed);
   }
@@ -1311,10 +1462,14 @@ final class CanonicalGameplayRegionLeaseOwner {
       long handoffDeadline,
       CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
       java.util.function.Function<CanonicalGameplayBindingInventoryRepository, T> read) {
-    if (transferOwner == null) return read.apply(bindingInventory);
-    return retainedBudget == null
-        ? bindingInventory.withinTransferRead(clock, handoffDeadline, read)
-        : bindingInventory.withinTransferRead(retainedBudget, read);
+    if (retainedBudget != null) {
+      // Do not wrap the ordinary caller's already-budgeted provider: the companion
+      // must own its connections independently until its retained lifetime ends.
+      return this.bindingInventory.withinTransferRead(retainedBudget, read);
+    }
+    return transferOwner == null
+        ? read.apply(bindingInventory)
+        : bindingInventory.withinTransferRead(clock, handoffDeadline, read);
   }
 
   private <T> T withTransferStatusRepository(
@@ -1333,10 +1488,14 @@ final class CanonicalGameplayRegionLeaseOwner {
       long handoffDeadline,
       CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
       java.util.function.Function<CanonicalGameplayRegionRuntimeStatusRepository, T> operation) {
-    if (transferOwner == null) return operation.apply(statusRepository);
-    return retainedBudget == null
-        ? transferOwner.withStatusRepository(handoffDeadline, operation)
-        : transferOwner.withStatusRepository(retainedBudget, operation);
+    if (retainedBudget != null) {
+      return transferOwner == null
+          ? operation.apply(this.statusRepository.forBudget(retainedBudget))
+          : transferOwner.withStatusRepository(retainedBudget, operation);
+    }
+    return transferOwner == null
+        ? operation.apply(statusRepository)
+        : transferOwner.withStatusRepository(handoffDeadline, operation);
   }
 
   private ResolvedBridgeSource resolveExactBridgeSource(
@@ -1422,6 +1581,15 @@ final class CanonicalGameplayRegionLeaseOwner {
           budget.check();
           return readCurrentIncarnation(source);
         });
+  }
+
+  /** Reuses the prepared initialization worker instead of acquiring a third background permit. */
+  CanonicalGameplayRegionIncarnationSource.StableEvidence readInstallationIncarnation(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source) {
+    // The legacy non-deadline preparation has no resource permit to reuse.
+    if (retainedBudget != null) retainedBudget.check();
+    return readCurrentIncarnation(source);
   }
 
   private static void requireSameIncarnation(

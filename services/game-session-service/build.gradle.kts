@@ -219,6 +219,8 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("redis/scripts/game-session-original-new-candidate-close.json")
         include("redis/lua/game-session-original-new-final-admission.lua")
         include("redis/scripts/game-session-original-new-final-admission.json")
+        include("redis/lua/game-session-region-transfer-receipt.lua")
+        include("redis/scripts/game-session-region-transfer-receipt.json")
     }
     from("src/main/resources") {
         include("redis/lua/game-session-region-lease-acquire.lua")
@@ -241,4 +243,38 @@ val gameSessionClassesProof by configurations.creating {
     isCanBeResolved = false
     extendsFrom(configurations.implementation.get())
     outgoing.artifact(gameSessionClassesProofJar)
+}
+
+
+// Published Flyway bytes remain immutable. Only jOOQ's disposable parsing input
+// exposes V1065.0.9's declarative columns/indexes while retaining its PL/pgSQL fence.
+val jooqMigrationInputs = layout.buildDirectory.dir("generated/jooq-migration-inputs")
+val prepareJooqMigrationInputs = tasks.register<Sync>("prepareJooqMigrationInputs") {
+    val source = layout.projectDirectory.dir("src/main/resources/db/migration")
+    from(source)
+    into(jooqMigrationInputs)
+    doFirst {
+        val text = source.file("V1065.0.9__retain_region_fence_dispatch_custody.sql").asFile.readText()
+        check(text.startsWith("-- [jooq ignore start]\n"))
+        check(text.split("-- [jooq ignore start]").size == 2)
+        check(text.split("CREATE FUNCTION preserve_gs_region_fence_dispatch()").size == 2)
+    }
+    filesMatching("V1065.0.9__retain_region_fence_dispatch_custody.sql") {
+        filter { line: String ->
+            when {
+                line == "-- [jooq ignore start]" -> ""
+                line.startsWith("CREATE FUNCTION preserve_gs_region_fence_dispatch()") ->
+                    "-- [jooq ignore start]\n$line"
+                else -> line
+            }
+        }
+    }
+}
+tasks.named<net.firedevops.firemud.WriteJooqConfigTask>("writeJooqConfig") {
+    dependsOn(prepareJooqMigrationInputs)
+    scriptsPath.set(jooqMigrationInputs.map { it.asFile.absolutePath + "/*.sql" })
+}
+tasks.named("generateJooq") {
+    dependsOn(prepareJooqMigrationInputs)
+    inputs.files(prepareJooqMigrationInputs).withPropertyName("stagedJooqMigrations")
 }

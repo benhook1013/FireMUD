@@ -40,6 +40,33 @@ import org.junit.jupiter.api.Test;
 /** Controlled command transport only; mock carriers do not qualify admission or source custody. */
 class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
   @Test
+  void unboundedCallerDeadlineStillUsesOneFiniteOperationBudget() throws Exception {
+    var fixture = new Fixture();
+    var clock = mock(Clock.class);
+    AtomicLong now = new AtomicLong(fixture.deadline - 100);
+    when(clock.millis()).thenAnswer(ignored -> now.get());
+    when(fixture.redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(fixture.connection);
+    fixture.completeWhoami(() -> now.addAndGet(30));
+    fixture.completeScriptLoad(() -> now.addAndGet(50));
+    fixture.completeEvaluation();
+    var owner =
+        new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+            fixture.redis, fixture.catalog, clock, mock());
+    assertThat(
+            owner.closeCapacityExecutionOnce(
+                fixture.execution, fixture.candidate, fixture.assignment, Long.MAX_VALUE))
+        .isEqualTo(4);
+    verify(fixture.whoami)
+        .get(
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 5000),
+            eq(TimeUnit.MILLISECONDS));
+    verify(fixture.evaluation)
+        .get(
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 4920),
+            eq(TimeUnit.MILLISECONDS));
+  }
+
+  @Test
   void unscopedCloseUsesOneAbsoluteDeadlineForEveryCommand() throws Exception {
     var fixture = new Fixture();
     var clock = mock(Clock.class);
@@ -56,9 +83,120 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
             owner.closeCapacityExecutionOnce(
                 fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
         .isEqualTo(4);
-    verify(fixture.whoami).get(100, TimeUnit.MILLISECONDS);
-    verify(fixture.scriptLoad).get(70, TimeUnit.MILLISECONDS);
-    verify(fixture.evaluation).get(20, TimeUnit.MILLISECONDS);
+    verify(fixture.whoami)
+        .get(
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 100),
+            eq(TimeUnit.MILLISECONDS));
+    verify(fixture.scriptLoad)
+        .get(
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 70),
+            eq(TimeUnit.MILLISECONDS));
+    verify(fixture.evaluation)
+        .get(
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 20),
+            eq(TimeUnit.MILLISECONDS));
+  }
+
+  @Test
+  @org.junit.jupiter.api.Timeout(10)
+  void defaultOwnerBoundsSlowConnectAndDisposesLateConnectionWithoutCommands() throws Exception {
+    var fixture = new Fixture();
+    var contextRef = new AtomicReference<io.grpc.Context.CancellableContext>();
+    var entered = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var disposed = new java.util.concurrent.CountDownLatch(1);
+    when(fixture.redis.connect(ByteArrayCodec.INSTANCE))
+        .thenAnswer(
+            ignored -> {
+              entered.countDown();
+              contextRef.get().cancel(new TimeoutException("controlled connect-phase expiry"));
+              while (release.getCount() != 0) {
+                try {
+                  release.await();
+                } catch (InterruptedException cancelled) {
+                  /* physical connect ignores cancellation */
+                }
+              }
+              return fixture.connection;
+            });
+    when(fixture.connection.closeAsync())
+        .thenAnswer(
+            ignored -> {
+              disposed.countDown();
+              return CompletableFuture.completedFuture(null);
+            });
+    var timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+    try (var context = io.grpc.Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, timer)) {
+      contextRef.set(context);
+      var previous = context.attach();
+      try {
+        assertThatThrownBy(
+                () ->
+                    new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                            fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
+                        .closeCapacityExecutionOnce(
+                            fixture.execution,
+                            fixture.candidate,
+                            fixture.assignment,
+                            fixture.deadline))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(entered.getCount()).isZero();
+        verifyNoInteractions(fixture.whoami, fixture.scriptLoad, fixture.evaluation);
+      } finally {
+        context.detach(previous);
+        release.countDown();
+      }
+      assertThat(disposed.await(2, TimeUnit.SECONDS)).isTrue();
+      verify(fixture.connection, never()).async();
+      verify(fixture.connection, never()).close();
+    } finally {
+      release.countDown();
+      timer.shutdownNow();
+    }
+  }
+
+  @Test
+  @org.junit.jupiter.api.Timeout(10)
+  void defaultOwnerBoundsCloseWithoutReturningSuccessAfterUnknownDisposal() throws Exception {
+    var fixture = new Fixture();
+    fixture.completeWhoami(() -> {});
+    fixture.completeScriptLoad(() -> {});
+    fixture.completeEvaluation();
+    when(fixture.redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(fixture.connection);
+    var close = new CompletableFuture<Void>();
+    var contextRef = new AtomicReference<io.grpc.Context.CancellableContext>();
+    when(fixture.connection.closeAsync())
+        .thenAnswer(
+            ignored -> {
+              contextRef.get().cancel(new TimeoutException("controlled close-phase expiry"));
+              return close;
+            });
+    var timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+    try (var context = io.grpc.Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, timer)) {
+      contextRef.set(context);
+      var previous = context.attach();
+      try {
+        assertThatThrownBy(
+                () ->
+                    new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                            fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
+                        .closeCapacityExecutionOnce(
+                            fixture.execution,
+                            fixture.candidate,
+                            fixture.assignment,
+                            fixture.deadline))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(close).isNotDone();
+        assertThat(fixture.evaluationSubmissions).hasValue(1);
+        verify(fixture.connection, never()).close();
+      } finally {
+        context.detach(previous);
+        close.complete(null);
+      }
+    } finally {
+      close.complete(null);
+      timer.shutdownNow();
+    }
   }
 
   @Test
@@ -155,7 +293,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
   }
 
   @Test
-  void unscopedCloseCapsWaitsAtFiveSecondsAndRetainsSynchronousCleanup() throws Exception {
+  void unscopedCloseCapsWaitsAtFiveSecondsAndUsesBoundedAsyncCleanup() throws Exception {
     var fixture = new Fixture();
     fixture.completeWhoami(() -> {});
     fixture.completeScriptLoad(() -> {});
@@ -173,11 +311,20 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
         .isEqualTo(4);
 
     verify(fixture.redis).connect(ByteArrayCodec.INSTANCE);
-    verify(fixture.whoami).get(5000, TimeUnit.MILLISECONDS);
-    verify(fixture.scriptLoad).get(5000, TimeUnit.MILLISECONDS);
-    verify(fixture.evaluation).get(5000, TimeUnit.MILLISECONDS);
-    verify(fixture.connection).close();
-    verify(fixture.connection, never()).closeAsync();
+    verify(fixture.whoami)
+        .get(
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 5000),
+            eq(TimeUnit.MILLISECONDS));
+    verify(fixture.scriptLoad)
+        .get(
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 5000),
+            eq(TimeUnit.MILLISECONDS));
+    verify(fixture.evaluation)
+        .get(
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 5000),
+            eq(TimeUnit.MILLISECONDS));
+    verify(fixture.connection).closeAsync();
+    verify(fixture.connection, never()).close();
   }
 
   private static LongSupplier checked(AtomicLong remaining) {
@@ -282,6 +429,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
                 };
               });
       when(connection.isOpen()).thenReturn(true);
+      when(connection.getOptions())
+          .thenReturn(io.lettuce.core.ClientOptions.builder().autoReconnect(false).build());
       when(connection.async()).thenReturn(commands);
       when(connection.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
     }

@@ -792,8 +792,50 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (budget == null)
       return within(deadline, owner -> owner.fenceForTransfer(item, dispatch, deadline));
     budget.check();
+    if (dispatch.hasReceipt(item)) {
+      var execution = item.execution();
+      Record retained = find(sql(), execution);
+      if (retained == null) throw unavailable();
+      exact(retained, execution);
+      CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+          sql(), execution, item.assignment().tenantGameplayTag());
+      var finalOwner = scopedFinalOwner();
+      if (!dispatch.sealed()) {
+        var prepared =
+            finalOwner.prepareTransferReceipt(
+                execution, item.candidate(), item.assignment(), dispatch, deadline);
+        dispatch.seal(prepared);
+      }
+      long result =
+          finalOwner.applyTransferReceipt(
+              execution, item.candidate(), item.assignment(), dispatch, deadline);
+      if (result == CAPACITY_EXECUTION_COMMITTED_OBSERVED) {
+        retainCommittedBeforeCleanup(execution.request(), execution.reservation(), deadline);
+      } else if (result == CAPACITY_EXECUTION_CLOSED_OBSERVED) {
+        if ("CLOSED".equals(retained.get("status", String.class)))
+          readExact(execution.request(), execution.reservation(), false);
+        else closeOriginalAttempt(execution.request(), execution.reservation());
+      } else if (result != CAPACITY_EXECUTION_FENCED_INDETERMINATE
+          && result != CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED) throw unavailable();
+      return readTransferFence(item, deadline);
+    }
     UUID dispatchId = dispatch.takeSubmission(item);
-    if (dispatchId == null) return readTransferFence(item, deadline);
+    if (dispatchId == null) {
+      // A prior one-use dispatch may have observed a terminal hash before SQL retention.
+      // Reconcile only exact positive/negative evidence; never submit the fence again.
+      var execution = item.execution();
+      Map<String, byte[]> physical =
+          readExecution(execution, item.assignment().tenantGameplayTag());
+      String state = text(physical.get("state"));
+      if ("COMMITTED".equals(state)) {
+        exactPhysicalBinding(physical, execution, state);
+        retainCommittedBeforeCleanup(execution.request(), execution.reservation(), deadline);
+      } else if ("CLOSED".equals(state)) {
+        exactPhysicalBinding(physical, execution, state);
+        closeOriginalAttempt(execution.request(), execution.reservation());
+      }
+      return readTransferFence(item, deadline);
+    }
     var execution = item.execution();
     Record row = find(sql(), execution);
     if (row == null) throw unavailable();
@@ -855,6 +897,25 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       // The immutable terminal reader independently proves the full retained positive/negative
       // result.
       readExact(execution.request(), execution.reservation(), false);
+      if ("COMMITTED".equals(state)) {
+        // Historical SQL proof alone does not qualify the currently observed transfer hash.
+        // Bind all committed metadata to the exact physical finalized session and SQL receipt.
+        Record receipt = transition(execution);
+        var candidate =
+            CanonicalGameplayOriginalNewCandidate.parseCanonical(
+                receipt.get("original_new_candidate_bytes", byte[].class));
+        String sessionSha1 =
+            requireCandidateAndIndexes(
+                retained,
+                candidate,
+                receipt.get("original_new_final_session_sha256", String.class),
+                execution);
+        if (!sessionSha1.equals(text(physical.get("sessionSha1")))
+            || !Long.toString(receipt.get("original_new_admission_at_ms", Long.class))
+                .equals(text(physical.get("admissionAt")))
+            || !Long.toString(receipt.get("original_new_continuity_expires_at_ms", Long.class))
+                .equals(text(physical.get("continuityExpiresAt")))) throw unavailable();
+      }
     }
     var output = new java.io.ByteArrayOutputStream();
     physical.entrySet().stream()
@@ -946,7 +1007,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     return row;
   }
 
-  private void requireCandidateAndIndexes(
+  private String requireCandidateAndIndexes(
       Record row,
       CanonicalGameplayOriginalNewCandidate candidate,
       String expectedFinalDigest,
@@ -1012,6 +1073,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                           receipt.get("original_new_continuity_expires_at_ms", Long.class))))
             throw unavailable();
         }
+        return expectedFinalDigest == null ? null : sha1(actual);
       } finally {
         if (actual != null) Arrays.fill(actual, (byte) 0);
       }
@@ -1065,9 +1127,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (budget == null)
       return within(
           Long.MAX_VALUE, CanonicalGameplayOriginalNewCapacityExecutionOwner::connectForRead);
+    return connectForRead(redis, budget);
+  }
+
+  /** Shared bounded connector; late physical completion retains the original budget custody. */
+  static StatefulRedisConnection<byte[], byte[]> connectForRead(
+      RedisClient redis, CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
     var opened =
         new java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>>();
-    long initialRemainingMillis = remainingMillis();
+    long initialRemainingMillis = budget.remainingMillis();
     var attempt = new ConnectAttempt(redis, opened);
     try {
       CONNECTS.execute(attempt);
@@ -1080,14 +1148,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     }
     try {
       var connection =
-          opened.get(Math.min(initialRemainingMillis, remainingMillis()), TimeUnit.MILLISECONDS);
+          opened.get(
+              Math.min(initialRemainingMillis, budget.remainingMillis()), TimeUnit.MILLISECONDS);
       if (!connection.isOpen()
           || connection.getOptions() == null
           || connection.getOptions().isAutoReconnect()) {
         throw unavailable();
       }
       // Failure before ownership is returned is disposed by the attempt's connection handoff.
-      remainingMillis();
+      budget.remainingMillis();
       return connection;
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();

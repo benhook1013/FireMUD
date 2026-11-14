@@ -323,7 +323,16 @@ class CapacityAdmissionDigestTest {
               1);
       var json = JsonMapper.builder().build().readTree(execution.canonicalBytes());
       assertThat(json.get("selectedOwnerId").asText()).isEqualTo(owner);
-      assertThat(execution.canonicalBytes()).isEqualTo(execution.canonicalBytes());
+      if (owner.equals("owner-1")) {
+        // Fixed pre-change ASCII v1 vector: a serializer change must not silently rebind evidence.
+        try (var expected =
+            getClass().getResourceAsStream("/capacity/original-new-execution-v1-ascii.json")) {
+          assertThat(expected).isNotNull();
+          assertThat(execution.canonicalBytes()).containsExactly(expected.readAllBytes());
+        }
+        assertThat(execution.digest())
+            .isEqualTo("sha256:9637a55ec42dd112eea2fab0d937e0fffe9df4ead7ab31a0905e1a57646e8f7a");
+      }
     }
     for (String owner :
         List.of("", " ", " owner", "owner\t", "😀".repeat(121), "bad\u0000id", "bad\uD800id")) {

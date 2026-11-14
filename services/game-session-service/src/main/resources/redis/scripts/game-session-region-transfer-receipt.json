@@ -1,0 +1,103 @@
+{
+  "scriptId": "game-session.region-transfer-receipt.v1",
+  "resourcePath": "redis/lua/game-session-region-transfer-receipt.lua",
+  "sha256": "e5dfd05a0865fe6a6c6651e3da9ba8215f70f5eef8b39fef6686670f86914fc8",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "capacityExecution",
+      "ownedPrefix": "session:game:capacity-execution:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "transferReceipt",
+      "ownedPrefix": "session:game:capacity-transfer-receipt:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "action"
+    },
+    {
+      "name": "capacityExecutionBytes"
+    },
+    {
+      "name": "executionDigest"
+    },
+    {
+      "name": "dispatchId"
+    },
+    {
+      "name": "incarnationDigest"
+    },
+    {
+      "name": "preparationNonce"
+    },
+    {
+      "name": "absoluteDeadlineMillis"
+    },
+    {
+      "name": "tenantGameplayTag"
+    },
+    {
+      "name": "tenantId"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "PREPARED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "PREPARATION_OBSERVED",
+      "category": "SUCCESS",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "FENCED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "EXACT_REPLAY",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "TERMINAL_RECEIPT_SEALED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "NOT_READY",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "REFUSED",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "Each durable issued nonce permits one PREPARE submission on a non-reconnecting connection. SQL seals only the actual observed issued winning nonce and issues APPLY once. Every later attempt is read-only OBSERVE. Missing, malformed or restored PREPARED receipts after issuance stay held; retained APPLIED requires exact current target evidence and cannot recreate a missing target. Historical UUID-only dispatches remain held. Protected-incarnation checks remain mandatory; no same-epoch storage continuity is inferred.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "none"
+    }
+  ],
+  "legacyPayloadShape": null
+}
