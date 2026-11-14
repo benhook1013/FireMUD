@@ -241,6 +241,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     return Math.max(1, TimeUnit.NANOSECONDS.toMillis(remainingNanos()));
   }
 
+  Deadline operationDeadline() {
+    check();
+    return deadline;
+  }
+
   long absoluteDeadlineMillis() {
     check();
     return absoluteDeadlineMillis;

@@ -610,6 +610,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .isInstanceOf(IllegalStateException.class);
       assertPreparedTimelineUnchanged(
           testSchema.dsl(), statusRepository, redis, source, preparation);
+      assertThat(world.observedDeadlines).hasSizeGreaterThanOrEqualTo(4);
+      assertThat(world.observedDeadlines)
+          .allSatisfy(deadline -> assertThat(deadline).isSameAs(world.observedDeadlines.get(0)));
     }
   }
 
@@ -883,6 +886,25 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   @Test
   void definitiveExpiredInitializeReleasesOnlyItsConsumedClaimAndAllowsFreshRetry()
       throws Exception {
+    assertKnownNoWriteRecovery(0);
+  }
+
+  @Test
+  void expiryBeforeDispatchReleasesOnlyTheNeverDispatchedClaim() throws Exception {
+    assertKnownNoWriteRecovery(1);
+  }
+
+  @Test
+  void confirmedSqlRollbackPreservesExactNoWriteProofForRetry() throws Exception {
+    assertKnownNoWriteRecovery(2);
+  }
+
+  @Test
+  void ambiguousReleaseCommitNeverRestoresProofEvenAfterRollbackReturns() throws Exception {
+    assertKnownNoWriteRecovery(3);
+  }
+
+  private void assertKnownNoWriteRecovery(int mode) throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
     try (RedisFixture redis = RedisFixture.open()) {
@@ -924,14 +946,93 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var permit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
       try (var session =
           bounded.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
-        Thread.sleep(2_500);
+        Thread.sleep(mode == 1 ? 5_500 : 2_500);
         assertThatThrownBy(
                 () ->
                     session.initialize(
                         permit,
                         retained -> {
                           proof.set(retained);
-                          repository.releaseInitialTimelineNoWrite(preparation, retained, NOW);
+                          if (mode == 2) {
+                            var rollbackConfiguration =
+                                testSchema
+                                    .dsl()
+                                    .configuration()
+                                    .derive(
+                                        new org.jooq.impl.DefaultExecuteListenerProvider(
+                                            new org.jooq.impl.DefaultExecuteListener() {
+                                              @Override
+                                              public void executeStart(
+                                                  org.jooq.ExecuteContext context) {
+                                                if (context
+                                                    .sql()
+                                                    .contains("SET phase = 'PREPARED'")) {
+                                                  java.util.concurrent.CompletableFuture.runAsync(
+                                                          () ->
+                                                              assertThatThrownBy(
+                                                                      () ->
+                                                                          repository
+                                                                              .releaseInitialTimelineNoWrite(
+                                                                                  preparation,
+                                                                                  retained,
+                                                                                  NOW))
+                                                                  .isInstanceOf(
+                                                                      IllegalStateException.class))
+                                                      .join();
+                                                  throw new IllegalStateException(
+                                                      "forced SQL rollback");
+                                                }
+                                              }
+                                            }));
+                            var failing =
+                                new CanonicalGameplayRegionRuntimeStatusRepository(
+                                    DSL.using(rollbackConfiguration));
+                            assertThatThrownBy(
+                                    () ->
+                                        failing.releaseInitialTimelineNoWrite(
+                                            preparation, retained, NOW))
+                                .isInstanceOf(RuntimeException.class);
+                            assertThat(
+                                    repository
+                                        .findTimelinePreparation(source)
+                                        .orElseThrow()
+                                        .phase())
+                                .isEqualTo(
+                                    CanonicalGameplayRegionRuntimeStatusRepository
+                                        .TimelinePreparationPhase.INITIALIZING);
+                          }
+                          if (mode == 3) {
+                            var delegate = testSchema.dsl().configuration().transactionProvider();
+                            var ambiguous =
+                                new org.jooq.TransactionProvider() {
+                                  @Override
+                                  public void begin(org.jooq.TransactionContext context) {
+                                    delegate.begin(context);
+                                  }
+
+                                  @Override
+                                  public void commit(org.jooq.TransactionContext context) {
+                                    delegate.commit(context);
+                                    throw new IllegalStateException("lost commit reply");
+                                  }
+
+                                  @Override
+                                  public void rollback(org.jooq.TransactionContext context) {
+                                    // Models a successful no-op rollback after a committed
+                                    // transaction.
+                                  }
+                                };
+                            var uncertain =
+                                new CanonicalGameplayRegionRuntimeStatusRepository(
+                                    DSL.using(testSchema.dsl().configuration().derive(ambiguous)));
+                            assertThatThrownBy(
+                                    () ->
+                                        uncertain.releaseInitialTimelineNoWrite(
+                                            preparation, retained, NOW))
+                                .isInstanceOf(RuntimeException.class);
+                          } else {
+                            repository.releaseInitialTimelineNoWrite(preparation, retained, NOW);
+                          }
                         }))
             .isInstanceOf(IllegalStateException.class);
       }
@@ -2157,6 +2258,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     private volatile WorldCanonicalInstanceLifecycleEvidence replacement;
     private volatile int callbackOnRead = -1;
     private volatile Runnable afterRead = () -> {};
+    private final java.util.List<io.grpc.Deadline> observedDeadlines = new java.util.ArrayList<>();
     private final CanonicalInitialPlayerLocationRegionResolver resolver;
 
     private WorldFixture(WorldCanonicalInstanceLifecycleEvidence original) {
@@ -2181,7 +2283,25 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 if (read == callbackOnRead) afterRead.run();
                 return response;
               });
+      when(initialClient.readInitialPlayerLocationRegion(
+              org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+          .thenAnswer(
+              invocation -> {
+                io.grpc.Deadline deadline = invocation.getArgument(1);
+                assertThat(deadline).isNotNull();
+                observedDeadlines.add(deadline);
+                return initialClient.readInitialPlayerLocationRegion(invocation.getArgument(0));
+              });
       when(lifecycleClient.read(original.request())).thenAnswer(invocation -> current.get());
+      when(lifecycleClient.read(
+              org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+          .thenAnswer(
+              invocation -> {
+                io.grpc.Deadline deadline = invocation.getArgument(1);
+                assertThat(deadline).isNotNull();
+                observedDeadlines.add(deadline);
+                return lifecycleClient.read(invocation.getArgument(0));
+              });
       this.resolver =
           new CanonicalInitialPlayerLocationRegionResolver(
               initialClient, new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));

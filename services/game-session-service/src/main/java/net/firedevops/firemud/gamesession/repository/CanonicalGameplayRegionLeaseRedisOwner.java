@@ -480,6 +480,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.permit = permit;
     }
 
+    void restoreAfterConfirmedRollback() {
+      consumed.set(false);
+    }
+
     boolean consumeFor(
         CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
       return permit.operationId().equals(preparation.operationId())
@@ -571,10 +575,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       caller.addListener(listener, Runnable::run);
       RuntimeException initializationFailure = null;
       Long outcome = null;
+      boolean dispatchInvoked = false;
       try {
         long timeout = Math.min(COMMAND_TIMEOUT_MILLIS, budget.remainingMillis());
         evalArguments[evalArguments.length - 1] =
             ascii(Long.toString(budget.absoluteDeadlineMillis()));
+        // Set before invocation: a thrown dispatch can still have unknown remote effects.
+        dispatchInvoked = true;
         RedisFuture<Long> future =
             commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, evalArguments);
         initialization.set(future);
@@ -596,9 +603,9 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
             initializationFailure.addSuppressed(disposalFailure);
         }
       }
-      // Only a completed -3 response proves no mutation. Timeout, cancellation,
-      // transport failure and Redis absence alone never mint this capability.
-      if (Long.valueOf(-3L).equals(outcome) && permit != null) {
+      // A local refusal before dispatch or a completed -3 proves no mutation. Once
+      // invocation begins, timeout/cancellation/transport failure remain indeterminate.
+      if ((!dispatchInvoked || Long.valueOf(-3L).equals(outcome)) && permit != null) {
         noWriteRecovery.accept(new InitializationNoWriteProof(permit));
       }
       if (initializationFailure != null) throw unavailable(initializationFailure);
