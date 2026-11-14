@@ -2042,6 +2042,64 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void signedPaymentBeforeCancellationWithoutConsentDemonstratesRecoveryGap() throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    UUID cancellationId = UUID.randomUUID();
+    long version =
+        in(
+            c,
+            () ->
+                checkout
+                    .payments()
+                    .ownerRowVersion(
+                        checkout.invoice().subscriptionId(), checkout.invoice().ownerAccountId()));
+    f.clock().advanceToAtLeast(checkout.invoice().expiresAt().plusSeconds(1));
+    checkout.status("succeeded");
+    var signed = checkout.signedSuccess();
+    var owner =
+        new net.firedevops.firemud.accountservice.service.session
+            .AccountHostingFirstInvoicePaymentService(
+            mock(
+                net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.service.session
+                    .AccountRecentReauthenticationService.class),
+            checkout.payments(),
+            new StripeEventInboxRepository(c.dsl()),
+            checkout.provider(),
+            checkout.verifier(),
+            f.service(),
+            new DataSourceTransactionManager(c.source()));
+
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
+        .isEqualTo("IGNORED");
+    f.transport().json = response(f, "canceled");
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    cancellationId, f.creation().requestId(), version, f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.RECONCILING);
+    assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
+        .isEqualTo("IGNORED");
+    assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isZero();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(checkout.confirmations()).isZero();
+  }
+
+  @Test
   void unavailableReservedInstrumentRefusesFirstInvoiceCommandWithoutClaimOrProviderPost()
       throws Exception {
     Context c = context("latest");
