@@ -15,8 +15,11 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayLegacyMigrationDisposition;
 import org.jooq.DSLContext;
@@ -43,6 +46,7 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
       "game_session_canonical_account_admission_fence_intent_cohort_row";
   private static final String BARRIER_TARGET =
       "game_session_canonical_account_admission_fence_intent_barrier_target";
+  private static final String FINAL_OBSERVATION = "game_session_account_fence_final_observation";
   private static final String TENANT_TAG_MAPPING = "game_session_canonical_tenant_gameplay_tag";
   private static final String CLOSED_RECEIPT =
       "game_session_canonical_account_closed_barrier_receipt";
@@ -78,13 +82,49 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
    * Inventory revision is locked before account control, matching the canonical prepare owner.
    */
   CanonicalGameplayAccountAdmissionFenceIntent beginFenceIntent(UUID accountId, UUID requestId) {
+    return beginFenceIntent(accountId, requestId, null);
+  }
+
+  /** Observes an exact physical FINAL before SQL, then conditionally binds it to the new intent. */
+  CanonicalGameplayAccountAdmissionFenceIntent beginFenceIntentWithFinalObservation(
+      UUID accountId,
+      UUID requestId,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner capacity,
+      Request request,
+      Result reservation,
+      long deadline) {
+    requireNonNil(accountId, "accountId");
+    requireNonNil(requestId, "requestId");
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(capacity, "capacity");
+    BigInteger previousFence;
+    BigInteger observedRevision;
+    CanonicalGameplayOriginalNewCapacityExecutionOwner.HistoricalFinalReadback actual;
+    try {
+      Record control = Objects.requireNonNull(readControl(dsl, accountId), "account control");
+      requireNoActiveControl(control, accountId);
+      previousFence = readBigInteger(control, "last_operation_fence");
+      observedRevision = inventoryRevision(dsl, false);
+      actual = capacity.readFinalBeforeAccountIntent(request, reservation, deadline);
+    } catch (RuntimeException unavailable) {
+      // Missing or ambiguous FINAL evidence cannot prevent acquiring the protective fence.
+      return beginFenceIntent(accountId, requestId);
+    }
+    return beginFenceIntent(
+        accountId,
+        requestId,
+        new PreIntentFinalObservation(previousFence, observedRevision, deadline, actual));
+  }
+
+  private CanonicalGameplayAccountAdmissionFenceIntent beginFenceIntent(
+      UUID accountId, UUID requestId, PreIntentFinalObservation observation) {
     requireNonNil(accountId, "accountId");
     requireNonNil(requestId, "requestId");
     requireNoAmbientTransaction();
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
-          BigInteger inventoryRevision = lockInventoryRevision(transaction);
+          BigInteger inventoryRevision = inventoryRevision(transaction, true);
           Record control = lockExistingControl(transaction, accountId);
           String controlState = control.get("state", String.class);
 
@@ -141,6 +181,20 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
               barrierTargets,
               cohortDigest,
               barrierTargetDigest);
+          if (observation != null
+              && clock.millis() < observation.deadline()
+              && previousFence.equals(observation.previousFence())
+              && inventoryRevision.equals(observation.inventoryRevision())) {
+            retainFinalObservation(
+                transaction,
+                operationId,
+                accountId,
+                inventoryRevision,
+                cohortRows,
+                cohortDigest,
+                barrierTargetDigest,
+                observation.readback());
+          }
           closeNewPreparation(
               transaction,
               accountId,
@@ -158,6 +212,107 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
           return loadAndRequireCurrent(transaction, savedControl, savedIntent);
         });
   }
+
+  private static void retainFinalObservation(
+      DSLContext transaction,
+      UUID operationId,
+      UUID accountId,
+      BigInteger inventoryRevision,
+      List<CanonicalGameplayAccountAdmissionFenceIntent.CohortRow> cohortRows,
+      String cohortDigest,
+      String targetDigest,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.HistoricalFinalReadback actual) {
+    var execution = actual.execution();
+    if (!accountId.equals(actual.accountId())
+        || cohortRows.stream()
+            .noneMatch(
+                row ->
+                    row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.TRANSITION
+                        && row.sourceKey().equals(execution.transitionId().toString())
+                        && actual.tenantId().equals(row.tenantId())
+                        && actual
+                            .playableStateNamespaceId()
+                            .equals(row.playableStateNamespaceId()))) {
+      return;
+    }
+    transaction.execute(
+        "INSERT INTO "
+            + FINAL_OBSERVATION
+            + " (operation_id, account_id, transition_id, admission_attempt_id, execution_digest,"
+            + " candidate_digest, final_session_sha256, admission_at_ms, continuity_expires_at_ms,"
+            + " inventory_snapshot_revision, cohort_digest, barrier_target_digest)"
+            + " SELECT ?, ?, e.transition_id, e.admission_attempt_id, e.execution_digest, ?, ?, ?, ?, ?, ?, ?"
+            + " FROM game_session_original_new_capacity_execution e"
+            + " JOIN game_session_canonical_binding_transition t ON t.transition_id = e.transition_id"
+            + " WHERE e.transition_id = ? AND e.admission_attempt_id = ? AND e.execution_digest = ?"
+            + " AND e.canonical_execution = ? AND e.status = 'AUTHORIZED' AND t.status = 'PROVISIONAL'"
+            + " AND t.original_new_candidate_digest = ? AND t.original_new_final_session_sha256 IS NULL",
+        operationId,
+        accountId,
+        execution.candidateDigest(),
+        actual.finalSessionSha256(),
+        actual.admissionAtMillis(),
+        actual.continuityExpiresAtMillis(),
+        decimal(inventoryRevision),
+        cohortDigest,
+        targetDigest,
+        execution.transitionId(),
+        execution.request().admissionAttemptId(),
+        execution.digest(),
+        execution.canonicalBytes(),
+        execution.candidateDigest());
+  }
+
+  /** Historical evidence only. An absent row leaves pre-intent ordering indeterminate. */
+  Optional<HistoricalFinalObservation> readFinalObservation(UUID operationId) {
+    requireNonNil(operationId, "operationId");
+    requireNoAmbientTransaction();
+    Record row =
+        dsl.fetchOne(
+            "SELECT o.* FROM "
+                + FINAL_OBSERVATION
+                + " o JOIN "
+                + INTENT
+                + " i"
+                + " ON i.operation_id = o.operation_id AND i.account_id = o.account_id"
+                + " AND i.inventory_snapshot_revision = o.inventory_snapshot_revision"
+                + " AND i.cohort_digest = o.cohort_digest AND i.barrier_target_digest = o.barrier_target_digest"
+                + " WHERE o.operation_id = ?",
+            operationId);
+    if (row == null) return Optional.empty();
+    return Optional.of(
+        new HistoricalFinalObservation(
+            operationId,
+            row.get("transition_id", UUID.class),
+            row.get("admission_attempt_id", UUID.class),
+            row.get("execution_digest", String.class),
+            row.get("candidate_digest", String.class),
+            row.get("final_session_sha256", String.class),
+            row.get("admission_at_ms", Long.class),
+            row.get("continuity_expires_at_ms", Long.class),
+            readBigInteger(row, "inventory_snapshot_revision"),
+            row.get("cohort_digest", String.class),
+            row.get("barrier_target_digest", String.class)));
+  }
+
+  private record PreIntentFinalObservation(
+      BigInteger previousFence,
+      BigInteger inventoryRevision,
+      long deadline,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.HistoricalFinalReadback readback) {}
+
+  record HistoricalFinalObservation(
+      UUID operationId,
+      UUID transitionId,
+      UUID admissionAttemptId,
+      String executionDigest,
+      String candidateDigest,
+      String finalSessionSha256,
+      long admissionAtMillis,
+      long continuityExpiresAtMillis,
+      BigInteger inventorySnapshotRevision,
+      String cohortDigest,
+      String barrierTargetDigest) {}
 
   /** Reads and verifies the immutable persisted tuple, cohort rows, and target rows. */
   CanonicalGameplayAccountAdmissionFenceIntent readFenceIntent(UUID accountId, UUID requestId) {
@@ -229,7 +384,7 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
 
           // The prepare owner takes this same inventory-clock then account-control lock order.
           // The operation lookup below is only a locator; current SQL ownership is reloaded.
-          lockInventoryRevision(transaction);
+          inventoryRevision(transaction, true);
           Record identity =
               transaction.fetchOne(
                   "SELECT account_id FROM " + INTENT + " WHERE operation_id = ?",
@@ -997,13 +1152,14 @@ final class CanonicalGameplayAccountAdmissionBarrierRepository {
     }
   }
 
-  private static BigInteger lockInventoryRevision(DSLContext transaction) {
+  private static BigInteger inventoryRevision(DSLContext transaction, boolean lock) {
     Record row =
         Objects.requireNonNull(
             transaction.fetchOne(
                 "SELECT inventory_revision FROM "
                     + INVENTORY_CLOCK
-                    + " WHERE singleton_id = 1 FOR UPDATE"),
+                    + " WHERE singleton_id = 1"
+                    + (lock ? " FOR UPDATE" : "")),
             "inventory revision clock row must exist");
     BigInteger revision = readBigInteger(row, "inventory_revision");
     if (revision.signum() <= 0) {
