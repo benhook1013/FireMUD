@@ -51,6 +51,38 @@ class AccountHostingSubscriptionProvisioningServiceTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void concurrentCaptureRecoversOnlyExactRetainedWinner(boolean retainedWinner) throws Exception {
+    ProviderDispatch dispatch = mock(ProviderDispatch.class);
+    when(dispatch.claim()).thenReturn(claim);
+    when(repository.prepareProviderDispatch(any(), any())).thenReturn(dispatch);
+    when(repository.readProviderDispatch(dispatch)).thenReturn(dispatch);
+    var located = mock(StripeHostingSubscriptionProvisioner.Located.class);
+    when(located.providerSubscriptionId()).thenReturn("sub_original");
+    when(provider.provision(dispatch)).thenReturn(located);
+    var observed = mock(StripeHostingFirstInvoicePaymentClient.Observation.class);
+    when(firstInvoiceProvider.capture(dispatch, "sub_original")).thenReturn(observed);
+    var failure = new FenceRejectedException("concurrent capture advanced version");
+    when(firstInvoices.retainAwaitingPayment(dispatch, "sub_original", observed))
+        .thenThrow(failure);
+    var winner =
+        mock(
+            net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment
+                .class);
+    when(firstInvoices.findAwaitingPayment(claim)).thenReturn(null, retainedWinner ? winner : null);
+    if (retainedWinner) {
+      assertThat(service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
+          .isEqualTo(new AccountHostingSubscriptionProvisioningService.AwaitingPayment(winner));
+    } else {
+      assertThatThrownBy(() -> service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
+          .isSameAs(failure);
+    }
+    verify(provider).provision(dispatch);
+    verify(firstInvoiceProvider).capture(dispatch, "sub_original");
+    verify(firstInvoices, times(2)).findAwaitingPayment(claim);
+  }
+
   @Test
   void claimCommitAndIndependentReadbackPrecedeProviderAndUnknownOutcomeDefersWithoutLifecycle() {
     ProviderDispatch prepared = mock(ProviderDispatch.class);
