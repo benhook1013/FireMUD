@@ -45,6 +45,45 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(PORT);
 
   @Test
+  void expiredTimelineProbeAndInitializeReturnNoWriteRefusal() throws Exception {
+    try (RedisFixture redis = RedisFixture.open();
+        var connection = redis.ownerClient().connect(ByteArrayCodec.INSTANCE);
+        var input =
+            getClass()
+                .getClassLoader()
+                .getResourceAsStream("redis/lua/game-session-region-timeline-initialize-v2.lua")) {
+      var commands = connection.sync();
+      String sha = commands.scriptLoad(input.readAllBytes());
+      String tag = "r1-" + "a".repeat(32) + "-" + "b".repeat(32) + "-" + "c".repeat(32);
+      byte[][] keys = {
+        ("tick-executor-lease:{" + tag + "}").getBytes(StandardCharsets.US_ASCII),
+        ("tick:{" + tag + "}:meta").getBytes(StandardCharsets.US_ASCII)
+      };
+      for (String action : java.util.List.of("PROBE", "INITIALIZE")) {
+        String[] args = {
+          "gs_region_timeline_init/v2",
+          action,
+          UUID.randomUUID().toString(),
+          "1",
+          UUID.randomUUID().toString(),
+          "a".repeat(64),
+          "30000",
+          "1",
+          "1"
+        };
+        byte[][] bytes =
+            java.util.Arrays.stream(args)
+                .map(value -> value.getBytes(StandardCharsets.US_ASCII))
+                .toArray(byte[][]::new);
+        Long outcome = commands.evalsha(sha, io.lettuce.core.ScriptOutputType.INTEGER, keys, bytes);
+        assertThat(outcome).isEqualTo(-3L);
+        assertThat(commands.type(keys[0])).isEqualTo("none");
+        assertThat(commands.type(keys[1])).isEqualTo("none");
+      }
+    }
+  }
+
+  @Test
   void handoffBudgetClosesAConnectionWhoseRedisHandshakeNeverReplies() throws Exception {
     try (var listener = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
       listener.setSoTimeout(2_000);
