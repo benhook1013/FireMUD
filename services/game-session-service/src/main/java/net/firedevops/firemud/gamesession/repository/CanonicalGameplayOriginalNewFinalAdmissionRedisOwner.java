@@ -4,7 +4,6 @@ import io.lettuce.core.RedisFuture;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
-import io.lettuce.core.codec.ByteArrayCodec;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -887,13 +886,30 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       OriginalNewCapacityExecution execution,
       String action) {
     requireNoAmbientTransaction();
+    if (scopedConnection == null) {
+      return withinConnectionBudget(
+          absoluteDeadlineMillis,
+          owner ->
+              owner.execute(
+                  script,
+                  keys,
+                  candidate,
+                  assignment,
+                  candidateBytes,
+                  characterBytes,
+                  templateBytes,
+                  durationMillis,
+                  accountJson,
+                  issuerJson,
+                  absoluteDeadlineMillis,
+                  issuerPayload,
+                  execution,
+                  action));
+    }
     StatefulRedisConnection<byte[], byte[]> connection = null;
     try {
       commandWaitMillis();
-      connection =
-          scopedConnection == null
-              ? redisClient.connect(ByteArrayCodec.INSTANCE)
-              : scopedConnection.get();
+      connection = scopedConnection.get();
       RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
       requirePrincipal(awaitCommand(commands::aclWhoami));
       String sha = awaitCommand(() -> commands.scriptLoad(script));
@@ -930,15 +946,35 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     } finally {
       if (connection != null) {
         try {
-          if (scopedConnection == null) connection.close();
-          else
-            scopedClose.accept(
-                CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+          scopedClose.accept(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
         } catch (RuntimeException cleanupFailure) {
           throw unavailable();
         }
       }
     }
+  }
+
+  private <T> T withinConnectionBudget(
+      long deadline,
+      java.util.function.Function<CanonicalGameplayOriginalNewFinalAdmissionRedisOwner, T>
+          operation) {
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+        clock,
+        Math.min(operationDeadlineMillis, deadline),
+        budget ->
+            operation.apply(
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                    redisClient,
+                    catalog,
+                    clock,
+                    tenantTags,
+                    () ->
+                        CanonicalGameplayOriginalNewCapacityExecutionOwner.connectForRead(
+                            redisClient, budget),
+                    budget::remainingMillis,
+                    budget::awaitAsyncClose,
+                    budget.absoluteDeadlineMillis())));
   }
 
   private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner withDeadline(long deadline) {
@@ -989,6 +1025,13 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       byte[] expectedCharacter,
       OriginalNewCapacityExecution execution) {
     requireNoAmbientTransaction();
+    if (scopedConnection == null) {
+      return withinConnectionBudget(
+          operationDeadlineMillis,
+          owner ->
+              owner.readExactPostimages(
+                  keys, candidate, accountOpen, issuerOpen, expectedCharacter, execution));
+    }
     byte[] sessionKey = ascii(keys.session());
     byte[] characterKey = ascii(keys.characterIndex());
     byte[] accountTenantKey = ascii(keys.accountTenantIndex());
@@ -1007,10 +1050,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     try {
       if (issuerOpen != null)
         issuerFields = CanonicalGameplayIssuerAdmissionBarrierRedisOwner.physicalFields(issuerOpen);
-      connection =
-          scopedConnection == null
-              ? redisClient.connect(ByteArrayCodec.INSTANCE)
-              : scopedConnection.get();
+      connection = scopedConnection.get();
       RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
       requirePrincipal(awaitCommand(commands::aclWhoami));
       if (!persistentString(commands, sessionKey)
@@ -1063,10 +1103,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(accountBarrierKey);
       wipe(issuerBarrierKey);
       if (connection != null) {
-        if (scopedConnection == null) connection.close();
-        else
-          scopedClose.accept(
-              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+        scopedClose.accept(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
       }
     }
   }
