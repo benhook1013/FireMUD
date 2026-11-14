@@ -185,7 +185,7 @@ class AccountCredentialAbuseRedisStoreTest {
   }
 
   @Test
-  void lateFinalCompletionCannotUseTheLargerSignalSkewAndFencesUncertainty() {
+  void lateKnownCompletionCannotUseLargerSignalSkewButDoesNotFenceNextRequest() {
     var fixture = new AsyncFixture();
     var store = fixture.store();
     fixture.completion =
@@ -200,8 +200,8 @@ class AccountCredentialAbuseRedisStoreTest {
     assertThat(fixture.calls).hasSize(7);
     assertThat(fixture.cancellations.get()).isEqualTo(1);
     fixture.completion = AsyncFixture.IMMEDIATE;
-    assertThat(store.admit(fixture.policy, fixture.buckets, fixture.now)).isNull();
-    assertThat(fixture.calls).hasSize(7);
+    assertThat(store.admit(fixture.policy, fixture.buckets, fixture.now)).isNotNull();
+    assertThat(fixture.calls).hasSize(14);
   }
 
   @Test
