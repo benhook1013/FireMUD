@@ -401,6 +401,7 @@ paths:
                   authorizationVersion: {type: integer, format: int64, minimum: 0}
         '401': {description: Protected current control-ui owner authentication required}
         '409': {description: Exact evidence refused; prior provider outcome may remain uncertain}
+        '503': {description: AUTH_UNAVAILABLE; Account authentication authority is temporarily unavailable}
   /billing/hosting/subscriptions/{subscriptionId}/first-invoice/reauthenticate:
     parameters:
       - name: subscriptionId
@@ -450,6 +451,7 @@ paths:
         '401': {description: Current owner authentication or ordinary secret refused}
         '409':
           description: Fresh unbound billing request without evidence creation, exact binding refused, or exact current evidence unavailable
+        '503': {description: AUTH_UNAVAILABLE; Account authentication authority is temporarily unavailable}
   /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm:
     parameters:
       - name: subscriptionId
@@ -490,6 +492,7 @@ paths:
         '401': {description: Protected current control-ui owner authentication required}
         '409': {description: Exact evidence refused; preserve the original operation and uncertain outcome}
         '502': {description: FIRST_INVOICE_PROVIDER_UNCERTAIN; preserve original operation and poll status}
+        '503': {description: AUTH_UNAVAILABLE; Account authentication authority is temporarily unavailable}
   /billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew:
     parameters:
       - name: subscriptionId
@@ -532,6 +535,7 @@ paths:
         '401': {description: Protected current control-ui owner authentication required}
         '409': {description: Exact evidence refused; preserve the original operation and uncertain outcome}
         '502': {description: FIRST_INVOICE_PROVIDER_UNCERTAIN; preserve original operation and poll status}
+        '503': {description: AUTH_UNAVAILABLE; Account authentication authority is temporarily unavailable}
   /ping:
     get:
       summary: Health check endpoint
