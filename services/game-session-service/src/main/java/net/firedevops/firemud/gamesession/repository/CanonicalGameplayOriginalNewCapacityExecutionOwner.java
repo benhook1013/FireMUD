@@ -916,7 +916,9 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     String instance = current.get("owner_instance_id", String.class);
     Long fence = current.get("executor_fence", Long.class);
     if (instance == null
-        || !instance.matches("[A-Za-z0-9._:-]{1,120}")
+        || instance.isBlank()
+        || !instance.equals(instance.trim())
+        || instance.codePointCount(0, instance.length()) > 120
         || fence == null
         || fence <= 0) throw unavailable();
     return new CurrentOwner(instance, fence);
