@@ -151,7 +151,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                                 && Boolean.TRUE.equals(
                                     proof
                                         .sql
-                                        .fetchOne(
+                                        .fetchSingle(
                                             "SELECT fence_apply_issued FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
                                             id)
                                         .get(0, Boolean.class))
@@ -192,7 +192,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       assertThat(
               proof
                   .sql
-                  .fetchOne(
+                  .fetchSingle(
                       "SELECT fence_apply_issued FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
                       id)
                   .get(0, Boolean.class))
