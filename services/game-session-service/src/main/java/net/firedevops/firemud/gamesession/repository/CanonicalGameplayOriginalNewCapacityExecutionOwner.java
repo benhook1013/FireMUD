@@ -870,6 +870,25 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       // The immutable terminal reader independently proves the full retained positive/negative
       // result.
       readExact(execution.request(), execution.reservation(), false);
+      if ("COMMITTED".equals(state)) {
+        // Historical SQL proof alone does not qualify the currently observed transfer hash.
+        // Bind all committed metadata to the exact physical finalized session and SQL receipt.
+        Record receipt = transition(execution);
+        var candidate =
+            CanonicalGameplayOriginalNewCandidate.parseCanonical(
+                receipt.get("original_new_candidate_bytes", byte[].class));
+        String sessionSha1 =
+            requireCandidateAndIndexes(
+                retained,
+                candidate,
+                receipt.get("original_new_final_session_sha256", String.class),
+                execution);
+        if (!sessionSha1.equals(text(physical.get("sessionSha1")))
+            || !Long.toString(receipt.get("original_new_admission_at_ms", Long.class))
+                .equals(text(physical.get("admissionAt")))
+            || !Long.toString(receipt.get("original_new_continuity_expires_at_ms", Long.class))
+                .equals(text(physical.get("continuityExpiresAt")))) throw unavailable();
+      }
     }
     var output = new java.io.ByteArrayOutputStream();
     physical.entrySet().stream()
@@ -961,7 +980,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     return row;
   }
 
-  private void requireCandidateAndIndexes(
+  private String requireCandidateAndIndexes(
       Record row,
       CanonicalGameplayOriginalNewCandidate candidate,
       String expectedFinalDigest,
@@ -1027,6 +1046,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                           receipt.get("original_new_continuity_expires_at_ms", Long.class))))
             throw unavailable();
         }
+        return expectedFinalDigest == null ? null : sha1(actual);
       } finally {
         if (actual != null) Arrays.fill(actual, (byte) 0);
       }

@@ -566,7 +566,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(thirdStatus.ownerInstanceId()).isEqualTo("instance-c");
       assertThat(thirdInstallation).isNotNull();
 
-      byte[] liveLeaseBeforeIncarnationChange = redis.admin().get(redisKey);
+      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
+      assertThat(redis.admin().get(redisKey)).isNull();
       Long fenceBeforeIncarnationChange = fenceSequenceValue(dsl);
       incarnationSource.changeStorageGeneration("storage-generation-2");
       var changedIncarnationOwner =
@@ -586,12 +587,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                       transfer,
                       transferClock.millis() + 5_000L))
           .isInstanceOf(IllegalStateException.class);
-      assertThat(redis.admin().get(redisKey)).containsExactly(liveLeaseBeforeIncarnationChange);
+      assertThat(redis.admin().get(redisKey)).isNull();
       assertThat(statusRepository.find(qualifiedSource)).contains(thirdStatus);
       assertThat(fenceSequenceValue(dsl)).isEqualTo(fenceBeforeIncarnationChange);
       incarnationSource.restoreStorageGeneration();
 
-      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
+      assertThat(redis.admin().get(redisKey)).isNull();
       WorldCanonicalInstanceLifecycleEvidence changed = changedEvidence(world.originalEvidence());
       world.replaceOnRead(2, changed);
       var fourthOwner =
@@ -776,8 +777,14 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                 CanonicalGameplayBindingInventoryRepository::readSnapshot))
                         .isNotNull();
                     assertThat(
-                            incarnationSource.readCurrent(
-                                CanonicalGameplayRegionIncarnationSource.RegionScope.from(source)))
+                            ownerWithLiveClock(
+                                    bindingInventory,
+                                    statusRepository,
+                                    redisOwner,
+                                    world,
+                                    "retained-permit-incarnation",
+                                    incarnationSource)
+                                .readInstallationIncarnation(retainedBudget, source))
                         .isEqualTo(incarnation);
                     return new CanonicalGameplayRegionRuntimeStatusRepository(
                             retainedBudget.sql(testSchema.dsl()))

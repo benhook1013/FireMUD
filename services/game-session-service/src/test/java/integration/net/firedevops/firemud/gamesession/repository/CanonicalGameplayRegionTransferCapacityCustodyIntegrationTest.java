@@ -625,6 +625,72 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
     }
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "admissionAt,1",
+    "continuityExpiresAt,1",
+    "sessionSha1,0000000000000000000000000000000000000000"
+  })
+  void committedTransferRejectsPhysicalMetadataDrift(String field, String replacement)
+      throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), proof.clock);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      proof
+          .capacity(proof.sql)
+          .authorize(
+              proof.admission, template, account, issuer, proof.execution, transferDeadline());
+      try (var readback =
+          new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                  proof.redis, proof.scripts, proof.clock, proof.tags)
+              .finalizeOriginalNewOnce(
+                  proof.admission,
+                  template,
+                  account,
+                  issuer,
+                  proof.execution,
+                  transferDeadline())) {
+        UUID id = proof.begin();
+        var item =
+            proof.transfers.within(
+                transferDeadline(), ignored -> proof.transfers.capture(id).getFirst());
+        new CanonicalGameplayBindingInventoryRepository(proof.sql)
+            .commitOriginalNewFinalAdmission(readback);
+        proof.fence(item);
+        String retained = proof.itemImage(id);
+        String original = proof.originalImage();
+        String tag =
+            proof.tags.assignmentForTransition(proof.execution.transitionId()).tenantGameplayTag();
+        byte[] key =
+            ("session:game:capacity-execution:{"
+                    + tag
+                    + "}:"
+                    + proof.execution.request().admissionAttemptId())
+                .getBytes(StandardCharsets.UTF_8);
+        try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+          byte[] name = field.getBytes(StandardCharsets.UTF_8);
+          byte[] prior = connection.sync().hget(key, name);
+          assertThat(prior).isNotNull();
+          connection.sync().hset(key, name, replacement.getBytes(StandardCharsets.UTF_8));
+          assertThatThrownBy(
+                  () -> proof.capacity(proof.sql).readTransferFence(item, transferDeadline()))
+              .isInstanceOf(IllegalStateException.class);
+          assertThat(proof.itemImage(id)).isEqualTo(retained);
+          assertThat(proof.originalImage()).isEqualTo(original);
+          assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+          connection.sync().hset(key, name, prior);
+          assertThat(proof.capacity(proof.sql).readTransferFence(item, transferDeadline()))
+              .isNotNull();
+        }
+      }
+    }
+  }
+
   @Test
   void standaloneTransferObservationCancelsBlockedSqlAtItsExplicitDeadline() throws Exception {
     try (var proof = new TransferSqlProof();

@@ -385,7 +385,7 @@ final class CanonicalGameplayRegionLeaseOwner {
                                 worldDeadline);
                         requireSameSource(source, beforeClaimWorld.source);
                         CanonicalGameplayRegionIncarnationSource.StableEvidence
-                            beforeClaimIncarnation = readCurrentIncarnation(source);
+                            beforeClaimIncarnation = readInstallationIncarnation(budget, source);
                         requireSameIncarnation(incarnation, beforeClaimIncarnation);
                         if (!statusRepository.matchesTimelinePreparation(
                             initializationPreparation,
@@ -1469,6 +1469,15 @@ final class CanonicalGameplayRegionLeaseOwner {
           budget.check();
           return readCurrentIncarnation(source);
         });
+  }
+
+  /** Reuses the prepared initialization worker instead of acquiring a third background permit. */
+  CanonicalGameplayRegionIncarnationSource.StableEvidence readInstallationIncarnation(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source) {
+    // The legacy non-deadline preparation has no resource permit to reuse.
+    if (retainedBudget != null) retainedBudget.check();
+    return readCurrentIncarnation(source);
   }
 
   private static void requireSameIncarnation(
