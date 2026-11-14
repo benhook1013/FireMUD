@@ -594,14 +594,6 @@ public class FriendsCommandHandler {
     return value == null || value.isBlank() ? null : value;
   }
 
-  private String playableStateScope(PlayableStateScope scope) {
-    return switch (scope) {
-      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
-      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
-      default -> null;
-    };
-  }
-
   private String visibilityPolicy(
       net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy visibilityPolicy) {
     return switch (visibilityPolicy) {
