@@ -77,6 +77,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
       "game_session_canonical_issuer_layout_bootstrap_intent";
   private final DSLContext dsl;
 
+  CanonicalGameplayBindingInventoryRepository forBudget(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    return new CanonicalGameplayBindingInventoryRepository(budget.sql(dsl));
+  }
+
   CanonicalGameplayBindingInventoryRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
   }

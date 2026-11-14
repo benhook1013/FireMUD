@@ -32,8 +32,21 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   private static final String FENCE_SEQUENCE = "game_session_region_executor_fence_seq";
   private final DSLContext dsl;
 
+  private final CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget;
+
   CanonicalGameplayRegionRuntimeStatusRepository(DSLContext dsl) {
+    this(dsl, null);
+  }
+
+  private CanonicalGameplayRegionRuntimeStatusRepository(
+      DSLContext dsl, CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
+    this.installationBudget = installationBudget;
+  }
+
+  CanonicalGameplayRegionRuntimeStatusRepository forBudget(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    return new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl), budget);
   }
 
   static boolean hasFrozenTransfer(
@@ -316,6 +329,9 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             return Optional.empty();
           }
           if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
+          // Lock waits and source checks cannot consume the installation deadline and still
+          // grant irreversible permission to create Redis meta.
+          if (installationBudget != null) installationBudget.check();
           int updated =
               transaction.execute(
                   "UPDATE "
