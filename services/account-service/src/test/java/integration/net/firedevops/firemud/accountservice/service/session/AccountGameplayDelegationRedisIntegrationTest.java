@@ -264,6 +264,55 @@ class AccountGameplayDelegationRedisIntegrationTest {
   }
 
   @Test
+  void unknownAccountProjectionFailsBeforeRedisAndLeavesOwnerRowsUnchanged() {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    createFreshAccount(database, sources);
+    UUID unknownAccount = UUID.randomUUID();
+    assertThat(dsl.fetchCount(DSL.table("accounts"), DSL.field("account_uuid").eq(unknownAccount)))
+        .isZero();
+    var tables =
+        List.of(
+            "accounts",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events");
+    Map<String, List<String>> before = new java.util.LinkedHashMap<>();
+    for (String table : tables) {
+      before.put(
+          table,
+          dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+              .getValues(0, String.class));
+    }
+    RedisClient writer = redisClient(writerUri);
+    try {
+      TrackedProvider provider = new TrackedProvider(writer);
+      var projection =
+          new AccountGameplayDelegationAuthorityProjection(
+              sources, database.manager(), redisClient(provider));
+      assertThatThrownBy(() -> projection.publishCurrent(unknownAccount))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account authority snapshot requires its exact Account row");
+      assertThatThrownBy(() -> projection.observeCurrent(unknownAccount))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account authority snapshot requires its exact Account row");
+      assertThat(provider.openedConnections()).isZero();
+      for (String table : tables) {
+        assertThat(
+                dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+                    .getValues(0, String.class))
+            .isEqualTo(before.get(table));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
   void accountCoordinationPrincipalRejectsRawEvalBeforeAnyScriptExecution() {
     RedisClient writer = redisClient(writerUri);
     try (var connection = writer.connect(ByteArrayCodec.INSTANCE)) {
