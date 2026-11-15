@@ -3575,6 +3575,37 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
   if (accepted) assert.deepEqual(contentRequests, knownPlay ? [workflowPath, ...Object.keys(classifierDefinitions)] : [workflowPath]);
   return accepted;
 }
+// A failed original event may recover only through a newer exact verified exception.
+const refreshStart = script.indexOf("async function verifyFailedPullCanonicalRefresh(");
+const refreshEnd = script.indexOf("// Commit objects", refreshStart);
+const refreshFunction = script.slice(refreshStart, refreshEnd);
+async function recoveredFailure(options = {}) {
+  const original = {id: 98, event: "pull_request", status: "completed", conclusion: "failure", ...options.original};
+  const replacement = options.absent ? null : {id: 99, run_attempt: 2, event: "repository_dispatch",
+    status: "completed", conclusion: "success", ...options.replacement};
+  let verified = 0, queries = 0;
+  const execute = new Function("repositoryName", "prNumber", "positiveInteger", "findMatchingRuntimeImagesRun",
+    "withTransientGitHubRetry", "github", "owner", "repo", "canonicalSmokeJobName", "verifyKnownPlayFailure",
+    `${refreshFunction}; return verifyFailedPullCanonicalRefresh;`);
+  const recover = execute(options.repository || repositoryName, "3390", value => Number.isSafeInteger(value) && value > 0,
+    async (event, title, selected) => {
+      queries++;
+      assert.equal(event, "repository_dispatch");
+      assert.deepEqual(selected, identity);
+      assert.equal(title, source.display_title);
+      if (options.lookupError) throw options.lookupError;
+      return replacement;
+    }, (_label, call) => call(), {paginate: async (route, input) => {
+      assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+      assert.equal(input.run_id, 99); assert.equal(input.attempt_number, 2);
+      return options.noProducer ? [] : [candidate];
+    }}, "benhook1013", "FireMUD", canonicalSmokeJobName, async (selected, job, selectedIdentity) => {
+      verified++;
+      assert.equal(selected, replacement); assert.equal(job, candidate); assert.deepEqual(selectedIdentity, identity);
+      return verify(options.mutateProof, "repository_dispatch");
+    });
+  return {accepted: await recover(original, identity), verified, queries};
+}
 // Proof errors in a successful exception attempt must fail closed.
 const failedStart = script.indexOf('// A continued probe');
 const failedEnd = script.indexOf('if (fullSmokeJob?.conclusion !== "success")', failedStart);
@@ -3652,6 +3683,31 @@ function markerAccepted(overrides = {}) {
     await assert.rejects(failedLegacyProof(stage, terminal), error => error === terminal);
     await assert.rejects(failedProof(terminal), error => error === terminal);
   }
+  assert.deepEqual(await recoveredFailure(), {accepted: true, verified: 1, queries: 1});
+  for (const options of [
+    {repository: "attacker/FireMUD"}, {original: {event: "repository_dispatch"}},
+    {original: {status: "in_progress"}}, {original: {conclusion: "success"}},
+    {original: {id: 0}}, {absent: true}, {replacement: {id: 98}}, {replacement: {id: 97}},
+    {replacement: {run_attempt: 0}}, {replacement: {event: "pull_request"}},
+    {replacement: {status: "in_progress"}}, {replacement: {conclusion: "failure"}},
+    {replacement: {conclusion: "cancelled"}}, {noProducer: true},
+  ]) {
+    const result = await recoveredFailure(options);
+    assert.equal(result.accepted, false, JSON.stringify(options));
+    assert.equal(result.verified, 0, JSON.stringify(options));
+  }
+  for (const mutateProof of [
+    d => {d.currentPullRequest.labels = [];},
+    d => {d.identity.headSha = "e".repeat(40);},
+    d => {d.source.head_repository.full_name = "attacker/FireMUD";},
+    d => {d.source.head_branch = "other";},
+    d => {d.latest.run_attempt++;},
+    d => {d.candidate.steps.find(s => s.name === "Stop smoke stack").conclusion = "failure";},
+    d => {d.candidate.steps.find(s => s.name.startsWith("Known canonical transition")).conclusion = "skipped";},
+    d => {d.candidate.steps.find(s => s.name === "Export fixed-tag preview image artifact").conclusion = "success";},
+    d => {d.definitions[workflowPath].content = Buffer.from("untrusted workflow").toString("base64");},
+  ]) assert.equal((await recoveredFailure({mutateProof})).accepted, false);
+  await assert.rejects(recoveredFailure({lookupError: new Error("unavailable")}), /unavailable/);
   assert.equal(markerAccepted(), true);
   const refreshMarker = {"github.event_name": "repository_dispatch",
     "github.event.pull_request.labels.*.name": [], "needs.image-meta.outputs.canonical_play_transition": "true"};

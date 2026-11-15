@@ -930,6 +930,28 @@ jobs:
               return true;
             }
 
+            // A failed original event is not replaced by arbitrary green history. Only
+            // a newer exact typed refresh with independently proven canonical exception
+            // evidence can recover this diagnostic gate; it never proves PLAY succeeded.
+            async function verifyFailedPullCanonicalRefresh(run, identity) {
+              if (repositoryName !== "benhook1013/FireMUD" || run.event !== "pull_request" ||
+                  run.status !== "completed" || run.conclusion !== "failure" ||
+                  !positiveInteger(run.id)) return false;
+              const title = `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
+                `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
+              const replacement = await findMatchingRuntimeImagesRun("repository_dispatch", title, identity);
+              if (!replacement || !positiveInteger(replacement.id) || !positiveInteger(replacement.run_attempt) || replacement.id <= run.id ||
+                  replacement.event !== "repository_dispatch" || replacement.status !== "completed" ||
+                  replacement.conclusion !== "success") return false;
+              const jobs = await withTransientGitHubRetry("canonical transition refresh jobs lookup", () =>
+                github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
+                  owner, repo, run_id: replacement.id, attempt_number: replacement.run_attempt, per_page: 100,
+                })
+              );
+              const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
+              return Boolean(candidate) && await verifyKnownPlayFailure(replacement, candidate, identity);
+            }
+
             // Commit objects are immutable; mutable PR/base reads stay fresh.
             const immutableCommits = new Map();
             async function immutableCommit(ref, label) {
@@ -1243,6 +1265,9 @@ jobs:
                       const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
                       knownPlayVerified = Boolean(candidate) &&
                         await verifyKnownPlayFailure(matching, candidate, currentIdentity);
+                      if (!knownPlayVerified) {
+                        knownPlayVerified = await verifyFailedPullCanonicalRefresh(matching, currentIdentity);
+                      }
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;
                       core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
