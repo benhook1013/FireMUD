@@ -1231,10 +1231,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                                                                   retained,
                                                                                   NOW))
                                                                   .isInstanceOf(
-                                                                      IllegalStateException.class)));
+                                                                      IllegalStateException
+                                                                          .class)));
                                                   // Consumed-proof reconciliation takes this same
                                                   // transaction lock. Roll back before awaiting it.
-                                                  lockAttempted.orTimeout(10, TimeUnit.SECONDS).join();
+                                                  lockAttempted
+                                                      .orTimeout(10, TimeUnit.SECONDS)
+                                                      .join();
                                                   assertThat(concurrentRelease.get().isDone())
                                                       .isFalse();
                                                   throw new IllegalStateException(
