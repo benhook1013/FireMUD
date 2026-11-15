@@ -228,6 +228,66 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
     assertThat(finalState.sourceVersion()).isEqualTo(3L);
     assertThat(finalState.issuanceFence().value()).isEqualTo(3L);
 
+    // Retrying an older completed logout must preserve the later owner's exact source state.
+    UUID laterLogoutRequestId = UUID.randomUUID();
+    String laterTokenHash = sha256Hex("later presented logout token");
+    assertThat(
+            logoutProducer.commit(
+                laterLogoutRequestId,
+                1,
+                AccountLogoutRequestDigest.accountLogoutAll(
+                    seed.account().getAccountUuid(), TOKEN_PROFILE, laterTokenHash),
+                TOKEN_PROFILE,
+                laterTokenHash,
+                persistedAccount,
+                finalState))
+        .isEqualTo(AccountLogoutAllAuthorityEventProducer.LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    ScopeState laterState = readState(transaction, generations, seed.account().getAccountUuid());
+    assertThat(laterState.generation()).isEqualTo(4L);
+    assertThat(laterState.sourceVersion()).isEqualTo(4L);
+    assertThat(laterState.issuanceFence().value()).isEqualTo(4L);
+    var laterEvidence =
+        transaction.execute(
+            status ->
+                sources.readCurrentAccountSource(seed.account().getAccountUuid(), laterState));
+    assertThat(laterEvidence).isNotNull();
+    assertThat(laterEvidence.checkpoint().sequence()).isEqualTo(3L);
+    var retainedRows =
+        dsl.fetch(
+            "SELECT row_to_json(r)::text FROM account_logout_all_operation_receipts r ORDER BY request_id");
+    var retainedEvents =
+        dsl.fetch(
+            "SELECT row_to_json(e)::text FROM account_authority_outbox_events e ORDER BY outbox_stream_key, outbox_sequence");
+    assertThat(
+            logoutProducer.commit(
+                logoutRequestId,
+                1,
+                logoutRequestDigest,
+                TOKEN_PROFILE,
+                syntheticPresentedTokenHash,
+                persistedAccount,
+                expectedLogoutState))
+        .isEqualTo(AccountLogoutAllAuthorityEventProducer.LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    assertThat(readState(transaction, generations, seed.account().getAccountUuid()))
+        .isEqualTo(laterState);
+    var replayedEvidence =
+        transaction.execute(
+            status ->
+                sources.readCurrentAccountSource(seed.account().getAccountUuid(), laterState));
+    var replayedReceipt =
+        transaction.execute(
+            status -> logoutOperations.findByRequestId(logoutRequestId).orElseThrow());
+    assertThat(replayedEvidence).isEqualTo(laterEvidence);
+    assertThat(replayedReceipt).isEqualTo(logoutReceipt);
+    assertThat(
+            dsl.fetch(
+                "SELECT row_to_json(r)::text FROM account_logout_all_operation_receipts r ORDER BY request_id"))
+        .isEqualTo(retainedRows);
+    assertThat(
+            dsl.fetch(
+                "SELECT row_to_json(e)::text FROM account_authority_outbox_events e ORDER BY outbox_stream_key, outbox_sequence"))
+        .isEqualTo(retainedEvents);
+
     assertDatabaseWriteRejected(
         () ->
             dsl.execute(

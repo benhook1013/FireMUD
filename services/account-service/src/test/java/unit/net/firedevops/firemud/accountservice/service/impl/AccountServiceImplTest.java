@@ -520,6 +520,19 @@ class AccountServiceImplTest {
     var claims = jwtUtil.parseToken(token).getPayload();
     assertEquals(account.getAccountUuid().toString(), claims.getSubject());
     assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
+    assertEquals("firemud-account-service", claims.getIssuer());
+    String expectedAudience =
+        switch (mode) {
+          case CONTROL_UI -> "control-ui";
+          case GAMEPLAY_PASSWORD, EMAIL_OTP -> "account-service";
+          case PLAYER_BOOTSTRAP -> "player-bootstrap";
+        };
+    assertEquals(java.util.Set.of(expectedAudience), claims.getAudience());
+    assertNotNull(UUID.fromString(claims.getId()));
+    assertFalse(claims.containsKey("tenantId"));
+    if (mode != OrdinaryIssuance.PLAYER_BOOTSTRAP) {
+      assertEquals(java.util.List.of(), claims.get("globalRoles"));
+    }
     org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
     if (mode != OrdinaryIssuance.GAMEPLAY_PASSWORD) {
       org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
@@ -3084,6 +3097,7 @@ class AccountServiceImplTest {
         org.junit.jupiter.params.provider.Arguments.of(valid, (Object) null),
         org.junit.jupiter.params.provider.Arguments.of(valid, ""),
         org.junit.jupiter.params.provider.Arguments.of(valid, 11L),
+        org.junit.jupiter.params.provider.Arguments.of(valid, java.util.List.of(valid)),
         org.junit.jupiter.params.provider.Arguments.of(valid, "11"),
         org.junit.jupiter.params.provider.Arguments.of(
             valid, "00000000-0000-0000-0000-000000000000"),
@@ -3249,8 +3263,10 @@ class AccountServiceImplTest {
   @Test
   void listBootstrapWorldsRejectsBootstrapTokenWithoutAudience() {
     composeOrdinaryBootstrapWorldDiscovery();
+    String accountUuid = "10000000-0000-4000-8000-000000000001";
     String malformedBootstrapToken =
-        new JwtUtil(JWT_SECRET, 300000L).generateToken("11", Map.of("accountId", "11"));
+        new JwtUtil(JWT_SECRET, 300000L)
+            .generateToken(accountUuid, Map.of("accountId", accountUuid));
 
     AuthenticationException ex =
         assertThrows(
@@ -3258,6 +3274,7 @@ class AccountServiceImplTest {
             () -> service.listBootstrapWorlds(malformedBootstrapToken));
 
     assertEquals("CONNECT_CONTEXT_INVALID", ex.getCode());
+    verifyNoInteractions(accountRepository, sessionService);
   }
 
   @Test
@@ -4164,6 +4181,27 @@ class AccountServiceImplTest {
         assertThrows(AuthenticationException.class, () -> service.exportAccountData(2L)).getCode());
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void exportAccountDataRejectsContradictoryOwnerBeforeProfileRead(boolean wrongOwner) {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    if (wrongOwner) {
+      account.setId(3L);
+    } else {
+      account.setAccountUuidSourceNumericId(3L);
+    }
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+
+    AuthenticationException failure =
+        assertThrows(AuthenticationException.class, () -> service.exportAccountData(2L));
+
+    assertEquals("AUTH_UNAVAILABLE", failure.getCode());
+    org.mockito.Mockito.verify(accountRepository).findById(2L);
+    verifyNoInteractions(profileRepository, notificationService);
+  }
+
   @Test
   void exportTenantDataRequiresTenantMembershipOrProfile() {
     Account account = new Account();
@@ -4199,6 +4237,29 @@ class AccountServiceImplTest {
     assertNull(export.profile());
     org.mockito.Mockito.verify(accountRepository).findById(2L);
     org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
+  }
+
+  @Test
+  void deleteAccountRejectsMissingOwnerBeforeRetentionOrChildAccess() {
+    when(accountRepository.findById(404L)).thenReturn(Optional.empty());
+
+    IllegalArgumentException failure =
+        assertThrows(IllegalArgumentException.class, () -> service.deleteAccount(404L));
+
+    assertEquals("Account not found", failure.getMessage());
+    org.mockito.Mockito.verify(accountRepository).findById(404L);
+    verifyNoInteractions(
+        accountJoinOperationRepository,
+        retainedSubscriptionEvidenceRepository,
+        emailVerificationTokenRepository,
+        passwordResetTokenRepository,
+        accountRealmAccessGrantRepository,
+        externalAccountRepository,
+        paymentTransactionRepository,
+        profileRepository,
+        accountTenantMembershipRepository);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .delete(org.mockito.ArgumentMatchers.any());
   }
 
   @Test

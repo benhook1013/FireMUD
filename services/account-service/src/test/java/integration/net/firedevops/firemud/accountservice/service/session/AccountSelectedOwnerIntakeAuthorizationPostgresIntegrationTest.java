@@ -639,7 +639,8 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
         assertThat(revoking.status).isEqualTo("REVOKING");
       } else {
         serviceClock.advance(Duration.ofSeconds(31));
-        assertThatThrownBy(fixture::issueCreator).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(fixture::issueCreator)
+            .isInstanceOf(AccountControlUiIssuanceService.PermanentRecoveryDenialException.class);
       }
       assertThat(
               f.dsl
