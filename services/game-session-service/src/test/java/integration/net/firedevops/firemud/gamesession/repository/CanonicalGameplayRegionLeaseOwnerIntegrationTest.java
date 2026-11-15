@@ -1195,9 +1195,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                               @Override
                                               public void executeStart(
                                                   org.jooq.ExecuteContext context) {
-                                                if (context
-                                                    .sql()
-                                                    .contains("SET phase = 'PREPARED'")) {
+                                                String sql = context.sql();
+                                                if (sql != null
+                                                    && sql.contains("SET phase = 'PREPARED'")) {
                                                   java.util.concurrent.CompletableFuture.runAsync(
                                                           () ->
                                                               assertThatThrownBy(
