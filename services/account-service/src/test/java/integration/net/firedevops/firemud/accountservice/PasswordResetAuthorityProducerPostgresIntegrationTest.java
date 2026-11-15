@@ -571,6 +571,64 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
           return null;
         });
 
+    var beforeAbortedTransaction =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                HexFormat.of().parseHex(tokenHash));
+    var beforeSourceAbort =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_draft_authorization_source_changes WHERE change_id = "
+                    + "(SELECT source_change_id FROM account_password_reset_draft_source_changes "
+                    + "WHERE token_hash = ?)",
+                HexFormat.of().parseHex(tokenHash));
+    assertThat(beforeAbortedTransaction).hasSize(1);
+    assertThat(beforeSourceAbort).hasSize(1);
+    assertThatThrownBy(
+            () ->
+                transaction(
+                    fixture.transaction(),
+                    () -> {
+                      var intent = fixture.sourceChanges().findByTokenHash(tokenHash).orElseThrow();
+                      fixture
+                          .sourceChanges()
+                          .markSourceAborted(
+                              intent,
+                              DraftAuthorizationFenceRepository.SourceChangeAbortReason.EXPIRED);
+                      assertThat(
+                              fixture
+                                  .sourceChanges()
+                                  .findByTokenHash(tokenHash)
+                                  .orElseThrow()
+                                  .status())
+                          .isEqualTo("SOURCE_ABORTED");
+                      throw new IllegalStateException("deliberate failure after source abort");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("deliberate failure after source abort");
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash)))
+        .isEqualTo(beforeAbortedTransaction);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_draft_authorization_source_changes WHERE change_id = "
+                        + "(SELECT source_change_id FROM account_password_reset_draft_source_changes "
+                        + "WHERE token_hash = ?)",
+                    HexFormat.of().parseHex(tokenHash)))
+        .isEqualTo(beforeSourceAbort);
+    assertThat(tokenExists(fixture, seed.rawToken())).isTrue();
+    assertThat(snapshot(fixture, seed))
+        .isEqualTo(new StoredState(seed.originalVerifier(), 1L, 1L, 1L, 1L, 0L, 0L));
+
     assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "expired-password"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Token expired");
