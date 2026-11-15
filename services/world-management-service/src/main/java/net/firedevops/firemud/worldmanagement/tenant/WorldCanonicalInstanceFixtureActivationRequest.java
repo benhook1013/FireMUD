@@ -35,19 +35,30 @@ public record WorldCanonicalInstanceFixtureActivationRequest(
   /** Canonical closed bytes retained as the immutable one-use operation request. */
   public byte[] canonicalBytes() {
     String json =
-        "{\"request\":{" +
-            "\"activationRequestId\":\"" + activationRequestId + "\"," +
-            "\"authorityKind\":\"RUN_OWNED_FIXTURE\"," +
-            "\"canonicalGameInstanceId\":\"" + canonicalGameInstanceId + "\"," +
-            "\"canonicalTenantId\":\"" + canonicalTenantId + "\"," +
-            "\"expectedLifecycleEpoch\":\"1\"," +
-            "\"expectedRowVersion\":\"0\"," +
-            "\"fixturePolicySealEvidenceDigest\":\"" + fixturePolicySealEvidenceDigest + "\"}," +
-            "\"schema\":\"" + SCHEMA + "\"}";
+        "{\"request\":{"
+            + "\"activationRequestId\":\""
+            + activationRequestId
+            + "\","
+            + "\"authorityKind\":\"RUN_OWNED_FIXTURE\","
+            + "\"canonicalGameInstanceId\":\""
+            + canonicalGameInstanceId
+            + "\","
+            + "\"canonicalTenantId\":\""
+            + canonicalTenantId
+            + "\","
+            + "\"expectedLifecycleEpoch\":\"1\","
+            + "\"expectedRowVersion\":\"0\","
+            + "\"fixturePolicySealEvidenceDigest\":\""
+            + fixturePolicySealEvidenceDigest
+            + "\"},"
+            + "\"schema\":\""
+            + SCHEMA
+            + "\"}";
     try {
       return Rfc8785CanonicalJson.canonicalizeUtf8(json);
     } catch (IOException impossible) {
-      throw new IllegalStateException("Fixture activation request cannot be canonicalized", impossible);
+      throw new IllegalStateException(
+          "Fixture activation request cannot be canonicalized", impossible);
     }
   }
 

@@ -23,7 +23,8 @@ public final class WorldCanonicalInstanceFixtureActivationOwner {
   private final TransactionTemplate read;
 
   public WorldCanonicalInstanceFixtureActivationOwner(
-      DSLContext dsl, PlatformTransactionManager manager,
+      DSLContext dsl,
+      PlatformTransactionManager manager,
       WorldCanonicalInstanceAssociationRepository associations) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
     this.associations = Objects.requireNonNull(associations, "associations");
@@ -38,7 +39,8 @@ public final class WorldCanonicalInstanceFixtureActivationOwner {
   }
 
   public WorldCanonicalInstanceFixtureActivationResult activate(
-      RunOwnedCanonicalWorldLaunchEvidence evidence, PreparedWorldInstanceRequest originalRequest,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
+      PreparedWorldInstanceRequest originalRequest,
       WorldCanonicalInstanceFixtureActivationRequest request) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(evidence, "evidence").requireFixedGameSessionPeer();
@@ -46,20 +48,29 @@ public final class WorldCanonicalInstanceFixtureActivationOwner {
     Objects.requireNonNull(request, "request");
     evidence.requireMatches(originalRequest);
     if (evidence.gameSessionAssociation() == null
-        || !request.canonicalGameInstanceId().equals(evidence.gameSessionAssociation().gameInstanceUuid())) {
+        || !request
+            .canonicalGameInstanceId()
+            .equals(evidence.gameSessionAssociation().gameInstanceUuid())) {
       throw new IllegalArgumentException("Fixture activation Game Session instance differs");
     }
-    Optional<WorldCanonicalInstanceFixtureActivationResult> retained = read(request, evidence, originalRequest);
+    Optional<WorldCanonicalInstanceFixtureActivationResult> retained =
+        read(request, evidence, originalRequest);
     if (retained.isPresent()) return retained.orElseThrow();
     try {
-      write.executeWithoutResult(status -> {
-        var association = associations.readRunOwnedFixtureAssociationInActivationTransaction(
-            evidence, originalRequest);
-        var plan = plan(association);
-        RunOwnedWorldFixedPresetResources.readCommitted(dsl, plan,
-            association.worldInstanceId(), association.runOwnedFixture().worldPrivateKeys().gameInstanceId());
-        storage.activateInOwnerTransaction(association, request, plan, request.canonicalBytes());
-      });
+      write.executeWithoutResult(
+          status -> {
+            var association =
+                associations.readRunOwnedFixtureAssociationInActivationTransaction(
+                    evidence, originalRequest);
+            var plan = plan(association);
+            RunOwnedWorldFixedPresetResources.readCommitted(
+                dsl,
+                plan,
+                association.worldInstanceId(),
+                association.runOwnedFixture().worldPrivateKeys().gameInstanceId());
+            storage.activateInOwnerTransaction(
+                association, request, plan, request.canonicalBytes());
+          });
     } catch (RuntimeException failure) {
       // A concurrent exact commit or ambiguous reply is accepted only after independent full proof.
       try {
@@ -70,8 +81,11 @@ public final class WorldCanonicalInstanceFixtureActivationOwner {
       }
       throw failure;
     }
-    return read(request, evidence, originalRequest).orElseThrow(
-        () -> new IllegalStateException("Fixture activation committed receipt was not reconstructed"));
+    return read(request, evidence, originalRequest)
+        .orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "Fixture activation committed receipt was not reconstructed"));
   }
 
   public Optional<WorldCanonicalInstanceFixtureActivationResult> read(
@@ -81,37 +95,53 @@ public final class WorldCanonicalInstanceFixtureActivationOwner {
 
   private Optional<WorldCanonicalInstanceFixtureActivationResult> read(
       WorldCanonicalInstanceFixtureActivationRequest request,
-      RunOwnedCanonicalWorldLaunchEvidence evidence, PreparedWorldInstanceRequest originalRequest) {
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
+      PreparedWorldInstanceRequest originalRequest) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(request, "request");
-    return Objects.requireNonNull(read.execute(status -> {
-      var association = associations.readFixtureActivationAssociationInOwnerTransaction(request);
-      if (association.isEmpty()) return Optional.<WorldCanonicalInstanceFixtureActivationResult>empty();
-      var retained = association.orElseThrow();
-      if (evidence != null) {
-        WorldCanonicalInstanceAssociationRepository.requireFixtureAssociationMatches(
-            retained, evidence, originalRequest);
-      }
-      var plan = plan(retained);
-      var result = storage.readCommittedResultInOwnerTransaction(
-          retained, request, plan, request.canonicalBytes());
-      if (result.isEmpty()) throw new IllegalStateException("Fixture activation receipt proof differs");
-      RunOwnedWorldFixedPresetResources.readActivated(dsl, plan, retained.worldInstanceId(),
-          retained.runOwnedFixture().worldPrivateKeys().gameInstanceId(), request);
-      return Optional.of(WorldCanonicalInstanceFixtureActivationResult.fromStored(request, result.orElseThrow()));
-    }));
+    return Objects.requireNonNull(
+        read.execute(
+            status -> {
+              var association =
+                  associations.readFixtureActivationAssociationInOwnerTransaction(request);
+              if (association.isEmpty())
+                return Optional.<WorldCanonicalInstanceFixtureActivationResult>empty();
+              var retained = association.orElseThrow();
+              if (evidence != null) {
+                WorldCanonicalInstanceAssociationRepository.requireFixtureAssociationMatches(
+                    retained, evidence, originalRequest);
+              }
+              var plan = plan(retained);
+              var result =
+                  storage.readCommittedResultInOwnerTransaction(
+                      retained, request, plan, request.canonicalBytes());
+              if (result.isEmpty())
+                throw new IllegalStateException("Fixture activation receipt proof differs");
+              RunOwnedWorldFixedPresetResources.readActivated(
+                  dsl,
+                  plan,
+                  retained.worldInstanceId(),
+                  retained.runOwnedFixture().worldPrivateKeys().gameInstanceId(),
+                  request);
+              return Optional.of(
+                  WorldCanonicalInstanceFixtureActivationResult.fromStored(
+                      request, result.orElseThrow()));
+            }));
   }
 
   private static RunOwnedWorldFixedPresetResources.FixedPresetPlan plan(
       WorldCanonicalInstanceAssociation association) {
-    return RunOwnedWorldFixedPresetResources.plan(association,
-        association.runOwnedFixture().sourceIntakeReceipt(), association.versionIdentity());
+    return RunOwnedWorldFixedPresetResources.plan(
+        association,
+        association.runOwnedFixture().sourceIntakeReceipt(),
+        association.versionIdentity());
   }
 
   private static void requireNoAmbientTransaction() {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
-      throw new IllegalStateException("Fixture activation owner cannot join an ambient transaction");
+      throw new IllegalStateException(
+          "Fixture activation owner cannot join an ambient transaction");
     }
   }
 }

@@ -47,9 +47,19 @@ CREATE TABLE world_run_owned_fixture_activation_manifest (
         ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 );
 
+CREATE TABLE world_run_owned_fixture_tenant_manifest (
+    transaction_id BIGINT NOT NULL,
+    activation_request_id UUID NOT NULL REFERENCES world_run_owned_fixture_activation_operation(activation_request_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    expected_old JSONB NOT NULL,
+    expected_new JSONB NOT NULL,
+    PRIMARY KEY (transaction_id, activation_request_id)
+);
+
 -- [jooq ignore start]
 REVOKE ALL ON world_run_owned_fixture_activation_operation FROM PUBLIC;
 REVOKE ALL ON world_run_owned_fixture_activation_manifest FROM PUBLIC;
+REVOKE ALL ON world_run_owned_fixture_tenant_manifest FROM PUBLIC;
 
 CREATE FUNCTION world_validate_run_owned_fixture_activation_operation()
 RETURNS TRIGGER
@@ -62,6 +72,7 @@ DECLARE
     plan JSONB;
     association "${serviceSchema}".world_canonical_instance_association%ROWTYPE;
     instance "${serviceSchema}".world_instance%ROWTYPE;
+    activated "${serviceSchema}".world_instance%ROWTYPE;
 BEGIN
     IF TG_OP <> 'INSERT' THEN
         RAISE EXCEPTION 'Run-owned fixture activation evidence is immutable' USING ERRCODE = '55000';
@@ -155,6 +166,15 @@ BEGIN
     PERFORM * FROM "${serviceSchema}".world_read_run_owned_fixed_preset(
         NEW.preset_plan_json, plan->>'expectedContentDigest', NEW.world_instance_id,
         association.private_game_instance_key);
+    activated := instance;
+    activated.status := 'ACTIVE';
+    activated.lifecycle_epoch := 2;
+    activated.row_version := 1;
+    activated.failure_reason := NULL;
+    activated.updated_at := CURRENT_TIMESTAMP;
+    INSERT INTO "${serviceSchema}".world_run_owned_fixture_tenant_manifest
+        (transaction_id, activation_request_id, expected_old, expected_new)
+    VALUES (txid_current(), NEW.activation_request_id, to_jsonb(instance), to_jsonb(activated));
     INSERT INTO "${serviceSchema}".world_run_owned_fixture_activation_manifest(
         transaction_id, activation_request_id, canonical_game_instance_id, world_instance_id,
         expected_lifecycle_epoch, expected_row_version, request_digest, result_digest)
@@ -198,6 +218,9 @@ BEGIN
             AND w.row_version = NEW.result_row_version)
         OR EXISTS (SELECT 1 FROM "${serviceSchema}".world_run_owned_fixture_activation_manifest m
             WHERE m.transaction_id = txid_current()
+                AND m.activation_request_id = NEW.activation_request_id)
+        OR EXISTS (SELECT 1 FROM "${serviceSchema}".world_run_owned_fixture_tenant_manifest m
+            WHERE m.transaction_id = txid_current()
                 AND m.activation_request_id = NEW.activation_request_id) THEN
         RAISE EXCEPTION 'Run-owned fixture activation operation did not commit its exact ACTIVE CAS'
             USING ERRCODE = '23514';
@@ -211,6 +234,65 @@ CREATE CONSTRAINT TRIGGER trg_world_run_owned_fixture_activation_commit
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
     EXECUTE FUNCTION world_require_run_owned_fixture_activation_commit();
 
+-- A separate exact row-image manifest authorizes the reserved-tenant trigger independently of
+-- trigger name ordering. It is one-use and must be consumed before the operation can commit.
+CREATE FUNCTION world_consume_run_owned_fixture_tenant_manifest(
+    actual_schema TEXT, actual_table TEXT, actual_operation TEXT,
+    actual_old JSONB, actual_new JSONB
+) RETURNS BOOLEAN
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, "${serviceSchema}"
+AS $$
+DECLARE consumed UUID;
+BEGIN
+    IF actual_schema IS DISTINCT FROM '${serviceSchema}'
+        OR actual_table IS DISTINCT FROM 'world_instance'
+        OR actual_operation IS DISTINCT FROM 'UPDATE'
+        OR actual_old IS NULL OR actual_new IS NULL THEN RETURN FALSE; END IF;
+    DELETE FROM "${serviceSchema}".world_run_owned_fixture_tenant_manifest m
+    USING "${serviceSchema}".world_run_owned_fixture_activation_operation o,
+        "${serviceSchema}".world_canonical_instance_association a
+    WHERE m.transaction_id = txid_current()
+        AND m.expected_old = actual_old AND m.expected_new = actual_new
+        AND o.activation_request_id = m.activation_request_id AND o.outcome = 'COMMITTED'
+        AND o.world_instance_id = (actual_old->>'id')::BIGINT
+        AND o.world_instance_id = (actual_new->>'id')::BIGINT
+        AND o.canonical_game_instance_id::TEXT = actual_old->>'canonical_game_instance_id'
+        AND o.canonical_game_instance_id::TEXT = actual_new->>'canonical_game_instance_id'
+        AND a.canonical_game_instance_id = o.canonical_game_instance_id
+        AND a.world_instance_id = o.world_instance_id
+        AND a.canonical_authority_kind = 'RUN_OWNED_FIXTURE'
+        AND a.local_tenant_key = (actual_old->>'tenant_id')::BIGINT
+        AND a.local_tenant_key = (actual_new->>'tenant_id')::BIGINT
+        AND a.private_game_instance_key = (actual_old->>'game_instance_id')::BIGINT
+        AND a.private_game_instance_key = (actual_new->>'game_instance_id')::BIGINT
+        AND actual_old->>'status' = 'PREPARING' AND actual_new->>'status' = 'ACTIVE'
+        AND actual_old->>'lifecycle_epoch' = '1' AND actual_new->>'lifecycle_epoch' = '2'
+        AND actual_old->>'row_version' = '0' AND actual_new->>'row_version' = '1'
+    RETURNING m.activation_request_id INTO consumed;
+    RETURN consumed IS NOT NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION world_consume_run_owned_fixture_tenant_manifest(TEXT,TEXT,TEXT,JSONB,JSONB) FROM PUBLIC;
+
+DO $migration$
+DECLARE
+    original TEXT;
+    anchor TEXT := $anchor$        RAISE EXCEPTION
+            'World tenant key is reserved for a canonical authored source; no exact transaction execution manifest'$anchor$;
+BEGIN
+    SELECT pg_get_functiondef('"${serviceSchema}".world_claim_legacy_numeric_tenant_key()'::REGPROCEDURE)
+        INTO STRICT original;
+    IF (length(original)-length(replace(original,anchor,'')))/length(anchor) <> 1 THEN
+        RAISE EXCEPTION 'Expected exact reserved-tenant execution denial guard';
+    END IF;
+    EXECUTE replace(original,anchor,$replacement$        IF "${serviceSchema}".world_consume_run_owned_fixture_tenant_manifest(
+            TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP, old_row, new_row) THEN
+            RETURN NEW;
+        END IF;
+$replacement$ || anchor);
+END;
+$migration$;
+
 -- Replace only the canonical fixture blanket denial; preserve V1042.7 predecessor staging. Any other lifecycle transition on fixture rows
 -- remains denied; the allowed transition consumes an exact transaction-local owner manifest.
 DO $migration$
@@ -219,7 +301,7 @@ DECLARE
     anchor TEXT := $anchor$BEGIN
     IF OLD.canonical_authority_kind = 'RUN_OWNED_FIXTURE'
         OR NEW.canonical_authority_kind = 'RUN_OWNED_FIXTURE' THEN
-        RAISE EXCEPTION 'Run-owned fixture World lifecycle transitions are disabled'
+        RAISE EXCEPTION 'Run-owned fixture World row mutations are disabled'
             USING ERRCODE = '23514';
     END IF;$anchor$;
 BEGIN

@@ -38,12 +38,18 @@ public final class WorldCanonicalInstanceFixtureActivationRepository {
     requireWritableReadCommittedTransaction();
     if (!association.isRunOwnedFixture()
         || !association.identity().canonicalTenantId().equals(request.canonicalTenantId())
-        || !association.identity().canonicalGameInstanceId().equals(request.canonicalGameInstanceId())
-        || !association.runOwnedFixture().fixtureProvenanceDigest()
+        || !association
+            .identity()
+            .canonicalGameInstanceId()
+            .equals(request.canonicalGameInstanceId())
+        || !association
+            .runOwnedFixture()
+            .fixtureProvenanceDigest()
             .equals(request.fixturePolicySealEvidenceDigest())
         || association.runOwnedFixture().preparingLifecycleEpoch() != 1L
-        || !presetPlan.fixtureOperationId().equals(
-            association.runOwnedFixture().fixtureOperationId().toString())
+        || !presetPlan
+            .fixtureOperationId()
+            .equals(association.runOwnedFixture().fixtureOperationId().toString())
         || !java.util.Arrays.equals(request.canonicalBytes(), requestBytes)) {
       throw invalidOwnerEvidence();
     }
@@ -71,7 +77,8 @@ public final class WorldCanonicalInstanceFixtureActivationRepository {
       throw invalidOwnerEvidence();
     }
     return WorldCanonicalInstanceFixtureActivationResult.fromStored(
-        request, result.get("result_bytes", byte[].class)).canonicalBytes();
+            request, result.get("result_bytes", byte[].class))
+        .canonicalBytes();
   }
 
   /** Reads the result in the lifecycle owner's independent read-only REPEATABLE READ snapshot. */
@@ -95,7 +102,10 @@ public final class WorldCanonicalInstanceFixtureActivationRepository {
     Objects.requireNonNull(requestBytes, "requestBytes");
     if (!association.isRunOwnedFixture()
         || !association.identity().canonicalTenantId().equals(request.canonicalTenantId())
-        || !association.identity().canonicalGameInstanceId().equals(request.canonicalGameInstanceId())
+        || !association
+            .identity()
+            .canonicalGameInstanceId()
+            .equals(request.canonicalGameInstanceId())
         || !java.util.Arrays.equals(request.canonicalBytes(), requestBytes)) {
       throw invalidOwnerEvidence();
     }
@@ -129,8 +139,8 @@ public final class WorldCanonicalInstanceFixtureActivationRepository {
     byte[] result = row.get("result_bytes", byte[].class);
     String resultDigest = row.get("result_digest", String.class);
     if (result == null || !digest(result).equals(resultDigest)) throw invalidOwnerEvidence();
-    return Optional.of(WorldCanonicalInstanceFixtureActivationResult.fromStored(
-        request, result).canonicalBytes());
+    return Optional.of(
+        WorldCanonicalInstanceFixtureActivationResult.fromStored(request, result).canonicalBytes());
   }
 
   private static byte[] preparingEvidenceBytes(
@@ -139,30 +149,56 @@ public final class WorldCanonicalInstanceFixtureActivationRepository {
       RunOwnedWorldFixedPresetResources.FixedPresetPlan plan) {
     var fixture = association.runOwnedFixture();
     String json =
-        "{\"authorityKind\":\"RUN_OWNED_FIXTURE\"," +
-            "\"canonicalGameInstanceId\":\"" + association.identity().canonicalGameInstanceId() + "\"," +
-            "\"fixtureOperationId\":\"" + fixture.fixtureOperationId() + "\"," +
-            "\"fixturePolicySealEvidenceDigest\":\"" + fixture.fixtureProvenanceDigest() + "\"," +
-            "\"preparationInputDigest\":\"" + fixture.preparationInputDigest() + "\"," +
-            "\"presetPlanDigest\":\"" + digest(plan.planJson().getBytes(StandardCharsets.UTF_8)) + "\"," +
-            "\"requestBytesBase64\":\"" + Base64.getEncoder().encodeToString(requestBytes) + "\"," +
-            "\"schema\":\"world-canonical-instance-fixture-preparing-evidence/v1\"," +
-            "\"sourceReceiptDigest\":\"" + fixture.sourceIntakeReceipt().receiptDigest() + "\"," +
-            "\"versionIdentityOperationId\":\"" + association.versionIdentityOperationId() + "\"," +
-            "\"worldInstanceId\":\"" + association.worldInstanceId() + "\"," +
-            "\"worldPrivateTenantKey\":\"" + fixture.worldPrivateKeys().tenantId() + "\"," +
-            "\"worldPrivateGameInstanceKey\":\"" + fixture.worldPrivateKeys().gameInstanceId() + "\"," +
-            "\"worldPrivateVersionKey\":\"" + fixture.worldPrivateKeys().versionId() + "\"}";
+        "{\"authorityKind\":\"RUN_OWNED_FIXTURE\","
+            + "\"canonicalGameInstanceId\":\""
+            + association.identity().canonicalGameInstanceId()
+            + "\","
+            + "\"fixtureOperationId\":\""
+            + fixture.fixtureOperationId()
+            + "\","
+            + "\"fixturePolicySealEvidenceDigest\":\""
+            + fixture.fixtureProvenanceDigest()
+            + "\","
+            + "\"preparationInputDigest\":\""
+            + fixture.preparationInputDigest()
+            + "\","
+            + "\"presetPlanDigest\":\""
+            + digest(plan.planJson().getBytes(StandardCharsets.UTF_8))
+            + "\","
+            + "\"requestBytesBase64\":\""
+            + Base64.getEncoder().encodeToString(requestBytes)
+            + "\","
+            + "\"schema\":\"world-canonical-instance-fixture-preparing-evidence/v1\","
+            + "\"sourceReceiptDigest\":\""
+            + fixture.sourceIntakeReceipt().receiptDigest()
+            + "\","
+            + "\"versionIdentityOperationId\":\""
+            + association.versionIdentityOperationId()
+            + "\","
+            + "\"worldInstanceId\":\""
+            + association.worldInstanceId()
+            + "\","
+            + "\"worldPrivateTenantKey\":\""
+            + fixture.worldPrivateKeys().tenantId()
+            + "\","
+            + "\"worldPrivateGameInstanceKey\":\""
+            + fixture.worldPrivateKeys().gameInstanceId()
+            + "\","
+            + "\"worldPrivateVersionKey\":\""
+            + fixture.worldPrivateKeys().versionId()
+            + "\"}";
     try {
       return Rfc8785CanonicalJson.canonicalizeUtf8(json);
     } catch (IOException impossible) {
-      throw new IllegalStateException("Fixture preparing evidence cannot be canonicalized", impossible);
+      throw new IllegalStateException(
+          "Fixture preparing evidence cannot be canonicalized", impossible);
     }
   }
 
   private static String digest(byte[] bytes) {
     try {
-      return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException("SHA-256 is unavailable", impossible);
     }
@@ -190,10 +226,12 @@ public final class WorldCanonicalInstanceFixtureActivationRepository {
   }
 
   private void requirePhysicalTransaction(String isolation, String readOnly) {
-    Record state = dsl.fetchOne(
-        "SELECT current_setting('transaction_isolation') AS isolation, "
-            + "current_setting('transaction_read_only') AS read_only");
-    if (state == null || !isolation.equals(state.get("isolation", String.class))
+    Record state =
+        dsl.fetchOne(
+            "SELECT current_setting('transaction_isolation') AS isolation, "
+                + "current_setting('transaction_read_only') AS read_only");
+    if (state == null
+        || !isolation.equals(state.get("isolation", String.class))
         || !readOnly.equals(state.get("read_only", String.class))) {
       throw new IllegalStateException("Fixture activation owner transaction state differs");
     }

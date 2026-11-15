@@ -468,37 +468,60 @@ public final class RunOwnedWorldFixedPresetResources {
 
   /** Reads the unchanged preset only for an exact committed fixture activation receipt. */
   public static MaterializedFixedPreset readActivated(
-      DSLContext dsl, FixedPresetPlan plan, long worldInstanceId, long privateGameInstanceKey,
-      net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationRequest request) {
+      DSLContext dsl,
+      FixedPresetPlan plan,
+      long worldInstanceId,
+      long privateGameInstanceKey,
+      net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationRequest
+          request) {
     Objects.requireNonNull(request, "request");
-    if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
-        || !org.springframework.transaction.support.TransactionSynchronizationManager.isCurrentTransactionReadOnly()
-        || !Integer.valueOf(java.sql.Connection.TRANSACTION_REPEATABLE_READ).equals(
-            org.springframework.transaction.support.TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
-      throw new IllegalStateException("Activated fixture preset requires its read-only owner snapshot");
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive()
+        || !org.springframework.transaction.support.TransactionSynchronizationManager
+            .isCurrentTransactionReadOnly()
+        || !Integer.valueOf(java.sql.Connection.TRANSACTION_REPEATABLE_READ)
+            .equals(
+                org.springframework.transaction.support.TransactionSynchronizationManager
+                    .getCurrentTransactionIsolationLevel())) {
+      throw new IllegalStateException(
+          "Activated fixture preset requires its read-only owner snapshot");
     }
-    Record transaction = dsl.fetchOne(
-        "SELECT current_setting('transaction_isolation') AS isolation, "
-            + "current_setting('transaction_read_only') AS read_only");
-    if (transaction == null || !"repeatable read".equals(transaction.get("isolation", String.class))
+    Record transaction =
+        dsl.fetchOne(
+            "SELECT current_setting('transaction_isolation') AS isolation, "
+                + "current_setting('transaction_read_only') AS read_only");
+    if (transaction == null
+        || !"repeatable read".equals(transaction.get("isolation", String.class))
         || !"on".equals(transaction.get("read_only", String.class))) {
       throw new IllegalStateException("Activated fixture preset physical snapshot differs");
     }
-    Record receipt = dsl.fetchOne(
-        "SELECT activation_request_id FROM world_run_owned_fixture_activation_operation "
-            + "WHERE activation_request_id=? AND canonical_game_instance_id=? AND world_instance_id=? "
-            + "AND request_bytes=? AND result_bytes=? AND outcome='COMMITTED' "
-            + "AND preset_plan_json=? AND expected_lifecycle_epoch=1 AND expected_row_version=0 "
-            + "AND result_lifecycle_epoch=2 AND result_row_version=1",
-        request.activationRequestId(), request.canonicalGameInstanceId(), worldInstanceId,
-        request.canonicalBytes(),
-        new net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationResult(request).canonicalBytes(),
-        plan.planJson());
-    if (receipt == null) throw new IllegalStateException("Fixture activation receipt is unavailable");
+    Record receipt =
+        dsl.fetchOne(
+            "SELECT activation_request_id FROM world_run_owned_fixture_activation_operation "
+                + "WHERE activation_request_id=? AND canonical_game_instance_id=? AND world_instance_id=? "
+                + "AND request_bytes=? AND result_bytes=? AND outcome='COMMITTED' "
+                + "AND preset_plan_json=? AND expected_lifecycle_epoch=1 AND expected_row_version=0 "
+                + "AND result_lifecycle_epoch=2 AND result_row_version=1",
+            request.activationRequestId(),
+            request.canonicalGameInstanceId(),
+            worldInstanceId,
+            request.canonicalBytes(),
+            new net.firedevops.firemud.worldmanagement.tenant
+                    .WorldCanonicalInstanceFixtureActivationResult(request)
+                .canonicalBytes(),
+            plan.planJson());
+    if (receipt == null)
+      throw new IllegalStateException("Fixture activation receipt is unavailable");
     requireFixtureWorldRow(dsl, plan, worldInstanceId, privateGameInstanceKey, true);
-    Record row = dsl.fetchOne("SELECT * FROM world_read_run_owned_fixed_preset(?, ?, ?, ?)",
-        plan.planJson(), plan.expectedContentDigest(), worldInstanceId, privateGameInstanceKey);
-    MaterializedFixedPreset result = requireResult(row, plan, worldInstanceId, privateGameInstanceKey);
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM world_read_run_owned_fixed_preset(?, ?, ?, ?)",
+            plan.planJson(),
+            plan.expectedContentDigest(),
+            worldInstanceId,
+            privateGameInstanceKey);
+    MaterializedFixedPreset result =
+        requireResult(row, plan, worldInstanceId, privateGameInstanceKey);
     requireFixtureWorldRow(dsl, plan, worldInstanceId, privateGameInstanceKey, true);
     return result;
   }
@@ -585,7 +608,10 @@ public final class RunOwnedWorldFixedPresetResources {
   }
 
   private static void requireFixtureWorldRow(
-      DSLContext dsl, FixedPresetPlan plan, long worldInstanceId, long privateGameInstanceKey,
+      DSLContext dsl,
+      FixedPresetPlan plan,
+      long worldInstanceId,
+      long privateGameInstanceKey,
       boolean activated) {
     Record row = dsl.fetchOne("SELECT * FROM world_instance WHERE id = ?", worldInstanceId);
     if (row == null

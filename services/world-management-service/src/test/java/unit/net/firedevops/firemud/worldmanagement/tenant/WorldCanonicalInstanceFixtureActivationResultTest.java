@@ -20,7 +20,8 @@ class WorldCanonicalInstanceFixtureActivationResultTest {
         .doesNotContain("world-canonical-instance-lifecycle-evidence/v1");
     bytes[0] = 0;
     assertThat(result.canonicalBytes()[0]).isEqualTo((byte) '{');
-    assertThatThrownBy(() -> WorldCanonicalInstanceFixtureActivationResult.fromStored(request, bytes))
+    assertThatThrownBy(
+            () -> WorldCanonicalInstanceFixtureActivationResult.fromStored(request, bytes))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -28,16 +29,30 @@ class WorldCanonicalInstanceFixtureActivationResultTest {
   void wrongRequestAndUnqualifiedEpochCannotReuseReceipt() {
     var request = request(UUID.randomUUID());
     var bytes = new WorldCanonicalInstanceFixtureActivationResult(request).canonicalBytes();
-    assertThatThrownBy(() -> WorldCanonicalInstanceFixtureActivationResult.fromStored(
-        request(UUID.randomUUID()), bytes)).isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(() -> new WorldCanonicalInstanceFixtureActivationRequest(
-        request.activationRequestId(), request.canonicalTenantId(), request.canonicalGameInstanceId(),
-        request.fixturePolicySealEvidenceDigest(), 2, 1)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                WorldCanonicalInstanceFixtureActivationResult.fromStored(
+                    request(UUID.randomUUID()), bytes))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                new WorldCanonicalInstanceFixtureActivationRequest(
+                    request.activationRequestId(),
+                    request.canonicalTenantId(),
+                    request.canonicalGameInstanceId(),
+                    request.fixturePolicySealEvidenceDigest(),
+                    2,
+                    1))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   private static WorldCanonicalInstanceFixtureActivationRequest request(UUID operation) {
-    return new WorldCanonicalInstanceFixtureActivationRequest(operation,
+    return new WorldCanonicalInstanceFixtureActivationRequest(
+        operation,
         UUID.fromString("10000000-0000-4000-8000-000000000001"),
-        UUID.fromString("20000000-0000-4000-8000-000000000001"), "sha256:" + "a".repeat(64), 1, 0);
+        UUID.fromString("20000000-0000-4000-8000-000000000001"),
+        "sha256:" + "a".repeat(64),
+        1,
+        0);
   }
 }

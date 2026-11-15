@@ -1529,6 +1529,18 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .isNotNull()
             .isEmpty();
       }
+      for (String addedFixtureTable :
+          List.of(
+              "world_run_owned_fixture_activation_operation",
+              "world_run_owned_fixture_activation_manifest",
+              "world_run_owned_fixture_tenant_manifest")) {
+        assertThat(retainedRowsAtDefaultFrontierOriginalColumns.remove(addedFixtureTable))
+            .as(
+                "new additive fixture activation table %s is installed and empty",
+                addedFixtureTable)
+            .isNotNull()
+            .isEmpty();
+      }
       for (String extendedTable :
           List.of("world_instance", "world_canonical_instance_topology_identity")) {
         assertThat(
@@ -1695,7 +1707,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
           assertSqlState(
               () -> probe.execute("UPDATE pg_temp.fixture_row_guard_probe SET " + mutation),
               "23514",
-              "Run-owned fixture World row mutations are disabled");
+              "Run-owned fixture activation requires its exact one-use owner CAS manifest");
         }
         assertThat(
                 probe.fetch(
@@ -2337,56 +2349,104 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   private void assertLocalFixtureActivationOwner(
-      RunOwnedCanonicalWorldLaunchEvidence evidence, PreparedWorldInstanceRequest original,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
+      PreparedWorldInstanceRequest original,
       WorldCanonicalInstanceAssociationRepository associations,
       WorldCanonicalInstanceAssociation association,
       RunOwnedWorldFixedPresetResources.FixedPresetPlan plan) {
-    var request = new net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationRequest(
-        UUID.randomUUID(), association.identity().canonicalTenantId(),
-        association.identity().canonicalGameInstanceId(),
-        association.runOwnedFixture().fixtureProvenanceDigest(), 1L, 0L);
-    var owner = new net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationOwner(
-        dsl, transactionManager, associations);
-    var storage = new net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationRepository(dsl);
+    var request =
+        new net.firedevops.firemud.worldmanagement.tenant
+            .WorldCanonicalInstanceFixtureActivationRequest(
+            UUID.randomUUID(),
+            association.identity().canonicalTenantId(),
+            association.identity().canonicalGameInstanceId(),
+            association.runOwnedFixture().fixtureProvenanceDigest(),
+            1L,
+            0L);
+    var owner =
+        new net.firedevops.firemud.worldmanagement.tenant
+            .WorldCanonicalInstanceFixtureActivationOwner(dsl, transactionManager, associations);
+    var storage =
+        new net.firedevops.firemud.worldmanagement.tenant
+            .WorldCanonicalInstanceFixtureActivationRepository(dsl);
     assertThat(owner.read(request)).isEmpty();
-    String beforeWorld = scalarText(
-        "SELECT to_jsonb(w)::text FROM world_instance w WHERE id=?", association.worldInstanceId());
-    ownerTransaction(evidence).executeWithoutResult(status -> {
-      var locked = associations.readRunOwnedFixtureAssociationInActivationTransaction(evidence, original);
-      storage.activateInOwnerTransaction(locked, request, plan, request.canonicalBytes());
-      status.setRollbackOnly();
-    });
+    String beforeWorld =
+        scalarText(
+            "SELECT to_jsonb(w)::text FROM world_instance w WHERE id=?",
+            association.worldInstanceId());
+    ownerTransaction(evidence)
+        .executeWithoutResult(
+            status -> {
+              var locked =
+                  associations.readRunOwnedFixtureAssociationInActivationTransaction(
+                      evidence, original);
+              storage.activateInOwnerTransaction(locked, request, plan, request.canonicalBytes());
+              status.setRollbackOnly();
+            });
     assertThat(owner.read(request)).isEmpty();
-    assertThat(scalarText("SELECT to_jsonb(w)::text FROM world_instance w WHERE id=?",
-        association.worldInstanceId())).isEqualTo(beforeWorld);
-    assertThat(scalarLong("SELECT count(*) FROM world_run_owned_fixture_activation_operation WHERE activation_request_id=?",
-        request.activationRequestId())).isZero();
+    assertThat(
+            scalarText(
+                "SELECT to_jsonb(w)::text FROM world_instance w WHERE id=?",
+                association.worldInstanceId()))
+        .isEqualTo(beforeWorld);
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_run_owned_fixture_activation_operation WHERE activation_request_id=?",
+                request.activationRequestId()))
+        .isZero();
     long resourcesBefore = resourceCount();
     var activated = owner.activate(evidence, original, request);
     assertThat(owner.read(request)).contains(activated);
-    String committedWorld = scalarText("SELECT to_jsonb(w)::text || w.xmin::text FROM world_instance w WHERE id=?",
-        association.worldInstanceId());
+    String committedWorld =
+        scalarText(
+            "SELECT to_jsonb(w)::text || w.xmin::text FROM world_instance w WHERE id=?",
+            association.worldInstanceId());
     assertThat(owner.activate(evidence, original, request)).isEqualTo(activated);
-    assertThat(scalarText("SELECT to_jsonb(w)::text || w.xmin::text FROM world_instance w WHERE id=?",
-        association.worldInstanceId())).isEqualTo(committedWorld);
+    assertThat(
+            scalarText(
+                "SELECT to_jsonb(w)::text || w.xmin::text FROM world_instance w WHERE id=?",
+                association.worldInstanceId()))
+        .isEqualTo(committedWorld);
     assertThat(resourceCount()).isEqualTo(resourcesBefore);
-    assertThat(scalarLong("SELECT count(*) FROM world_run_owned_fixture_activation_operation WHERE activation_request_id=?",
-        request.activationRequestId())).isEqualTo(1L);
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_run_owned_fixture_activation_operation WHERE activation_request_id=?",
+                request.activationRequestId()))
+        .isEqualTo(1L);
     assertThatThrownBy(() -> associations.readRunOwnedFixtureAssociation(evidence, original))
         .isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(() -> RunOwnedWorldFixedPresetResources.readCommitted(dsl, plan,
-        association.worldInstanceId(), association.runOwnedFixture().worldPrivateKeys().gameInstanceId()))
+    assertThatThrownBy(
+            () ->
+                RunOwnedWorldFixedPresetResources.readCommitted(
+                    dsl,
+                    plan,
+                    association.worldInstanceId(),
+                    association.runOwnedFixture().worldPrivateKeys().gameInstanceId()))
         .isInstanceOf(IllegalStateException.class);
-    var changed = new net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationRequest(
-        UUID.randomUUID(), request.canonicalTenantId(), request.canonicalGameInstanceId(),
-        request.fixturePolicySealEvidenceDigest(), 1L, 0L);
+    var changed =
+        new net.firedevops.firemud.worldmanagement.tenant
+            .WorldCanonicalInstanceFixtureActivationRequest(
+            UUID.randomUUID(),
+            request.canonicalTenantId(),
+            request.canonicalGameInstanceId(),
+            request.fixturePolicySealEvidenceDigest(),
+            1L,
+            0L);
     assertThat(owner.read(changed)).isEmpty();
-    assertThatThrownBy(() -> owner.activate(evidence, original, changed)).isInstanceOf(RuntimeException.class);
-    assertThat(scalarText("SELECT to_jsonb(w)::text || w.xmin::text FROM world_instance w WHERE id=?",
-        association.worldInstanceId())).isEqualTo(committedWorld);
-    assertThatThrownBy(() -> dsl.execute(
-        "UPDATE world_run_owned_fixture_activation_operation SET result_bytes=? WHERE activation_request_id=?",
-        new byte[] {1}, request.activationRequestId())).isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(() -> owner.activate(evidence, original, changed))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(
+            scalarText(
+                "SELECT to_jsonb(w)::text || w.xmin::text FROM world_instance w WHERE id=?",
+                association.worldInstanceId()))
+        .isEqualTo(committedWorld);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE world_run_owned_fixture_activation_operation SET result_bytes=? WHERE activation_request_id=?",
+                    new byte[] {1},
+                    request.activationRequestId()))
+        .isInstanceOf(RuntimeException.class);
     assertThat(owner.read(request)).contains(activated);
   }
 
@@ -3339,6 +3399,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1048");
     versions.add("1049");
     versions.add("1050");
+    versions.add("1051");
     return List.copyOf(versions);
   }
 

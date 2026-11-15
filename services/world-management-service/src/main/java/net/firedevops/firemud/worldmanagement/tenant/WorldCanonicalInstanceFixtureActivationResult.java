@@ -6,7 +6,9 @@ import java.util.Base64;
 import java.util.Objects;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 
-/** Owner-local fixture CAS receipt. Not Human lifecycle, admission or authenticated transport proof. */
+/**
+ * Owner-local fixture CAS receipt. Not Human lifecycle, admission or authenticated transport proof.
+ */
 public record WorldCanonicalInstanceFixtureActivationResult(
     WorldCanonicalInstanceFixtureActivationRequest request) {
   public static final String SCHEMA = "world-canonical-instance-fixture-activation-result/v1";
@@ -16,14 +18,17 @@ public record WorldCanonicalInstanceFixtureActivationResult(
   }
 
   public byte[] canonicalBytes() {
-    String json = "{\"schema\":\"" + SCHEMA
-        + "\",\"requestBytesBase64\":\""
-        + Base64.getEncoder().encodeToString(request.canonicalBytes())
-        + "\",\"lifecycleStatus\":\"ACTIVE\",\"lifecycleEpoch\":\"2\",\"rowVersion\":\"1\"}";
+    String json =
+        "{\"schema\":\""
+            + SCHEMA
+            + "\",\"requestBytesBase64\":\""
+            + Base64.getEncoder().encodeToString(request.canonicalBytes())
+            + "\",\"lifecycleStatus\":\"ACTIVE\",\"lifecycleEpoch\":\"2\",\"rowVersion\":\"1\"}";
     try {
       return Rfc8785CanonicalJson.canonicalizeUtf8(json);
     } catch (IOException impossible) {
-      throw new IllegalStateException("Fixture activation result cannot be canonicalized", impossible);
+      throw new IllegalStateException(
+          "Fixture activation result cannot be canonicalized", impossible);
     }
   }
 
