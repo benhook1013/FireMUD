@@ -1609,59 +1609,68 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             assertThat(read.preparationInputDigest()).isEqualTo(prepared.inputDigest());
             var resolvedAssociation =
                 association.readOwnerAssociation(input.canonicalGameInstanceId()).orElseThrow();
-            // Alter only the SHARED namespace after the real owners have committed the association.
+            // Alter one identity field after the real owners have committed the association.
             // This is a refusal probe, not a fabricated alternative owner projection.
-            var changedNamespaceEvidence =
-                new WorldCanonicalInstanceAssociation.GameSessionReadEvidence(
-                    evidence.readRequestId(),
-                    evidence.targetNamespace(),
-                    evidence.canonicalTenantId(),
-                    evidence.worldSlug(),
-                    evidence.canonicalGameInstanceId(),
-                    evidence.controlPlaneRequestId(),
-                    evidence.launchDescriptorId(),
-                    evidence.descriptorRequestDigest(),
-                    evidence.descriptorResultDigest(),
-                    evidence.releaseAttestationEvidenceDigest(),
-                    UUID.randomUUID(),
-                    evidence.playableStateScope(),
-                    evidence.publicProduction(),
-                    evidence.canonicalRealmId(),
-                    evidence.catalogRevision(),
-                    evidence.currentGameSessionStatus(),
-                    evidence.currentGameSessionRowVersion(),
-                    evidence.descriptor(),
-                    evidence.releaseAttestation());
-            var changedNamespaceClaim =
-                new WorldCanonicalInstanceAssociation.Claim(
-                    input.gameSessionReadRequest(),
-                    changedNamespaceEvidence,
-                    resolvedAssociation.worldInstanceId(),
-                    input.completeLaunchBinding(),
-                    input.versionIdentity());
-            var beforeNamespaceRefusal =
-                rows(world.dsl(), worldBefore.keySet().toArray(String[]::new));
-            assertThatThrownBy(
-                    () ->
-                        world
-                            .write()
-                            .executeWithoutResult(
-                                status ->
-                                    association.retainClaimInOwnerTransaction(
-                                        changedNamespaceClaim)))
-                .isInstanceOf(
-                    WorldCanonicalInstanceAssociationRepository.InvalidAssociationEvidenceException
-                        .class)
-                .hasMessageContaining(
-                    "World row has no matching insert-born canonical prepare identity");
-            assertThat(association.readOwnerAssociation(input.canonicalGameInstanceId()))
-                .contains(resolvedAssociation);
-            assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new)))
-                .isEqualTo(beforeNamespaceRefusal);
-            assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new)))
-                .isEqualTo(protectedAccount);
-            assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
-                .isEqualTo(gsBefore);
+            for (String changedField : List.of("namespace", "realm", "catalog")) {
+              var changedIdentityEvidence =
+                  new WorldCanonicalInstanceAssociation.GameSessionReadEvidence(
+                      evidence.readRequestId(),
+                      evidence.targetNamespace(),
+                      evidence.canonicalTenantId(),
+                      evidence.worldSlug(),
+                      evidence.canonicalGameInstanceId(),
+                      evidence.controlPlaneRequestId(),
+                      evidence.launchDescriptorId(),
+                      evidence.descriptorRequestDigest(),
+                      evidence.descriptorResultDigest(),
+                      evidence.releaseAttestationEvidenceDigest(),
+                      changedField.equals("namespace")
+                          ? UUID.randomUUID()
+                          : evidence.playableStateNamespaceId(),
+                      evidence.playableStateScope(),
+                      evidence.publicProduction(),
+                      changedField.equals("realm")
+                          ? UUID.randomUUID()
+                          : evidence.canonicalRealmId(),
+                      changedField.equals("catalog")
+                          ? Math.addExact(evidence.catalogRevision(), 1L)
+                          : evidence.catalogRevision(),
+                      evidence.currentGameSessionStatus(),
+                      evidence.currentGameSessionRowVersion(),
+                      evidence.descriptor(),
+                      evidence.releaseAttestation());
+              var changedIdentityClaim =
+                  new WorldCanonicalInstanceAssociation.Claim(
+                      input.gameSessionReadRequest(),
+                      changedIdentityEvidence,
+                      resolvedAssociation.worldInstanceId(),
+                      input.completeLaunchBinding(),
+                      input.versionIdentity());
+              var beforeIdentityRefusal =
+                  rows(world.dsl(), worldBefore.keySet().toArray(String[]::new));
+              assertThatThrownBy(
+                      () ->
+                          world
+                              .write()
+                              .executeWithoutResult(
+                                  status ->
+                                      association.retainClaimInOwnerTransaction(
+                                          changedIdentityClaim)))
+                  .as("retained association rejects independent %s substitution", changedField)
+                  .isInstanceOf(
+                      WorldCanonicalInstanceAssociationRepository
+                          .InvalidAssociationEvidenceException.class)
+                  .hasMessageContaining(
+                      "World row has no matching insert-born canonical prepare identity");
+              assertThat(association.readOwnerAssociation(input.canonicalGameInstanceId()))
+                  .contains(resolvedAssociation);
+              assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new)))
+                  .isEqualTo(beforeIdentityRefusal);
+              assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new)))
+                  .isEqualTo(protectedAccount);
+              assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
+                  .isEqualTo(gsBefore);
+            }
             var prepareFields = resolvedAssociation.worldPrepareFields();
             var operationalRegionPlan =
                 world
