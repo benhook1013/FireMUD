@@ -1185,6 +1185,28 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                             return;
                           }
                           if (mode == 2) {
+                            var concurrentRelease = new AtomicReference<CompletableFuture<Void>>();
+                            var lockAttempted = new CompletableFuture<Void>();
+                            var concurrentConfiguration =
+                                testSchema
+                                    .dsl()
+                                    .configuration()
+                                    .derive(
+                                        new org.jooq.impl.DefaultExecuteListenerProvider(
+                                            new org.jooq.impl.DefaultExecuteListener() {
+                                              @Override
+                                              public void executeStart(
+                                                  org.jooq.ExecuteContext context) {
+                                                String sql = context.sql();
+                                                if (sql != null
+                                                    && sql.contains("pg_advisory_xact_lock")) {
+                                                  lockAttempted.complete(null);
+                                                }
+                                              }
+                                            }));
+                            var concurrentRepository =
+                                new CanonicalGameplayRegionRuntimeStatusRepository(
+                                    DSL.using(concurrentConfiguration));
                             var rollbackConfiguration =
                                 testSchema
                                     .dsl()
@@ -1198,18 +1220,23 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                                 String sql = context.sql();
                                                 if (sql != null
                                                     && sql.contains("SET phase = 'PREPARED'")) {
-                                                  java.util.concurrent.CompletableFuture.runAsync(
+                                                  concurrentRelease.set(
+                                                      CompletableFuture.runAsync(
                                                           () ->
                                                               assertThatThrownBy(
                                                                       () ->
-                                                                          repository
+                                                                          concurrentRepository
                                                                               .releaseInitialTimelineNoWrite(
                                                                                   preparation,
                                                                                   retained,
                                                                                   NOW))
                                                                   .isInstanceOf(
-                                                                      IllegalStateException.class))
-                                                      .join();
+                                                                      IllegalStateException.class)));
+                                                  // Consumed-proof reconciliation takes this same
+                                                  // transaction lock. Roll back before awaiting it.
+                                                  lockAttempted.orTimeout(10, TimeUnit.SECONDS).join();
+                                                  assertThat(concurrentRelease.get().isDone())
+                                                      .isFalse();
                                                   throw new IllegalStateException(
                                                       "forced SQL rollback");
                                                 }
@@ -1223,6 +1250,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                         failing.releaseInitialTimelineNoWrite(
                                             preparation, retained, NOW))
                                 .isInstanceOf(RuntimeException.class);
+                            assertThat(concurrentRelease.get()).isNotNull();
+                            concurrentRelease.get().orTimeout(10, TimeUnit.SECONDS).join();
                             assertThat(
                                     repository
                                         .findTimelinePreparation(source)
