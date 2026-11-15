@@ -534,6 +534,105 @@ class AccountGameplayDelegationRedisIntegrationTest {
   }
 
   @Test
+  void committedResetSurvivesRedisAuthenticationFailureAndExactRetry() {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    UUID accountId = createFreshAccount(database, sources);
+    Runnable exactReset =
+        commitPasswordResetAuthorityChange(database, dsl, authorities, outbox, sources, accountId);
+    var committed =
+        inTransaction(
+            database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+    assertThat(committed.account().generation()).isEqualTo(2L);
+    assertThat(committed.account().checkpoint().sequence()).isEqualTo(1L);
+    var tables =
+        List.of(
+            "accounts",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events",
+            "account_password_reset_operation_receipts",
+            "password_reset_token");
+    Map<String, List<String>> committedRows = new java.util.LinkedHashMap<>();
+    for (String table : tables)
+      committedRows.put(
+          table,
+          dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+              .getValues(0, String.class));
+    assertThat(committedRows.get("account_password_reset_operation_receipts")).hasSize(1);
+    assertThat(committedRows.get("account_authority_outbox_events")).hasSize(1);
+    RedisClient writer = redisClient(writerUri);
+    RedisClient denied =
+        redisClient(
+            writerUri.getHost(),
+            writerUri.getPort(),
+            ACCOUNT_IDENTITY,
+            "deliberately-invalid-test-credential");
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String issuerKey =
+        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX + ACCOUNT_ISSUER;
+    String accountKey = AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId;
+    try (var adminConnection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = adminConnection.sync();
+      assertThat(admin.get(ascii(issuerKey))).isNull();
+      assertThat(admin.get(ascii(accountKey))).isNull();
+      try {
+        AtomicInteger deniedAttempts = new AtomicInteger();
+        var deniedRedis =
+            redisClient(
+                () -> {
+                  deniedAttempts.incrementAndGet();
+                  try {
+                    return denied.connect(ByteArrayCodec.INSTANCE);
+                  } catch (RuntimeException failure) {
+                    assertThat(failure)
+                        .hasRootCauseInstanceOf(
+                            io.lettuce.core.RedisCommandExecutionException.class)
+                        .hasStackTraceContaining("WRONGPASS");
+                    throw failure;
+                  }
+                });
+        var unavailable =
+            new AccountGameplayDelegationAuthorityProjection(
+                sources, database.manager(), deniedRedis);
+        assertThatThrownBy(() -> unavailable.publishCurrent(accountId))
+            .isInstanceOf(
+                AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+        assertThat(deniedAttempts.get()).isEqualTo(1);
+        assertThat(admin.get(ascii(issuerKey))).isNull();
+        assertThat(admin.get(ascii(accountKey))).isNull();
+        for (String table : tables)
+          assertThat(
+                  dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+                      .getValues(0, String.class))
+              .isEqualTo(committedRows.get(table));
+        exactReset.run();
+        var projection =
+            new AccountGameplayDelegationAuthorityProjection(
+                sources, database.manager(), redisClient(new TrackedProvider(writer)));
+        projection.publishCurrent(accountId);
+        assertCurrentOwnerProjection(projection, admin, accountId, committed);
+        for (String table : tables)
+          assertThat(
+                  dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+                      .getValues(0, String.class))
+              .isEqualTo(committedRows.get(table));
+      } finally {
+        admin.del(ascii(issuerKey));
+        admin.del(ascii(accountKey));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      denied.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
   void unknownAccountProjectionFailsBeforeRedisAndLeavesOwnerRowsUnchanged() {
     TestContext database = newPostgresContext();
     DSLContext dsl = database.dsl();
@@ -3437,7 +3536,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
         });
   }
 
-  private static void commitPasswordResetAuthorityChange(
+  private static Runnable commitPasswordResetAuthorityChange(
       TestContext context,
       DSLContext dsl,
       AccountAuthorityGenerationRepository authorities,
@@ -3500,14 +3599,19 @@ class AccountGameplayDelegationRedisIntegrationTest {
             null,
             null,
             context.manager());
-    inTransaction(
-        context,
-        () -> {
-          accountService.completePasswordReset(
-              new CompletePasswordResetRequest(
-                  rawToken, "active-transition-password-" + UUID.randomUUID()));
-          return null;
-        });
+    var request =
+        new CompletePasswordResetRequest(
+            rawToken, "active-transition-password-" + UUID.randomUUID());
+    Runnable exactReset =
+        () ->
+            inTransaction(
+                context,
+                () -> {
+                  accountService.completePasswordReset(request);
+                  return null;
+                });
+    exactReset.run();
+    return exactReset;
   }
 
   private String writeResponseKeyring() throws Exception {
