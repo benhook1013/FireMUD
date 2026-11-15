@@ -360,6 +360,12 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void concurrentActualOwnerPreparationRejectsPendingDuplicateAndCommitsOriginal()
+      throws Exception {
+    compose(Refusal.CONCURRENT_PREPARATION);
+  }
+
+  @Test
   void databaseOwnerLockTimeoutRetainsPendingWithoutInventingTerminal() throws Exception {
     compose(Refusal.PREPARATION_LOCK_TIMEOUT);
   }
@@ -480,7 +486,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     EXPIRED_ATTEMPT,
     CHANGED_ACTIVATION_ATTEMPT,
     EXPIRED_AFTER_ACTIVATION_PROTECTION_ACQUISITION,
-    PREPARATION_LOCK_TIMEOUT
+    PREPARATION_LOCK_TIMEOUT,
+    CONCURRENT_PREPARATION
   }
 
   private enum ActivationFailure {
@@ -1181,7 +1188,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   .isEqualTo(gsBefore);
               return;
             }
-            if (refusal == Refusal.PREPARATION_LOCK_TIMEOUT) {
+            if (refusal == Refusal.PREPARATION_LOCK_TIMEOUT
+                || refusal == Refusal.CONCURRENT_PREPARATION) {
               try (var blocker = world.pool().getConnection();
                   var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
                 blocker.setAutoCommit(false);
@@ -1220,6 +1228,56 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                                       "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND ? = ANY(pg_blocking_pids(pid)))",
                                       blockerPid)
                                   .get(0, Boolean.class));
+                  if (refusal == Refusal.CONCURRENT_PREPARATION) {
+                    assertThat(
+                            repository
+                                .readExactExecution(identity.get())
+                                .operation()
+                                .orElseThrow()
+                                .state())
+                        .isEqualTo(
+                            WorldCanonicalInstancePreparationRepository.ExecutionState.PENDING);
+                    assertThatThrownBy(
+                            () ->
+                                ClientCalls.blockingUnaryCall(
+                                    channel,
+                                    method,
+                                    CallOptions.DEFAULT.withDeadlineAfter(5, TimeUnit.SECONDS),
+                                    Empty.getDefaultInstance()))
+                        .isInstanceOf(StatusRuntimeException.class);
+                    assertThat(ownerRefusal.get())
+                        .isInstanceOf(
+                            WorldCanonicalInstancePreparationRepository
+                                .ConflictingPreparationException.class)
+                        .hasMessage(
+                            "Exact original World execution has a retained PENDING intent; only serialized ABORTED recovery may resolve it");
+                    assertThat(result.get()).isNull();
+                    blocker.rollback();
+                    attempt.get(15, TimeUnit.SECONDS);
+                    assertThat(result.get()).isNotNull();
+                    assertThat(
+                            repository
+                                .readExactExecution(identity.get())
+                                .operation()
+                                .orElseThrow()
+                                .state())
+                        .isEqualTo(
+                            WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED);
+                    assertThat(association.readOwnerAssociation(input.canonicalGameInstanceId()))
+                        .contains(result.get().association());
+                    for (String table :
+                        List.of(
+                            "world_instance",
+                            "world_canonical_instance_association",
+                            "world_canonical_instance_preparation",
+                            "world_canonical_instance_execution")) {
+                      assertThat(world.dsl().fetchCount(org.jooq.impl.DSL.table(table)))
+                          .isEqualTo(1);
+                    }
+                    assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
+                        .isEqualTo(gsBefore);
+                    return;
+                  }
                   assertThatThrownBy(() -> attempt.get(15, TimeUnit.SECONDS))
                       .isInstanceOf(java.util.concurrent.ExecutionException.class);
                   assertThat(result.get()).isNull();
