@@ -293,6 +293,7 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
         // Mockito verification does not execute a query and returns no ResultSet.
         assertThat(verificationResult).isNull();
       }
+      verifyNoInteractions(fixture.clockStatement);
       assertThat(repositories.constructed()).hasSize(1);
     }
   }
