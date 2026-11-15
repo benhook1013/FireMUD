@@ -1887,7 +1887,9 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
-    return jwtUtil.generateToken(subject, expirationMs, claims);
+    Map<String, Object> accountClaims = new HashMap<>(claims);
+    accountClaims.put("iss", "firemud-account-service");
+    return jwtUtil.generateToken(subject, expirationMs, accountClaims);
   }
 
   private Map<String, Object> authenticationTokenClaims(String audience, Account account) {
