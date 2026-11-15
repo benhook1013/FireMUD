@@ -3097,6 +3097,7 @@ class AccountServiceImplTest {
         org.junit.jupiter.params.provider.Arguments.of(valid, (Object) null),
         org.junit.jupiter.params.provider.Arguments.of(valid, ""),
         org.junit.jupiter.params.provider.Arguments.of(valid, 11L),
+        org.junit.jupiter.params.provider.Arguments.of(valid, java.util.List.of(valid)),
         org.junit.jupiter.params.provider.Arguments.of(valid, "11"),
         org.junit.jupiter.params.provider.Arguments.of(
             valid, "00000000-0000-0000-0000-000000000000"),
@@ -3262,8 +3263,10 @@ class AccountServiceImplTest {
   @Test
   void listBootstrapWorldsRejectsBootstrapTokenWithoutAudience() {
     composeOrdinaryBootstrapWorldDiscovery();
+    String accountUuid = "10000000-0000-4000-8000-000000000001";
     String malformedBootstrapToken =
-        new JwtUtil(JWT_SECRET, 300000L).generateToken("11", Map.of("accountId", "11"));
+        new JwtUtil(JWT_SECRET, 300000L)
+            .generateToken(accountUuid, Map.of("accountId", accountUuid));
 
     AuthenticationException ex =
         assertThrows(
@@ -3271,6 +3274,7 @@ class AccountServiceImplTest {
             () -> service.listBootstrapWorlds(malformedBootstrapToken));
 
     assertEquals("CONNECT_CONTEXT_INVALID", ex.getCode());
+    verifyNoInteractions(accountRepository, sessionService);
   }
 
   @Test
