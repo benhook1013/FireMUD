@@ -263,6 +263,69 @@ class AccountGameplayDelegationRedisIntegrationTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void physicalOwnerAdvanceAcrossProjectionRoundTripNeverReturnsStaleSuccess(boolean publish) {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    UUID accountId = createFreshAccount(database, sources);
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String issuerKey =
+        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX + ACCOUNT_ISSUER;
+    String accountKey = AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId;
+    try (var adminConnection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = adminConnection.sync();
+      assertThat(admin.get(ascii(issuerKey))).isNull();
+      assertThat(admin.get(ascii(accountKey))).isNull();
+      try {
+        var redis = redisClient(new TrackedProvider(writer));
+        var stable =
+            new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis);
+        stable.publishCurrent(accountId);
+        byte[][] original = redis.readAuthorityProjections(accountId);
+        var changingManager =
+            new BeforeSecondTransactionManager(
+                database.manager(),
+                () ->
+                    commitPasswordResetAuthorityChange(
+                        database, dsl, authorities, outbox, sources, accountId));
+        var changing =
+            new AccountGameplayDelegationAuthorityProjection(sources, changingManager, redis);
+        assertThatThrownBy(
+                () -> {
+                  if (publish) changing.publishCurrent(accountId);
+                  else changing.observeCurrent(accountId);
+                })
+            .isInstanceOf(
+                AccountGameplayDelegationAuthorityProjection.StaleProjectionException.class);
+        var current =
+            inTransaction(
+                database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+        byte[][] advanced =
+            AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(current);
+        assertThat(advanced[1]).isNotEqualTo(original[1]);
+        assertProjectionBytes(admin, issuerKey, accountKey, original);
+        assertThatThrownBy(() -> stable.observeCurrent(accountId))
+            .isInstanceOf(
+                AccountGameplayDelegationAuthorityProjection.StaleProjectionException.class);
+        stable.publishCurrent(accountId);
+        assertProjectionBytes(admin, issuerKey, accountKey, advanced);
+        assertThat(stable.observeCurrent(accountId).accountGeneration())
+            .isEqualTo(current.account().generation());
+      } finally {
+        admin.del(ascii(issuerKey));
+        admin.del(ascii(accountKey));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
   @Test
   void unknownAccountProjectionFailsBeforeRedisAndLeavesOwnerRowsUnchanged() {
     TestContext database = newPostgresContext();
