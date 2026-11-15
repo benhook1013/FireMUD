@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package entity_management.v1;
+option java_package = "net.firedevops.firemud.entitymanagement.v1";
+option java_multiple_files = true;
+
+import "world-management/v1/world_selected_draft_publication_freeze_service.proto";
+
+// Standalone and unregistered. Authenticated same-namespace Game Design may retain its exact
+// Account-authorized selected Entity inputs after the exact World freeze has committed.
+service EntitySelectedSourceIntakeCommandService {
+  rpc RetainSelectedEntitySource(RetainSelectedEntitySourceRequest)
+      returns (RetainSelectedEntitySourceResponse);
+}
+
+message RetainSelectedEntitySourceRequest {
+  uint32 schema_version = 1;
+  string target_namespace = 2;
+  string transport_request_id = 3;
+  bytes original_intake_authorization_binding = 4;
+  string intake_authorization_digest = 5;
+  world_management.v1.BeginVersionPublicationFreezeRequest freeze_request = 6;
+  world_management.v1.BeginVersionPublicationFreezeResponse freeze_acknowledgement = 7;
+}
+
+message RetainSelectedEntitySourceResponse {
+  RetainSelectedEntitySourceRequest request = 1;
+  bytes committed_empty_receipt = 2;
+  string receipt_digest = 3;
+}

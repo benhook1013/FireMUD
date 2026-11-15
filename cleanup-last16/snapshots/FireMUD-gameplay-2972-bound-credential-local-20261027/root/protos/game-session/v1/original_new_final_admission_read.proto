@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+option java_outer_classname = "OriginalNewFinalAdmissionReadProto";
+
+// Separate manually composed Account-only read of the actual finalized ORIGINAL_NEW Redis value.
+service OriginalNewFinalAdmissionReadService {
+  rpc ReadOriginalNewFinalAdmission(
+      ReadOriginalNewFinalAdmissionRequest)
+      returns (ReadOriginalNewFinalAdmissionResponse);
+}
+
+// The selector carries Account's expected immutable anchors, never a raw token or rebind handle.
+// Repeated fields let the receiver reject both absence and duplicate wire values.
+message ReadOriginalNewFinalAdmissionRequest {
+  repeated uint32 schema_version = 1;
+  repeated bytes expected_original_admission_json = 2;
+}
+
+// Game Session echoes the exact selector and returns closed evidence decoded from the retained
+// candidate plus the actual persistent finalized session readback. The result contains digests,
+// never token or handle bytes.
+message ReadOriginalNewFinalAdmissionResponse {
+  repeated uint32 schema_version = 1;
+  repeated bytes expected_original_admission_json = 2;
+  repeated bytes actual_final_admission_json = 3;
+}

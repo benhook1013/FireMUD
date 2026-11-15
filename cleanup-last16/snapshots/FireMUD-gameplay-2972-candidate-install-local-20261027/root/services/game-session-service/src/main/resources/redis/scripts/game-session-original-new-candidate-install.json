@@ -1,0 +1,40 @@
+{
+  "scriptId": "game-session.original-new-candidate-install.v1",
+  "resourcePath": "redis/lua/game-session-original-new-candidate-install.lua",
+  "sha256": "1f2658014b73710bca61f0be80fa7994e567e2680569a96b138f7c164e773dbd",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {"name": "session", "ownedPrefix": "session:game:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "characterIndex", "ownedPrefix": "session:game:index:character:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "accountTenantIndex", "ownedPrefix": "session:game:index:account-tenant:", "hashTagDeclaration": "REQUIRED"},
+    {"name": "tenantIndex", "ownedPrefix": "session:game:index:tenant:", "hashTagDeclaration": "REQUIRED"}
+  ],
+  "arguments": [
+    {"name": "purpose"},
+    {"name": "tenantId"},
+    {"name": "accountId"},
+    {"name": "playableStateNamespaceId"},
+    {"name": "characterId"},
+    {"name": "gameInstanceId"},
+    {"name": "sessionId"},
+    {"name": "bindingGeneration"},
+    {"name": "tenantGameplayTag"},
+    {"name": "candidateBytes"}
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {"code": "CANDIDATE_CREATED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "EXISTING_STATE_REFUSED", "category": "STALE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "The exact candidate is not an authenticated session and cannot authorize authenticated readers, PLAY, LOOK, or gameplay admission. The SQL owner persists DISPATCH_POSSIBLE before this one CREATE invocation. Every later retry is read-only and requires exact current readback of the session value and all three indexes; absence, partial state, foreign state, expiry, reset, or lost outcome remains uncertain and is never repaired. Only a later Account-committed final six-key CAS may replace the exact candidate with a complete authenticated session.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "none"}
+  ],
+  "legacyPayloadShape": null
+}

@@ -1,0 +1,48 @@
+{
+  "scriptId": "game-session.issuer-admission-barrier-close.v1",
+  "resourcePath": "redis/lua/game-session-issuer-admission-barrier-close.lua",
+  "sha256": "ab75bdcc1f157af3c78e954a57512f3815fd81ccae1c4f7a9ace02beced15323",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "issuerAdmissionBarrier",
+      "ownedPrefix": "session:game:issuer-admission:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {"name": "issuerId"},
+    {"name": "tenantId"},
+    {"name": "playableStateNamespaceId"},
+    {"name": "tenantGameplayTag"},
+    {"name": "cutoffOperationId"},
+    {"name": "cutoffAdmissionBarrierEpoch"},
+    {"name": "exactClosedPayloadDigest"},
+    {"name": "exactClosedPayload"},
+    {"name": "capturedInitializerOperationIdOrNone"},
+    {"name": "capturedInitializerAdmissionBarrierEpochOrZero"},
+    {"name": "capturedInitializerTupleDigestOrNone"},
+    {"name": "expectedOriginalOpenPayloadDigestOrNone"},
+    {"name": "expectedOriginalOpenPayloadOrEmpty"},
+    {"name": "state"}
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {"code": "CLOSED_CREATED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "CLOSED_REPLAY", "category": "REPLAY", "effect": "NON_MUTATING"},
+    {"code": "CAPTURED_OPEN_CLOSED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "TYPE_TTL_OR_FIELDSET_REFUSED", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS_OR_TARGET", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"},
+    {"code": "NEWER_CLOSED_OR_UNEXPECTED_STATE", "category": "STALE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "tailLossBehavior": "A selected issuer cutoff closes only its exact tenant target under the captured cutoff epoch and tuple. It may create CLOSED from absence or replace the exact captured original OPEN payload with a higher cutoff epoch. Existing CLOSED, newer or conflicting state, malformed/reset state, or a different OPEN initializer remains unresolved and non-admitting. Exact CLOSED readback is required before the SQL cohort may become INSTALLED. This script never opens admission or touches the global issuer index/capacity key.",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {"callerVersion": "v1", "payloadVersion": "none"}
+  ],
+  "legacyPayloadShape": null
+}

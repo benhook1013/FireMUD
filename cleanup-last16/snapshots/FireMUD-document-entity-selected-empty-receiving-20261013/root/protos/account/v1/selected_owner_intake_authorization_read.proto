@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone read of a distinct finalized Entity or Automation intake authorization. This method
+// samples that the exact Account authorization and source participation remain held at read time;
+// it does not prove continuous commit protection, owner inventory, or terminal settlement.
+service AccountSelectedOwnerIntakeAuthorizationReadService {
+  rpc ReadHeldSelectedOwnerIntakeAuthorization(
+      ReadHeldSelectedOwnerIntakeAuthorizationRequest)
+      returns (ReadHeldSelectedOwnerIntakeAuthorizationResponse);
+}
+
+message ReadHeldSelectedOwnerIntakeAuthorizationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Derived from the closed Entity or Automation owner in the complete original binding.
+  string intended_reader = 4;
+  // ENTITY_INTAKE_RETENTION or AUTOMATION_INTAKE_RETENTION, derived from that same owner.
+  string retention_purpose = 5;
+  // Complete canonical SelectedOwnerIntakeAuthorizationBinding bytes and their SHA-256 digest.
+  bytes original_intake_authorization_binding = 6;
+  string intake_authorization_digest = 7;
+}
+
+message ReadHeldSelectedOwnerIntakeAuthorizationResponse {
+  // Echo the complete request tuple unchanged. Only held=true is a successful result.
+  ReadHeldSelectedOwnerIntakeAuthorizationRequest request = 1;
+  bool held = 2;
+}

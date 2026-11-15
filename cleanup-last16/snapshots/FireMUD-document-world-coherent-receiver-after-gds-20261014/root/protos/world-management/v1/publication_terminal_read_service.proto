@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Standalone authenticated readback of World-owned publication terminal state.
+service WorldPublicationTerminalReadService {
+  rpc ReadPublicationTerminal(ReadPublicationTerminalRequest)
+      returns (ReadPublicationTerminalResponse);
+}
+
+enum WorldPublicationTerminalReadOutcome {
+  WORLD_PUBLICATION_TERMINAL_READ_OUTCOME_UNSPECIFIED = 0;
+  WORLD_PUBLICATION_TERMINAL_READ_OUTCOME_PUBLISHED = 1;
+  WORLD_PUBLICATION_TERMINAL_READ_OUTCOME_ABORTED = 2;
+}
+
+message ReadPublicationTerminalRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Complete canonical game-design-publication-operation/v1 bytes; lookup data, not authority.
+  bytes original_operation = 4;
+  // Exact expected Game Design terminal bytes; never interpreted as World-authenticated proof.
+  bytes expected_game_design_terminal_evidence = 5;
+}
+
+message ReadPublicationTerminalResponse {
+  // The complete request tuple is echoed byte-for-byte.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  bytes original_operation = 4;
+  bytes expected_game_design_terminal_evidence = 5;
+  // World-owned terminal phase, distinct from the producer/outcome in the embedded GDS bytes.
+  WorldPublicationTerminalReadOutcome world_outcome = 6;
+  // Complete immutable Game Design terminal bytes actually retained by the World owner.
+  bytes world_terminal_evidence = 7;
+}
