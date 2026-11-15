@@ -5,6 +5,8 @@ import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestS
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Connection;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -133,6 +135,101 @@ class WorldInitialAdmissionHoldHistoryPostgresIntegrationTest {
             "world_canonical_player_admission_hold")) {
       assertThat(sql.fetchCount(DSL.table(DSL.name(table)))).as(table).isZero();
     }
+  }
+
+  @Test
+  void retainedLegacyLifecycleChangesDoNotPromoteIdentityOrChangeAnExistingReadSnapshot()
+      throws Exception {
+    String schema = "world_hold_snapshot_" + UUID.randomUUID().toString().replace("-", "");
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    migration(source, schema, "1019").migrate();
+    DSLContext sql = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    long tenant = 970001L;
+    long instance = 980001L;
+    long worldId = insertHistoricalWorld(sql, tenant, instance);
+    UUID holdId = insertHistoricalHold(sql, tenant, instance, "PENDING");
+    migration(source, schema, null).migrate();
+    var originalWorld = worldRow(sql, worldId);
+    var originalHistory = history(sql);
+    var repository = new InitialAdmissionBindHoldRepository(sql);
+    var original = repository.findByHoldId(holdId.toString()).orElseThrow();
+    assertThat(repository.hasNonterminalForRealm(tenant, original.realmUuid())).isTrue();
+
+    try (Connection connection = source.getConnection()) {
+      connection.setReadOnly(true);
+      connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+      connection.setAutoCommit(false);
+      DSLContext snapshotSql = DSL.using(connection, SQLDialect.POSTGRES);
+      var snapshotRepository = new InitialAdmissionBindHoldRepository(snapshotSql);
+      var snapshotRow = holdRow(snapshotSql, holdId);
+      assertThat(snapshotRepository.findByHoldId(holdId.toString())).contains(original);
+      assertThat(snapshotSql.fetchValue("SHOW transaction_isolation", String.class))
+          .isEqualTo("repeatable read");
+      assertThat(snapshotSql.fetchValue("SHOW transaction_read_only", String.class))
+          .isEqualTo("on");
+
+      // A separate autocommit connection changes only the retained numeric row.
+      var reconciled =
+          repository
+              .markReconciliationRequired(
+                  original, "HISTORICAL_OWNER_UNAVAILABLE", Instant.parse("2026-11-15T00:00:00Z"))
+              .orElseThrow();
+      assertThat(reconciled.status()).isEqualTo("RECONCILIATION_REQUIRED");
+      assertThat(reconciled.rowVersion()).isEqualTo(original.rowVersion() + 1);
+      assertThat(repository.hasNonterminalForRealm(tenant, original.realmUuid())).isTrue();
+      assertThat(snapshotRepository.findByHoldId(holdId.toString())).contains(original);
+      assertThat(holdRow(snapshotSql, holdId)).isEqualTo(snapshotRow);
+      connection.rollback();
+    }
+
+    var reconciled = repository.findByHoldId(holdId.toString()).orElseThrow();
+    assertThat(reconciled.status()).isEqualTo("RECONCILIATION_REQUIRED");
+    // Stipulated historical strings are not authenticated canonical owner proof.
+    var committed =
+        repository
+            .recordTerminalProof(
+                reconciled,
+                "COMMITTED",
+                "fabricated-legacy-proof",
+                "c".repeat(64),
+                "fabricated-legacy-audit",
+                19L,
+                Instant.parse("2026-11-15T00:00:01Z"))
+            .orElseThrow();
+    assertThat(committed.status()).isEqualTo("COMMITTED");
+    assertThat(committed.rowVersion()).isEqualTo(original.rowVersion() + 2);
+    assertThat(committed.ownerProofId()).isEqualTo("fabricated-legacy-proof");
+    assertThat(committed.ownerPointerVersion()).isEqualTo(19L);
+    assertThat(repository.hasNonterminalForRealm(tenant, original.realmUuid())).isFalse();
+    assertThat(
+            repository.recordTerminalProof(
+                reconciled,
+                "ABORTED",
+                "stale-proof",
+                "d".repeat(64),
+                null,
+                null,
+                Instant.parse("2026-11-15T00:00:02Z")))
+        .isEmpty();
+    assertThat(repository.findByHoldId(holdId.toString())).contains(committed);
+    var row = holdRow(sql, holdId);
+    for (String column : CANONICAL_REQUEST_COLUMNS) assertThat(row).containsEntry(column, null);
+    assertThat(row)
+        .containsEntry("canonical_owner_proof_bytes", null)
+        .containsEntry("canonical_owner_proof_digest", null);
+    assertThat(worldRow(sql, worldId)).isEqualTo(originalWorld);
+    assertThat(history(sql)).isEqualTo(originalHistory);
+    assertThat(sql.fetchCount(DSL.table(DSL.name("world_canonical_instance_association"))))
+        .isZero();
+    assertThat(
+            sql.fetchCount(
+                DSL.table(
+                    DSL.name("world_canonical_initial_admission_hold_finalization_manifest"))))
+        .isZero();
+    assertPromotionDenied(sql, holdId);
   }
 
   /** Two rejected acquisitions at each schema boundary; no fabricated positive authority. */
