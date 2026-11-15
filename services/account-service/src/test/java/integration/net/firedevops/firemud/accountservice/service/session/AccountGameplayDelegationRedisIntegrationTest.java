@@ -582,17 +582,23 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(admin.get(ascii(accountKey))).isNull();
       try {
         AtomicInteger deniedAttempts = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean authenticationRefused =
+            new java.util.concurrent.atomic.AtomicBoolean();
         var deniedRedis =
             redisClient(
                 () -> {
                   deniedAttempts.incrementAndGet();
                   try {
-                    return denied.connect(ByteArrayCodec.INSTANCE);
+                    var unexpectedConnection = denied.connect(ByteArrayCodec.INSTANCE);
+                    unexpectedConnection.close();
+                    throw new AssertionError(
+                        "Invalid fixture credentials unexpectedly authenticated");
                   } catch (RuntimeException failure) {
                     assertThat(failure)
                         .hasRootCauseInstanceOf(
                             io.lettuce.core.RedisCommandExecutionException.class)
                         .hasStackTraceContaining("WRONGPASS");
+                    authenticationRefused.set(true);
                     throw failure;
                   }
                 });
@@ -603,6 +609,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
             .isInstanceOf(
                 AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
         assertThat(deniedAttempts.get()).isEqualTo(1);
+        assertThat(authenticationRefused.get()).isTrue();
         assertThat(admin.get(ascii(issuerKey))).isNull();
         assertThat(admin.get(ascii(accountKey))).isNull();
         for (String table : tables)
