@@ -297,3 +297,20 @@ The selected-empty service also requires the complete incoming publication reque
 For publication-gate calls, `GetDraftDesignDigest` is not an admin or user operation. The target receiver authorization is a method-level allowlist for the authenticated Game Design workload identity, under the shared [Security Architecture](../../system-architecture-security.md) and [Authentication & Authorization](../../system-architecture-authentication.md) owner rules. The call must carry and validate the exact `{tenantId, scope}` (`versionId` or `scriptPatchVersion`) together with the stable caller `publishRequestId`, derived workflow identity, and canonical `requestDigest`; omitted or changed binding fails closed. This context is authorization and replay evidence, not a digest input. Other internal workloads are denied, and no user/admin JWT is accepted as a substitute. Game Design's Temporal activities must never forward the initiating human operator JWT; operator authority terminates at workflow admission.
 
 **Current status:** `GetDraftDesignDigest` invokes `PublicationReadGuard` for the exact Automation publication-read method. The guard requires the authenticated exact Game Design workload mTLS peer in the configured trusted namespace and denies account, global-role, or scoped-role context. It does not add an end-user JWT requirement; a role-free internal identity is neither workload authorization nor an independent denial condition when the exact peer is present. The request proto carries tenant, typed scope, the patch `baseVersionId` when applicable, stable `publishRequestId`, derived workflow identity, and canonical `requestDigest`; the handler validates that complete binding before returning `UNSUPPORTED_SCOPE` for either selector. Focused unit proof covers the allowlisted peer without end-user context, missing/wrong peer, account/global/scoped-role context denial, and changed request digest. This does not claim live mounted-certificate or real Temporal-activity proof. The selected-empty schema-6 primitive remains unregistered; exact version mapping and the base-bound patch manifest are still required before a publication digest can be returned. See the [Game Design publication/Temporal contract](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity) for the coordinator-side boundary.
+
+### Private script-patch content seal
+
+The standalone, unregistered `ScriptPatchPublicationSealService` captures exact
+definitions and event bindings in a physically verified writable READ COMMITTED
+transaction under the same PostgreSQL patch-row lock acquired
+by raw writes to definitions, bindings and retained base bindings. Forward V1006
+stores a numeric base, schema-5 content digest and immutable snapshot with the
+canonical publication request and workflow binding. Identical replay retains the
+original bytes; changed content, request or base refuses. Historical authored rows
+are not assigned a seal, and catalog epoch 3 explicitly classifies the new source
+family while retaining preceding catalog epochs and evidence.
+
+This is a private content-storage primitive, not an authenticated publication
+receiver or affected-handler readiness manifest. It deliberately does not infer
+`onLoadHandlerIds` from script names. Existing `UNSUPPORTED_SCOPE` and
+`SCRIPT_PATCH_MANIFEST_UNAVAILABLE` boundaries remain unchanged.
