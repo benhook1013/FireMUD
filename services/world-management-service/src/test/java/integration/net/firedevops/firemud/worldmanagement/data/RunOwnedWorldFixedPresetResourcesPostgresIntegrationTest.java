@@ -2519,6 +2519,33 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         .contains(
             net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState.HoldStatus
                 .ABORTED);
+    var commitSelector =
+        new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request(
+            i.targetNamespace(),
+            i.canonicalTenantId(),
+            i.worldSlug(),
+            i.canonicalRealmId(),
+            i.playableStateNamespaceId(),
+            i.playableStateScope(),
+            i.canonicalGameInstanceId(),
+            association.canonicalVersionId(),
+            2L,
+            "fixture-commit-" + UUID.randomUUID(),
+            "c".repeat(64),
+            net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                .InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            i.catalogRevision(),
+            null);
+    var commitRequest =
+        new net.firedevops.firemud.worldmanagement.tenant.WorldFixtureInitialAdmissionHoldRequest(
+            commitSelector, activation);
+    var commitIdentity = holds.acquire(commitRequest);
+    net.firedevops.firemud.worldmanagement.tenant.FixtureHoldStorageTestAccess
+        .commitAndRejectMalformedProof(dsl, holds, commitRequest, commitIdentity);
+    assertThat(holds.readState(commitRequest, commitIdentity))
+        .contains(
+            net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState.HoldStatus
+                .COMMITTED);
   }
 
   private WorldLifecycleCommandServiceImpl nativeService(
