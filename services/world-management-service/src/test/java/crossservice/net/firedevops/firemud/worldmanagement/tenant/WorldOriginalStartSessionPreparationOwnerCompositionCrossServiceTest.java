@@ -366,6 +366,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void actualPendingTimeoutCanBeDurablyAbortedAndCannotRestart() throws Exception {
+    compose(Refusal.PREPARATION_TIMEOUT_ABORT);
+  }
+
+  @Test
   void databaseOwnerLockTimeoutRetainsPendingWithoutInventingTerminal() throws Exception {
     compose(Refusal.PREPARATION_LOCK_TIMEOUT);
   }
@@ -487,6 +492,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     CHANGED_ACTIVATION_ATTEMPT,
     EXPIRED_AFTER_ACTIVATION_PROTECTION_ACQUISITION,
     PREPARATION_LOCK_TIMEOUT,
+    PREPARATION_TIMEOUT_ABORT,
     CONCURRENT_PREPARATION
   }
 
@@ -962,7 +968,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                               world.dsl(), new WorldAuthoredSourceIntakeRepository(world.dsl())),
                           JSON),
                       digestService(world.dsl())),
-                  Duration.ofSeconds(refusal == Refusal.PREPARATION_LOCK_TIMEOUT ? 3 : 10));
+                  Duration.ofSeconds(
+                      (refusal == Refusal.PREPARATION_LOCK_TIMEOUT
+                              || refusal == Refusal.PREPARATION_TIMEOUT_ABORT)
+                          ? 3
+                          : 10));
           var verifier = new WorldStartSessionAccountParticipationVerifier(NAMESPACE, acquisition);
           var identity = new AtomicReference<WorldCanonicalInstanceExecutionIdentity>();
           var service =
@@ -1189,6 +1199,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               return;
             }
             if (refusal == Refusal.PREPARATION_LOCK_TIMEOUT
+                || refusal == Refusal.PREPARATION_TIMEOUT_ABORT
                 || refusal == Refusal.CONCURRENT_PREPARATION) {
               try (var blocker = world.pool().getConnection();
                   var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
@@ -1314,6 +1325,36 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   .isZero();
               assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
                   .isEqualTo(gsBefore);
+              if (refusal == Refusal.PREPARATION_TIMEOUT_ABORT) {
+                var aborted = repository.recordDurableAbort(identity.get());
+                assertThat(aborted.state())
+                    .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.ABORTED);
+                var abortRows = rows(world.dsl(), worldBefore.keySet().toArray(String[]::new));
+                assertThat(repository.recordDurableAbort(identity.get())).isEqualTo(aborted);
+                assertThat(repository.readExactExecution(identity.get()).operation())
+                    .contains(aborted);
+                assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new)))
+                    .isEqualTo(abortRows);
+                ownerRefusal.set(null);
+                assertThatThrownBy(
+                        () ->
+                            ClientCalls.blockingUnaryCall(
+                                channel,
+                                method,
+                                CallOptions.DEFAULT.withDeadlineAfter(10, TimeUnit.SECONDS),
+                                Empty.getDefaultInstance()))
+                    .isInstanceOf(StatusRuntimeException.class);
+                assertThat(ownerRefusal.get())
+                    .isInstanceOf(
+                        WorldCanonicalInstancePreparationRepository.ConflictingPreparationException
+                            .class)
+                    .hasMessageContaining("ABORTED");
+                assertThat(result.get()).isNull();
+                assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new)))
+                    .isEqualTo(abortRows);
+                assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
+                    .isEqualTo(gsBefore);
+              }
               return;
             }
             try {
