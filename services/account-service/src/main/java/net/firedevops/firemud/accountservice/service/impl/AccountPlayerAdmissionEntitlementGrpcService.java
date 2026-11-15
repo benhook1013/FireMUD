@@ -58,7 +58,7 @@ public final class AccountPlayerAdmissionEntitlementGrpcService implements Binda
             TlsServerCredentials.ClientAuth.REQUIRE,
             GrpcRequestBytePolicy.ordinary(),
             RuntimePlayerAdmissionEntitlementGrpcCodec.MAX_REQUEST_WIRE_BYTES);
-    factory.addService(this);
+    factory.addService(bindService());
     return factory.createServer();
   }
 
