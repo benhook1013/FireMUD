@@ -520,6 +520,19 @@ class AccountServiceImplTest {
     var claims = jwtUtil.parseToken(token).getPayload();
     assertEquals(account.getAccountUuid().toString(), claims.getSubject());
     assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
+    assertEquals("firemud-account-service", claims.getIssuer());
+    String expectedAudience =
+        switch (mode) {
+          case CONTROL_UI -> "control-ui";
+          case GAMEPLAY_PASSWORD, EMAIL_OTP -> "account-service";
+          case PLAYER_BOOTSTRAP -> "player-bootstrap";
+        };
+    assertEquals(java.util.Set.of(expectedAudience), claims.getAudience());
+    assertNotNull(UUID.fromString(claims.getId()));
+    assertFalse(claims.containsKey("tenantId"));
+    if (mode != OrdinaryIssuance.PLAYER_BOOTSTRAP) {
+      assertEquals(java.util.List.of(), claims.get("globalRoles"));
+    }
     org.mockito.Mockito.verify(accountRepository).findByAccountUuid(account.getAccountUuid());
     if (mode != OrdinaryIssuance.GAMEPLAY_PASSWORD) {
       org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
