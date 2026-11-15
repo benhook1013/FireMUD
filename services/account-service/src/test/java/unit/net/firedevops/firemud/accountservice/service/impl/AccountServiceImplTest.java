@@ -4164,6 +4164,27 @@ class AccountServiceImplTest {
         assertThrows(AuthenticationException.class, () -> service.exportAccountData(2L)).getCode());
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void exportAccountDataRejectsContradictoryOwnerBeforeProfileRead(boolean wrongOwner) {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    if (wrongOwner) {
+      account.setId(3L);
+    } else {
+      account.setAccountUuidSourceNumericId(3L);
+    }
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+
+    AuthenticationException failure =
+        assertThrows(AuthenticationException.class, () -> service.exportAccountData(2L));
+
+    assertEquals("AUTH_UNAVAILABLE", failure.getCode());
+    org.mockito.Mockito.verify(accountRepository).findById(2L);
+    verifyNoInteractions(profileRepository, notificationService);
+  }
+
   @Test
   void exportTenantDataRequiresTenantMembershipOrProfile() {
     Account account = new Account();
