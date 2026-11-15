@@ -20,7 +20,7 @@ class InitialGameplayRecoverCodecTest {
       "mutation":{"operationId":"00000000-0000-4000-8000-000000000007","verb":"recover","workflow":"initial-gameplay-release","maintenanceLockPresence":"RESULT_ONLY"},
       "auditReason":{"code":"INITIAL_GAMEPLAY_RELEASE","detail":"initial"}}
       """
-          .formatted(D, D, D, D, D);
+          .replace("%s", D);
 
   // Static cross-language artifact: lowercase hex of the exact ADR 0047 preimage bytes.
   private static final String PREIMAGE_HEX =
