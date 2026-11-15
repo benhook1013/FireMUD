@@ -415,3 +415,7 @@ Old-stack donor #3007's transport proof is adapted to the current handler rather
 ## Fixture activation catalog forward repair
 
 V1052 explicitly classifies the three V1051 run-owned fixture operation/control relations and appends a new exact catalog epoch after installing its guards. V1051 and V1052 retain honest installation markers with exact successful Flyway-row checks; prior epochs, snapshots, operation evidence and migration history are not rewritten. The catalog remains fail-closed for any other unclassified relation or changed schema. Fresh physical PostgreSQL qualification on the isolated da41439174 repair passes all 28 catalog/private-FRESH/graph-receipt cases and all 13 original fixture-resource cases, zero failures/errors/skips. Schema generation, integration compilation, affected formatting, Checkstyle and SpotBugs pass. Earlier local runs exposed stale epoch/frontier expectations, which were corrected without weakening history or conflict assertions. These local receipts are not exact remote-head CI or deployment proof. This repair adds no runtime registration or activation authority.
+
+### Legacy lifecycle caller boundary
+
+The generic prepare, activate, fail and terminate RPC handlers now enforce the same-namespace Game Session workload before owner access. Focused receiver tests cover absent, wrong-service, cross-namespace and account-bearing callers, missing configured namespace, and the intended Game Session path. This source change does not qualify deployed exposure, canonical activation, or fixture terminal integration.
