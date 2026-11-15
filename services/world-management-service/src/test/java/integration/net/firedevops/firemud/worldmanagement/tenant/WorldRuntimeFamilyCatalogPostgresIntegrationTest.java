@@ -75,7 +75,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture(null)) {
       var evidence = f.owner().read(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(5);
+      assertThat(catalog.catalogEpoch()).isEqualTo(6);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -207,7 +207,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(
               f.dsl
                   .fetch(
-                      "SELECT to_jsonb(h)::text FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1046' AND version IS DISTINCT FROM '1047' AND version IS DISTINCT FROM '1048' AND version IS DISTINCT FROM '1049' AND version IS DISTINCT FROM '1050' ORDER BY installed_rank")
+                      "SELECT to_jsonb(h)::text FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1046' AND version IS DISTINCT FROM '1047' AND version IS DISTINCT FROM '1048' AND version IS DISTINCT FROM '1049' AND version IS DISTINCT FROM '1050' AND version IS DISTINCT FROM '1051' AND version IS DISTINCT FROM '1052' ORDER BY installed_rank")
                   .getValues(0, String.class))
           .isEqualTo(historyBefore);
       f.owner().read(request());
@@ -316,7 +316,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
         migration(f.source, f.schema, null).migrate();
         Request read = request();
         var original = f.owner().read(read);
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(5);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(6);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -368,7 +368,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(request()))
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
-      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(5);
+      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(6);
     }
   }
 
@@ -396,7 +396,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
   void directSnapshotInsertRequiresBothSuccessfulExactCatalogMigrationRows() throws Exception {
     try (Fixture f = fixture(null)) {
       var catalog = f.owner().read(request()).catalog();
-      for (String version : List.of("1046", "1047", "1048", "1049", "1050")) {
+      for (String version : List.of("1046", "1047", "1048", "1049", "1050", "1051", "1052")) {
         for (String column : List.of("success", "script")) {
           Request read = request();
           var evidence = new Evidence(read, UUID.randomUUID(), catalog);
@@ -438,6 +438,49 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
           assertThat(f.count("world_runtime_family_catalog_snapshot")).isEqualTo(before + 1);
         }
       }
+    }
+  }
+
+  @Test
+  void fixtureActivationCatalogUpgradePreservesHistoryAndAddsExactNonPayloadFamilies()
+      throws Exception {
+    try (Fixture f = fixture("1050")) {
+      Request original = request();
+      f.owner().read(original);
+      var epochs = f.retainedRows("world_runtime_family_catalog_epoch");
+      var snapshots = f.retainedRows("world_runtime_family_catalog_snapshot");
+      var history = f.retainedRows("flyway_schema_history_world_management_service");
+      migration(f.source, f.schema, "1051").migrate();
+      assertThatThrownBy(() -> f.owner().read(request()))
+          .hasMessageContaining("Unclassified or changed World schema family");
+      migration(f.source, f.schema, null).migrate();
+      assertThat(f.retainedRows("world_runtime_family_catalog_epoch"))
+          .containsAll(epochs)
+          .hasSize(epochs.size() + 1);
+      assertThat(f.retainedRows("world_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      assertThat(f.retainedRows("flyway_schema_history_world_management_service"))
+          .containsAll(history)
+          .hasSize(history.size() + 2);
+      var catalog = f.owner().read(request()).catalog();
+      assertThat(catalog.catalogEpoch()).isEqualTo(6);
+      for (String relation :
+          List.of(
+              "world_run_owned_fixture_activation_operation",
+              "world_run_owned_fixture_activation_manifest",
+              "world_run_owned_fixture_tenant_manifest")) {
+        assertThat(catalog.families())
+            .anySatisfy(
+                family -> {
+                  assertThat(family.familyId()).isEqualTo(relation);
+                  assertThat(family.freshDisposition())
+                      .isEqualTo(
+                          relation.endsWith("_operation")
+                              ? FreshDisposition.PROVENANCE_ONLY
+                              : FreshDisposition.CONTROL_ONLY);
+                });
+        assertThat(f.count(relation)).isZero();
+      }
+      migration(f.source, f.schema, null).validate();
     }
   }
 
@@ -549,8 +592,8 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
               + " ('region_instance.name','region_instance','name','RUNTIME_PAYLOAD','S3','REQUIRED_TOPOLOGY')");
       f.dsl.execute(
           "INSERT INTO world_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-              + " SELECT 6,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM"
-              + " (SELECT world_runtime_family_catalog_bytes(6) AS bytes) revised");
+              + " SELECT 7,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM"
+              + " (SELECT world_runtime_family_catalog_bytes(7) AS bytes) revised");
       assertThatThrownBy(() -> f.owner().readExact(read))
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(read))
@@ -563,9 +606,9 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
                   .get(0, byte[].class))
           .isEqualTo(WorldRuntimeFamilyCatalogCodec.evidenceBytes(original));
       var revised = f.owner().read(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(6);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(7);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
-      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(6);
+      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(7);
     }
   }
 
