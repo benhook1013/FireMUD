@@ -294,6 +294,25 @@ class AccountGameplayDelegationRedisIntegrationTest {
         if (seedProjection) {
           stable.publishCurrent(accountId);
           assertProjectionBytes(admin, issuerKey, accountKey, original);
+          // Redis-only poisoning cannot authorize Account source advancement or an overwrite.
+          assertThat(initialSource.account().generation()).isEqualTo(1L);
+          byte[] aheadAccount = projectionPair(accountId, 1L, 2L, "unused", "ahead-cache")[1];
+          admin.set(ascii(accountKey), aheadAccount);
+          assertThatThrownBy(() -> stable.publishCurrent(accountId))
+              .isInstanceOf(
+                  AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+          assertThat(admin.get(ascii(accountKey))).containsExactly(aheadAccount);
+          assertThat(admin.get(ascii(issuerKey))).containsExactly(original[0]);
+          assertThat(admin.pttl(ascii(accountKey))).isEqualTo(-1L);
+          assertThat(
+                  inTransaction(
+                      database,
+                      () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId)))
+              .isEqualTo(initialSource);
+          assertThatThrownBy(() -> stable.observeCurrent(accountId))
+              .isInstanceOf(
+                  AccountGameplayDelegationAuthorityProjection.StaleProjectionException.class);
+          admin.set(ascii(accountKey), original[1]);
         } else {
           assertThat(publish).isTrue();
           assertThat(admin.get(ascii(issuerKey))).isNull();
