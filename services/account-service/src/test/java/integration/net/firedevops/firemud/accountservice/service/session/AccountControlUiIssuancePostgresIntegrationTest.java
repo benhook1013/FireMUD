@@ -108,6 +108,57 @@ class AccountControlUiIssuancePostgresIntegrationTest {
   }
 
   @Test
+  void lateCommitRollbackPreservesExactCandidateAndOriginalEnvelope() {
+    Context c = context();
+    Fixture f = new Fixture(c);
+    var prepared = f.prepare();
+    var candidate = f.candidate(prepared);
+    var rowsBefore =
+        c.dsl.fetch(
+            "SELECT to_jsonb(o)::text AS wire FROM account_control_ui_issuance_operations o");
+    var envelopesBefore =
+        c.dsl.fetch(
+            "SELECT to_jsonb(e)::text AS wire FROM account_control_ui_response_envelopes e");
+    assertThat(rowsBefore).hasSize(1);
+    assertThat(envelopesBefore).hasSize(1);
+    Transport transport = new Transport(candidate);
+    var pending =
+        transport.client.registerPending(
+            candidate.tokenHash, candidate.pendingRegistry, candidate.expiryMillis());
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () -> {
+                      var committed = c.operations.commit(candidate, pending);
+                      assertThat(committed.stored.status).isEqualTo("COMMITTED");
+                      assertThat(c.operations.findRequest(candidate.requestId).status)
+                          .isEqualTo("COMMITTED");
+                      throw new IllegalStateException("deliberate rollback after issuance commit");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("deliberate rollback after issuance commit");
+    assertThat(
+            c.dsl.fetch(
+                "SELECT to_jsonb(o)::text AS wire FROM account_control_ui_issuance_operations o"))
+        .isEqualTo(rowsBefore);
+    assertThat(
+            c.dsl.fetch(
+                "SELECT to_jsonb(e)::text AS wire FROM account_control_ui_response_envelopes e"))
+        .isEqualTo(envelopesBefore);
+    var retained = c.tx(() -> c.operations.findRequest(candidate.requestId));
+    assertThat(retained.status).isEqualTo("CANDIDATE");
+    assertOriginal(candidate, retained);
+    assertThatThrownBy(() -> c.tx(() -> c.operations.requireCommitted(retained)))
+        .isInstanceOf(IllegalStateException.class);
+    var recovered = c.tx(() -> c.operations.commit(retained, pending));
+    assertThat(recovered.stored.status).isEqualTo("COMMITTED");
+    assertOriginal(candidate, recovered.stored);
+    var envelope = Objects.requireNonNull(c.tx(() -> c.operations.envelope(recovered.stored)));
+    assertThat(envelope.encrypted()).containsExactly(f.encryptedResponse);
+    assertThat(envelope.binding()).containsExactly(f.ownerBinding);
+  }
+
+  @Test
   void replayDenialsPersistBoundedHistoryWithoutChangingRetainedIssuanceAccountOrOtp() {
     Context c = contextAt("1043");
     Fixture f = new Fixture(c);
