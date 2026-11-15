@@ -1,0 +1,108 @@
+{
+  "sources": [
+    {
+      "pack_group": "selected-source-world-proof",
+      "source_checkout": "FireMUD-document-world-selected-publication-owners-20261015",
+      "source_branch": "codex/document-world-selected-publication-owners-20261015",
+      "source_head": "c6f2c4ca7c75a03d5cff594f9516a6e4d2b64fb2",
+      "source_worktree_status": "untracked (??)",
+      "source_path": "services/game-design-service/src/test/java/integration/net/firedevops/firemud/account/GenuineGameDesignWorldSourceCommitPostgresIntegrationTest.java",
+      "sha256": "0b2487ab319038e0cb14447792f24b0f1dfa6e16a55b610dca5ccfd29f927a35",
+      "destination_ref": "origin/dot/oldstack-creator-20261113",
+      "destination_head": "b6f15b73384e89ae87db77aed82dd9739ceb549a",
+      "destination_path": "services/game-design-service/src/test/java/integration/net/firedevops/firemud/account/GenuineGameDesignWorldSourceCommitPostgresIntegrationTest.java",
+      "purpose": "selected Game Design/World source-commit proof candidate"
+    },
+    {
+      "pack_group": "selected-source-world-proof",
+      "source_checkout": "FireMUD-document-world-selected-publication-owners-20261015",
+      "source_branch": "codex/document-world-selected-publication-owners-20261015",
+      "source_head": "c6f2c4ca7c75a03d5cff594f9516a6e4d2b64fb2",
+      "source_worktree_status": "untracked (??)",
+      "source_path": "services/game-design-service/src/test/java/integration/net/firedevops/firemud/account/GenuineWorldSourceProofPki.java",
+      "sha256": "afcb89a31ce6fbf37b28a66eab9cf815661b359f92c1e1e8dfb297d3b652d7b9",
+      "destination_ref": "origin/dot/oldstack-creator-20261113",
+      "destination_head": "b6f15b73384e89ae87db77aed82dd9739ceb549a",
+      "destination_path": "services/game-design-service/src/test/java/integration/net/firedevops/firemud/account/GenuineWorldSourceProofPki.java",
+      "purpose": "selected Game Design/World source-commit proof candidate"
+    },
+    {
+      "pack_group": "account-subscription-test-baselines",
+      "source_checkout": "FireMUD-gameplay-public-scope-reader-proof-20261103",
+      "source_branch": "detached",
+      "source_head": "ab38a90728f1e0c7af1ee9c9722ddb01d00e0938",
+      "source_worktree_status": "untracked (??)",
+      "source_path": "services/account-service/src/test/resources/db/migration/V1028__retain_non_authorizing_subscription_evidence.sql",
+      "sha256": "93c3cff8c95923264eb33a6f89bedbe35f2f9c079bec3f323cd89c4a799e76e2",
+      "destination_ref": "origin/develop",
+      "destination_head": "8d6d9cfa4aa6cc1778eaa2ba3109c3a4eb72a292",
+      "destination_path": "services/account-service/src/test/resources/db/migration/V1028__retain_non_authorizing_subscription_evidence.sql",
+      "purpose": "Account test-only historical Flyway baseline consumed by lifecycle upgrade proof"
+    },
+    {
+      "pack_group": "account-subscription-test-baselines",
+      "source_checkout": "FireMUD-gameplay-public-scope-reader-proof-20261103",
+      "source_branch": "detached",
+      "source_head": "ab38a90728f1e0c7af1ee9c9722ddb01d00e0938",
+      "source_worktree_status": "untracked (??)",
+      "source_path": "services/account-service/src/test/resources/db/migration/V1029__canonical_subscription_intent_and_provider_history.sql",
+      "sha256": "f54025fb8b9d466540f4e175b20b585a0ededa4eca9d34bf70befd631c7e869e",
+      "destination_ref": "origin/develop",
+      "destination_head": "8d6d9cfa4aa6cc1778eaa2ba3109c3a4eb72a292",
+      "destination_path": "services/account-service/src/test/resources/db/migration/V1029__canonical_subscription_intent_and_provider_history.sql",
+      "purpose": "Account test-only historical Flyway baseline consumed by lifecycle upgrade proof"
+    },
+    {
+      "pack_group": "account-subscription-test-baselines",
+      "source_checkout": "FireMUD-gameplay-public-scope-reader-proof-20261103",
+      "source_branch": "detached",
+      "source_head": "ab38a90728f1e0c7af1ee9c9722ddb01d00e0938",
+      "source_worktree_status": "untracked (??)",
+      "source_path": "services/account-service/src/test/resources/db/migration/V1030__hosting_subscription_provisioning_claims.sql",
+      "sha256": "e37a212dbc1e1cb0f9d64eb4f43ef128bbbdac38dae9960ac0c96c278c81c36d",
+      "destination_ref": "origin/develop",
+      "destination_head": "8d6d9cfa4aa6cc1778eaa2ba3109c3a4eb72a292",
+      "destination_path": "services/account-service/src/test/resources/db/migration/V1030__hosting_subscription_provisioning_claims.sql",
+      "purpose": "Account test-only historical Flyway baseline consumed by lifecycle upgrade proof"
+    },
+    {
+      "pack_group": "account-subscription-test-baselines",
+      "source_checkout": "FireMUD-gameplay-public-scope-reader-proof-20261103",
+      "source_branch": "detached",
+      "source_head": "ab38a90728f1e0c7af1ee9c9722ddb01d00e0938",
+      "source_worktree_status": "untracked (??)",
+      "source_path": "services/account-service/src/test/resources/db/migration/V1032__hosting_subscription_first_provider_dispatch.sql",
+      "sha256": "70a1cc481050c8752252dbd487fd35156847d417ad0c6b8d030a15abfe0ade69",
+      "destination_ref": "origin/develop",
+      "destination_head": "8d6d9cfa4aa6cc1778eaa2ba3109c3a4eb72a292",
+      "destination_path": "services/account-service/src/test/resources/db/migration/V1032__hosting_subscription_first_provider_dispatch.sql",
+      "purpose": "Account test-only historical Flyway baseline consumed by lifecycle upgrade proof"
+    },
+    {
+      "pack_group": "account-subscription-test-baselines",
+      "source_checkout": "FireMUD-gameplay-public-scope-reader-proof-20261103",
+      "source_branch": "detached",
+      "source_head": "ab38a90728f1e0c7af1ee9c9722ddb01d00e0938",
+      "source_worktree_status": "untracked (??)",
+      "source_path": "services/account-service/src/test/resources/db/migration/V1035__canonical_join_failure_and_attempt_diagnostics.sql",
+      "sha256": "760db8ba49867fe5c16eb0cfa8c0256cd6ee2ea615b2410a4c7e79d5fd2e3094",
+      "destination_ref": "origin/develop",
+      "destination_head": "8d6d9cfa4aa6cc1778eaa2ba3109c3a4eb72a292",
+      "destination_path": "services/account-service/src/test/resources/db/migration/V1035__canonical_join_failure_and_attempt_diagnostics.sql",
+      "purpose": "Account test-only historical Flyway baseline consumed by lifecycle upgrade proof"
+    },
+    {
+      "pack_group": "account-subscription-test-baselines",
+      "source_checkout": "FireMUD-gameplay-public-scope-reader-proof-20261103",
+      "source_branch": "detached",
+      "source_head": "ab38a90728f1e0c7af1ee9c9722ddb01d00e0938",
+      "source_worktree_status": "untracked (??)",
+      "source_path": "services/account-service/src/test/resources/db/migration/V1036__hosting_subscription_terminal_resolution.sql",
+      "sha256": "f913dca819521bf7d046d900da6e57a96807cd84b76d7105b583dac64e8b733f",
+      "destination_ref": "origin/develop",
+      "destination_head": "8d6d9cfa4aa6cc1778eaa2ba3109c3a4eb72a292",
+      "destination_path": "services/account-service/src/test/resources/db/migration/V1036__hosting_subscription_terminal_resolution.sql",
+      "purpose": "Account test-only historical Flyway baseline consumed by lifecycle upgrade proof"
+    }
+  ]
+}
