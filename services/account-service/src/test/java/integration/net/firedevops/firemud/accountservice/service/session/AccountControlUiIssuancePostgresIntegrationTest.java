@@ -108,6 +108,61 @@ class AccountControlUiIssuancePostgresIntegrationTest {
   }
 
   @Test
+  void concurrentOwnerRequestSelectionRetainsOneOriginalPreparedCapture() throws Exception {
+    Context c = context();
+    Fixture f = new Fixture(c);
+    UUID callerContext = UUID.randomUUID();
+    Instant issuedAt = Instant.ofEpochSecond(Instant.now().getEpochSecond());
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    try (var workers = Executors.newFixedThreadPool(2)) {
+      java.util.concurrent.Callable<AccountControlUiIssuanceRepository.Stored> attempt =
+          () -> {
+            ready.countDown();
+            if (!start.await(10, TimeUnit.SECONDS))
+              throw new AssertionError("Owner selection start timed out");
+            return c.tx(
+                () -> {
+                  c.operations.lockReplayRequest(f.request);
+                  var existing = c.operations.findRequest(f.request);
+                  if (existing != null) return existing;
+                  return c.operations.prepare(
+                      f.request,
+                      "spiffe://test-only/control-ui",
+                      callerContext,
+                      "test-mac1",
+                      "c".repeat(64),
+                      f.primary,
+                      f.authority,
+                      f.signer,
+                      issuedAt,
+                      300_000L);
+                });
+          };
+      var first = workers.submit(attempt);
+      var second = workers.submit(attempt);
+      assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      var firstResult = first.get(20, TimeUnit.SECONDS);
+      var secondResult = second.get(20, TimeUnit.SECONDS);
+      assertThat(firstResult.status).isEqualTo("PREPARED");
+      assertOriginal(firstResult, secondResult);
+      assertThat(secondResult.operationId).isEqualTo(firstResult.operationId);
+      assertThat(secondResult.jti).isEqualTo(firstResult.jti);
+      assertThat(secondResult.callerContextId).isEqualTo(callerContext);
+      assertThat(secondResult.claims).containsExactly(firstResult.claims);
+      assertThat(secondResult.sources).containsExactly(firstResult.sources);
+      assertThat(secondResult.bundle).containsExactly(firstResult.bundle);
+      assertThat(secondResult.signerReceipt).containsExactly(firstResult.signerReceipt);
+      assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations")))
+          .isEqualTo(1);
+      assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isZero();
+    } finally {
+      start.countDown();
+    }
+  }
+
+  @Test
   void lateCommitRollbackPreservesExactCandidateAndOriginalEnvelope() {
     Context c = context();
     Fixture f = new Fixture(c);
