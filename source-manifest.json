@@ -5,7 +5,7 @@
     "head": "9e9686d9a5cfef140536e33c4bca3d64d6168984"
   },
   "generated_utc": "2026-11-15T07:45:25.697543+00:00",
-  "public_source_scan": "flagged files omitted; concerns are filename-only",
+  "public_source_scan": "local regex scan; no credential/private-user-data matches after replacing the test fixture literal",
   "items": [
     {
       "dir": "account-player-admission",
@@ -110,7 +110,7 @@
       "source_head": "9a5a165e90cb9e9e9c3ff352584474e62c3aa719",
       "destination": "Account tracker design/project-management/implementation-tracking/player-access-and-session.md and Entity contract design/architecture/microservices/entity-management-service/api-contracts.md#character-creation-owner-protection. Add current realm-grant proof and delegation resolver; use a forward migration because V1012 is occupied.",
       "source_file_count_expected": 24,
-      "included_file_count": 23,
+      "included_file_count": 24,
       "files": [
         {
           "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateDelegationBindings.java",
@@ -232,6 +232,16 @@
           "kind": "source"
         },
         {
+          "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateOutboundMtlsTest.java",
+          "sha256": "35201d302f9364a918af7dd88e18dc7f66ac19a7067d7ba72fb48de9de3bc555",
+          "bytes": 33310,
+          "git_blob_sha1": "94cb2c7e18bf9fe50cbc2c56512e4039dd1654d9",
+          "kind": "source",
+          "sanitized": true,
+          "original_sha256": "81f955a1272f8a1c58e8746f21f720fb457e3377cc2220bf0f83c593ef6f80ba",
+          "sanitization": "replaced one bearer-credential-shaped test fixture literal with deterministic non-secret test value"
+        },
+        {
           "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreatePublicSourceClientMtlsTest.java",
           "sha256": "a22a526a27b178cc2c42d024eed5d4671da14e5fcc21f65208df618edfadd79e",
           "bytes": 51203,
@@ -351,10 +361,13 @@
       ]
     }
   ],
-  "scan_findings_filename_only": [
-    [
-      "account-character-create/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateOutboundMtlsTest.java",
-      "bearer credential"
-    ]
-  ]
+  "scan_findings_filename_only": [],
+  "sanitization_update": {
+    "path": "account-character-create/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateOutboundMtlsTest.java",
+    "original_sha256": "81f955a1272f8a1c58e8746f21f720fb457e3377cc2220bf0f83c593ef6f80ba",
+    "sanitized_sha256": "35201d302f9364a918af7dd88e18dc7f66ac19a7067d7ba72fb48de9de3bc555",
+    "replacement": "Bearer test-fixture-token",
+    "original_match_count": 1,
+    "assertions_updated": 0
+  }
 }

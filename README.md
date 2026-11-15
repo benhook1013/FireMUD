@@ -22,7 +22,9 @@ Input artifact: `World-fixture-activation-reference.tar.gz` SHA-256 `c53a123bd4a
 
 Destination: Account tracker design/project-management/implementation-tracking/player-access-and-session.md and Entity contract design/architecture/microservices/entity-management-service/api-contracts.md#character-creation-owner-protection. Add current realm-grant proof and delegation resolver; use a forward migration because V1012 is occupied.
 Original source: `FireMUD-2972-headroom-repair-20261018` at `refs/heads/codex/gameplay-2972-current-parent-receiving-20261018` / `9a5a165e90cb9e9e9c3ff352584474e62c3aa719`.
-Input artifact: `Account-CHARACTER-CREATE-reference.tar.gz` SHA-256 `11510f399f25c0cea031ce45b674e54f301da9a1375056c884dd857414a6234e`; expected selected source files: 24; included: 23.
+Input artifact: `Account-CHARACTER-CREATE-reference.tar.gz` SHA-256 `11510f399f25c0cea031ce45b674e54f301da9a1375056c884dd857414a6234e`; expected selected source files: 24; included: 24.
+
+Sanitization: `services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateOutboundMtlsTest.java` contained one bearer-credential-shaped test fixture literal. It is now the deterministic non-secret `Bearer test-fixture-token`; there was no assertion of the original literal to update. The original source-file SHA-256 and sanitized postimage SHA-256 are recorded in `source-manifest.json`.
 
 ### `automation-script-patch-snapshot`
 
@@ -38,4 +40,4 @@ Input artifact: `Account-draft-Entity-settlement-reference.tar.gz` SHA-256 `6de7
 
 ## Public-source scan
 
-Potentially sensitive files were omitted; see `source-manifest.json` filename-only concern list.
+No credential or private-user-data concern was found after the test fixture literal was replaced.
