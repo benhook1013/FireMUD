@@ -264,8 +264,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void physicalOwnerAdvanceAcrossProjectionRoundTripNeverReturnsStaleSuccess(boolean publish) {
+  @org.junit.jupiter.params.provider.CsvSource({"false, true", "true, true", "true, false"})
+  void physicalOwnerAdvanceAcrossProjectionRoundTripNeverReturnsStaleSuccess(
+      boolean publish, boolean seedProjection) {
     TestContext database = newPostgresContext();
     DSLContext dsl = database.dsl();
     var authorities = new AccountAuthorityGenerationRepository(dsl);
@@ -285,8 +286,19 @@ class AccountGameplayDelegationRedisIntegrationTest {
         var redis = redisClient(new TrackedProvider(writer));
         var stable =
             new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis);
-        stable.publishCurrent(accountId);
-        byte[][] original = redis.readAuthorityProjections(accountId);
+        var initialSource =
+            inTransaction(
+                database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+        byte[][] original =
+            AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(initialSource);
+        if (seedProjection) {
+          stable.publishCurrent(accountId);
+          assertProjectionBytes(admin, issuerKey, accountKey, original);
+        } else {
+          assertThat(publish).isTrue();
+          assertThat(admin.get(ascii(issuerKey))).isNull();
+          assertThat(admin.get(ascii(accountKey))).isNull();
+        }
         var changingManager =
             new BeforeSecondTransactionManager(
                 database.manager(),
