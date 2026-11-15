@@ -1556,6 +1556,62 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
         });
   }
 
+  @Test
+  void absentFrozenJournalReadbackDoesNotPromoteStoredTopologyOrEnterOwners() throws Exception {
+    withCurrentStorageOwner(
+        fixture -> {
+          var plan = fixture.plan();
+          fixture.write().execute(status -> fixture.topology().store(plan));
+          var owner = plan.ownerBinding();
+          var tuples =
+              plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+                  .filter(unit -> unit.owner() == DraftCommitBinding.Owner.WORLD_MANAGEMENT)
+                  .map(
+                      unit ->
+                          new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                              unit.owner().name(),
+                              unit.aggregateType(),
+                              unit.aggregateId(),
+                              unit.scopeType(),
+                              unit.scopeId(),
+                              unit.expectedEpoch()))
+                  .toList();
+          // Constructed selector only: neither its declared digest nor stored topology grants
+          // APPLIED, publication or capture authority. No frozen journal has been written.
+          var selector =
+              new WorldAuthoredGraphSnapshot.CaptureRequest(
+                  owner.targetNamespace(),
+                  owner.canonicalTenantId(),
+                  owner.canonicalVersionId(),
+                  owner.intakeRequestId(),
+                  UUID.randomUUID(),
+                  "absent-journal",
+                  "a".repeat(64),
+                  1,
+                  "publish:" + owner.canonicalTenantId() + ":publish-request:absent-journal",
+                  plan.binding().commitId().toString(),
+                  "b".repeat(64),
+                  3,
+                  tuples);
+          var captureOwner = mock(WorldAuthoredGraphSnapshotRepository.class);
+          var topologyOwner = mock(WorldDraftTopologyCommitRepository.class);
+          var digestOwner = mock(WorldDraftDesignDigestService.class);
+          var journal =
+              new WorldCanonicalFrozenTopologyRepository(
+                  fixture.dsl(), captureOwner, topologyOwner, digestOwner);
+          var before =
+              retainedTableSnapshot(fixture.dsl(), fixture.schema(), currentStorageTables());
+          var request = new WorldCanonicalFrozenTopology.Request(plan, selector);
+          assertThat(journal.readCommitted(request)).isEmpty();
+          assertThat(journal.readCommitted(selector)).isEmpty();
+          assertThat(journal.readCommitted(request)).isEmpty();
+          verifyNoInteractions(captureOwner, topologyOwner, digestOwner);
+          assertThat(retainedTableSnapshot(fixture.dsl(), fixture.schema(), currentStorageTables()))
+              .isEqualTo(before);
+          assertCompleteCurrentStorage(fixture);
+        });
+  }
+
   private static List<String> currentStorageTables() {
     return List.of(
         "region",
