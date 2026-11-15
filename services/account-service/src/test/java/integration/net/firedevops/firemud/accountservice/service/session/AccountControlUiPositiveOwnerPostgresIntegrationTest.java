@@ -129,7 +129,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
           .withStartupTimeout(java.time.Duration.ofSeconds(60))
           .withCreateContainerCmdModifier(
               command ->
-                  java.util.Objects.requireNonNull(command.getHostConfig(), "container host config")
+                  java.util.Objects.requireNonNull(command.getHostConfig())
                       .withMemory(512L * 1024 * 1024)
                       .withMemorySwap(512L * 1024 * 1024)
                       .withPidsLimit(256L));
@@ -143,7 +143,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
           .withStartupTimeout(java.time.Duration.ofSeconds(30))
           .withCreateContainerCmdModifier(
               command ->
-                  java.util.Objects.requireNonNull(command.getHostConfig(), "container host config")
+                  java.util.Objects.requireNonNull(command.getHostConfig())
                       .withMemory(256L * 1024 * 1024)
                       .withMemorySwap(256L * 1024 * 1024)
                       .withPidsLimit(128L))
@@ -174,7 +174,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
           .withStartupTimeout(java.time.Duration.ofSeconds(30))
           .withCreateContainerCmdModifier(
               command ->
-                  java.util.Objects.requireNonNull(command.getHostConfig(), "container host config")
+                  java.util.Objects.requireNonNull(command.getHostConfig())
                       .withMemory(256L * 1024 * 1024)
                       .withMemorySwap(256L * 1024 * 1024)
                       .withPidsLimit(128L))

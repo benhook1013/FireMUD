@@ -74,6 +74,31 @@ class AccountPlayerAdmissionEntitlementGrpcServiceTest {
     verifyNoInteractions(owner);
   }
 
+  @Test
+  @SuppressWarnings("unchecked")
+  void ordinaryBindingAlwaysRejectsMissingTlsBeforeHandlerOrOwner() {
+    var owner = mock(AccountPlayerAdmissionEntitlementOwner.class);
+    var service = new AccountPlayerAdmissionEntitlementGrpcService(owner, "prod");
+    var method =
+        net.firedevops.firemud.account.v1.AccountPlayerAdmissionEntitlementReadServiceGrpc
+            .getReadPlayerAdmissionEntitlementMethod();
+    io.grpc.ServerCall<
+            ReadPlayerAdmissionEntitlementRequest, ReadPlayerAdmissionEntitlementResponse>
+        call = mock(io.grpc.ServerCall.class);
+    when(call.getAttributes()).thenReturn(io.grpc.Attributes.EMPTY);
+    when(call.getMethodDescriptor()).thenReturn(method);
+    var definition = service.bindService().getMethod(method.getFullMethodName());
+    var handler =
+        (io.grpc.ServerCallHandler<
+                ReadPlayerAdmissionEntitlementRequest, ReadPlayerAdmissionEntitlementResponse>)
+            definition.getServerCallHandler();
+    handler.startCall(call, new io.grpc.Metadata());
+    var status = ArgumentCaptor.forClass(Status.class);
+    verify(call).close(status.capture(), any());
+    assertThat(status.getValue().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+    verifyNoInteractions(owner);
+  }
+
   @ParameterizedTest
   @MethodSource("ownerFailures")
   void ownerFailuresRetainExactAvailabilityClassificationWithoutSourceDetails(

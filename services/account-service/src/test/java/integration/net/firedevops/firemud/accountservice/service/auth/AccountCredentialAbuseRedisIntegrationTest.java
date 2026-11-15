@@ -334,7 +334,7 @@ class AccountCredentialAbuseRedisIntegrationTest {
         .withStartupTimeout(Duration.ofSeconds(30))
         .withCreateContainerCmdModifier(
             command ->
-                java.util.Objects.requireNonNull(command.getHostConfig(), "container host config")
+                java.util.Objects.requireNonNull(command.getHostConfig())
                     .withMemory(PROCESS_BYTES)
                     .withMemorySwap(PROCESS_BYTES)
                     .withPidsLimit(128L))

@@ -637,7 +637,7 @@ class AccountRepositoryIntegrationTest {
   }
 
   @Test
-  void retainedRealmGrantStoragePreservesCurrentnessWhilePublicMutationsStayUnavailable() {
+  void privateRealmGrantStorageRetainsMonotonicCurrentnessWhileLifecycleMutationsAreUnavailable() {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     long accountId =
         Objects.requireNonNull(
@@ -715,38 +715,45 @@ class AccountRepositoryIntegrationTest {
             .orElseThrow();
     UUID originalGeneration = original.getGrantAuthorityGeneration();
     assertThat(grant.getGrantAuthorityGeneration()).isEqualTo(originalGeneration);
-    // The public legacy mutation surface is deliberately unavailable. Its rejection must not
-    // mutate the retained row; the storage-only fixture below is not lifecycle authority.
-    String retainedRow =
-        jdbc.queryForObject(
-            "SELECT row_to_json(g)::text FROM account_realm_access_grant g WHERE id = ?",
-            String.class,
-            original.getId());
+    String beforeDeniedMutation =
+        transactionAwareDsl
+            .fetchSingle(
+                "SELECT row_to_json(g)::text FROM account_realm_access_grant g WHERE id = ?",
+                original.getId())
+            .get(0, String.class);
     assertThatThrownBy(
-            () -> accountService.revokeRealmAccess(accountId, 7654323L, "world", "private"))
+            () ->
+                transaction.executeWithoutResult(
+                    status ->
+                        accountService.revokeRealmAccess(accountId, 7654323L, "world", "private")))
         .isInstanceOf(
             net.firedevops.firemud.accountservice.service.exception.AuthenticationException.class)
         .hasMessage("Lifecycle-qualified realm-grant mutations are unavailable");
     assertThatThrownBy(
             () ->
-                accountService.grantRealmAccess(
-                    new RealmAccessGrantRequest(
-                        accountId,
-                        7654323L,
-                        "world",
-                        "private",
-                        "test",
-                        "regrant",
-                        "req-regrant-1")))
+                transaction.execute(
+                    status ->
+                        accountService.grantRealmAccess(
+                            new RealmAccessGrantRequest(
+                                accountId,
+                                7654323L,
+                                "world",
+                                "private",
+                                "test",
+                                "regrant",
+                                "req-regrant-1"))))
         .isInstanceOf(
             net.firedevops.firemud.accountservice.service.exception.AuthenticationException.class)
         .hasMessage("Lifecycle-qualified realm-grant mutations are unavailable");
     assertThat(
-            jdbc.queryForObject(
-                "SELECT row_to_json(g)::text FROM account_realm_access_grant g WHERE id = ?",
-                String.class,
-                original.getId()))
-        .isEqualTo(retainedRow);
+            transactionAwareDsl
+                .fetchSingle(
+                    "SELECT row_to_json(g)::text FROM account_realm_access_grant g WHERE id = ?",
+                    original.getId())
+                .get(0, String.class))
+        .isEqualTo(beforeDeniedMutation);
+
+    // Direct fixture storage proves retained currentness, not lifecycle mutation authority.
     transaction.executeWithoutResult(
         status ->
             grants.revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
@@ -763,15 +770,8 @@ class AccountRepositoryIntegrationTest {
     assertThat(revoked.getGrantAuthorityGeneration()).isNotEqualTo(originalGeneration);
 
     UUID revokedGeneration = revoked.getGrantAuthorityGeneration();
-    transaction.executeWithoutResult(
-        status -> {
-          revoked.setGrantVersion(revoked.getGrantVersion() + 1L);
-          revoked.setGranted(true);
-          revoked.setGrantedBy("test");
-          revoked.setGrantReason("retained storage fixture regrant");
-          revoked.setUpdatedAt(Instant.now());
-          grants.save(revoked);
-        });
+    revoked.setGranted(true);
+    var regrantResult = transaction.execute(status -> grants.save(revoked));
     AccountRealmAccessGrant regranted =
         grants
             .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
@@ -780,6 +780,9 @@ class AccountRepositoryIntegrationTest {
     assertThat(regranted.isGranted()).isTrue();
     assertThat(regranted.getGrantVersion()).isEqualTo(3L);
     assertThat(regranted.getGrantAuthorityGeneration()).isNotEqualTo(revokedGeneration);
+    assertThat(regrantResult).isNotNull();
+    assertThat(regrantResult.isGranted()).isTrue();
+    assertThat(regrantResult.getGrantVersion()).isEqualTo(regranted.getGrantVersion());
     assertThat(regranted.getGrantAuthorityGeneration()).isNotEqualTo(originalGeneration);
   }
 
