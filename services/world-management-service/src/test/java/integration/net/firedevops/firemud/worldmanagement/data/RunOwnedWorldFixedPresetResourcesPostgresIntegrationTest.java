@@ -917,7 +917,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   "INSERT INTO initial_admission_bind_hold SELECT (jsonb_populate_record(NULL::initial_admission_bind_hold, ?::jsonb)).*",
                   json(selectors)),
           "23514",
-          "disabled");
+          "require exact fixture authority");
     }
     assertSqlState(
         () ->
@@ -1501,8 +1501,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1052 install six consecutive catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
+          .as("V1046 through V1053 install seven consecutive catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -2448,6 +2448,77 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                     request.activationRequestId()))
         .isInstanceOf(RuntimeException.class);
     assertThat(owner.read(request)).contains(activated);
+    assertFixtureHoldStorage(associations, association, request);
+  }
+
+  private void assertFixtureHoldStorage(
+      WorldCanonicalInstanceAssociationRepository associations,
+      WorldCanonicalInstanceAssociation association,
+      net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationRequest
+          activation) {
+    var i = association.identity();
+    var selector =
+        new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request(
+            i.targetNamespace(),
+            i.canonicalTenantId(),
+            i.worldSlug(),
+            i.canonicalRealmId(),
+            i.playableStateNamespaceId(),
+            i.playableStateScope(),
+            i.canonicalGameInstanceId(),
+            association.canonicalVersionId(),
+            2L,
+            "fixture-attempt-" + UUID.randomUUID(),
+            "b".repeat(64),
+            net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                .InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            i.catalogRevision(),
+            null);
+    var request =
+        new net.firedevops.firemud.worldmanagement.tenant.WorldFixtureInitialAdmissionHoldRequest(
+            selector, activation);
+    var holds =
+        new net.firedevops.firemud.worldmanagement.tenant
+            .WorldFixtureInitialAdmissionHoldRepository(dsl, transactionManager, associations);
+    assertThat(holds.readIdentity(request)).isEmpty();
+    var identity = holds.acquire(request);
+    var humanHolds =
+        new net.firedevops.firemud.worldmanagement.tenant
+            .WorldCanonicalInitialAdmissionHoldRepository(
+            dsl,
+            transactionManager,
+            associations,
+            mock(
+                net.firedevops.firemud.worldmanagement.tenant
+                    .WorldCanonicalInstanceLifecycleReadRepository.class));
+    assertThatThrownBy(() -> humanHolds.readIdentity(selector))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("cannot be read as Human");
+    assertThat(holds.acquire(request)).isEqualTo(identity);
+    assertThat(holds.readIdentity(request)).contains(identity);
+    assertThat(holds.readState(request, identity))
+        .contains(
+            net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState.HoldStatus
+                .PENDING);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE initial_admission_bind_hold SET fixture_hold_request_bytes=? WHERE hold_id=?",
+                    new byte[] {1},
+                    identity.holdId()))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE initial_admission_bind_hold SET status='ABORTED' WHERE hold_id=?",
+                    identity.holdId()))
+        .isInstanceOf(RuntimeException.class);
+    net.firedevops.firemud.worldmanagement.tenant.FixtureHoldStorageTestAccess.abort(
+        holds, request, identity);
+    assertThat(holds.readState(request, identity))
+        .contains(
+            net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState.HoldStatus
+                .ABORTED);
   }
 
   private WorldLifecycleCommandServiceImpl nativeService(
@@ -3401,6 +3472,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1050");
     versions.add("1051");
     versions.add("1052");
+    versions.add("1053");
     return List.copyOf(versions);
   }
 

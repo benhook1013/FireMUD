@@ -946,6 +946,22 @@ public final class WorldCanonicalInstanceAssociationRepository {
   Optional<WorldCanonicalInstanceAssociation> readFixtureActivationAssociationInOwnerTransaction(
       WorldCanonicalInstanceFixtureActivationRequest request) {
     requireReadOnlyRepeatableReadOwnerTransaction();
+    return readFixtureActivationAssociation(request, false);
+  }
+
+  /** Exact retained fixture authority under the writable hold owner transaction. */
+  Optional<WorldCanonicalInstanceAssociation> readFixtureActivationAssociationInHoldTransaction(
+      WorldCanonicalInstanceFixtureActivationRequest request) {
+    requireWritableActivationTransaction();
+    // Match lifecycle mutation ordering: lock World before the hold row is acquired.
+    dsl.fetch(
+        "SELECT wi.id FROM world_instance wi WHERE canonical_game_instance_id=? FOR UPDATE",
+        request.canonicalGameInstanceId());
+    return readFixtureActivationAssociation(request, true);
+  }
+
+  private Optional<WorldCanonicalInstanceAssociation> readFixtureActivationAssociation(
+      WorldCanonicalInstanceFixtureActivationRequest request, boolean writable) {
     byte[] resultBytes =
         new WorldCanonicalInstanceFixtureActivationResult(request).canonicalBytes();
     Record receipt =
@@ -963,7 +979,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
     Record row = findByCanonicalGameInstance(request.canonicalGameInstanceId());
     if (row == null)
       throw new InvalidAssociationEvidenceException("Fixture receipt lost association");
-    var association = toRunOwnedFixtureAssociation(row, true, false, true);
+    var association = toRunOwnedFixtureAssociation(row, !writable, writable, true);
     if (!association.identity().canonicalTenantId().equals(request.canonicalTenantId())
         || !association
             .runOwnedFixture()
