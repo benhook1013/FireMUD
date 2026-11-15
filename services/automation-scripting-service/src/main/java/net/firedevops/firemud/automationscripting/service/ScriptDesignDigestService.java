@@ -12,8 +12,8 @@ public interface ScriptDesignDigestService {
 
   /**
    * Digests already captured owner-local rows; this does not authorize publication or seal storage.
-   * The caller owns transaction/immutability and must supply definitions in the original owner-query
-   * order. Rows remain mutable and must not change during this call.
+   * The caller owns transaction/immutability and must supply definitions in the original
+   * owner-query order. Rows remain mutable and must not change during this call.
    */
   ScriptDraftDesignDigest getDraftDesignDigestForScriptPatchSnapshot(
       String tenantId,
