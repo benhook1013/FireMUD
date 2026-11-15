@@ -1,0 +1,360 @@
+{
+  "format": "FireMUD selected recovery source pack v1",
+  "parent_pin": {
+    "branch": "codex/renovate-maintenance-batch",
+    "head": "9e9686d9a5cfef140536e33c4bca3d64d6168984"
+  },
+  "generated_utc": "2026-11-15T07:45:25.697543+00:00",
+  "public_source_scan": "flagged files omitted; concerns are filename-only",
+  "items": [
+    {
+      "dir": "account-player-admission",
+      "source": "Account-PLAYER-ADMISSION-receiver.patch",
+      "archive_sha256": "15e0ae40cdcf95fd779d50c6c850240f7c0b7a73e72287a8d36c8cbd15210e3e",
+      "source_checkout": "FireMUD-dot-entitlement-3434-20261114",
+      "source_branch": "detached",
+      "source_head": "d7ebf9689c4ff40146dd09f911ca386f6fbfb812",
+      "destination": "Account tracker: design/project-management/implementation-tracking/player-access-and-session.md; receiver on origin/dot/oldstack-account-20261113 at bdc881d15503cae58685258336f1294713a1dacb. Runtime registration and validation remain pending.",
+      "source_file_count_expected": 4,
+      "included_file_count": 5,
+      "files": [
+        {
+          "path": "Account-PLAYER-ADMISSION-receiver.patch",
+          "sha256": "15e0ae40cdcf95fd779d50c6c850240f7c0b7a73e72287a8d36c8cbd15210e3e",
+          "bytes": 11101,
+          "git_blob_sha1": null,
+          "kind": "patch"
+        },
+        {
+          "path": "postimages/services/account-service/src/main/java/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfiguration.java",
+          "original_repo_path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfiguration.java",
+          "sha256": "90160b77db82d4a480dd008585c0a653bc14ffb146e81bcbf3e3e3d04fa3d863",
+          "bytes": 1428,
+          "git_blob_sha1": "8e77e0a9dca592c51a61ad334f45e602dbd58758",
+          "kind": "exact-postimage"
+        },
+        {
+          "path": "postimages/services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcService.java",
+          "original_repo_path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcService.java",
+          "sha256": "9cb63cc204f06147a68485208c5ea1b313d85acb1a5723e9bf0f2a8635d7badf",
+          "bytes": 7057,
+          "git_blob_sha1": "01c7fbb0632d00a73b41a406f3bcd384f1fa8db1",
+          "kind": "exact-postimage"
+        },
+        {
+          "path": "postimages/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfigurationTest.java",
+          "original_repo_path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfigurationTest.java",
+          "sha256": "cc27fc0995efbb40bc5b2a15204e06c6ab6ad12966d44a4e7562c8046956155e",
+          "bytes": 3072,
+          "git_blob_sha1": "edbc93aa6b0a05a04dd947a91a7ad78884f26bf9",
+          "kind": "exact-postimage"
+        },
+        {
+          "path": "postimages/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcServiceTest.java",
+          "original_repo_path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcServiceTest.java",
+          "sha256": "20678623dd6275d0197738944fe32d9b6ffc37f0d70e1b340dfeaa83d482c928",
+          "bytes": 17188,
+          "git_blob_sha1": "388a7d3c340036bcc2d698a1a6d4b9fc32a81f92",
+          "kind": "exact-postimage"
+        }
+      ],
+      "postimages": "4 exact postimages reconstructed from patch against named Account base"
+    },
+    {
+      "dir": "world-fixture-activation",
+      "source": "World-fixture-activation-reference.tar.gz",
+      "archive_sha256": "c53a123bd4a7b2750f13ff3250f39c17acb6bdd2ac89a297333c22e968258eaa",
+      "source_checkout": "FireMUD-gameplay-fixture-first-open-owner-preparation-20261015",
+      "source_branch": "refs/heads/codex/gameplay-fixture-first-open-owner-preparation-20261015",
+      "source_head": "6b487afb6c69d7a55ac954439b5ac3c13e8c6f6e",
+      "destination": "World tracker design/project-management/implementation-tracking/world-runtime-and-movement.md; canonical fixture launch boundary. Compose with current World hold and Game Session pointer-proof owners; storage change follows World V1050.",
+      "source_file_count_expected": 4,
+      "included_file_count": 4,
+      "files": [
+        {
+          "path": "services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/tenant/WorldCanonicalInstanceFixtureActivationRepository.java",
+          "sha256": "875a7bb9c820fd0a90731858024587425a6a379dd9fa36be6dc40d7c5a6d1c9e",
+          "bytes": 9685,
+          "git_blob_sha1": "0a7fa740c757625346b5cd147c5e0c109dd62bdc",
+          "kind": "source"
+        },
+        {
+          "path": "services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/tenant/WorldCanonicalInstanceFixtureActivationRequest.java",
+          "sha256": "cf451bd703508fac41798ddb18339d5a7ed617afa0ee19972f2413f81b9cf81c",
+          "bytes": 2651,
+          "git_blob_sha1": "42978dfcca0c23562665b7669d5bdef6b44902b2",
+          "kind": "source"
+        },
+        {
+          "path": "services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/tenant/WorldCanonicalInstanceFixtureActivationResult.java",
+          "sha256": "5c2bc07afce8ec0070f42c535e3b02b33601c306ff6f95430224f9976e380b15",
+          "bytes": 1475,
+          "git_blob_sha1": "13adc764e386414e1a0693f1bdebb8405cf6c68c",
+          "kind": "source"
+        },
+        {
+          "path": "services/world-management-service/src/main/resources/db/migration/V1043__world_run_owned_fixture_activation.sql",
+          "sha256": "67c32fd6294c8743ee8bb161ecca036606e5a846c56ec17466c90a8f89c12e7b",
+          "bytes": 27042,
+          "git_blob_sha1": "bc2dd8bb1cd25e115b6b1bff334212079e2cf4e4",
+          "kind": "source"
+        }
+      ]
+    },
+    {
+      "dir": "account-character-create",
+      "source": "Account-CHARACTER-CREATE-reference.tar.gz",
+      "archive_sha256": "11510f399f25c0cea031ce45b674e54f301da9a1375056c884dd857414a6234e",
+      "source_checkout": "FireMUD-2972-headroom-repair-20261018",
+      "source_branch": "refs/heads/codex/gameplay-2972-current-parent-receiving-20261018",
+      "source_head": "9a5a165e90cb9e9e9c3ff352584474e62c3aa719",
+      "destination": "Account tracker design/project-management/implementation-tracking/player-access-and-session.md and Entity contract design/architecture/microservices/entity-management-service/api-contracts.md#character-creation-owner-protection. Add current realm-grant proof and delegation resolver; use a forward migration because V1012 is occupied.",
+      "source_file_count_expected": 24,
+      "included_file_count": 23,
+      "files": [
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateDelegationBindings.java",
+          "sha256": "c0d55f35459e1dbb6d8f40593ab8451cde95bf0d346d93d6954de6526da76f59",
+          "bytes": 15975,
+          "git_blob_sha1": "b25a76a94a8fa6262f97d1cd3cc8c2b42322ca86",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateDelegationClients.java",
+          "sha256": "e93f882f73c17b79792c399c48774ea62d3484225c2e12418122056968da7d65",
+          "bytes": 3427,
+          "git_blob_sha1": "3df2607544fc5da25cbdc41968d514faa4aa85ab",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateEntityClient.java",
+          "sha256": "a64ef13c6cdb118cb12b7b9fc40af6581775252a895d9422a2590458e6abb665",
+          "bytes": 7981,
+          "git_blob_sha1": "4a261a641c00211f9dac7fd42e74ef6017d7a218",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateGameSessionClient.java",
+          "sha256": "d46b0ad931937e75186823a10a403447497353244d72152babcf0a1af97c6e58",
+          "bytes": 4328,
+          "git_blob_sha1": "232eab9a3228a4e338f3023b36fcc91c7476ccd1",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateIntent.java",
+          "sha256": "b624274052d1d71c2da404438ef4d4520c6c114d7571c3edc2f5fd2bc675f9fe",
+          "bytes": 4423,
+          "git_blob_sha1": "6806a854bb21394c3bf89aa3982b62a6436626d3",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateOwnerClients.java",
+          "sha256": "627b9860d7916cd591bee62b2cd78e15674c8054f1791ed05e650d4eac68ffa7",
+          "bytes": 3385,
+          "git_blob_sha1": "d98e534f33ab436cb851a943e904c264349a5336",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreatePublicSourceClient.java",
+          "sha256": "df51390bda5658db489216455f652ff2d449f7fef8986d0e8c4b86a5b652d3a1",
+          "bytes": 16922,
+          "git_blob_sha1": "897a42e5563bf08ada75ee78f90768125956b0b7",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateRepository.java",
+          "sha256": "c9b4446a9364098dffde4cbe9fd631031111dfbea62e20c659228257e9f6578e",
+          "bytes": 18996,
+          "git_blob_sha1": "3b4321b4dd2e1b75a85bee5f7c7689220e635da2",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateScopeService.java",
+          "sha256": "a8eb7a0c45f4d0c8d5b0854786345c37aeb37f16879a2f2549f271c34e5e3996",
+          "bytes": 1986,
+          "git_blob_sha1": "76df025872345224fcdf2b7e6ba0d78c1a934751",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateService.java",
+          "sha256": "db4c0ea6d74fd73cfca78c23472db06cbbd907a0d457b623d41867f9e6d69f12",
+          "bytes": 8381,
+          "git_blob_sha1": "abdd367b336557a4513016a683bf35ea25cc6e79",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateSettlementService.java",
+          "sha256": "916cb5100787017e361d7bd995e90004541494854771589c36c35de60589ecf0",
+          "bytes": 3334,
+          "git_blob_sha1": "7475bc434c01343f6c171cfe8083655ac0b09fe6",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateSourceGrpcService.java",
+          "sha256": "49a67a0e8d5d0b0d4020cffa316e795785501c08bc105b03902e10cee2e25ac4",
+          "bytes": 4819,
+          "git_blob_sha1": "5a05c550416dc3f6d5890389302472ca8b709915",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateSourceResolver.java",
+          "sha256": "99502d92b02ba7bb0e3aafbf4ef0cc2eaec2eccc5471c5d02e39ffa95d5edce5",
+          "bytes": 15393,
+          "git_blob_sha1": "e525f48546c45db8486ef04e68c220ff6f5f13da",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateWorldClient.java",
+          "sha256": "63248188869ec51257ca5c97a6ccf0f1a3ee7f656d64d1015646201b35496fca",
+          "bytes": 4364,
+          "git_blob_sha1": "9e8983bae834d8f4e26fac5b8f884a7fdc58542f",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateDelegationClientsTest.java",
+          "sha256": "4414c62f8b7b42387c293b37352ec45bff65092db83f1274822bcadccbbb1124",
+          "bytes": 15917,
+          "git_blob_sha1": "fed05a6f62358a4b26600ac2c79199a777c51d92",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateGrpcClientsTest.java",
+          "sha256": "00269543883ac45d3ff8c91b1872ec067e03d21a148a0f3f71d4b1cb0f044a86",
+          "bytes": 10725,
+          "git_blob_sha1": "683f2cb0098a53c5c9d82c545b4ea101c1f6c11c",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateIntentTest.java",
+          "sha256": "c6d5a11544052f05bcbf457f6263f5f2e47da941e8141b4ee1349721b701c180",
+          "bytes": 1961,
+          "git_blob_sha1": "a12db9bc65b5018c37a44e682f6f30b43e316c3b",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreatePublicSourceClientMtlsTest.java",
+          "sha256": "a22a526a27b178cc2c42d024eed5d4671da14e5fcc21f65208df618edfadd79e",
+          "bytes": 51203,
+          "git_blob_sha1": "f7359055e5ee708cd2e22f5a6873cb60658ac5f3",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateScopeServiceTest.java",
+          "sha256": "bfc192de783926f1e08ffa762961c2f25e55c4979df575d7ab6553a49ace8acb",
+          "bytes": 4018,
+          "git_blob_sha1": "3647ac6a97161509a69bcb1f805642cc2407ca6c",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateServiceTest.java",
+          "sha256": "3b430984b8600213c02a624ae00395d68884670c229b236dcc6d3ef4192e6f22",
+          "bytes": 16864,
+          "git_blob_sha1": "2d4ac45e55212fe882d7549ef42ca163a5dab180",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateSourceResolverTest.java",
+          "sha256": "2cfa6bd5ecc45bf0c8099172509d1405ab58f74aac13e5802cf18f4f6350de1b",
+          "bytes": 43564,
+          "git_blob_sha1": "d021af852883cdd9dd2b764770083018b6bd64e1",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/testFixtures/java/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateTestActions.java",
+          "sha256": "b579ae3990da0e06729d0eddca05c3371dfcdca124b245589fc728c3a71bab13",
+          "bytes": 1882,
+          "git_blob_sha1": "a8830e3d193570f55a9f51b193c0f47086bfdc6b",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/testFixtures/resources/charactercreate/public-action.json",
+          "sha256": "ef4051476f04ffc66a50904607feb11e186b37473cd5e6f4f0bb102e2bd2c44d",
+          "bytes": 5407,
+          "git_blob_sha1": "a63aa694c71d110a8afdf697755bff20a20abca4",
+          "kind": "source"
+        }
+      ]
+    },
+    {
+      "dir": "automation-script-patch-snapshot",
+      "source": "Automation-script-patch-snapshot-reference.tar.gz",
+      "archive_sha256": "9f867aa9f97c9ddea178274e2484842507dcd946eefe9005ebcf3059338c0399",
+      "source_checkout": "FireMUD-script-patch-publication-envelope",
+      "source_branch": "refs/heads/codex/script-patch-publication-envelope",
+      "source_head": "50c3cc7c7bc47b41a4a2407874a749e06d7e7c10",
+      "destination": "Creator tracker design/project-management/implementation-tracking/game-authoring-publishing-and-activation.md and design/architecture/microservices/game-design-service/version-control.md. Bind tenant/patch serialization and definitions-plus-bindings snapshot to the current stable request and complete affected-handler manifest.",
+      "source_file_count_expected": 5,
+      "included_file_count": 5,
+      "files": [
+        {
+          "path": "services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/model/ScriptPatchPublicationSeal.java",
+          "sha256": "e81216f0f11f8dae7238a0237f3006fb25b122a197ecc842b32c7443542328de",
+          "bytes": 458,
+          "git_blob_sha1": "b34649e85521717c0e179fc105ca5a9c5f8cb972",
+          "kind": "source"
+        },
+        {
+          "path": "services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/repository/ScriptPatchPublicationSealRepository.java",
+          "sha256": "82dea01572ec88258133773d6da00b2f2f962a1e57f0637f1fff293d02178221",
+          "bytes": 7193,
+          "git_blob_sha1": "713063052f7348d1d19d49a905ff18aa06dc62b3",
+          "kind": "source"
+        },
+        {
+          "path": "services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/service/impl/ScriptPatchPublicationSealService.java",
+          "sha256": "8849acbdb4f0f821aa34eb1b602e1920e1394dc67e8db5d09ee9af038334f12c",
+          "bytes": 8255,
+          "git_blob_sha1": "c20502b0e6c1c9ed23adca5412ebe6ec78f90bd5",
+          "kind": "source"
+        },
+        {
+          "path": "services/automation-scripting-service/src/test/java/integration/net/firedevops/firemud/automationscripting/repository/ScriptPatchPublicationSealRepositoryIntegrationTest.java",
+          "sha256": "90f5e3bde9028f9e1c3cfaa6c38370272f7f57350635f7746288f17b184eda80",
+          "bytes": 7869,
+          "git_blob_sha1": "414a2e3d9d6e0c362e9e2b9c0dcb76733042a564",
+          "kind": "source"
+        },
+        {
+          "path": "services/automation-scripting-service/src/test/java/unit/net/firedevops/firemud/automationscripting/service/impl/ScriptPatchPublicationSealServiceTest.java",
+          "sha256": "8336496106711edd159ce14ee9914da7484ee6f066f06ed368c4f4f771626393",
+          "bytes": 6943,
+          "git_blob_sha1": "85f0de1cf09a2a31392220051163523ae359972f",
+          "kind": "source"
+        }
+      ]
+    },
+    {
+      "dir": "account-draft-entity-settlement",
+      "source": "Account-draft-Entity-settlement-reference.tar.gz",
+      "archive_sha256": "6de70685dbcd9a476c98c2df7b76e9c9f1348b344dc19de4f3317becced31455",
+      "source_checkout": "FireMUD-document-gameplay-owned-bridge-20261007",
+      "source_branch": "refs/heads/codex/document-gameplay-owned-bridge-20261007",
+      "source_head": "7cfc5e7d7836758063f9ea0d46dd4e9fd5510395",
+      "destination": "Account tracker design/project-management/implementation-tracking/player-access-and-session.md, current author-draft terminal settlement owner: add required-owner Entity readback and focused test.",
+      "source_file_count_expected": 2,
+      "included_file_count": 2,
+      "files": [
+        {
+          "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/authordraft/AccountDraftTerminalReconciliationService.java",
+          "sha256": "b884b05f72419cfae8b8e87e4d37e82fd62b390a5f483cd1798de849915ccfce",
+          "bytes": 11932,
+          "git_blob_sha1": "61e18f868f60866ca536f443f9cb47f99f5b0919",
+          "kind": "source"
+        },
+        {
+          "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/authordraft/AccountDraftTerminalReconciliationServiceTest.java",
+          "sha256": "c2ac79070eff79e2f39b0e1b7d12cda47ad7334b86bf9fb77b0cd22def9925be",
+          "bytes": 40892,
+          "git_blob_sha1": "1f32d213f7639ee3f5dc6a8d31686c69adf96cbc",
+          "kind": "source"
+        }
+      ]
+    }
+  ],
+  "scan_findings_filename_only": [
+    [
+      "account-character-create/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/charactercreate/AccountCharacterCreateOutboundMtlsTest.java",
+      "bearer credential"
+    ]
+  ]
+}

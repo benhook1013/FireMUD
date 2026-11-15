@@ -1,0 +1,216 @@
+diff --git a/services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcService.java b/services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcService.java
+index 1a4efe1a70a9d7025718655b25365df5362647c9..01c7fbb0632d00a73b41a406f3bcd384f1fa8db1 100644
+--- a/services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcService.java
++++ b/services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcService.java
+@@ -1,8 +1,10 @@
+ package net.firedevops.firemud.accountservice.service.impl;
+ 
+ import com.google.protobuf.Any;
++import io.grpc.BindableService;
+ import io.grpc.Server;
+ import io.grpc.ServerInterceptors;
++import io.grpc.ServerServiceDefinition;
+ import io.grpc.Status;
+ import io.grpc.StatusRuntimeException;
+ import io.grpc.TlsServerCredentials;
+@@ -30,9 +32,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
+  * Unregistered Account owner receiver. No component annotation, capacity commit, World hold or
+  * gameplay admission.
+  */
+-public final class AccountPlayerAdmissionEntitlementGrpcService
+-    extends AccountPlayerAdmissionEntitlementReadServiceGrpc
+-        .AccountPlayerAdmissionEntitlementReadServiceImplBase {
++public final class AccountPlayerAdmissionEntitlementGrpcService implements BindableService {
+   private final AccountPlayerAdmissionEntitlementOwner owner;
+   private final String namespace;
+   private final AccountPlayerAdmissionEntitlementWorkloadGuard guard;
+@@ -58,11 +58,27 @@ public final class AccountPlayerAdmissionEntitlementGrpcService
+             TlsServerCredentials.ClientAuth.REQUIRE,
+             GrpcRequestBytePolicy.ordinary(),
+             RuntimePlayerAdmissionEntitlementGrpcCodec.MAX_REQUEST_WIRE_BYTES);
+-    factory.addService(ServerInterceptors.interceptForward(this, guard));
++    factory.addService(this);
+     return factory.createServer();
+   }
+ 
++  /** Every registration path retains the exact TLS workload guard, including Spring discovery. */
+   @Override
++  public ServerServiceDefinition bindService() {
++    var handler =
++        new AccountPlayerAdmissionEntitlementReadServiceGrpc
++            .AccountPlayerAdmissionEntitlementReadServiceImplBase() {
++          @Override
++          public void readPlayerAdmissionEntitlement(
++              ReadPlayerAdmissionEntitlementRequest request,
++              StreamObserver<ReadPlayerAdmissionEntitlementResponse> observer) {
++            AccountPlayerAdmissionEntitlementGrpcService.this.readPlayerAdmissionEntitlement(
++                request, observer);
++          }
++        };
++    return ServerInterceptors.interceptForward(handler, guard);
++  }
++
+   public void readPlayerAdmissionEntitlement(
+       ReadPlayerAdmissionEntitlementRequest wire,
+       StreamObserver<ReadPlayerAdmissionEntitlementResponse> observer) {
+diff --git a/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcServiceTest.java b/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcServiceTest.java
+index 3a75f2bc035fec0658b2bfaab69219d87702acd7..388a7d3c340036bcc2d698a1a6d4b9fc32a81f92 100644
+--- a/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcServiceTest.java
++++ b/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/impl/AccountPlayerAdmissionEntitlementGrpcServiceTest.java
+@@ -74,6 +74,31 @@ class AccountPlayerAdmissionEntitlementGrpcServiceTest {
+     verifyNoInteractions(owner);
+   }
+ 
++  @Test
++  @SuppressWarnings("unchecked")
++  void ordinaryBindingAlwaysRejectsMissingTlsBeforeHandlerOrOwner() {
++    var owner = mock(AccountPlayerAdmissionEntitlementOwner.class);
++    var service = new AccountPlayerAdmissionEntitlementGrpcService(owner, "prod");
++    var method =
++        net.firedevops.firemud.account.v1.AccountPlayerAdmissionEntitlementReadServiceGrpc
++            .getReadPlayerAdmissionEntitlementMethod();
++    io.grpc.ServerCall<
++            ReadPlayerAdmissionEntitlementRequest, ReadPlayerAdmissionEntitlementResponse>
++        call = mock(io.grpc.ServerCall.class);
++    when(call.getAttributes()).thenReturn(io.grpc.Attributes.EMPTY);
++    when(call.getMethodDescriptor()).thenReturn(method);
++    var definition = service.bindService().getMethod(method.getFullMethodName());
++    var handler =
++        (io.grpc.ServerCallHandler<
++                ReadPlayerAdmissionEntitlementRequest, ReadPlayerAdmissionEntitlementResponse>)
++            definition.getServerCallHandler();
++    handler.startCall(call, new io.grpc.Metadata());
++    var status = ArgumentCaptor.forClass(Status.class);
++    verify(call).close(status.capture(), any());
++    assertThat(status.getValue().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
++    verifyNoInteractions(owner);
++  }
++
+   @ParameterizedTest
+   @MethodSource("ownerFailures")
+   void ownerFailuresRetainExactAvailabilityClassificationWithoutSourceDetails(
+diff --git a/services/account-service/src/main/java/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfiguration.java b/services/account-service/src/main/java/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfiguration.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8e77e0a9dca592c51a61ad334f45e602dbd58758
+--- /dev/null
++++ b/services/account-service/src/main/java/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfiguration.java
+@@ -0,0 +1,29 @@
++package net.firedevops.firemud.accountservice.config;
++
++import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
++import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmissionEntitlementGrpcService;
++import org.springframework.beans.factory.annotation.Value;
++import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Configuration;
++import org.springframework.context.annotation.Profile;
++
++/**
++ * Explicit isolated receiving only. Requires an independently composed genuine Account source
++ * owner; creates no source, credential, entitlement, admission or deployment authority. The server
++ * must supply TLS client certificates and the receiver's bounded wire policy.
++ */
++@Configuration(proxyBeanMethods = false)
++@Profile("isolated-player-admission-receiving")
++@ConditionalOnProperty(
++    prefix = "firemud.account.player-admission-receiving",
++    name = "enabled",
++    havingValue = "true")
++public class AccountPlayerAdmissionReceivingConfiguration {
++  @Bean
++  AccountPlayerAdmissionEntitlementGrpcService accountPlayerAdmissionEntitlementReceiver(
++      AccountPlayerAdmissionEntitlementOwner owner,
++      @Value("${firemud.grpc.workload-namespace:}") String namespace) {
++    return new AccountPlayerAdmissionEntitlementGrpcService(owner, namespace);
++  }
++}
+diff --git a/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfigurationTest.java b/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfigurationTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..edbc93aa6b0a05a04dd947a91a7ad78884f26bf9
+--- /dev/null
++++ b/services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/config/AccountPlayerAdmissionReceivingConfigurationTest.java
+@@ -0,0 +1,84 @@
++package net.firedevops.firemud.accountservice.config;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.verifyNoInteractions;
++
++import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
++import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmissionEntitlementGrpcService;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++import org.springframework.boot.test.context.runner.ApplicationContextRunner;
++
++class AccountPlayerAdmissionReceivingConfigurationTest {
++  private final ApplicationContextRunner context =
++      new ApplicationContextRunner()
++          .withUserConfiguration(AccountPlayerAdmissionReceivingConfiguration.class);
++
++  @Test
++  void absentByDefault() {
++    context.run(
++        ctx -> {
++          assertThat(ctx).hasNotFailed();
++          assertThat(ctx).doesNotHaveBean(AccountPlayerAdmissionEntitlementGrpcService.class);
++        });
++  }
++
++  @ParameterizedTest
++  @ValueSource(
++      strings = {
++        "spring.profiles.active=isolated-player-admission-receiving",
++        "firemud.account.player-admission-receiving.enabled=true"
++      })
++  void neitherSelectionAloneRegistersReceiver(String selection) {
++    context
++        .withPropertyValues(selection)
++        .run(
++            ctx -> {
++              assertThat(ctx).hasNotFailed();
++              assertThat(ctx).doesNotHaveBean(AccountPlayerAdmissionEntitlementGrpcService.class);
++            });
++  }
++
++  @Test
++  void enabledWithoutSourceOwnerFailsClosed() {
++    enabled()
++        .withPropertyValues("firemud.grpc.workload-namespace=test")
++        .run(ctx -> assertThat(ctx).hasFailed());
++  }
++
++  @Test
++  void enabledWithoutNamespaceFailsClosed() {
++    enabled()
++        .withBean(
++            AccountPlayerAdmissionEntitlementOwner.class,
++            () -> mock(AccountPlayerAdmissionEntitlementOwner.class))
++        .run(ctx -> assertThat(ctx).hasFailed());
++  }
++
++  @Test
++  void explicitReceivingUsesOnlySuppliedOwnerWithoutProvisioningAuthority() {
++    var owner = mock(AccountPlayerAdmissionEntitlementOwner.class);
++    enabled()
++        .withPropertyValues("firemud.grpc.workload-namespace=test")
++        .withBean(AccountPlayerAdmissionEntitlementOwner.class, () -> owner)
++        .run(
++            ctx -> {
++              assertThat(ctx).hasNotFailed();
++              assertThat(ctx).hasSingleBean(AccountPlayerAdmissionEntitlementGrpcService.class);
++              assertThat(
++                      ctx.getBean(AccountPlayerAdmissionEntitlementGrpcService.class)
++                          .bindService()
++                          .getMethods())
++                  .hasSize(1);
++              verifyNoInteractions(owner);
++            });
++  }
++
++  private ApplicationContextRunner enabled() {
++    return context.withPropertyValues(
++        "spring.profiles.active=isolated-player-admission-receiving",
++        "firemud.account.player-admission-receiving.enabled=true");
++  }
++}
