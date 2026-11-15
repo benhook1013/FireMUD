@@ -488,6 +488,33 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .doesNotContain("dispatch");
       assertProjectionBytes(admin, issuerKey, accountKey, initialProjection);
 
+      // A corrupt or expiring stored projection is not permission to replace it.
+      byte[] malformedAccountProjection = ascii("{not-a-canonical-projection}");
+      admin.set(ascii(accountKey), malformedAccountProjection);
+      assertThatThrownBy(
+              () ->
+                  redis.publishAuthorityProjections(
+                      accountId, initialProjection[0], initialProjection[1]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(admin.get(ascii(accountKey))).containsExactly(malformedAccountProjection);
+      assertThat(admin.get(ascii(issuerKey))).containsExactly(initialProjection[0]);
+      admin.set(ascii(accountKey), initialProjection[1]);
+      admin.pexpire(ascii(accountKey), 60_000L);
+      Long originalAccountProjectionExpiry = admin.pexpiretime(ascii(accountKey));
+      assertThat(admin.pttl(ascii(accountKey))).isPositive();
+      assertThatThrownBy(
+              () ->
+                  redis.publishAuthorityProjections(
+                      accountId, initialProjection[0], initialProjection[1]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertProjectionBytes(admin, issuerKey, accountKey, initialProjection);
+      assertThat(admin.pexpiretime(ascii(accountKey))).isEqualTo(originalAccountProjectionExpiry);
+      assertThat(admin.pttl(ascii(accountKey))).isPositive();
+      admin.set(ascii(accountKey), initialProjection[1]);
+      assertThat(admin.pttl(ascii(accountKey))).isEqualTo(-1L);
+
       byte[][] signedBigintBoundary =
           projectionPair(
               accountId, Long.MAX_VALUE, Long.MAX_VALUE, "issuer-bigint-max", "account-bigint-max");
