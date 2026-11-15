@@ -263,6 +263,24 @@ class AccountGameplayDelegationRedisIntegrationTest {
     }
   }
 
+  @Test
+  void accountCoordinationPrincipalRejectsRawEvalBeforeAnyScriptExecution() {
+    RedisClient writer = redisClient(writerUri);
+    try (var connection = writer.connect(ByteArrayCodec.INSTANCE)) {
+      var commands = connection.sync();
+      assertThat(commands.aclWhoami()).isEqualTo(ACCOUNT_IDENTITY);
+      assertThatThrownBy(
+              () ->
+                  commands.eval(
+                      "return 1", io.lettuce.core.ScriptOutputType.INTEGER, new byte[0][]))
+          .isInstanceOf(io.lettuce.core.RedisCommandExecutionException.class)
+          .hasMessageContaining("NOPERM");
+      assertThat(commands.ping()).isEqualTo("PONG");
+    } finally {
+      writer.shutdown();
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void pinnedRedisHelperRegistersPendingAndProjectsExactOwnerValues(boolean tenantBound)
