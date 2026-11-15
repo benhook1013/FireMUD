@@ -342,6 +342,7 @@ class AccountControlUiIssuanceWorkflowTest {
           .isSameAs(uncertain);
     }
     assertThat(preparedWritten).isTrue();
+    verify(fixture.abuse, org.mockito.Mockito.times(2)).isUsable(any());
     verify(fixture.signers, never()).sign(any(), any(), any());
     verify(fixture.operations, never()).bindCandidate(any(), anyString(), any(), any(), any());
     verify(fixture.operations, never()).beginRecoveryFailure(any());
