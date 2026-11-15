@@ -360,6 +360,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void concurrentSerializedAbortWaitsForActualOriginalCommit() throws Exception {
+    compose(Refusal.CONCURRENT_ABORT);
+  }
+
+  @Test
   void concurrentActualOwnerPreparationRejectsPendingDuplicateAndCommitsOriginal()
       throws Exception {
     compose(Refusal.CONCURRENT_PREPARATION);
@@ -493,7 +498,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     EXPIRED_AFTER_ACTIVATION_PROTECTION_ACQUISITION,
     PREPARATION_LOCK_TIMEOUT,
     PREPARATION_TIMEOUT_ABORT,
-    CONCURRENT_PREPARATION
+    CONCURRENT_PREPARATION,
+    CONCURRENT_ABORT
   }
 
   private enum ActivationFailure {
@@ -1200,9 +1206,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             }
             if (refusal == Refusal.PREPARATION_LOCK_TIMEOUT
                 || refusal == Refusal.PREPARATION_TIMEOUT_ABORT
-                || refusal == Refusal.CONCURRENT_PREPARATION) {
+                || refusal == Refusal.CONCURRENT_PREPARATION
+                || refusal == Refusal.CONCURRENT_ABORT) {
               try (var blocker = world.pool().getConnection();
-                  var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                  var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
                 blocker.setAutoCommit(false);
                 int blockerPid;
                 try (var query = blocker.createStatement();
@@ -1239,6 +1246,46 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                                       "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND ? = ANY(pg_blocking_pids(pid)))",
                                       blockerPid)
                                   .get(0, Boolean.class));
+                  if (refusal == Refusal.CONCURRENT_ABORT) {
+                    var abort =
+                        executor.submit(() -> repository.recordDurableAbort(identity.get()));
+                    await()
+                        .atMost(Duration.ofSeconds(5))
+                        .until(
+                            () ->
+                                world
+                                    .dsl()
+                                    .fetchSingle(
+                                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity a JOIN pg_stat_activity original ON original.pid = ANY(pg_blocking_pids(a.pid)) WHERE a.wait_event_type='Lock' AND ? = ANY(pg_blocking_pids(original.pid)))",
+                                        blockerPid)
+                                    .get(0, Boolean.class));
+                    assertThat(abort.isDone()).isFalse();
+                    blocker.rollback();
+                    attempt.get(15, TimeUnit.SECONDS);
+                    var terminal = abort.get(15, TimeUnit.SECONDS);
+                    assertThat(terminal.state())
+                        .isEqualTo(
+                            WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED);
+                    assertThat(result.get()).isNotNull();
+                    assertThat(terminal.worldInstanceId())
+                        .isEqualTo(result.get().association().worldInstanceId());
+                    assertThat(repository.readExactExecution(identity.get()).operation())
+                        .contains(terminal);
+                    assertThat(association.readOwnerAssociation(input.canonicalGameInstanceId()))
+                        .contains(result.get().association());
+                    for (String table :
+                        List.of(
+                            "world_instance",
+                            "world_canonical_instance_association",
+                            "world_canonical_instance_preparation",
+                            "world_canonical_instance_execution")) {
+                      assertThat(world.dsl().fetchCount(org.jooq.impl.DSL.table(table)))
+                          .isEqualTo(1);
+                    }
+                    assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
+                        .isEqualTo(gsBefore);
+                    return;
+                  }
                   if (refusal == Refusal.CONCURRENT_PREPARATION) {
                     assertThat(
                             repository
