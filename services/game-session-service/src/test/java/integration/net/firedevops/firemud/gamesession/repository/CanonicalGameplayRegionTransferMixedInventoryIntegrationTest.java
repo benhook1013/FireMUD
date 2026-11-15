@@ -346,10 +346,20 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
       // and prove the predecessor and exact terminal receipts stay intact until it qualifies.
       UUID verified = null;
       for (int attempt = 0; attempt < 4 * pages && verified == null; attempt++) {
+        long attemptDeadline = cohortSize == 3 ? initialDeadline : transferDeadline();
         try {
-          verified =
-              transfer.advance(
-                  proof.scope, proof.prior, cohortSize == 3 ? initialDeadline : transferDeadline());
+          verified = transfer.advance(proof.scope, proof.prior, attemptDeadline);
+        } catch (
+            CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException expired) {
+          // This controlled attestor echoes the exact request window and records the real clock
+          // after its deliberate latency. A page budget may expire during that latency. Retain
+          // the refusal and retry only that expired bounded attempt, never an arbitrary bad proof.
+          if (cohortSize == 3
+              || proof.clock.millis() < attemptDeadline
+              || !"Protected observation timing differs from request"
+                  .equals(expired.getMessage())) {
+            throw expired;
+          }
         } catch (CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable expired) {
           if (cohortSize == 3) throw expired;
         } catch (IllegalStateException held) {
