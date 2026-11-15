@@ -44,6 +44,7 @@ import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -360,6 +361,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void originalGameSessionLeaseExpiresWhileActualPreparationWaitsOnOwnerLock() throws Exception {
+    compose(Refusal.PREPARATION_LEASE_EXPIRED);
+  }
+
+  @Test
   void concurrentSerializedAbortWaitsForActualOriginalCommit() throws Exception {
     compose(Refusal.CONCURRENT_ABORT);
   }
@@ -499,7 +505,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     PREPARATION_LOCK_TIMEOUT,
     PREPARATION_TIMEOUT_ABORT,
     CONCURRENT_PREPARATION,
-    CONCURRENT_ABORT
+    CONCURRENT_ABORT,
+    PREPARATION_LEASE_EXPIRED
   }
 
   private enum ActivationFailure {
@@ -650,6 +657,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           refusal == Refusal.EXPIRED_ATTEMPT
               ? Duration.ofSeconds(30)
               : refusal == Refusal.EXPIRED_AFTER_ACTIVATION_PROTECTION_ACQUISITION
+                      || refusal == Refusal.PREPARATION_LEASE_EXPIRED
                   ? Duration.ofSeconds(90)
                   : Duration.ofMinutes(5);
       var attempts = new GameSessionStartSessionOperatorAttemptRepository(gs.dsl(), lease);
@@ -978,7 +986,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                       (refusal == Refusal.PREPARATION_LOCK_TIMEOUT
                               || refusal == Refusal.PREPARATION_TIMEOUT_ABORT)
                           ? 3
-                          : 10));
+                          : refusal == Refusal.PREPARATION_LEASE_EXPIRED ? 120 : 10));
           var verifier = new WorldStartSessionAccountParticipationVerifier(NAMESPACE, acquisition);
           var identity = new AtomicReference<WorldCanonicalInstanceExecutionIdentity>();
           var service =
@@ -1207,7 +1215,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             if (refusal == Refusal.PREPARATION_LOCK_TIMEOUT
                 || refusal == Refusal.PREPARATION_TIMEOUT_ABORT
                 || refusal == Refusal.CONCURRENT_PREPARATION
-                || refusal == Refusal.CONCURRENT_ABORT) {
+                || refusal == Refusal.CONCURRENT_ABORT
+                || refusal == Refusal.PREPARATION_LEASE_EXPIRED) {
               try (var blocker = world.pool().getConnection();
                   var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
                 blocker.setAutoCommit(false);
@@ -1234,7 +1243,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                               ClientCalls.blockingUnaryCall(
                                   channel,
                                   method,
-                                  CallOptions.DEFAULT.withDeadlineAfter(15, TimeUnit.SECONDS),
+                                  CallOptions.DEFAULT.withDeadlineAfter(
+                                      refusal == Refusal.PREPARATION_LEASE_EXPIRED ? 130 : 15,
+                                      TimeUnit.SECONDS),
                                   Empty.getDefaultInstance()));
                   await()
                       .atMost(Duration.ofSeconds(10))
@@ -1246,6 +1257,55 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                                       "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND ? = ANY(pg_blocking_pids(pid)))",
                                       blockerPid)
                                   .get(0, Boolean.class));
+                  if (refusal == Refusal.PREPARATION_LEASE_EXPIRED) {
+                    assertThat(identity.get().originalGameSessionLeaseExpiresAt())
+                        .isAfter(Instant.now());
+                    await()
+                        .atMost(Duration.ofSeconds(100))
+                        .until(
+                            () ->
+                                gs.dsl()
+                                    .fetchSingle(
+                                        "SELECT lease_expires_at <= clock_timestamp() FROM game_session_start_session_operator_attempt WHERE owner_attempt_id=?",
+                                        claim.get().ownerAttemptId())
+                                    .get(0, Boolean.class));
+                    assertThat(identity.get().originalAuthorizationExpiry()).isAfter(Instant.now());
+                    blocker.rollback();
+                    assertThatThrownBy(() -> attempt.get(15, TimeUnit.SECONDS))
+                        .isInstanceOf(java.util.concurrent.ExecutionException.class);
+                    assertThat(result.get()).isNull();
+                    Throwable failure = ownerRefusal.get();
+                    assertThat(failure).isNotNull();
+                    java.sql.SQLException sqlFailure = null;
+                    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                      if (cause instanceof java.sql.SQLException sql) {
+                        sqlFailure = sql;
+                      }
+                    }
+                    assertThat((Throwable) sqlFailure).isNotNull();
+                    assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+                    assertThat(sqlFailure.getMessage())
+                        .contains(
+                            "Original StartSession authorization or Game Session lease expired before World execution admission");
+                    assertThat(
+                            repository
+                                .readExactExecution(identity.get())
+                                .operation()
+                                .orElseThrow()
+                                .state())
+                        .isEqualTo(
+                            WorldCanonicalInstancePreparationRepository.ExecutionState.PENDING);
+                    for (String table :
+                        List.of(
+                            "world_instance",
+                            "world_canonical_instance_association",
+                            "world_canonical_instance_preparation")) {
+                      assertThat(world.dsl().fetchCount(org.jooq.impl.DSL.table(table))).isZero();
+                    }
+                    assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
+                        .isEqualTo(gsBefore);
+                    return;
+                  }
                   if (refusal == Refusal.CONCURRENT_ABORT) {
                     var abort =
                         executor.submit(() -> repository.recordDurableAbort(identity.get()));
