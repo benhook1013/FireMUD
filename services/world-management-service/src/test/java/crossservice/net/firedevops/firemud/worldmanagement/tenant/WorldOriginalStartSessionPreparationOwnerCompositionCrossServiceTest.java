@@ -360,6 +360,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void databaseOwnerLockTimeoutRetainsPendingWithoutInventingTerminal() throws Exception {
+    compose(Refusal.PREPARATION_LOCK_TIMEOUT);
+  }
+
+  @Test
   void actualCommittedPreparationRetryReturnsAfterInstallationRegistryAdvances() throws Exception {
     compose(
         Refusal.NONE,
@@ -474,7 +479,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     MISMATCHED_ATTEMPT,
     EXPIRED_ATTEMPT,
     CHANGED_ACTIVATION_ATTEMPT,
-    EXPIRED_AFTER_ACTIVATION_PROTECTION_ACQUISITION
+    EXPIRED_AFTER_ACTIVATION_PROTECTION_ACQUISITION,
+    PREPARATION_LOCK_TIMEOUT
   }
 
   private enum ActivationFailure {
@@ -949,7 +955,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                               world.dsl(), new WorldAuthoredSourceIntakeRepository(world.dsl())),
                           JSON),
                       digestService(world.dsl())),
-                  Duration.ofSeconds(10));
+                  Duration.ofSeconds(refusal == Refusal.PREPARATION_LOCK_TIMEOUT ? 3 : 10));
           var verifier = new WorldStartSessionAccountParticipationVerifier(NAMESPACE, acquisition);
           var identity = new AtomicReference<WorldCanonicalInstanceExecutionIdentity>();
           var service =
@@ -1171,6 +1177,83 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   .isEqualTo(worldBefore);
               assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new)))
                   .isEqualTo(accountBefore);
+              assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
+                  .isEqualTo(gsBefore);
+              return;
+            }
+            if (refusal == Refusal.PREPARATION_LOCK_TIMEOUT) {
+              try (var blocker = world.pool().getConnection();
+                  var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                blocker.setAutoCommit(false);
+                int blockerPid;
+                try (var query = blocker.createStatement();
+                    var pid = query.executeQuery("SELECT pg_backend_pid()")) {
+                  assertThat(pid.next()).isTrue();
+                  blockerPid = pid.getInt(1);
+                }
+                try (var lock =
+                    blocker.prepareStatement(
+                        "SELECT 1 FROM world_design_publication_fence_owner WHERE local_tenant_key=? AND version_id=? FOR UPDATE")) {
+                  lock.setLong(
+                      1, input.completeLaunchBinding().sourceIntakeReceipt().localTenantKey());
+                  lock.setLong(2, input.versionIdentity().localVersionKey());
+                  try (var locked = lock.executeQuery()) {
+                    assertThat(locked.next()).isTrue();
+                  }
+                }
+                try {
+                  var attempt =
+                      executor.submit(
+                          () ->
+                              ClientCalls.blockingUnaryCall(
+                                  channel,
+                                  method,
+                                  CallOptions.DEFAULT.withDeadlineAfter(15, TimeUnit.SECONDS),
+                                  Empty.getDefaultInstance()));
+                  await()
+                      .atMost(Duration.ofSeconds(10))
+                      .until(
+                          () ->
+                              world
+                                  .dsl()
+                                  .fetchSingle(
+                                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND ? = ANY(pg_blocking_pids(pid)))",
+                                      blockerPid)
+                                  .get(0, Boolean.class));
+                  assertThatThrownBy(() -> attempt.get(15, TimeUnit.SECONDS))
+                      .isInstanceOf(java.util.concurrent.ExecutionException.class);
+                  assertThat(result.get()).isNull();
+                  Throwable failure = ownerRefusal.get();
+                  assertThat(failure).isNotNull();
+                  java.sql.SQLException sqlFailure = null;
+                  for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                    if (cause instanceof java.sql.SQLException sql) {
+                      sqlFailure = sql;
+                    }
+                  }
+                  assertThat((Throwable) sqlFailure).isNotNull();
+                  assertThat(sqlFailure.getSQLState()).isIn("55P03", "57014");
+                } finally {
+                  blocker.rollback();
+                }
+              }
+              assertThat(
+                      repository
+                          .readExactExecution(identity.get())
+                          .operation()
+                          .orElseThrow()
+                          .state())
+                  .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.PENDING);
+              assertThat(association.readOwnerAssociation(input.canonicalGameInstanceId()))
+                  .isEmpty();
+              assertThat(world.dsl().fetchCount(org.jooq.impl.DSL.table("world_instance")))
+                  .isZero();
+              assertThat(
+                      world
+                          .dsl()
+                          .fetchCount(
+                              org.jooq.impl.DSL.table("world_canonical_instance_preparation")))
+                  .isZero();
               assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
                   .isEqualTo(gsBefore);
               return;
