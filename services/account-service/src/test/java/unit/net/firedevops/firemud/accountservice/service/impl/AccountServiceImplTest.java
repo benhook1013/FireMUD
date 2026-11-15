@@ -4202,6 +4202,29 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void deleteAccountRejectsMissingOwnerBeforeRetentionOrChildAccess() {
+    when(accountRepository.findById(404L)).thenReturn(Optional.empty());
+
+    IllegalArgumentException failure =
+        assertThrows(IllegalArgumentException.class, () -> service.deleteAccount(404L));
+
+    assertEquals("Account not found", failure.getMessage());
+    org.mockito.Mockito.verify(accountRepository).findById(404L);
+    verifyNoInteractions(
+        accountJoinOperationRepository,
+        retainedSubscriptionEvidenceRepository,
+        emailVerificationTokenRepository,
+        passwordResetTokenRepository,
+        accountRealmAccessGrantRepository,
+        externalAccountRepository,
+        paymentTransactionRepository,
+        profileRepository,
+        accountTenantMembershipRepository);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .delete(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
   void deleteAccountRefusesNonterminalSubscription() {
     Account account = new Account();
     account.setId(2L);
