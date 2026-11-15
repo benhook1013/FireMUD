@@ -1,5 +1,6 @@
 package unit.net.firedevops.firemud.accountservice.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -32,6 +33,74 @@ import org.junit.jupiter.api.Test;
 
 class AccountAuthoritySourceEventReadbackTest {
   private static final UUID ACCOUNT_UUID = UUID.fromString("c980fa44-619e-4ca4-8ad6-75b0538a66a3");
+
+  @Test
+  void sequenceZeroRequiresOriginalPositiveBaselineWithoutReceipts() {
+    var outbox = mock(AccountAuthorityOutboxRepository.class);
+    var resets = mock(AccountPasswordResetOperationRepository.class);
+    var logouts = mock(AccountLogoutAllOperationRepository.class);
+    var security = mock(AccountSecurityStateOperationRepository.class);
+    var readback = new AccountAuthoritySourceEventReadback(outbox, resets, logouts, security);
+    String stream = "account:auth-authority:v1:account/" + ACCOUNT_UUID;
+    when(outbox.readCheckpoint(stream)).thenReturn(Optional.empty());
+
+    var snapshot = readback.requireCurrentLatest(account(), accountState(1L, 1L, 4L, 3L));
+
+    assertThat(snapshot.outboxSequence()).isZero();
+    assertThat(snapshot.latestEvent()).isEmpty();
+    verify(outbox, never())
+        .findEvent(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong());
+    verifyNoInteractions(resets, logouts, security);
+  }
+
+  @Test
+  void sequenceZeroCannotRepairProgressedSourceWithoutHistory() {
+    var outbox = mock(AccountAuthorityOutboxRepository.class);
+    var resets = mock(AccountPasswordResetOperationRepository.class);
+    var logouts = mock(AccountLogoutAllOperationRepository.class);
+    var security = mock(AccountSecurityStateOperationRepository.class);
+    var readback = new AccountAuthoritySourceEventReadback(outbox, resets, logouts, security);
+    when(outbox.readCheckpoint("account:auth-authority:v1:account/" + ACCOUNT_UUID))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> readback.requireCurrentLatest(account(), accountState(2L, 2L, 5L, 4L)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("original positive 1/1 baseline");
+    verify(outbox, never())
+        .findEvent(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong());
+    verifyNoInteractions(resets, logouts, security);
+  }
+
+  @Test
+  void checkpointCannotAuthorizePristineOrSingleCounterProgression() {
+    var outbox = mock(AccountAuthorityOutboxRepository.class);
+    var resets = mock(AccountPasswordResetOperationRepository.class);
+    var logouts = mock(AccountLogoutAllOperationRepository.class);
+    var security = mock(AccountSecurityStateOperationRepository.class);
+    var readback = new AccountAuthoritySourceEventReadback(outbox, resets, logouts, security);
+    String stream = "account:auth-authority:v1:account/" + ACCOUNT_UUID;
+    when(outbox.readCheckpoint(stream))
+        .thenReturn(
+            Optional.of(new Checkpoint(stream, 1L, "event-id", "sha256:" + "a".repeat(64))));
+
+    assertThatThrownBy(() -> readback.requireCurrentLatest(account(), accountState(1L, 1L, 4L, 3L)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("contradictory event history");
+    for (var counters : java.util.List.of(new long[] {2L, 1L}, new long[] {1L, 2L})) {
+      assertThatThrownBy(
+              () ->
+                  readback.requireCurrentLatest(
+                      account(), accountState(counters[0], counters[1], 4L, 3L)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("history is not proven");
+    }
+    verify(outbox, never())
+        .findEvent(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong());
+    verifyNoInteractions(resets, logouts, security);
+  }
 
   @Test
   void unsupportedGenericAccountEventMapsToTypedUnavailableEvidence() {

@@ -288,7 +288,11 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
           .hasMessageContaining("Fresh owned Account original COMMIT required");
       verify(fixture.connection, never()).commit();
       verify(fixture.connection).rollback();
-      verify(fixture.clockStatement, never()).executeQuery(anyString());
+      try (var verificationResult =
+          verify(fixture.clockStatement, never()).executeQuery(anyString())) {
+        // Mockito verification does not execute a query and returns no ResultSet.
+        assertThat(verificationResult).isNull();
+      }
       assertThat(repositories.constructed()).hasSize(1);
     }
   }

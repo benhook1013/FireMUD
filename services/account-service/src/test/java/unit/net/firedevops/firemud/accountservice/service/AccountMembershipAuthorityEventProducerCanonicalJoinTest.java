@@ -947,6 +947,21 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
   }
 
   @Test
+  void eventPublicationRejectsReadOnlyOwnerTransactionBeforeAnyLookup() {
+    Fixture fixture = new Fixture();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalFirstJoinMembershipChange(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical Account JOIN requires a writable owner transaction");
+    fixture.verifyNoOwnerInteractions();
+  }
+
+  @Test
   void eventPublicationRequiresWritableAccountTransactionBeforeAnyLookup() {
     Fixture fixture = new Fixture();
     TransactionSynchronizationManager.setActualTransactionActive(false);

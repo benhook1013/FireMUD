@@ -62,7 +62,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * signer capture and Redis/TLS/WAITAOF are explicitly test-only doubles. The tenant source is a
  * stipulated external Game Design fixture, not genuine owner provenance. No private proof
  * constructor is bypassed: Coordination creates its receipt through its normal transport path.
- * Opaque envelope fixture bytes prove retention, not AEAD, genuine issuance or physical Redis.
+ * Ordinary opaque envelope fixtures prove retention only. The explicit retained-key rotation test
+ * additionally uses real envelope cryptography with temporary test custody. Neither proves genuine
+ * issuance, production custody or physical Redis.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountControlUiIssuancePostgresIntegrationTest {
@@ -105,6 +107,201 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     assertThat(envelope.binding()).isEqualTo(f.ownerBinding);
     assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations"))).isEqualTo(1);
     assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isEqualTo(1);
+  }
+
+  @Test
+  void concurrentOwnerRequestSelectionRetainsOneOriginalPreparedCapture() throws Exception {
+    Context c = context();
+    Fixture f = new Fixture(c);
+    UUID callerContext = UUID.randomUUID();
+    Instant issuedAt = Instant.ofEpochSecond(Instant.now().getEpochSecond());
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    try (var workers = Executors.newFixedThreadPool(2)) {
+      java.util.concurrent.Callable<AccountControlUiIssuanceRepository.Stored> attempt =
+          () -> {
+            ready.countDown();
+            if (!start.await(10, TimeUnit.SECONDS))
+              throw new AssertionError("Owner selection start timed out");
+            return c.tx(
+                () -> {
+                  c.operations.lockReplayRequest(f.request);
+                  var existing = c.operations.findRequest(f.request);
+                  if (existing != null) return existing;
+                  return c.operations.prepare(
+                      f.request,
+                      "spiffe://test-only/control-ui",
+                      callerContext,
+                      "test-mac1",
+                      "c".repeat(64),
+                      f.primary,
+                      f.authority,
+                      f.signer,
+                      issuedAt,
+                      300_000L);
+                });
+          };
+      var first = workers.submit(attempt);
+      var second = workers.submit(attempt);
+      assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      var firstResult = first.get(20, TimeUnit.SECONDS);
+      var secondResult = second.get(20, TimeUnit.SECONDS);
+      assertThat(firstResult.status).isEqualTo("PREPARED");
+      assertOriginal(firstResult, secondResult);
+      assertThat(secondResult.operationId).isEqualTo(firstResult.operationId);
+      assertThat(secondResult.jti).isEqualTo(firstResult.jti);
+      assertThat(secondResult.callerContextId).isEqualTo(callerContext);
+      assertThat(secondResult.claims).containsExactly(firstResult.claims);
+      assertThat(secondResult.sources).containsExactly(firstResult.sources);
+      assertThat(secondResult.bundle).containsExactly(firstResult.bundle);
+      assertThat(secondResult.signerReceipt).containsExactly(firstResult.signerReceipt);
+      assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations")))
+          .isEqualTo(1);
+      assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isZero();
+    } finally {
+      start.countDown();
+    }
+  }
+
+  @Test
+  void retainedEncryptedOwnerResponseRecoversAfterRealKeyRotationAndRepositoryRestart(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path custody) throws Exception {
+    Context c = context();
+    Fixture f = new Fixture(c);
+    var prepared = f.prepare();
+    java.nio.file.Path encryption =
+        java.nio.file.Files.createDirectories(custody.resolve("encryption"));
+    byte[] oldKey = new byte[32];
+    byte[] newKey = new byte[32];
+    java.util.Arrays.fill(oldKey, (byte) 11);
+    java.util.Arrays.fill(newKey, (byte) 23);
+    String oldEncoded = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(oldKey);
+    String newEncoded = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(newKey);
+    String header = "firemud-account-response-envelope-keyring-v1\n";
+    java.nio.file.Files.writeString(
+        encryption.resolve("keyring"), header + "active enc-old " + oldEncoded + "\n");
+    Clock clock = Clock.fixed(prepared.issuedAt, java.time.ZoneOffset.UTC);
+    var crypto =
+        new AccountControlUiResponseCryptography(new AccountControlUiKeyring(custody), clock);
+    byte[] credential = bytes("test-only-control-ui-response-not-a-runtime-token");
+    byte[] sealed = crypto.seal(credential, f.ownerBinding, prepared.recoveryExpiry);
+    var candidate =
+        c.tx(
+            () ->
+                c.operations.bindCandidate(
+                    prepared, "d".repeat(64), sealed, f.ownerBinding, f.signer));
+    Transport transport = new Transport(candidate);
+    var pending =
+        transport.client.registerPending(
+            candidate.tokenHash, candidate.pendingRegistry, candidate.expiryMillis());
+    c.tx(() -> c.operations.commit(candidate, pending));
+    var operationsBefore =
+        c.dsl
+            .fetch(
+                "SELECT row_to_json(t)::text FROM account_control_ui_issuance_operations t ORDER BY 1")
+            .getValues(0, String.class);
+    var envelopesBefore =
+        c.dsl
+            .fetch(
+                "SELECT row_to_json(t)::text FROM account_control_ui_response_envelopes t ORDER BY 1")
+            .getValues(0, String.class);
+    assertThat(operationsBefore).hasSize(1);
+    assertThat(envelopesBefore).hasSize(1);
+    java.nio.file.Files.writeString(
+        encryption.resolve("keyring"),
+        header
+            + "active enc-new "
+            + newEncoded
+            + "\nretiring enc-old "
+            + prepared.recoveryExpiry.plusSeconds(60).toEpochMilli()
+            + " "
+            + oldEncoded
+            + "\n");
+    var restarted = new AccountControlUiIssuanceRepository(c.dsl);
+    var reread = c.tx(() -> restarted.findRequest(prepared.requestId));
+    c.tx(() -> restarted.requireCommitted(reread));
+    var envelope = Objects.requireNonNull(c.tx(() -> restarted.envelope(reread)));
+    var rotatedCrypto =
+        new AccountControlUiResponseCryptography(new AccountControlUiKeyring(custody), clock);
+    assertThat(envelope.encrypted()).containsExactly(sealed);
+    assertThat(envelope.binding()).containsExactly(f.ownerBinding);
+    assertThat(rotatedCrypto.open(envelope.encrypted(), envelope.binding(), reread.recoveryExpiry))
+        .containsExactly(credential);
+    assertThatThrownBy(
+            () ->
+                rotatedCrypto.open(
+                    envelope.encrypted(), bytes("different-owner"), reread.recoveryExpiry))
+        .isInstanceOf(AccountResponseEnvelopeCryptography.IntegrityException.class);
+    java.nio.file.Files.writeString(
+        encryption.resolve("keyring"), header + "active enc-new " + newEncoded + "\n");
+    assertThatThrownBy(
+            () ->
+                rotatedCrypto.open(envelope.encrypted(), envelope.binding(), reread.recoveryExpiry))
+        .isInstanceOf(AccountResponseEnvelopeKeyring.KeyUnavailableException.class);
+    assertThat(
+            c.dsl
+                .fetch(
+                    "SELECT row_to_json(t)::text FROM account_control_ui_issuance_operations t ORDER BY 1")
+                .getValues(0, String.class))
+        .isEqualTo(operationsBefore);
+    assertThat(
+            c.dsl
+                .fetch(
+                    "SELECT row_to_json(t)::text FROM account_control_ui_response_envelopes t ORDER BY 1")
+                .getValues(0, String.class))
+        .isEqualTo(envelopesBefore);
+  }
+
+  @Test
+  void lateCommitRollbackPreservesExactCandidateAndOriginalEnvelope() {
+    Context c = context();
+    Fixture f = new Fixture(c);
+    var prepared = f.prepare();
+    var candidate = f.candidate(prepared);
+    var rowsBefore =
+        c.dsl.fetch(
+            "SELECT to_jsonb(o)::text AS wire FROM account_control_ui_issuance_operations o");
+    var envelopesBefore =
+        c.dsl.fetch(
+            "SELECT to_jsonb(e)::text AS wire FROM account_control_ui_response_envelopes e");
+    assertThat(rowsBefore).hasSize(1);
+    assertThat(envelopesBefore).hasSize(1);
+    Transport transport = new Transport(candidate);
+    var pending =
+        transport.client.registerPending(
+            candidate.tokenHash, candidate.pendingRegistry, candidate.expiryMillis());
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () -> {
+                      var committed = c.operations.commit(candidate, pending);
+                      assertThat(committed.stored.status).isEqualTo("COMMITTED");
+                      assertThat(c.operations.findRequest(candidate.requestId).status)
+                          .isEqualTo("COMMITTED");
+                      throw new IllegalStateException("deliberate rollback after issuance commit");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("deliberate rollback after issuance commit");
+    assertThat(
+            c.dsl.fetch(
+                "SELECT to_jsonb(o)::text AS wire FROM account_control_ui_issuance_operations o"))
+        .isEqualTo(rowsBefore);
+    assertThat(
+            c.dsl.fetch(
+                "SELECT to_jsonb(e)::text AS wire FROM account_control_ui_response_envelopes e"))
+        .isEqualTo(envelopesBefore);
+    var retained = c.tx(() -> c.operations.findRequest(candidate.requestId));
+    assertThat(retained.status).isEqualTo("CANDIDATE");
+    assertOriginal(candidate, retained);
+    assertThatThrownBy(() -> c.tx(() -> c.operations.requireCommitted(retained)))
+        .isInstanceOf(IllegalStateException.class);
+    var recovered = c.tx(() -> c.operations.commit(retained, pending));
+    assertThat(recovered.stored.status).isEqualTo("COMMITTED");
+    assertOriginal(candidate, recovered.stored);
+    var envelope = Objects.requireNonNull(c.tx(() -> c.operations.envelope(recovered.stored)));
+    assertThat(envelope.encrypted()).containsExactly(f.encryptedResponse);
+    assertThat(envelope.binding()).containsExactly(f.ownerBinding);
   }
 
   @Test
