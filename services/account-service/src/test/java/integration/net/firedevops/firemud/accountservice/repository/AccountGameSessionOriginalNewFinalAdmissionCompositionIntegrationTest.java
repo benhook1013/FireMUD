@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.google.protobuf.ByteString;
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -98,18 +99,20 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
   private static final String FAULT_FUNCTION = "actual_final_test_fail_confirmation";
   private static final String FAULT_TRIGGER = "actual_final_test_confirmation_fault";
+  private static final AccountPostgresIntegrationFixture POSTGRES =
+      new AccountPostgresIntegrationFixture(true);
   private final AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest accountFixtures =
-      new AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest();
+      AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.withPostgres(POSTGRES);
   @TempDir Path temporaryDirectory;
 
   @BeforeAll
   static void startPostgres() {
-    AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.startPostgres();
+    POSTGRES.start();
   }
 
   @AfterAll
   static void stopPostgres() {
-    AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.stopPostgres();
+    POSTGRES.stop();
   }
 
   @AfterEach

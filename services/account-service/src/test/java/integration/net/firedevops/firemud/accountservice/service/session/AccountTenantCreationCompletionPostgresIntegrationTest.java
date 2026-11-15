@@ -870,7 +870,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                       request,
                       evidence.expiresAt(),
                       Clock.fixed(evidence.evaluatedAt(), ZoneOffset.UTC))
-                  .orElseThrow();
+                  .orElseThrow(() -> new AssertionError("Controlled fixture must have capacity"));
             });
     var owner =
         new net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner(
