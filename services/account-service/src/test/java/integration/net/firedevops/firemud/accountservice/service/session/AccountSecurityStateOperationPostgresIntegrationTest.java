@@ -755,6 +755,34 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
     } finally {
       missing.dsl().execute("ALTER TABLE account_security_state_operations ENABLE TRIGGER USER");
     }
+    // Storage rejection does not replace owner readback verification of a missing receipt.
+    assertThatThrownBy(
+            () ->
+                tx(
+                    missing,
+                    () ->
+                        sourceReadback(missing)
+                            .requireCurrentLatest(
+                                new AccountRepository(missing.dsl())
+                                    .findById(seed.account().getId())
+                                    .orElseThrow(),
+                                missing.generations().read(seed.source().scope()))))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                tx(
+                    missing,
+                    () -> {
+                      sourceReadback(missing)
+                          .requireRetainedEvent(
+                              new AccountRepository(missing.dsl())
+                                  .findById(seed.account().getId())
+                                  .orElseThrow(),
+                              event,
+                              missing.generations().read(seed.source().scope()));
+                      return null;
+                    }))
+        .isInstanceOf(IllegalStateException.class);
     assertPostgresCheckViolation(
         () ->
             missing
