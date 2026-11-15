@@ -1,0 +1,40 @@
+{
+  "files": [
+    {
+      "checkout": "FireMUD-gameplay-2972-bound-credential-local-20261027",
+      "source_head": "100a2d534e31921be70227ec0f77a830e3ad519e",
+      "source_branch": "codex/gameplay-2972-bound-credential-local-20261027",
+      "repo_path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/session/AccountGameplayDelegationRedisClient.java",
+      "status": " M",
+      "pack_path": "snapshots/FireMUD-gameplay-2972-bound-credential-local-20261027/root/services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/session/AccountGameplayDelegationRedisClient.java",
+      "source_sha256": "e3188ddd73af5e62a21bf3d8b89ab8af3f333379cf875c739773e20f76512e33",
+      "packaged_sha256": "e3188ddd73af5e62a21bf3d8b89ab8af3f333379cf875c739773e20f76512e33",
+      "bytes": 90880,
+      "destination": "Player Access / candidate credential and issuer admission owner; reconcile schema frontier before reuse.",
+      "sanitized_fixture": false,
+      "note": "credential scanner matched a fixed Redis namespace constant, not a secret",
+      "disposition": "included",
+      "group": "snapshots",
+      "source_path": "FireMUD-gameplay-2972-bound-credential-local-20261027/root/services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/session/AccountGameplayDelegationRedisClient.java",
+      "packed_sha256": "e3188ddd73af5e62a21bf3d8b89ab8af3f333379cf875c739773e20f76512e33"
+    },
+    {
+      "checkout": "FireMUD-document-entity-selected-empty-receiving-20261013",
+      "source_head": "c428904f58e7d0cc096498dba061cdd0d22b37be",
+      "source_branch": "codex/document-entity-selected-empty-receiving-20261013",
+      "repo_path": "services/common-platform-core/src/test/java/net/firedevops/firemud/common/publication/AccountSelectedPublicationOrderCredentialsTest.java",
+      "status": "??",
+      "pack_path": "snapshots/FireMUD-document-entity-selected-empty-receiving-20261013/root/services/common-platform-core/src/test/java/net/firedevops/firemud/common/publication/AccountSelectedPublicationOrderCredentialsTest.java",
+      "source_sha256": "03c5b20aa73b925a6640cc45e183d896a02b19bcfc5592d5f47536ab28e3346b",
+      "packaged_sha256": "573a5e66a88e711d229abbfec9c2f72c2ba51c210699f13e36be782ac0f2ea39",
+      "bytes": 4230,
+      "destination": "Game Authoring + Entity / selected-source intake owner; current tracker says source-prepared, standalone, default-denied.",
+      "sanitized_fixture": true,
+      "note": "replaced test-only credential-shaped literal with deterministic fixture",
+      "disposition": "included",
+      "group": "snapshots",
+      "source_path": "FireMUD-document-entity-selected-empty-receiving-20261013/root/services/common-platform-core/src/test/java/net/firedevops/firemud/common/publication/AccountSelectedPublicationOrderCredentialsTest.java",
+      "packed_sha256": "573a5e66a88e711d229abbfec9c2f72c2ba51c210699f13e36be782ac0f2ea39"
+    }
+  ]
+}
