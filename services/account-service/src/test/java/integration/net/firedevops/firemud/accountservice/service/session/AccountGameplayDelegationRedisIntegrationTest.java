@@ -358,6 +358,72 @@ class AccountGameplayDelegationRedisIntegrationTest {
   }
 
   @Test
+  void olderCapturedProjectionCannotOverwriteNewerCommittedOwnerPublication() {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    UUID accountId = createFreshAccount(database, sources);
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String issuerKey =
+        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX + ACCOUNT_ISSUER;
+    String accountKey = AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId;
+    try (var adminConnection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = adminConnection.sync();
+      assertThat(admin.get(ascii(issuerKey))).isNull();
+      assertThat(admin.get(ascii(accountKey))).isNull();
+      try {
+        var stableRedis = redisClient(new TrackedProvider(writer));
+        var stable =
+            new AccountGameplayDelegationAuthorityProjection(
+                sources, database.manager(), stableRedis);
+        stable.publishCurrent(accountId);
+        byte[][] baseline = stableRedis.readAuthorityProjections(accountId);
+        AtomicInteger interleavings = new AtomicInteger();
+        TrackedProvider staleProvider = new TrackedProvider(writer);
+        var staleRedis =
+            redisClient(
+                () -> {
+                  assertThat(interleavings.incrementAndGet()).isEqualTo(1);
+                  assertThat(
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isActualTransactionActive())
+                      .isFalse();
+                  commitPasswordResetAuthorityChange(
+                      database, dsl, authorities, outbox, sources, accountId);
+                  stable.publishCurrent(accountId);
+                  return staleProvider.openPinnedConnection();
+                });
+        var stale =
+            new AccountGameplayDelegationAuthorityProjection(
+                sources, database.manager(), staleRedis);
+        assertThatThrownBy(() -> stale.publishCurrent(accountId))
+            .isInstanceOf(
+                AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+        assertThat(interleavings.get()).isEqualTo(1);
+        assertThat(staleProvider.openedConnections()).isEqualTo(1);
+        var current =
+            inTransaction(
+                database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+        byte[][] advanced =
+            AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(current);
+        assertThat(advanced[1]).isNotEqualTo(baseline[1]);
+        assertProjectionBytes(admin, issuerKey, accountKey, advanced);
+        assertThat(stable.observeCurrent(accountId).accountGeneration())
+            .isEqualTo(current.account().generation());
+      } finally {
+        admin.del(ascii(issuerKey));
+        admin.del(ascii(accountKey));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
   void unknownAccountProjectionFailsBeforeRedisAndLeavesOwnerRowsUnchanged() {
     TestContext database = newPostgresContext();
     DSLContext dsl = database.dsl();
