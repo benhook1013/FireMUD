@@ -1654,6 +1654,512 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
   }
 
   @Test
+  void rawProtoJsonSpellingsStoreExactOriginalBytesAndEffectiveDefaults() throws Exception {
+    withCurrentStorageOwner(
+        fixture -> {
+          var printed = fixture.plan();
+          var binding = printed.binding();
+          var revisions = new ArrayList<RevisionPayload>();
+          for (var revision : binding.revisions()) {
+            var node =
+                printed.graph().nodes().stream()
+                    .filter(value -> value.revisionId().equals(revision.revisionId()))
+                    .findFirst()
+                    .orElseThrow();
+            revisions.add(
+                new RevisionPayload(
+                    revision.revisionOrder(),
+                    revision.revisionId(),
+                    revision.owner(),
+                    JsonFormat.printer()
+                        .preservingProtoFieldNames()
+                        .printingEnumsAsInts()
+                        .omittingInsignificantWhitespace()
+                        .print(node.mutation())));
+          }
+          var rawBinding =
+              DraftCommitBinding.create(
+                  binding.target(),
+                  binding.requestId(),
+                  binding.commitId(),
+                  binding.baseCommitId(),
+                  revisions,
+                  binding.affectedUnits());
+          var raw = WorldDraftTopologyCommitPlan.create(rawBinding, printed.ownerBinding());
+          assertThat(revisions.getFirst().payload()).contains("\"aggregate_type\":1");
+          assertThat(rawBinding.digest()).isNotEqualTo(binding.digest());
+          var stored =
+              Objects.requireNonNull(
+                  fixture.write().execute(status -> fixture.topology().store(raw)));
+          assertThat(stored.binding().canonicalBytes())
+              .containsExactly(rawBinding.canonicalBytes());
+          assertCompleteCurrentStorage(fixture);
+          var dsl = fixture.dsl();
+          assertThat(dsl.fetchSingle("SELECT spacing_multiplier FROM region").get(0, Double.class))
+              .isEqualTo(1.0);
+          assertThat(dsl.fetchSingle("SELECT cost FROM room_exit").get(0, Integer.class))
+              .isEqualTo(1);
+          assertThat(
+                  dsl.fetchSingle("SELECT spawn_count FROM world_entity_spawn_binding")
+                      .get(0, Integer.class))
+              .isEqualTo(1);
+          var history =
+              dsl.fetchSingle(
+                  "SELECT binding_json,binding_digest FROM world_topology_draft_commit");
+          assertThat(history.get("binding_json", String.class))
+              .isEqualTo(rawBinding.canonicalJson());
+          assertThat(history.get("binding_digest", String.class)).isEqualTo(rawBinding.digest());
+          var before = retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables());
+          assertThat(
+                  Objects.requireNonNull(
+                          fixture.write().execute(status -> fixture.topology().store(raw)))
+                      .resultBytes())
+              .containsExactly(stored.resultBytes());
+          assertThat(fixture.topology().readCommitted(raw).orElseThrow().binding().revisions())
+              .isEqualTo(revisions);
+          assertThatThrownBy(
+                  () -> fixture.write().execute(status -> fixture.topology().store(printed)))
+              .hasMessageContaining("changed full input or source");
+          assertThatThrownBy(() -> fixture.topology().readCommitted(printed))
+              .hasMessageContaining("changed full input or source");
+          assertThat(retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables()))
+              .isEqualTo(before);
+        });
+  }
+
+  @Test
+  void conflictingFreshCompleteClaimsCannotRemapTheWinningCanonicalTemplates() throws Exception {
+    withCurrentStorageOwner(
+        fixture -> {
+          var firstPlan = fixture.plan();
+          var b = firstPlan.binding();
+          UUID otherCommit = UUID.randomUUID();
+          var revisions = new ArrayList<RevisionPayload>();
+          for (var node : firstPlan.graph().nodes()) {
+            revisions.add(
+                new RevisionPayload(
+                    node.revisionOrder(),
+                    node.revisionId(),
+                    Owner.WORLD_MANAGEMENT,
+                    JsonFormat.printer()
+                        .omittingInsignificantWhitespace()
+                        .print(
+                            node.mutation().toBuilder()
+                                .setCommitId(otherCommit.toString())
+                                .build())));
+          }
+          var secondPlan =
+              WorldDraftTopologyCommitPlan.create(
+                  DraftCommitBinding.create(
+                      b.target(),
+                      UUID.randomUUID(),
+                      otherCommit,
+                      b.baseCommitId(),
+                      revisions,
+                      b.affectedUnits()),
+                  firstPlan.ownerBinding());
+          CountDownLatch begin = new CountDownLatch(1);
+          var executor = Executors.newFixedThreadPool(2);
+          try {
+            var one = executor.submit(() -> claimOrConflict(fixture, firstPlan, begin));
+            var two = executor.submit(() -> claimOrConflict(fixture, secondPlan, begin));
+            begin.countDown();
+            var outcomes = List.of(one.get(20, TimeUnit.SECONDS), two.get(20, TimeUnit.SECONDS));
+            assertThat(
+                    outcomes.stream()
+                        .filter(WorldDraftTopologyCommitEvidence.class::isInstance)
+                        .count())
+                .isEqualTo(1);
+            assertThat(outcomes.stream().filter(RuntimeException.class::isInstance).count())
+                .isEqualTo(1);
+            var winner =
+                outcomes.stream()
+                    .filter(WorldDraftTopologyCommitEvidence.class::isInstance)
+                    .map(WorldDraftTopologyCommitEvidence.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+            var winningPlan = winner.binding().equals(firstPlan.binding()) ? firstPlan : secondPlan;
+            var loser = winningPlan == firstPlan ? secondPlan : firstPlan;
+            assertCompleteCurrentStorage(fixture);
+            assertThat(
+                    fixture
+                        .dsl()
+                        .fetch(
+                            "SELECT DISTINCT request_id,commit_id FROM world_authored_topology_identity")
+                        .map(
+                            row ->
+                                List.of(
+                                    row.get("request_id", UUID.class),
+                                    row.get("commit_id", UUID.class))))
+                .containsExactly(
+                    List.of(winner.binding().requestId(), winner.binding().commitId()));
+            var before =
+                retainedTableSnapshot(fixture.dsl(), fixture.schema(), currentStorageTables());
+            assertThatThrownBy(
+                    () -> fixture.write().execute(status -> fixture.topology().store(loser)))
+                .isInstanceOf(RuntimeException.class);
+            assertThat(fixture.topology().readCommitted(loser)).isEmpty();
+            assertThat(fixture.topology().readCommitted(winningPlan).orElseThrow().resultBytes())
+                .containsExactly(winner.resultBytes());
+            assertThat(
+                    retainedTableSnapshot(fixture.dsl(), fixture.schema(), currentStorageTables()))
+                .isEqualTo(before);
+          } finally {
+            begin.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(20, TimeUnit.SECONDS)).isTrue();
+          }
+        });
+  }
+
+  private static Object claimOrConflict(
+      CurrentStorageOwner fixture, WorldDraftTopologyCommitPlan plan, CountDownLatch begin) {
+    await(begin);
+    try {
+      return Objects.requireNonNull(
+          fixture.write().execute(status -> fixture.topology().store(plan)));
+    } catch (RuntimeException conflict) {
+      return conflict;
+    }
+  }
+
+  @Test
+  void independentStorageReadRejectsEveryFamilyMappingEpochAndResultCorruption() throws Exception {
+    withCurrentStorageOwner(
+        fixture -> {
+          var stored =
+              Objects.requireNonNull(
+                  fixture.write().execute(status -> fixture.topology().store(fixture.plan())));
+          var before =
+              retainedTableSnapshot(fixture.dsl(), fixture.schema(), currentStorageTables());
+          var corruptions = new LinkedHashMap<String, String>();
+          corruptions.put("region", "UPDATE region SET weather='changed'");
+          corruptions.put("zone", "UPDATE zone SET name='changed'");
+          corruptions.put("room", "UPDATE room SET description_localized_variants_json='changed'");
+          corruptions.put("exit", "UPDATE room_exit SET cost=19");
+          corruptions.put("rule", "UPDATE generation_rule SET value='changed'");
+          corruptions.put(
+              "entity",
+              "UPDATE world_entity_spawn_binding SET entity_canonical_template_id='"
+                  + UUID.randomUUID()
+                  + "'");
+          corruptions.put(
+              "mapping", "UPDATE world_authored_topology_identity SET revision_order='99'");
+          corruptions.put(
+              "aggregate", "UPDATE world_design_aggregate_epoch SET draft_revision_epoch=2");
+          corruptions.put(
+              "scope", "UPDATE world_design_scope_epoch SET draft_scope_revision_epoch=2");
+          corruptions.put(
+              "result", "UPDATE world_topology_draft_commit SET result_bytes='changed'::bytea");
+          for (var corruption : corruptions.entrySet()) {
+            fixture
+                .dsl()
+                .connection(
+                    connection -> {
+                      var clone = DSL.using(connection, SQLDialect.POSTGRES);
+                      for (String table : currentStorageTables()) {
+                        clone.execute(
+                            "CREATE TEMP TABLE "
+                                + table
+                                + " AS SELECT * FROM "
+                                + fixture.schema()
+                                + "."
+                                + table);
+                      }
+                      assertThat(
+                              clone
+                                  .fetchSingle(
+                                      "SELECT pg_my_temp_schema()=relnamespace FROM pg_class WHERE oid='region'::regclass")
+                                  .get(0, Boolean.class))
+                          .isTrue();
+                      var reader =
+                          new WorldDraftTopologyCommitRepository(
+                              clone,
+                              new WorldDesignPublicationFenceRepository(
+                                  clone, new WorldAuthoredSourceIntakeRepository(clone)),
+                              new tools.jackson.databind.ObjectMapper());
+                      assertThat(reader.readCommitted(fixture.plan()).orElseThrow().resultBytes())
+                          .containsExactly(stored.resultBytes());
+                      assertThat(clone.execute(corruption.getValue())).isPositive();
+                      var damaged =
+                          retainedTableSnapshot(clone, fixture.schema(), currentStorageTables());
+                      assertThatThrownBy(() -> reader.readCommitted(fixture.plan()))
+                          .as("independent physical read rejects %s", corruption.getKey())
+                          .isInstanceOf(
+                              WorldDesignPublicationFenceRepository.ConflictException.class);
+                      assertThat(
+                              retainedTableSnapshot(
+                                  clone, fixture.schema(), currentStorageTables()))
+                          .isEqualTo(damaged);
+                    });
+            assertThat(
+                    retainedTableSnapshot(fixture.dsl(), fixture.schema(), currentStorageTables()))
+                .isEqualTo(before);
+          }
+          assertThat(fixture.topology().readCommitted(fixture.plan()).orElseThrow().graphBytes())
+              .containsExactly(stored.graphBytes());
+        });
+  }
+
+  @Test
+  void legalHistoricalSchemaTwoAndThreeJournalsRetainAllBytesThroughCurrentMigration()
+      throws Exception {
+    for (int schemaVersion : List.of(2, 3)) {
+      withCurrentStorageOwner(
+          "1006",
+          fixture -> {
+            var dsl = fixture.dsl();
+            var plan = fixture.plan();
+            var stored =
+                Objects.requireNonNull(
+                    fixture.write().execute(status -> fixture.topology().store(plan)));
+            var owner = plan.ownerBinding();
+            String publication = UUID.randomUUID().toString();
+            var workflow =
+                PublicationDigestRequestBinding.full(
+                    owner.canonicalTenantId().toString(),
+                    Long.toString(owner.gameDesignVersionId()),
+                    publication);
+            var freeze =
+                new WorldDesignPublicationFenceEvidence(
+                    owner.targetNamespace(),
+                    owner.canonicalTenantId(),
+                    owner.canonicalVersionId(),
+                    owner.versionIdentityOperationId(),
+                    owner.gameDesignVersionId(),
+                    owner.intakeRequestId(),
+                    owner.intakeOperationId(),
+                    owner.intakeRequestDigest(),
+                    owner.sourceOperationId(),
+                    owner.sourceEvidenceDigest(),
+                    owner.intakeReceiptDigest(),
+                    publication,
+                    "a".repeat(64),
+                    1,
+                    workflow.derivedWorkflowIdentity());
+            var fence =
+                new WorldDesignPublicationFenceRepository(
+                    dsl, new WorldAuthoredSourceIntakeRepository(dsl));
+            var attempt =
+                Objects.requireNonNull(
+                    fixture
+                        .write()
+                        .execute(
+                            status ->
+                                fence.claimFreeze(
+                                    freeze,
+                                    () ->
+                                        new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                            plan.binding().commitId().toString(),
+                                            "b".repeat(64),
+                                            schemaVersion))));
+            var tuples =
+                plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+                    .map(
+                        unit ->
+                            new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                                unit.owner().name(),
+                                unit.aggregateType(),
+                                unit.aggregateId(),
+                                unit.scopeType(),
+                                unit.scopeId(),
+                                unit.expectedEpoch()))
+                    .toList();
+            var request =
+                new WorldCanonicalFrozenTopology.Request(
+                    plan,
+                    new WorldAuthoredGraphSnapshot.CaptureRequest(
+                        owner.targetNamespace(),
+                        owner.canonicalTenantId(),
+                        owner.canonicalVersionId(),
+                        owner.intakeRequestId(),
+                        attempt.publicationFence(),
+                        publication,
+                        freeze.requestDigest(),
+                        1,
+                        freeze.publishWorkflowId(),
+                        plan.binding().commitId().toString(),
+                        "b".repeat(64),
+                        schemaVersion,
+                        tuples));
+            var provenance =
+                dsl.fetchSingle(
+                    "SELECT to_jsonb(v)::text AS identity_json,to_jsonb(i)::text AS intake_json "
+                        + "FROM world_authored_version_identity v JOIN world_authored_source_intake i "
+                        + "ON i.operation_id=v.intake_operation_id WHERE v.operation_id=?",
+                    owner.versionIdentityOperationId());
+            var mapper = new tools.jackson.databind.ObjectMapper();
+            String identity = provenance.get("identity_json", String.class);
+            String intake = provenance.get("intake_json", String.class);
+            UUID captureId = UUID.randomUUID();
+            // Literal retained journal encoding, legally inserted under its original1006 guard.
+            // Controlled checkpoint values are historical fixture inputs, not a current producer.
+            var result = new LinkedHashMap<String, Object>();
+            result.put("schemaVersion", "1");
+            result.put("status", WorldCanonicalFrozenTopology.STATUS);
+            result.put(
+                "missingProof",
+                List.of(
+                    "ACCOUNT_AUTHORIZATION",
+                    "COMPLETE_PARTICIPANT_COMMIT",
+                    "PUBLICATION_CHECKPOINT_DIGEST"));
+            result.put("captureId", captureId.toString());
+            result.put("freeze", request.freeze());
+            result.put("ownerBinding", owner);
+            result.put("bindingJson", plan.binding().canonicalJson());
+            result.put("bindingDigest", plan.binding().digest());
+            result.put("identityJson", identity);
+            result.put("intakeJson", intake);
+            result.put("graphBytes", stored.graphBytes());
+            result.put("storageResultBytes", stored.resultBytes());
+            byte[] bytes = mapper.writeValueAsBytes(result);
+            fixture
+                .write()
+                .execute(
+                    status -> {
+                      dsl.execute(
+                          "INSERT INTO world_canonical_frozen_topology "
+                              + "(capture_id,publication_fence,request_id,commit_id,version_identity_operation_id,"
+                              + "freeze_request_json,owner_binding_json,binding_json,binding_digest,identity_json,"
+                              + "intake_json,graph_bytes,graph_sha256,storage_result_bytes,result_bytes,capture_status)"
+                              + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                          captureId,
+                          attempt.publicationFence(),
+                          plan.binding().requestId(),
+                          plan.binding().commitId(),
+                          owner.versionIdentityOperationId(),
+                          mapper.writeValueAsString(request.freeze()),
+                          WorldDraftTopologyCommitRepository.ownerBindingJson(owner),
+                          plan.binding().canonicalJson(),
+                          plan.binding().digest(),
+                          identity,
+                          intake,
+                          stored.graphBytes(),
+                          WorldAuthoredGraphSnapshotCapture.sha256(stored.graphBytes()),
+                          stored.resultBytes(),
+                          bytes,
+                          WorldCanonicalFrozenTopology.STATUS);
+                      return null;
+                    });
+            var tables = new ArrayList<>(currentStorageTables());
+            tables.removeAll(
+                List.of("world_draft_graph_application", "world_region_draft_execution_manifest"));
+            // Some current tables are not installed in1006; retain each actual original table.
+            tables.removeIf(
+                table ->
+                    dsl.fetchSingle(
+                                "SELECT count(*) FROM information_schema.tables WHERE table_schema=? AND table_name=?",
+                                fixture.schema(),
+                                table)
+                            .get(0, Long.class)
+                        == 0);
+            var originalColumns = new LinkedHashMap<String, List<String>>();
+            var before = new LinkedHashMap<String, List<String>>();
+            for (String table : tables) {
+              var columns =
+                  dsl.fetch(
+                          "SELECT column_name FROM information_schema.columns WHERE table_schema=? AND table_name=? ORDER BY ordinal_position",
+                          fixture.schema(),
+                          table)
+                      .getValues(0, String.class);
+              originalColumns.put(table, columns);
+              before.put(table, retainedRows(dsl, table, columns));
+            }
+            var source =
+                new DriverManagerDataSource(
+                    postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+            source.setSchema(fixture.schema());
+            Path root = repositoryRoot();
+            flyway(source, fixture.schema(), null, worldMigrations(root), sagaMigrations(root))
+                .migrate();
+            for (var entry : originalColumns.entrySet()) {
+              assertThat(retainedRows(dsl, entry.getKey(), entry.getValue()))
+                  .as("schema%s retained %s full original rows+xmin", schemaVersion, entry.getKey())
+                  .isEqualTo(before.get(entry.getKey()));
+            }
+            var deniedOwner = mock(WorldAuthoredGraphSnapshotRepository.class);
+            var deniedDigest = mock(WorldDraftDesignDigestService.class);
+            var reader =
+                new WorldCanonicalFrozenTopologyRepository(
+                    dsl, deniedOwner, fixture.topology(), deniedDigest);
+            var service =
+                new WorldCanonicalFrozenTopologyService(
+                    reader, new DataSourceTransactionManager(source));
+            var upgraded = retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables());
+            assertThat(reader.readCommitted(request).orElseThrow().resultBytes())
+                .containsExactly(bytes);
+            assertThat(reader.readCommitted(request.freeze()).orElseThrow().graphBytes())
+                .containsExactly(stored.graphBytes());
+            assertThat(service.capture(request).captureId()).isEqualTo(captureId);
+            verifyNoInteractions(deniedOwner, deniedDigest);
+            assertThat(retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables()))
+                .isEqualTo(upgraded);
+            assertTypedHistoricalEntityAndExitCorruption(fixture, request, stored);
+            assertThat(dsl.fetchSingle("SHOW session_replication_role").get(0, String.class))
+                .isEqualTo("origin");
+          });
+    }
+  }
+
+  private static void assertTypedHistoricalEntityAndExitCorruption(
+      CurrentStorageOwner fixture,
+      WorldCanonicalFrozenTopology.Request request,
+      WorldDraftTopologyCommitEvidence stored) {
+    var mapper = new tools.jackson.databind.ObjectMapper();
+    for (String field :
+        List.of("entity_template_id", "entity_canonical_template_id", "to_room_id")) {
+      fixture
+          .dsl()
+          .connection(
+              connection -> {
+                var clone = DSL.using(connection, SQLDialect.POSTGRES);
+                clone.execute(
+                    "CREATE TEMP TABLE world_canonical_frozen_topology AS SELECT * FROM "
+                        + fixture.schema()
+                        + ".world_canonical_frozen_topology");
+                assertThat(
+                        clone
+                            .fetchSingle(
+                                "SELECT pg_my_temp_schema()=relnamespace FROM pg_class WHERE oid='world_canonical_frozen_topology'::regclass")
+                            .get(0, Boolean.class))
+                    .isTrue();
+                var reader =
+                    new WorldCanonicalFrozenTopologyRepository(
+                        clone,
+                        mock(WorldAuthoredGraphSnapshotRepository.class),
+                        fixture.topology(),
+                        mock(WorldDraftDesignDigestService.class));
+                assertThat(reader.readCommitted(request).orElseThrow().graphBytes())
+                    .containsExactly(stored.graphBytes());
+                var graph = mapper.readTree(stored.graphBytes());
+                boolean changed = false;
+                for (var row : graph.path("rows")) {
+                  String family = row.path("mapping").path("family").asText();
+                  if (family.equals(
+                      field.equals("to_room_id") ? "ROOM_EXIT" : "WORLD_ENTITY_SPAWN_BINDING")) {
+                    var content = (tools.jackson.databind.node.ObjectNode) row.path("content");
+                    if (field.equals("entity_canonical_template_id"))
+                      content.put(field, UUID.randomUUID().toString());
+                    else content.put(field, 0);
+                    changed = true;
+                  }
+                }
+                assertThat(changed).isTrue();
+                byte[] bad = mapper.writeValueAsBytes(graph);
+                clone.execute(
+                    "UPDATE world_canonical_frozen_topology SET graph_bytes=?,graph_sha256=?",
+                    bad,
+                    WorldAuthoredGraphSnapshotCapture.sha256(bad));
+                assertThatThrownBy(() -> reader.readCommitted(request))
+                    .as("recomputed-checksum typed %s", field)
+                    .hasMessageContaining("exact typed original payload");
+                assertThatThrownBy(() -> reader.readCommitted(request.freeze()))
+                    .hasMessageContaining("exact typed original payload");
+              });
+    }
+  }
+
+  @Test
   void currentTopologyConcurrentExactFirstClaimsReturnOneOriginalStoredResult() throws Exception {
     withCurrentStorageOwner(
         fixture -> {
@@ -1756,6 +2262,52 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
                       binding.baseCommitId(),
                       mixedRevisions,
                       mixedUnits),
+                  original.ownerBinding()));
+
+          var target = binding.target();
+          changed.add(
+              WorldDraftTopologyCommitPlan.create(
+                  DraftCommitBinding.create(
+                      new DraftCommitBinding.TargetProof(
+                          target.canonicalTenantId(),
+                          target.canonicalVersionId(),
+                          target.gameDesignVersionRowId(),
+                          target.gameDesignVersionTenantKey(),
+                          target.sourceGameRowId() + 1,
+                          target.sourceGameTenantKey(),
+                          target.sourceProvenanceKind()),
+                      binding.requestId(),
+                      binding.commitId(),
+                      binding.baseCommitId(),
+                      binding.revisions(),
+                      binding.affectedUnits()),
+                  original.ownerBinding()));
+          var reordered = new ArrayList<>(binding.revisions());
+          var firstRoom = reordered.get(2);
+          var secondRoom = reordered.get(3);
+          reordered.set(
+              2,
+              new RevisionPayload(
+                  firstRoom.revisionOrder(),
+                  secondRoom.revisionId(),
+                  secondRoom.owner(),
+                  secondRoom.payload()));
+          reordered.set(
+              3,
+              new RevisionPayload(
+                  secondRoom.revisionOrder(),
+                  firstRoom.revisionId(),
+                  firstRoom.owner(),
+                  firstRoom.payload()));
+          changed.add(
+              WorldDraftTopologyCommitPlan.create(
+                  DraftCommitBinding.create(
+                      binding.target(),
+                      binding.requestId(),
+                      binding.commitId(),
+                      binding.baseCommitId(),
+                      reordered,
+                      binding.affectedUnits()),
                   original.ownerBinding()));
 
           var owner = original.ownerBinding();
@@ -1901,6 +2453,11 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
   }
 
   private static void withCurrentStorageOwner(CurrentStorageProof proof) throws Exception {
+    withCurrentStorageOwner(null, proof);
+  }
+
+  private static void withCurrentStorageOwner(String target, CurrentStorageProof proof)
+      throws Exception {
     String schema = "world_current_storage_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
@@ -1912,7 +2469,13 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     Path root = repositoryRoot();
     try {
-      flyway(source, schema, null, worldMigrations(root), sagaMigrations(root)).migrate();
+      flyway(
+              source,
+              schema,
+              target == null ? null : MigrationVersion.fromVersion(target),
+              worldMigrations(root),
+              sagaMigrations(root))
+          .migrate();
       var upstream = controlledSource();
       var intake =
           Objects.requireNonNull(

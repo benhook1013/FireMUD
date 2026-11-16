@@ -62,6 +62,7 @@ import org.junit.jupiter.api.Test;
 import org.postgresql.PGConnection;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -505,6 +506,210 @@ class WorldCanonicalFrozenTopologyJournalIntegrationTest {
     assertThat(service(dsl).readCommitted(fixture.request()).orElseThrow().resultBytes())
         .containsExactly(original.resultBytes());
     assertOrigin();
+  }
+
+  @Test
+  void retainedJournalRejectsEveryChangedFieldThroughBothIndependentReads() throws Exception {
+    var fixture = fixture();
+    var original = service(dsl).capture(fixture.request());
+    var before = snapshotRows();
+    var mutations = new LinkedHashMap<String, Object>();
+    mutations.put("result_bytes", new byte[] {1});
+    mutations.put("storage_result_bytes", new byte[] {1});
+    mutations.put("binding_digest", "sha256:" + "f".repeat(64));
+    mutations.put("binding_json", "{}");
+    mutations.put("identity_json", "{}");
+    mutations.put("intake_json", "{}");
+    mutations.put(
+        "owner_binding_json",
+        WorldDraftTopologyCommitRepository.ownerBindingJson(fixture.request().plan().ownerBinding())
+            .replace("firemud", "other"));
+    var changedFreeze = (ObjectNode) JSON.valueToTree(fixture.request().freeze());
+    changedFreeze.put("contentDigest", flipped(fixture.request().freeze().contentDigest()));
+    mutations.put("freeze_request_json", JSON.writeValueAsString(changedFreeze));
+    mutations.put("graph_sha256", "f".repeat(64));
+    mutations.put("capture_id", UUID.randomUUID());
+    mutations.put("request_id", UUID.randomUUID());
+    mutations.put("commit_id", UUID.randomUUID());
+    mutations.put("version_identity_operation_id", UUID.randomUUID());
+    mutations.put("capture_status", "UNKNOWN");
+    for (var mutation : mutations.entrySet()) {
+      try (Connection connection = source.getConnection()) {
+        var clone = DSL.using(connection, SQLDialect.POSTGRES);
+        clone.execute(
+            "CREATE TEMP TABLE world_canonical_frozen_topology AS SELECT * FROM "
+                + SCHEMA
+                + ".world_canonical_frozen_topology WHERE publication_fence=?",
+            fixture.request().freeze().publicationFence());
+        assertThat(
+                clone
+                    .fetchSingle(
+                        "SELECT pg_my_temp_schema()=relnamespace FROM pg_class "
+                            + "WHERE oid='world_canonical_frozen_topology'::regclass")
+                    .get(0, Boolean.class))
+            .isTrue();
+        var deniedOwner = mock(WorldAuthoredGraphSnapshotRepository.class);
+        var deniedDigest = mock(WorldDraftDesignDigestService.class);
+        var reader =
+            new WorldCanonicalFrozenTopologyRepository(
+                clone, deniedOwner, topology(clone), deniedDigest);
+        assertThat(reader.readCommitted(fixture.request()).orElseThrow().resultBytes())
+            .containsExactly(original.resultBytes());
+        assertThat(reader.readCommitted(fixture.request().freeze()).orElseThrow().captureId())
+            .isEqualTo(original.captureId());
+        assertThat(
+                clone.execute(
+                    "UPDATE world_canonical_frozen_topology SET " + mutation.getKey() + "=?",
+                    mutation.getValue()))
+            .isEqualTo(1);
+        String damaged =
+            clone
+                .fetchSingle(
+                    "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) FROM world_canonical_frozen_topology t")
+                .get(0, String.class);
+        assertThatThrownBy(() -> reader.readCommitted(fixture.request()))
+            .as("complete original journal field %s", mutation.getKey())
+            .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> reader.readCommitted(fixture.request().freeze()))
+            .as("selector reconstructs and rejects changed journal field %s", mutation.getKey())
+            .isInstanceOf(RuntimeException.class);
+        assertThat(
+                clone
+                    .fetchSingle(
+                        "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) FROM world_canonical_frozen_topology t")
+                    .get(0, String.class))
+            .isEqualTo(damaged);
+        verifyNoInteractions(deniedOwner, deniedDigest);
+      }
+      assertThat(snapshotRows()).isEqualTo(before);
+    }
+    assertThatThrownBy(
+            () ->
+                write.execute(
+                    status -> {
+                      dsl.execute(
+                          "TRUNCATE " + SCHEMA + ".world_canonical_frozen_topology CASCADE");
+                      throw new AssertionError(
+                          "Journal TRUNCATE guard unexpectedly permitted a write");
+                    }))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("immutable");
+    assertThat(snapshotRows()).isEqualTo(before);
+    assertThat(service(dsl).readCommitted(fixture.request()).orElseThrow().resultBytes())
+        .containsExactly(original.resultBytes());
+    assertOrigin();
+  }
+
+  @Test
+  void actualPreCaptureRefusalsLeaveEveryCanonicalOwnerRowUnchanged() throws Exception {
+    var fixture = fixture();
+    assertThat(count(fixture.request())).isZero();
+    var before = snapshotRows();
+    var mutations = new LinkedHashMap<String, String>();
+    mutations.put("storage", "DELETE FROM world_topology_draft_commit");
+    mutations.put("content", "UPDATE region SET weather='changed'");
+    mutations.put(
+        "fence",
+        "UPDATE world_design_publication_fence_owner SET current_publication_fence='"
+            + UUID.randomUUID()
+            + "'");
+    for (String phase : List.of("PUBLISHED", "ABORTED", "RECONCILIATION_REQUIRED")) {
+      mutations.put(
+          phase,
+          "UPDATE world_design_publication_fence_owner SET owner_freeze_phase='" + phase + "'");
+    }
+    mutations.put("digest", "SELECT 1");
+    for (var mutation : mutations.entrySet()) {
+      try (Connection connection = source.getConnection()) {
+        var clone = DSL.using(connection, SQLDialect.POSTGRES);
+        for (String table : OWNER_TABLES) {
+          clone.execute("CREATE TEMP TABLE " + table + " AS SELECT * FROM " + SCHEMA + "." + table);
+        }
+        assertThat(
+                clone
+                    .fetchSingle(
+                        "SELECT pg_my_temp_schema()=relnamespace FROM pg_class "
+                            + "WHERE oid='world_design_publication_fence_owner'::regclass")
+                    .get(0, Boolean.class))
+            .isTrue();
+        clone.execute(mutation.getValue());
+        var single = new SingleConnectionDataSource(connection, true);
+        var transaction = new TransactionTemplate(new DataSourceTransactionManager(single));
+        transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+        WorldDraftDesignDigestService currentDigest = digest(clone);
+        WorldDraftDesignDigestService selectedDigest = currentDigest;
+        if (mutation.getKey().equals("digest")) {
+          selectedDigest =
+              new WorldDraftDesignDigestService() {
+                @Override
+                public WorldDraftDesignDigest getDraftDesignDigest(String tenant, String version) {
+                  throw new AssertionError("Selected capture must not request ordinary digest");
+                }
+
+                @Override
+                public WorldDraftDesignDigest getSelectedDraftDesignDigest(
+                    String tenant,
+                    String version,
+                    WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration closure) {
+                  var actual = currentDigest.getSelectedDraftDesignDigest(tenant, version, closure);
+                  return new WorldDraftDesignDigest(
+                      actual.tenantId(),
+                      Long.toString(Long.parseLong(actual.scopeValue()) + 1),
+                      actual.appliedCommitId(),
+                      actual.contentDigest(),
+                      actual.digestSchemaVersion());
+                }
+              };
+        }
+        var repository =
+            new WorldCanonicalFrozenTopologyRepository(
+                clone,
+                new WorldAuthoredGraphSnapshotRepository(clone),
+                topology(clone),
+                selectedDigest);
+        assertThat(repository.readCommitted(fixture.request())).isEmpty();
+        var damaged = snapshotCloneRows(clone);
+        String diagnostic =
+            switch (mutation.getKey()) {
+              case "storage" -> "no committed complete topology result";
+              case "content" -> "every exact payload field";
+              case "fence" -> "retained V25 owner binding";
+              case "digest" -> "exact frozen content checkpoint";
+              default -> "exact current FROZEN attempt";
+            };
+        assertThatThrownBy(
+                () -> transaction.execute(status -> repository.capture(fixture.request())))
+            .as("actual capture refuses %s", mutation.getKey())
+            .hasMessageContaining(diagnostic);
+        assertThat(snapshotCloneRows(clone)).isEqualTo(damaged);
+        assertThat(
+                clone
+                    .fetchSingle(
+                        "SELECT count(*) FROM world_canonical_frozen_topology WHERE publication_fence=?",
+                        fixture.request().freeze().publicationFence())
+                    .get(0, Long.class))
+            .isZero();
+        assertThat(connection.getAutoCommit()).isTrue();
+      }
+      assertThat(snapshotRows()).isEqualTo(before);
+    }
+    // These damaged clones model historical invalid states, not legal terminal transitions.
+    assertOrigin();
+  }
+
+  private static Map<String, List<String>> snapshotCloneRows(DSLContext clone) {
+    var rows = new LinkedHashMap<String, List<String>>();
+    for (String table : OWNER_TABLES) {
+      rows.put(
+          table,
+          clone
+              .fetch(
+                  "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::text,xmin::text")
+              .getValues(0, String.class));
+    }
+    return Map.copyOf(rows);
   }
 
   private static DSLContext observeOwnerLock(AtomicInteger pid, CountDownLatch entered) {
