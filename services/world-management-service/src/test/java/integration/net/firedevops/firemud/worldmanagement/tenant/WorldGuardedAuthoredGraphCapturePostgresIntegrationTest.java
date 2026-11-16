@@ -556,6 +556,44 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       assertThat(retried).usingRecursiveComparison().isEqualTo(stored);
       assertThat(retainedTableSnapshot(dsl, schema, retainedTables)).isEqualTo(beforeRetry);
 
+      // Concurrent historical retries serialize on the actual retained publication owner;
+      // neither contender may refresh the graph or promote retained bytes to current authority.
+      CountDownLatch firstHeld = new CountDownLatch(1);
+      CountDownLatch releaseFirst = new CountDownLatch(1);
+      CountDownLatch secondStarted = new CountDownLatch(1);
+      AtomicReference<Integer> firstPid = new AtomicReference<>();
+      AtomicReference<Integer> secondPid = new AtomicReference<>();
+      ExecutorService retries = Executors.newFixedThreadPool(2);
+      try {
+        Future<WorldAuthoredGraphSnapshot> firstRetry = retries.submit(() -> write.execute(status -> {
+          firstPid.set(dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+          var original = capture.capture(request);
+          firstHeld.countDown();
+          await(releaseFirst);
+          return original;
+        }));
+        await(firstHeld);
+        Future<WorldAuthoredGraphSnapshot> secondRetry = retries.submit(() -> write.execute(status -> {
+          secondPid.set(dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+          secondStarted.countDown();
+          return capture.capture(request);
+        }));
+        await(secondStarted);
+        awaitOwnerRowLockWait(dsl, Objects.requireNonNull(secondPid.get()), Objects.requireNonNull(firstPid.get()));
+        assertThat(secondRetry.isDone()).isFalse();
+        releaseFirst.countDown();
+        assertThat(Objects.requireNonNull(firstRetry.get(20, TimeUnit.SECONDS)))
+            .usingRecursiveComparison().isEqualTo(stored);
+        assertThat(Objects.requireNonNull(secondRetry.get(20, TimeUnit.SECONDS)))
+            .usingRecursiveComparison().isEqualTo(stored);
+      } finally {
+        releaseFirst.countDown();
+        retries.shutdownNow();
+        assertThat(retries.awaitTermination(20, TimeUnit.SECONDS)).isTrue();
+      }
+      assertThat(retainedTableSnapshot(dsl, schema, retainedTables)).isEqualTo(beforeRetry);
+      verifyNoInteractions(unusedDigest);
+
       // Carry the donor's changed-checkpoint and persisted-snapshot tamper vectors through
       // the real current migrations. This is retained schema-2 readback, not fresh capture proof.
       var changedCheckpoint =
