@@ -1,0 +1,644 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  AccountControlUiApiError,
+  accountControlUiLoginTimeoutMs,
+  type AccountControlUiApi,
+  type AccountControlUiLoginRequest,
+} from '../api/accountControlUi';
+import {
+  ControlUiSessionError,
+  createControlUiSessionStore,
+} from './controlUiSession';
+
+const origin = 'https://gateway.example.test';
+const accountId = '11111111-1111-4111-8111-111111111111';
+const subscriptionId = '22222222-2222-4222-8222-222222222222';
+const authToken = 'header.payload.signature';
+const stores = new Set<ReturnType<typeof createControlUiSessionStore>>();
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function ids() {
+  const values = [
+    '33333333-3333-4333-8333-333333333333',
+    '44444444-4444-4444-8444-444444444444',
+    '55555555-5555-4555-8555-555555555555',
+    '66666666-6666-4666-8666-666666666666',
+    '77777777-7777-4777-8777-777777777777',
+    '88888888-8888-4888-8888-888888888888',
+    '99999999-9999-4999-8999-999999999999',
+  ];
+  let index = 0;
+  return () => values[index++] ?? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+}
+
+function successfulLogin(
+  expiresAt = new Date(Date.now() + 60_000).toISOString()
+) {
+  return {
+    accountId,
+    authToken,
+    expiresAt,
+  };
+}
+
+function makeStore(
+  options: {
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    clearQueryCache?: () => void;
+  } = {}
+) {
+  const store = createControlUiSessionStore({
+    origin: () => origin,
+    fetchImpl: options.fetchImpl ?? vi.fn<typeof fetch>(),
+    now: options.now,
+    idFactory: ids(),
+    clearQueryCache: options.clearQueryCache,
+  });
+  stores.add(store);
+  return store;
+}
+
+function loginApi(result = successfulLogin()): AccountControlUiApi {
+  return {
+    login: vi.fn<AccountControlUiApi['login']>().mockResolvedValue(result),
+  };
+}
+
+function getRequest(
+  url = new URL(
+    `/api/account/billing/hosting/subscriptions/${subscriptionId}/first-invoice`,
+    origin
+  )
+) {
+  return {
+    url,
+    init: { method: 'GET', headers: { Accept: 'application/json' } },
+  };
+}
+
+afterEach(() => {
+  for (const store of stores) store.signOut();
+  stores.clear();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe('memory-only control-ui session owner', () => {
+  it('uses one login attempt with stable IDs and attaches the current bearer only to the exact owner read', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ state: 'AWAITING_PAYMENT' }), {
+        status: 200,
+      })
+    );
+    const store = makeStore({ fetchImpl });
+    const sentLoginRequests: AccountControlUiLoginRequest[] = [];
+    const login = vi
+      .fn<AccountControlUiApi['login']>()
+      .mockImplementation(async (request) => {
+        sentLoginRequests.push({ ...request });
+        return successfulLogin();
+      });
+    const api: AccountControlUiApi = { login };
+
+    const session = await store.signIn(api, {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const [loginRequest] = sentLoginRequests;
+    expect(login).toHaveBeenCalledOnce();
+    expect(loginRequest).toMatchObject({
+      requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      callerContextId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    expect(login.mock.calls[0][0].secret).toBe('');
+    expect(session).not.toHaveProperty('authToken');
+
+    const { url, init } = getRequest();
+    const response = await store.authenticatedRequest(url, init);
+    expect(await response.json()).toEqual({ state: 'AWAITING_PAYMENT' });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [sentUrl, sentInit] = fetchImpl.mock.calls[0];
+    expect(sentUrl).toEqual(url);
+    expect(new Headers(sentInit?.headers).get('authorization')).toBe(
+      `Bearer ${authToken}`
+    );
+    expect(sentInit).toMatchObject({
+      method: 'GET',
+      credentials: 'omit',
+      cache: 'no-store',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+      mode: 'same-origin',
+    });
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it('rejects cross-origin, non-HTTPS, wrong-route, and caller-supplied bearer requests before dispatch', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const store = makeStore({ fetchImpl });
+    await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+
+    const cases = [
+      getRequest(
+        new URL(
+          `/api/account/billing/hosting/subscriptions/${subscriptionId}/first-invoice`,
+          'https://attacker.example.test'
+        )
+      ),
+      getRequest(
+        new URL(
+          `/api/account/billing/hosting/subscriptions/${subscriptionId}/first-invoice`,
+          'http://gateway.example.test'
+        )
+      ),
+      getRequest(new URL('/api/account/auth/logout', origin)),
+      {
+        ...getRequest(),
+        init: {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            Authorization: 'Bearer caller-supplied',
+          },
+        },
+      },
+    ];
+
+    for (const { url, init } of cases) {
+      await expect(
+        store.authenticatedRequest(url, init)
+      ).rejects.toBeInstanceOf(ControlUiSessionError);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('clears local auth and query state on expiry and sign-out', async () => {
+    vi.useFakeTimers();
+    const clearQueryCache = vi.fn();
+    const store = makeStore({ clearQueryCache });
+    await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    expect(store.getSession()).not.toBeNull();
+
+    vi.advanceTimersByTime(60_001);
+    expect(store.getSession()).toBeNull();
+    expect(clearQueryCache).toHaveBeenCalled();
+
+    const secondStore = makeStore({ clearQueryCache });
+    await secondStore.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const countBeforeSignOut = clearQueryCache.mock.calls.length;
+    secondStore.signOut();
+    expect(secondStore.getSession()).toBeNull();
+    expect(clearQueryCache.mock.calls.length).toBe(countBeforeSignOut + 1);
+  });
+
+  it('rearms expiry when the wall clock rolls back before the timer fires', async () => {
+    const initialTime = 1_700_000_000_000;
+    let now = initialTime;
+    vi.useFakeTimers({ now: initialTime });
+    const clearQueryCache = vi.fn();
+    const store = makeStore({
+      now: () => now,
+      clearQueryCache,
+    });
+    await store.signIn(
+      loginApi(successfulLogin(new Date(initialTime + 60_000).toISOString())),
+      { email: 'owner@example.com', secret: 'primary-secret' }
+    );
+    const clearQueryCacheCalls = clearQueryCache.mock.calls.length;
+
+    now = initialTime - 100_000;
+    vi.advanceTimersByTime(60_000);
+
+    expect(store.getSession()).not.toBeNull();
+    expect(clearQueryCache.mock.calls.length).toBe(clearQueryCacheCalls);
+
+    now = initialTime + 60_000;
+    vi.advanceTimersByTime(160_000);
+
+    expect(store.getSession()).toBeNull();
+    expect(clearQueryCache.mock.calls.length).toBe(clearQueryCacheCalls + 1);
+  });
+
+  it('keeps an ordinary 503 session but clears it after an authentication rejection', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response('private error details', { status: 503 })
+      );
+    const store = makeStore({ fetchImpl });
+    await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const { url, init } = getRequest();
+    const unavailable = await store.authenticatedRequest(url, init);
+    expect(unavailable.status).toBe(503);
+    expect(store.getSession()).not.toBeNull();
+
+    fetchImpl.mockResolvedValue(
+      new Response('private error details', { status: 401 })
+    );
+    await expect(store.authenticatedRequest(url, init)).rejects.toMatchObject({
+      code: 'AUTH_REJECTED',
+    });
+    expect(store.getSession()).toBeNull();
+  });
+
+  it.each(['AUTH_INVALID_CREDENTIALS', 'INVALID_CREDENTIALS'])(
+    'keeps a valid bearer after reauthentication returns %s',
+    async (code) => {
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            status: 'ERROR',
+            data: null,
+            error: { code, message: 'Invalid credentials' },
+          }),
+          {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      );
+      const store = makeStore({ fetchImpl });
+      const session = await store.signIn(loginApi(), {
+        email: 'owner@example.com',
+        secret: 'primary-secret',
+      });
+      const url = new URL(
+        `/api/account/billing/hosting/subscriptions/${subscriptionId}/first-invoice/reauthenticate`,
+        origin
+      );
+
+      const response = await store.authenticatedRequest(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: { code } });
+      expect(store.getSession()).toEqual(session);
+      expect(
+        new Headers(fetchImpl.mock.calls[0][1]?.headers).get('authorization')
+      ).toBe(`Bearer ${authToken}`);
+    }
+  );
+
+  it('still clears the bearer for a reauthentication session rejection', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ code: 'AUTH_SESSION_REVOKED' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const store = makeStore({ fetchImpl });
+    await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const url = new URL(
+      `/api/account/billing/hosting/subscriptions/${subscriptionId}/first-invoice/reauthenticate`,
+      origin
+    );
+
+    await expect(
+      store.authenticatedRequest(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      })
+    ).rejects.toMatchObject({ code: 'AUTH_REJECTED' });
+    expect(store.getSession()).toBeNull();
+  });
+
+  it('does not treat a credential code on an owner read as a reauthentication denial', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'ERROR',
+          data: null,
+          error: {
+            code: 'AUTH_INVALID_CREDENTIALS',
+            message: 'Invalid credentials',
+          },
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    const store = makeStore({ fetchImpl });
+    await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const { url, init } = getRequest();
+
+    await expect(store.authenticatedRequest(url, init)).rejects.toMatchObject({
+      code: 'AUTH_REJECTED',
+    });
+    expect(store.getSession()).toBeNull();
+  });
+
+  it('times out a stalled owner fetch and ignores its late auth rejection', async () => {
+    vi.useFakeTimers();
+    const pending = deferred<Response>();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ state: 'AWAITING_PAYMENT' }), {
+          status: 200,
+        })
+      );
+    const store = makeStore({ fetchImpl });
+    const session = await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const { url, init } = getRequest();
+    const request = store.authenticatedRequest(url, init);
+    const failure = expect(request).rejects.toMatchObject({
+      code: 'REQUEST_FAILED',
+    });
+
+    await vi.advanceTimersByTimeAsync(accountControlUiLoginTimeoutMs);
+    await failure;
+    expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(store.getSession()).toEqual(session);
+
+    const lateUnauthorized = new Response('private auth details', {
+      status: 401,
+    });
+    const cancelLateBody = vi.spyOn(lateUnauthorized.body!, 'cancel');
+    pending.resolve(lateUnauthorized);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cancelLateBody).toHaveBeenCalledOnce();
+
+    const recovered = await store.authenticatedRequest(url, init);
+    expect(await recovered.json()).toEqual({ state: 'AWAITING_PAYMENT' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(store.getSession()).toEqual(session);
+  });
+
+  it('times out a stalled owner response body and cancels its reader', async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"state":'));
+        },
+        cancel,
+      }),
+      { status: 200 }
+    );
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response);
+    const store = makeStore({ fetchImpl });
+    const session = await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const { url, init } = getRequest();
+    const request = store.authenticatedRequest(url, init);
+    const failure = expect(request).rejects.toMatchObject({
+      code: 'REQUEST_FAILED',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(response.body?.locked).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(accountControlUiLoginTimeoutMs);
+    await failure;
+    expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(store.getSession()).toEqual(session);
+  });
+
+  it('does not retry a timed-out payment write or deliver its late success', async () => {
+    vi.useFakeTimers();
+    const pending = deferred<Response>();
+    const fetchImpl = vi.fn<typeof fetch>().mockReturnValue(pending.promise);
+    const store = makeStore({ fetchImpl });
+    const session = await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const url = new URL(
+      `/api/account/billing/hosting/subscriptions/${subscriptionId}/first-invoice/confirm`,
+      origin
+    );
+    const request = store.authenticatedRequest(url, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ acceptCharge: true }),
+    });
+    const failure = expect(request).rejects.toMatchObject({
+      code: 'REQUEST_FAILED',
+    });
+
+    await vi.advanceTimersByTimeAsync(accountControlUiLoginTimeoutMs);
+    await failure;
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(store.getSession()).toEqual(session);
+
+    const lateSuccess = new Response(JSON.stringify({ status: 'succeeded' }), {
+      status: 200,
+    });
+    const cancelLateBody = vi.spyOn(lateSuccess.body!, 'cancel');
+    pending.resolve(lateSuccess);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cancelLateBody).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(store.getSession()).toEqual(session);
+  });
+
+  it('denies a stale owner response after sign-out even if fetch ignores abort', async () => {
+    const pending = deferred<Response>();
+    const fetchImpl = vi.fn<typeof fetch>().mockReturnValue(pending.promise);
+    const store = makeStore({ fetchImpl });
+    await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const { url, init } = getRequest();
+    const request = store.authenticatedRequest(url, init);
+    await Promise.resolve();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+
+    store.signOut();
+    pending.resolve(
+      new Response(JSON.stringify({ state: 'COMMITTED' }), { status: 200 })
+    );
+    await expect(request).rejects.toMatchObject({ code: 'SESSION_REPLACED' });
+    expect(store.getSession()).toBeNull();
+  });
+
+  it('aborts and denies old owner work when a signed-in identity is replaced', async () => {
+    const pending = deferred<Response>();
+    const fetchImpl = vi.fn<typeof fetch>().mockReturnValue(pending.promise);
+    const clearQueryCache = vi.fn();
+    const store = makeStore({ fetchImpl, clearQueryCache });
+    await store.signIn(loginApi(), {
+      email: 'first@example.com',
+      secret: 'first-secret',
+    });
+    const oldSession = store.getSession();
+    const { url, init } = getRequest();
+    const request = store.authenticatedRequest(url, init);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+
+    const nextSession = await store.signIn(
+      loginApi({
+        accountId,
+        authToken: 'next.header.signature',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      { email: 'second@example.com', secret: 'second-secret' }
+    );
+    pending.resolve(
+      new Response(JSON.stringify({ state: 'COMMITTED' }), { status: 200 })
+    );
+
+    await expect(request).rejects.toMatchObject({ code: 'SESSION_REPLACED' });
+    expect(oldSession?.identity).not.toBe(nextSession.identity);
+    expect(store.getSession()?.identity).toBe(nextSession.identity);
+    expect(clearQueryCache.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('denies a stale login response when a newer attempt replaces it', async () => {
+    const earlier = deferred<ReturnType<typeof successfulLogin>>();
+    const login = vi
+      .fn<AccountControlUiApi['login']>()
+      .mockReturnValueOnce(earlier.promise)
+      .mockResolvedValueOnce(successfulLogin());
+    const store = makeStore();
+    const api: AccountControlUiApi = { login };
+
+    const first = store
+      .signIn(api, { email: 'first@example.com', secret: 'first-secret' })
+      .catch((error: unknown) => error);
+    const second = await store.signIn(api, {
+      email: 'second@example.com',
+      secret: 'second-secret',
+    });
+    earlier.resolve(successfulLogin());
+
+    expect(await first).toMatchObject({ code: 'SESSION_REPLACED' });
+    expect(store.getSession()?.identity).toBe(second.identity);
+    expect(login).toHaveBeenCalledTimes(2);
+    expect(login.mock.calls[0][0].requestId).not.toBe(
+      login.mock.calls[1][0].requestId
+    );
+  });
+
+  it('expires uncertain IDs at the original submission bound despite a second lost reply', async () => {
+    vi.useFakeTimers();
+    const store = makeStore();
+    const login = vi
+      .fn<AccountControlUiApi['login']>()
+      .mockRejectedValue(new AccountControlUiApiError(0));
+    const api = { login };
+    const email = 'owner@example.com';
+    const submit = () => store.signIn(api, { email, secret: '012345' });
+
+    await expect(submit()).rejects.toMatchObject({ status: 0 });
+    vi.advanceTimersByTime(59_999);
+    await expect(submit()).rejects.toMatchObject({ status: 0 });
+    expect(login.mock.calls[1][0]).toEqual(login.mock.calls[0][0]);
+
+    vi.advanceTimersByTime(1);
+    expect(store.canRetrySignIn(email)).toBe(false);
+    await expect(submit()).rejects.toMatchObject({ status: 0 });
+    expect(login.mock.calls[2][0].requestId).not.toBe(
+      login.mock.calls[0][0].requestId
+    );
+    expect(login.mock.calls[2][0].callerContextId).not.toBe(
+      login.mock.calls[0][0].callerContextId
+    );
+  });
+
+  it.each(['email edit', 'sign-out', 'definitive rejection'])(
+    'drops the uncertain original after %s',
+    async (invalidation) => {
+      const store = makeStore();
+      const login = vi
+        .fn<AccountControlUiApi['login']>()
+        .mockRejectedValueOnce(new AccountControlUiApiError(0))
+        .mockResolvedValue(successfulLogin());
+      const api = { login };
+      const email = 'owner@example.com';
+      const submit = () => store.signIn(api, { email, secret: '012345' });
+
+      await expect(submit()).rejects.toMatchObject({ status: 0 });
+      expect(store.canRetrySignIn(email)).toBe(true);
+      if (invalidation === 'email edit') {
+        store.discardLoginRecoveryIfEmailChanged('other@example.com');
+      } else if (invalidation === 'sign-out') {
+        store.signOut();
+      } else {
+        login.mockRejectedValueOnce(new AccountControlUiApiError(409));
+        await expect(submit()).rejects.toMatchObject({ status: 409 });
+        expect(login.mock.calls[1][0]).toEqual(login.mock.calls[0][0]);
+      }
+
+      expect(store.canRetrySignIn(email)).toBe(false);
+      await submit();
+      const fresh = login.mock.lastCall![0];
+      expect(fresh.requestId).not.toBe(login.mock.calls[0][0].requestId);
+      expect(fresh.callerContextId).not.toBe(
+        login.mock.calls[0][0].callerContextId
+      );
+    }
+  );
+
+  it('rejects a buffered success body if the session changes before JSON is consumed', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ state: 'AWAITING_PAYMENT' }), {
+        status: 200,
+      })
+    );
+    const store = makeStore({ fetchImpl });
+    await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const { url, init } = getRequest();
+    const response = await store.authenticatedRequest(url, init);
+    store.signOut();
+    await expect(response.json()).rejects.toMatchObject({
+      code: 'SESSION_REPLACED',
+    });
+  });
+});

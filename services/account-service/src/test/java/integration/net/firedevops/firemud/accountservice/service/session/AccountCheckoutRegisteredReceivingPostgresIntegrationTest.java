@@ -1,11 +1,19 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.when;
 
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
+import io.grpc.ForwardingServerCallListener;
+import io.grpc.Metadata;
 import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
@@ -25,8 +33,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLContext;
+import net.firedevops.firemud.account.v1.AccountControlUiCredentialTransportClass;
+import net.firedevops.firemud.account.v1.AuthLoginRequest;
 import net.firedevops.firemud.accountservice.config.AccountCheckoutReceivingConfiguration;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding;
@@ -192,8 +204,33 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         denied.put("secret", "wrong-secret");
         assertThat(receiving.request("POST", "/api/account/auth/login", null, denied).statusCode())
             .isEqualTo(401);
-        var signedIn = receiving.request("POST", "/api/account/auth/login", null, login);
+        receiving.resetIngressObservations();
+        var signedIn =
+            receiving.request(
+                "POST",
+                "/api/account/auth/login",
+                null,
+                login,
+                Map.of(
+                    "Forwarded", "for=198.51.100.10;proto=https",
+                    "X-Forwarded-For", "198.51.100.20, 198.51.100.30",
+                    "X-Real-IP", "198.51.100.40",
+                    "X-Client-IP", "198.51.100.50"));
         assertThat(signedIn.statusCode()).isEqualTo(200);
+        var observedLogin = receiving.observedAuthLogin.get();
+        assertThat(observedLogin).isNotNull();
+        assertThat(observedLogin.getCanonicalClientAddressList()).containsExactly("127.0.0.1");
+        assertThat(observedLogin.getTransportClassList())
+            .containsExactly(
+                AccountControlUiCredentialTransportClass
+                    .ACCOUNT_CONTROL_UI_CREDENTIAL_TRANSPORT_CLASS_HTTP);
+        assertThat(receiving.rateLimitKeys)
+            .containsExactly(
+                List.of(
+                    "request_rate_limiter.{account-checkout-receiving.127.0.0.1}.tokens",
+                    "request_rate_limiter.{account-checkout-receiving.127.0.0.1}.timestamp"));
+        assertThat(observedLogin.getCanonicalClientAddressList())
+            .doesNotContain("198.51.100.10", "198.51.100.20", "198.51.100.40", "198.51.100.50");
         assertThat(signedIn.headers().firstValue("cache-control")).contains("no-store");
         var data = JSON.readTree(signedIn.body()).path("data");
         assertThat(data.path("accountId").asText()).isEqualTo(account.getAccountUuid().toString());
@@ -408,6 +445,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
     private URI origin;
     private ReactiveStringRedisTemplate rateLimitRedis;
     private RedisScript<List<Long>> rateLimitScript;
+    private final AtomicReference<AuthLoginRequest> observedAuthLogin = new AtomicReference<>();
+    private final List<List<String>> rateLimitKeys = new CopyOnWriteArrayList<>();
 
     RegisteredChain(
         Path directory,
@@ -585,7 +624,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
                     ServerInterceptors.intercept(
                         account.getBean(AccountControlUiAuthenticationGrpcService.class),
                         new GrpcPeerIdentityInterceptor(),
-                        account.getBean(AuthTokenInterceptor.class)))
+                        account.getBean(AuthTokenInterceptor.class),
+                        new AuthLoginRequestCapture(observedAuthLogin)))
                 .build()
                 .start();
         gateway = new AnnotationConfigApplicationContext();
@@ -626,14 +666,19 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         rateLimitScript = canonicalRateLimitScript();
         rateLimitRedis = org.mockito.Mockito.mock(ReactiveStringRedisTemplate.class);
         when(rateLimitRedis.execute(
-                org.mockito.ArgumentMatchers.same(rateLimitScript),
-                org.mockito.ArgumentMatchers.anyList(),
-                org.mockito.ArgumentMatchers.eq(List.of("20", "40", "", "1"))))
-            .thenReturn(Flux.just(List.of(1L, 39L)));
+                same(rateLimitScript), anyList(), eq(List.of("20", "40", "", "1"))))
+            .thenAnswer(
+                invocation -> {
+                  @SuppressWarnings("unchecked")
+                  List<String> keys = invocation.getArgument(1);
+                  rateLimitKeys.add(List.copyOf(keys));
+                  return Flux.just(List.of(1L, 39L));
+                });
         gateway.registerBean(ReactiveStringRedisTemplate.class, () -> rateLimitRedis);
         gateway.registerBean(
             RedisRateLimiter.REDIS_SCRIPT_NAME, RedisScript.class, () -> rateLimitScript);
         var headerTrust = new GatewayHeaderTrustProperties();
+        headerTrust.getForwardedClientIp().setTrustedProxyCidrs(List.of("127.0.0.1/32"));
         gateway.registerBean(
             HeaderTrustFilter.class,
             () ->
@@ -695,15 +740,27 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
 
     HttpResponse<String> request(String method, String path, String bearer, Object body)
         throws Exception {
+      return request(method, path, bearer, body, Map.of());
+    }
+
+    HttpResponse<String> request(
+        String method, String path, String bearer, Object body, Map<String, String> headers)
+        throws Exception {
       var request = HttpRequest.newBuilder(origin.resolve(path)).timeout(Duration.ofSeconds(20));
       if (bearer != null) request.header("Authorization", "Bearer " + bearer);
       if (body != null) request.header("Content-Type", "application/json");
+      headers.forEach((name, value) -> request.header(name, value));
       request.method(
           method,
           body == null
               ? HttpRequest.BodyPublishers.noBody()
               : HttpRequest.BodyPublishers.ofByteArray(JSON.writeValueAsBytes(body)));
       return browser.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    void resetIngressObservations() {
+      observedAuthLogin.set(null);
+      rateLimitKeys.clear();
     }
 
     HttpResponse<String> rawWebhook(String payload, String signature) throws Exception {
@@ -731,6 +788,29 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         tomcat.destroy();
       }
       if (account != null) account.close();
+    }
+  }
+
+  private static final class AuthLoginRequestCapture implements ServerInterceptor {
+    private final AtomicReference<AuthLoginRequest> observed;
+
+    private AuthLoginRequestCapture(AtomicReference<AuthLoginRequest> observed) {
+      this.observed = observed;
+    }
+
+    @Override
+    public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+        ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+      ServerCall.Listener<ReqT> delegate = next.startCall(call, headers);
+      return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(delegate) {
+        @Override
+        public void onMessage(ReqT message) {
+          if (message instanceof AuthLoginRequest loginRequest) {
+            observed.set(loginRequest);
+          }
+          super.onMessage(message);
+        }
+      };
     }
   }
 

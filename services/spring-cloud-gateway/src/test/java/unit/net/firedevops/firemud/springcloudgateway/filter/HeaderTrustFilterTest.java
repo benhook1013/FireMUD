@@ -3,9 +3,12 @@ package net.firedevops.firemud.springcloudgateway.filter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
+import io.netty.channel.Channel;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.Clock;
@@ -18,13 +21,30 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
 import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.http.HttpCookie;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.codec.ServerCodecConfigurer;
+import org.springframework.http.server.reactive.AbstractServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpRequestDecorator;
 import org.springframework.http.server.reactive.SslInfo;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
+import org.springframework.mock.http.server.reactive.MockServerHttpResponse;
 import org.springframework.mock.web.server.MockServerWebExchange;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilterChain;
+import org.springframework.web.server.adapter.DefaultServerWebExchange;
+import org.springframework.web.server.adapter.ForwardedHeaderTransformer;
+import org.springframework.web.server.i18n.AcceptHeaderLocaleContextResolver;
+import org.springframework.web.server.session.DefaultWebSessionManager;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.netty.Connection;
+import reactor.netty.http.server.HttpServerRequest;
 
 class HeaderTrustFilterTest {
   private static final Clock TCP_PROXY_CERTIFICATE_CLOCK = tcpProxyCertificateClock();
@@ -46,6 +66,79 @@ class HeaderTrustFilterTest {
 
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP"))
         .isEqualTo("1.2.3.4");
+  }
+
+  @Test
+  void directHttpsLoginFailsClosedWhenNativeSocketPeerIsUnavailable() {
+    GatewayHeaderTrustProperties properties = new GatewayHeaderTrustProperties();
+    properties.getForwardedClientIp().setTrustedProxyCidrs(List.of("192.0.2.0/24"));
+    var request =
+        MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+            .sslInfo(mock(SslInfo.class))
+            .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+            .header("X-Client-IP", "203.0.113.10")
+            .header("Forwarded", "for=198.51.100.10;proto=https")
+            .header("X-Forwarded-For", "198.51.100.20, 198.51.100.30")
+            .header("X-Real-IP", "198.51.100.40")
+            .header("X-Proxy-Client-IP", "198.51.100.50")
+            .build();
+    var original = MockServerWebExchange.from(request);
+    var canonical = filterThroughChain(legacyFilter(properties), original);
+    assertThat(VerifiedHttpClientOrigin.from(canonical)).isNull();
+    assertThat(canonical.getRequest().getHeaders().getFirst("X-Client-IP")).isNull();
+  }
+
+  @Test
+  void readsRawSocketPeerAfterFrameworkForwardedHeaderTransformation() {
+    InetSocketAddress socketPeer = new InetSocketAddress("192.0.2.10", 443);
+    InetSocketAddress forwardedPeer = new InetSocketAddress("198.51.100.10", 443);
+    HttpServerRequest nativeRequest =
+        mock(HttpServerRequest.class, withSettings().extraInterfaces(Connection.class));
+    Connection nativeConnection = (Connection) nativeRequest;
+    Channel channel = mock(Channel.class);
+    when(nativeConnection.channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(socketPeer);
+    // Reactor Netty's NATIVE strategy exposes the parsed peer through HttpServerRequest as well.
+    when(nativeRequest.remoteAddress()).thenReturn(forwardedPeer);
+
+    HttpHeaders headers = new HttpHeaders();
+    headers.set("Forwarded", "for=198.51.100.10;proto=https");
+    headers.set("X-Forwarded-For", "203.0.113.20");
+    headers.set("X-Client-IP", "203.0.113.30");
+    headers.set("X-Real-IP", "203.0.113.40");
+    headers.set("X-Proxy-Client-IP", "203.0.113.50");
+    GatewayHeaderTrustProperties properties = new GatewayHeaderTrustProperties();
+    properties.getForwardedClientIp().setTrustedProxyCidrs(List.of("192.0.2.0/24"));
+    var request =
+        new NativeSocketServerHttpRequest(
+            URI.create("http://localhost/api/account/auth/login"),
+            headers,
+            socketPeer,
+            mock(SslInfo.class),
+            nativeRequest);
+    var transformed = new ForwardedHeaderTransformer().apply(request);
+
+    assertThat(transformed.getURI().getScheme()).isEqualTo("https");
+    assertThat(transformed.getRemoteAddress().getHostString())
+        .isEqualTo(forwardedPeer.getHostString());
+    assertThat(transformed.getRemoteAddress().getPort()).isEqualTo(forwardedPeer.getPort());
+    assertThat(
+            ((HttpServerRequest) ServerHttpRequestDecorator.getNativeRequest(transformed))
+                .remoteAddress())
+        .isEqualTo(forwardedPeer);
+    var originalExchange =
+        new DefaultServerWebExchange(
+            transformed,
+            new MockServerHttpResponse(),
+            new DefaultWebSessionManager(),
+            ServerCodecConfigurer.create(),
+            new AcceptHeaderLocaleContextResolver());
+    var canonical = filterThroughChain(legacyFilter(properties), originalExchange);
+    var origin = VerifiedHttpClientOrigin.from(canonical);
+
+    assertThat(canonical.getRequest().getHeaders().getFirst("X-Client-IP")).isEqualTo("192.0.2.10");
+    assertThat(origin).isNotNull();
+    assertThat(origin.sourceContext().canonicalClientAddress()).isEqualTo("192.0.2.10");
   }
 
   @Test
@@ -294,6 +387,45 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void directLoginOverrideIsLimitedToExactPostHttpsRoute() {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.getForwardedClientIp().setTrustedProxyCidrs(List.of("192.0.2.0/24"));
+    HeaderTrustFilter filter = legacyFilter(props);
+
+    for (MockServerHttpRequest request :
+        List.of(
+            MockServerHttpRequest.get("https://localhost/api/account/auth/login")
+                .sslInfo(mock(SslInfo.class))
+                .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+                .header("Forwarded", "for=198.51.100.10")
+                .build(),
+            MockServerHttpRequest.post("https://localhost/api/account/auth/login/extra")
+                .sslInfo(mock(SslInfo.class))
+                .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+                .header("Forwarded", "for=198.51.100.10")
+                .build(),
+            MockServerHttpRequest.post("https://localhost/api/account/profile")
+                .sslInfo(mock(SslInfo.class))
+                .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+                .header("Forwarded", "for=198.51.100.10")
+                .build())) {
+      ServerWebExchange canonical = filterThroughChain(filter, MockServerWebExchange.from(request));
+      assertThat(canonical.getRequest().getHeaders().getFirst("X-Client-IP"))
+          .isEqualTo("198.51.100.10");
+    }
+
+    var insecureLogin =
+        MockServerHttpRequest.post("http://localhost/api/account/auth/login")
+            .remoteAddress(new InetSocketAddress("192.0.2.10", 443))
+            .header("Forwarded", "for=198.51.100.10")
+            .build();
+    ServerWebExchange canonicalInsecure =
+        filterThroughChain(filter, MockServerWebExchange.from(insecureLogin));
+    assertThat(canonicalInsecure.getRequest().getHeaders().getFirst("X-Client-IP"))
+        .isEqualTo("198.51.100.10");
+  }
+
+  @Test
   void doesNotTrustForwardedHeadersWhenRemoteIsNotTrusted() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getForwardedClientIp().setTrustedProxyCidrs(List.of("5.6.7.8/32"));
@@ -425,6 +557,68 @@ class HeaderTrustFilterTest {
     filter.filter(untrustedListenerExchange, ignored -> Mono.empty()).block();
     assertThat(untrustedListenerExchange.getResponse().getStatusCode())
         .isEqualTo(HttpStatus.FORBIDDEN);
+  }
+
+  @Test
+  void accountLoginDoesNotReceiveDirectSourceProofOnDedicatedTcpProxyListener() throws Exception {
+    GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
+    TcpProxyTrustPolicy policy =
+        new TcpProxyTrustPolicy(
+            certificateListenerProperties(),
+            headerProperties,
+            8080,
+            TCP_PROXY_CERTIFICATE_CLOCK,
+            Set.of("test"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
+    var request =
+        MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+            .localAddress(new InetSocketAddress("127.0.0.1", 8443))
+            .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+            .sslInfo(authenticatedTcpProxyPeer())
+            .header("Forwarded", "for=198.51.100.10")
+            .header("X-Forwarded-For", "198.51.100.20")
+            .header("X-Real-IP", "198.51.100.30")
+            .build();
+
+    ServerWebExchange canonical = filterThroughChain(filter, MockServerWebExchange.from(request));
+
+    assertThat(VerifiedHttpClientOrigin.from(canonical)).isNull();
+    assertThat(canonical.getRequest().getHeaders().getFirst("X-Client-IP")).isEqualTo("127.0.0.1");
+  }
+
+  @Test
+  void rejectsUntrustedAccountLoginOnDedicatedTcpProxyListener() throws Exception {
+    GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
+    TcpProxyTrustPolicy policy =
+        new TcpProxyTrustPolicy(
+            certificateListenerProperties(),
+            headerProperties,
+            8080,
+            TCP_PROXY_CERTIFICATE_CLOCK,
+            Set.of("test"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
+    var request =
+        MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+            .localAddress(new InetSocketAddress("127.0.0.1", 8443))
+            .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+            .sslInfo(mock(SslInfo.class))
+            .header("Forwarded", "for=198.51.100.10")
+            .build();
+    var exchange = MockServerWebExchange.from(request);
+    AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
+
+    filter
+        .filter(
+            exchange,
+            candidate -> {
+              delegated.set(candidate);
+              return Mono.empty();
+            })
+        .block();
+
+    assertThat(delegated.get()).isNull();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(VerifiedHttpClientOrigin.from(exchange)).isNull();
   }
 
   @Test
@@ -861,6 +1055,50 @@ class HeaderTrustFilterTest {
             8080,
             Clock.systemUTC(),
             Set.of("test")));
+  }
+
+  private static final class NativeSocketServerHttpRequest extends AbstractServerHttpRequest {
+    private final InetSocketAddress remoteAddress;
+    private final SslInfo sslInfo;
+    private final Object nativeRequest;
+
+    private NativeSocketServerHttpRequest(
+        URI uri,
+        HttpHeaders headers,
+        InetSocketAddress remoteAddress,
+        SslInfo sslInfo,
+        Object nativeRequest) {
+      super(HttpMethod.POST, uri, "", headers);
+      this.remoteAddress = remoteAddress;
+      this.sslInfo = sslInfo;
+      this.nativeRequest = nativeRequest;
+    }
+
+    @Override
+    public InetSocketAddress getRemoteAddress() {
+      return remoteAddress;
+    }
+
+    @Override
+    protected SslInfo initSslInfo() {
+      return sslInfo;
+    }
+
+    @Override
+    protected MultiValueMap<String, HttpCookie> initCookies() {
+      return new LinkedMultiValueMap<>();
+    }
+
+    @Override
+    public Flux<DataBuffer> getBody() {
+      return Flux.empty();
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T getNativeRequest() {
+      return (T) nativeRequest;
+    }
   }
 
   private static GatewayTcpProxyListenerProperties certificateListenerProperties() {
