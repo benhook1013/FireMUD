@@ -565,27 +565,40 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       AtomicReference<Integer> secondPid = new AtomicReference<>();
       ExecutorService retries = Executors.newFixedThreadPool(2);
       try {
-        Future<WorldAuthoredGraphSnapshot> firstRetry = retries.submit(() -> write.execute(status -> {
-          firstPid.set(dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-          var original = capture.capture(request);
-          firstHeld.countDown();
-          await(releaseFirst);
-          return original;
-        }));
+        Future<WorldAuthoredGraphSnapshot> firstRetry =
+            retries.submit(
+                () ->
+                    write.execute(
+                        status -> {
+                          firstPid.set(
+                              dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                          var original = capture.capture(request);
+                          firstHeld.countDown();
+                          await(releaseFirst);
+                          return original;
+                        }));
         await(firstHeld);
-        Future<WorldAuthoredGraphSnapshot> secondRetry = retries.submit(() -> write.execute(status -> {
-          secondPid.set(dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-          secondStarted.countDown();
-          return capture.capture(request);
-        }));
+        Future<WorldAuthoredGraphSnapshot> secondRetry =
+            retries.submit(
+                () ->
+                    write.execute(
+                        status -> {
+                          secondPid.set(
+                              dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                          secondStarted.countDown();
+                          return capture.capture(request);
+                        }));
         await(secondStarted);
-        awaitOwnerRowLockWait(dsl, Objects.requireNonNull(secondPid.get()), Objects.requireNonNull(firstPid.get()));
+        awaitOwnerRowLockWait(
+            dsl, Objects.requireNonNull(secondPid.get()), Objects.requireNonNull(firstPid.get()));
         assertThat(secondRetry.isDone()).isFalse();
         releaseFirst.countDown();
         assertThat(Objects.requireNonNull(firstRetry.get(20, TimeUnit.SECONDS)))
-            .usingRecursiveComparison().isEqualTo(stored);
+            .usingRecursiveComparison()
+            .isEqualTo(stored);
         assertThat(Objects.requireNonNull(secondRetry.get(20, TimeUnit.SECONDS)))
-            .usingRecursiveComparison().isEqualTo(stored);
+            .usingRecursiveComparison()
+            .isEqualTo(stored);
       } finally {
         releaseFirst.countDown();
         retries.shutdownNow();
