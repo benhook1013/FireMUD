@@ -16,7 +16,7 @@ function fixture() {
       head_sha: C, pull_requests: [{number: 7, head: {sha: C}, base: {sha: D}}]},
     pr: {number: 7, state: 'open', head: {sha: C, repo: {full_name: 'example/FireMUD'}},
       base: {ref: 'develop', repo: {full_name: 'example/FireMUD'}},
-      merge_commit_sha: A, user: {login: 'developer'}},
+      merge_commit_sha: A, labels: [], user: {login: 'developer'}},
     base: {object: {sha: B}}, merge: {sha: A, parents: [{sha: B}, {sha: C}]},
   };
 }
@@ -51,6 +51,9 @@ for (const [name, mutate] of Object.entries({
   forkCurrent: f => f.pr.head.repo.full_name = 'fork/FireMUD',
   wrongBaseRepository: f => f.pr.base.repo.full_name = 'fork/FireMUD',
   unsupportedBase: f => f.pr.base.ref = 'feature/stack',
+  missingLabels: f => delete f.pr.labels,
+  malformedLabels: f => f.pr.labels = [{name: 3}],
+  appBot: f => f.pr.user.login = 'app/renovate',
   bot: f => f.pr.user.login = 'renovate[bot]',
   currentBase: f => f.run.pull_requests[0].base.sha = B,
   invalidBase: f => f.base.object.sha = 'invalid',
@@ -69,4 +72,11 @@ test('observer has no checkout, artifact, candidate execution or extra permissio
   assert.equal(workflow.jobs.refresh.steps.length, 1);
   assert.match(workflow.jobs.refresh.steps[0].uses, /^actions\/github-script@[0-9a-f]{40}$/);
   assert.doesNotMatch(script, /downloadArtifact|downloadWorkflowRunArtifact|exec\(|spawn\(/);
+});
+
+test('priority stacked base refreshes even when source base is current', async () => {
+  const f = fixture(); f.pr.base.ref = 'feature/stack';
+  f.pr.labels = [{name: 'preview:priority'}]; f.run.pull_requests[0].base.sha = B;
+  const sent = await execute(f);
+  assert.equal(sent.length, 1); assert.equal(sent[0].client_payload.base_ref, 'feature/stack');
 });

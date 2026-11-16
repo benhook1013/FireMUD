@@ -43,11 +43,16 @@ jobs:
             const {data: pr} = await github.rest.pulls.get({
               ...context.repo, pull_number: source.number,
             });
+            const labelsValid = Array.isArray(pr.labels) &&
+              pr.labels.every(label => typeof label?.name === 'string');
+            const isPriority = labelsValid && pr.labels.some(label => label.name === 'preview:priority');
+            const isIntegrationBase = ['main', 'develop'].includes(pr.base?.ref);
             if (pr.state !== 'open' || pr.head?.repo?.full_name !== repository ||
                 pr.base?.repo?.full_name !== repository ||
                 pr.head.sha !== run.head_sha || source.head?.sha !== run.head_sha ||
-                !['main', 'develop'].includes(pr.base.ref) ||
-                ['dependabot[bot]', 'renovate[bot]'].includes(pr.user?.login) ||
+                !labelsValid || (!isIntegrationBase && !isPriority) ||
+                !/^[A-Za-z0-9._/-]+$/.test(pr.base.ref) ||
+                ['app/dependabot', 'dependabot[bot]', 'app/renovate', 'renovate[bot]'].includes(pr.user?.login) ||
                 !sha.test(pr.merge_commit_sha)) {
               core.info('Source is stale or ineligible; no dispatch.');
               return;
@@ -55,7 +60,7 @@ jobs:
             const {data: base} = await github.rest.git.getRef({
               ...context.repo, ref: `heads/${pr.base.ref}`,
             });
-            if (!sha.test(base.object?.sha) || source.base?.sha === base.object.sha) {
+            if (!sha.test(base.object?.sha) || (isIntegrationBase && source.base?.sha === base.object.sha)) {
               core.info('No stale source base to repair; no dispatch.');
               return;
             }
