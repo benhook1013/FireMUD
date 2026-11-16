@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.util.JsonFormat;
@@ -449,6 +450,30 @@ class WorldSelectedPublicationPostgresIntegrationTest {
       assertThat(publicationTerminalCount(dsl, acknowledgement.publicationFence())).isEqualTo(1L);
       assertThat(publicationTerminalBytes(dsl, acknowledgement.publicationFence()))
           .containsExactly(terminal.canonicalBytes());
+      // The real PUBLISHED transition above must not reopen capture or consult current digest
+      // production. Detached reads validate the original journal with actual immutable codecs.
+      var historicalOwner = mock(WorldAuthoredGraphSnapshotRepository.class);
+      var historicalDigest =
+          mock(net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService.class);
+      var historicalJournal =
+          new WorldCanonicalFrozenTopologyRepository(
+              dsl, historicalOwner, topology, historicalDigest);
+      var historicalService =
+          new WorldCanonicalFrozenTopologyService(historicalJournal, transactionManager);
+      var originalCapture = selectorSource.frozenTopology();
+      var originalRequest = originalCapture.request();
+      Map<String, List<String>> beforeHistoricalRetry = snapshotMutationRows(dsl);
+      assertThat(historicalJournal.readCommitted(originalRequest).orElseThrow().captureId())
+          .isEqualTo(originalCapture.captureId());
+      assertThat(
+              historicalJournal.readCommitted(originalRequest.freeze()).orElseThrow().resultBytes())
+          .containsExactly(originalCapture.resultBytes());
+      assertThat(historicalService.capture(originalRequest).resultBytes())
+          .containsExactly(originalCapture.resultBytes());
+      assertThat(historicalService.readCommitted(originalRequest).orElseThrow().captureId())
+          .isEqualTo(originalCapture.captureId());
+      verifyNoInteractions(historicalOwner, historicalDigest);
+      assertThat(snapshotMutationRows(dsl)).isEqualTo(beforeHistoricalRetry);
       String expectedWorldRequest =
           WorldPublicationTerminal.request(terminal.canonicalBytes()).worldRequestJson();
       String reformattedWorldRequest =
