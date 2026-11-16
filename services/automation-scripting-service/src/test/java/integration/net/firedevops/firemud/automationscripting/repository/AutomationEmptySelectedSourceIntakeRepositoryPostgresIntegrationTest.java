@@ -511,7 +511,7 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     dsl.execute(
         "INSERT INTO script_patch_base_bindings (tenant_id, script_patch_version, base_version_id) "
             + "VALUES (?, ?, ?)",
-        "unqualified-tenant-key",
+        "503",
         "unqualified-patch",
         503L);
     assertUnqualifiedDenial(fixture, requestDigest);
