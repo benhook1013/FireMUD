@@ -161,7 +161,9 @@ public final class LoopbackMtlsTestPki {
   private static Identity issueIdentity(
       Path directory, Path caStore, Path caFile, IdentitySpec identity) throws Exception {
     String alias = identity.alias();
-    String san = "URI:" + identity.workloadUri() + ",DNS:localhost,IP:127.0.0.1";
+    String san =
+        (identity.workloadUri() == null ? "" : "URI:" + identity.workloadUri() + ",")
+            + "DNS:localhost,IP:127.0.0.1";
     Path store = directory.resolve(alias + ".p12");
     Path request = directory.resolve(alias + ".csr");
     Path certificate = directory.resolve(alias + ".crt");
