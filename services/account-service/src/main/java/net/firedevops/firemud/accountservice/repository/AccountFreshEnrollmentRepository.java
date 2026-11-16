@@ -16,7 +16,8 @@ import org.jooq.Record;
 public final class AccountFreshEnrollmentRepository {
   private static final String SOURCE_CONSTRAINTS =
       "account_authority_source_generation_consistent, "
-          + "account_authority_source_fence_consistent, account_authority_source_record_consistent";
+          + "account_authority_source_fence_consistent, account_authority_source_record_consistent, "
+          + "account_fence_provenance_consistent";
 
   private final DSLContext dsl;
   private final AccountRepository accounts;
