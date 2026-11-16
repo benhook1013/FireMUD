@@ -556,6 +556,46 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       assertThat(retried).usingRecursiveComparison().isEqualTo(stored);
       assertThat(retainedTableSnapshot(dsl, schema, retainedTables)).isEqualTo(beforeRetry);
 
+      // Carry the donor's changed-checkpoint and persisted-snapshot tamper vectors through
+      // the real current migrations. This is retained schema-2 readback, not fresh capture proof.
+      var changedCheckpoint =
+          new WorldAuthoredGraphSnapshot.CaptureRequest(
+              request.targetNamespace(),
+              request.canonicalTenantId(),
+              request.canonicalVersionId(),
+              request.intakeRequestId(),
+              request.publicationFence(),
+              request.publicationRequestId(),
+              request.requestDigest(),
+              request.versionStateEpoch(),
+              request.publishWorkflowId(),
+              request.appliedCommitId() + "-changed",
+              request.contentDigest(),
+              request.digestSchemaVersion(),
+              request.suppliedOwnedAffectedTuples());
+      assertThatThrownBy(() -> write.execute(status -> capture.capture(changedCheckpoint)))
+          .isInstanceOf(WorldAuthoredGraphSnapshotRepository.SnapshotConflictException.class)
+          .hasMessageContaining("complete immutable V25 freeze attempt");
+      assertThat(retainedTableSnapshot(dsl, schema, retainedTables)).isEqualTo(beforeRetry);
+
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE world_authored_graph_snapshot SET graph_sha256 = ? WHERE snapshot_id = ?",
+                      "b".repeat(64),
+                      stored.snapshotId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("snapshot history is immutable")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("55000"));
+      assertThat(retainedTableSnapshot(dsl, schema, retainedTables)).isEqualTo(beforeRetry);
+      assertThat(snapshotRepository.findByFence(frozen.publicationFence()))
+          .usingRecursiveComparison()
+          .isEqualTo(stored);
+      WorldAuthoredGraphSnapshot replayAfterRejectedTamper =
+          Objects.requireNonNull(write.execute(status -> capture.capture(request)));
+      assertThat(replayAfterRejectedTamper).usingRecursiveComparison().isEqualTo(stored);
+      assertThat(retainedTableSnapshot(dsl, schema, retainedTables)).isEqualTo(beforeRetry);
+
       var changedTuples =
           new WorldAuthoredGraphSnapshot.CaptureRequest(
               request.targetNamespace(),
