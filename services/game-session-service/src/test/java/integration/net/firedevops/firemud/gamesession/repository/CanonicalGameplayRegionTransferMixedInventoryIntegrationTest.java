@@ -252,6 +252,7 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
           .capacity(proof.sql)
           .authorize(
               proof.admission, template, account, issuer, proof.execution, transferDeadline());
+      List<OriginalNewCapacityExecution> undelivered = new ArrayList<>();
       UUID transferId;
       List<CanonicalGameplayRegionOwnerTransferRepository.Item> captured;
       try (var finalReadback =
@@ -267,7 +268,6 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
         // Complete real FINAL before bulk SQL fixture setup consumes the live admission window.
         // The extra envelopes reuse the original transition and model dispatches that never reached
         // Redis. Seed the complete mixed cohort before transfer capture begins.
-        List<OriginalNewCapacityExecution> undelivered = new ArrayList<>();
         for (int index = 1; index < cohortSize; index++) {
           undelivered.add(proof.newControlledExecution());
         }
