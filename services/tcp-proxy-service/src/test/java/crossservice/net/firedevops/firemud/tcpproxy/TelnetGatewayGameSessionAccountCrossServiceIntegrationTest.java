@@ -453,13 +453,23 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               webSocketClient.awaitResponseMatching(
                   response -> response.contains("You drop Torch."), "drop response"))
           .contains("You drop Torch.");
+      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
+      var originalSession =
+          sessionContextService.findByGameplayIdentity(
+              TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID);
+      assertThat(originalSession).isPresent();
       webSocketClient.send("LOGOUT");
       assertThat(
               webSocketClient.awaitResponseMatching(
                   response -> response.contains("ERROR LOGOUT_UNAVAILABLE"),
                   "fail-closed logout response"))
           .contains("ERROR LOGOUT_UNAVAILABLE")
+          .contains("Logout is temporarily unavailable")
           .doesNotContain("OK LOGOUT");
+      assertThat(
+              sessionContextService.findByGameplayIdentity(
+                  TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID))
+          .isEqualTo(originalSession);
       // Refusal must not claim durable logout or close the still-authorized transport.
       int responsesBeforeLook = webSocketClient.responseCount();
       webSocketClient.send("LOOK");
