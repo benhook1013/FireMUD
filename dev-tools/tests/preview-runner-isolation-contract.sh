@@ -108,9 +108,9 @@ if not isinstance(preview_jobs, dict) or not preview_jobs:
     raise AssertionError("preview.yml must define source jobs")
 if not isinstance(trusted_jobs, dict) or not trusted_jobs:
     raise AssertionError("hosted-identity-request.yml must define trusted jobs")
-if set(preview_triggers) != {"pull_request_target", "repository_dispatch"}:
+if set(preview_triggers) != {"pull_request", "repository_dispatch"}:
     raise AssertionError(
-        "preview.yml must use only default-branch-owned pull_request_target and repository_dispatch triggers"
+        "preview.yml must use only credential-free pull_request and default-branch repository_dispatch triggers"
     )
 if preview_triggers["repository_dispatch"] != {"types": ["preview-deploy", "preview-destroy"]}:
     raise AssertionError("preview.yml must accept only typed preview deploy/destroy dispatches")
@@ -255,12 +255,10 @@ for path, job_names in protected_jobs.items():
                 f"{path.name}:{job_name} still consumes the legacy shared preview kubeconfig secret"
             )
 
-# The source workflow definition must not be selectable from a PR branch.
-# Typed repository dispatch and pull_request_target execute the default-branch
-# workflow; the source job may still check out an exact PR merge only on an
-# unprivileged GitHub-hosted runner.
+# Automatic pull_request source is untrusted; only typed repository dispatch
+# uses the default-branch workflow. Both render with credential-free tools.
 preview_source = preview_path.read_text(encoding="utf-8")
-if "workflow_dispatch" in preview_source or "on:\n  pull_request:" in preview_source:
+if "workflow_dispatch" in preview_source or "pull_request_target:" in preview_source:
     raise AssertionError("preview.yml retains a branch-selectable source trigger")
 if '"$EVENT_NAME" == repository_dispatch && "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH"' not in preview_source:
     raise AssertionError("preview.yml dispatch lacks a default-branch ref guard")
@@ -297,6 +295,8 @@ def check_preview_source_permissions(job_name: str, job: dict[str, Any]) -> None
             raise AssertionError(
                 "preview-runtime-base-refresh must have exactly contents:write and pull-requests:read"
             )
+        if "github.event_name == 'repository_dispatch'" not in str(job.get("if", "")):
+            raise AssertionError("preview runtime refresh write permissions require dispatch-only gating")
         return
     job_permissions_list = permissions(job_permissions)
     if any(permission.endswith(": write") for permission in job_permissions_list):
@@ -388,14 +388,33 @@ except AssertionError:
 else:
     raise AssertionError("preview runtime refresh extra permission mutation escaped source checking")
 
+refresh_with_pr_gate = dict(refresh_job)
+refresh_with_pr_gate["if"] = "${{ github.event_name == 'pull_request' }}"
+try:
+    check_preview_source_permissions("preview-runtime-base-refresh", refresh_with_pr_gate)
+except AssertionError:
+    pass
+else:
+    raise AssertionError("preview runtime refresh PR write mutation escaped source checking")
+
 # The plan's local actions and scripts must come from the default branch; the
 # render's PR checkout is exact, unprivileged, and bound to the planned merge.
 plan_checkouts = checkouts(preview_jobs["preview-plan"])
 if len(plan_checkouts) != 1 or plan_checkouts[0].get("with", {}).get("ref") != "${{ github.event.repository.default_branch }}":
     raise AssertionError("preview plan must check out the trusted default branch")
 render_checkouts = checkouts(preview_jobs["preview-render"])
-if len(render_checkouts) != 1 or render_checkouts[0].get("with", {}).get("ref") != "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge":
-    raise AssertionError("preview render must check out the exact PR merge ref")
+if len(render_checkouts) != 2:
+    raise AssertionError("preview render must isolate trusted tools and candidate chart checkouts")
+if render_checkouts[0].get("with", {}).get("ref") != "${{ github.event.repository.default_branch }}" or render_checkouts[0].get("with", {}).get("path") is not None:
+    raise AssertionError("preview render tools must remain rooted at the trusted default branch")
+if render_checkouts[1].get("with", {}).get("ref") != "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge" or render_checkouts[1].get("with", {}).get("path") != "candidate":
+    raise AssertionError("preview render must isolate the exact PR merge ref under candidate/")
+render_text = text(preview_jobs["preview-render"])
+for required in ("git -C candidate", "candidate/k8s/helm/firemud", "python3 ./dev-tools/hosted/preview/"):
+    if required not in render_text:
+        raise AssertionError(f"preview render lost isolated trusted-tools/candidate-data boundary: {required}")
+if re.search(r"(?:uses:|bash|python3)\s+(?:\./)?candidate/", render_text):
+    raise AssertionError("preview render executes candidate tools or local actions")
 for job_name, job in preview_jobs.items():
     for checkout in checkouts(job):
         if checkout.get("with", {}).get("persist-credentials") is not False:
@@ -405,12 +424,12 @@ trusted_target = next(
     if isinstance(step, dict) and step.get("id") == "target"
 )["run"]
 for required in (
-    "[[ \"$SOURCE_EVENT\" == pull_request_target || \"$SOURCE_EVENT\" == repository_dispatch ]]",
+    "[[ \"$SOURCE_EVENT\" == pull_request || \"$SOURCE_EVENT\" == repository_dispatch ]]",
     "require_source_field path '.github/workflows/preview.yml'",
     'require_source_field head "$WORKFLOW_RUN_HEAD_SHA"',
     'require_source_field head-branch "$DEFAULT_BRANCH"',
     "Ignoring source run without exactly one canonical preview artifact.",
-    '"$SOURCE_EVENT" == pull_request_target && "$ARTIFACT_KIND" != render',
+    '"$SOURCE_EVENT" == pull_request && "$ARTIFACT_KIND" != render',
     '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]]',
 ):
     if required not in trusted_target:
@@ -567,3 +586,6 @@ with tempfile.TemporaryDirectory() as temporary:
 
 print("preview runner isolation contract checks passed")
 PY
+
+# Exercise the metadata-only observer through this canonical isolation gate.
+node --test "$ROOT_DIR/dev-tools/tests/preview-runtime-refresh.test.cjs"

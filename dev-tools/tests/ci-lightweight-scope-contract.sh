@@ -2101,7 +2101,7 @@ for path_item in (
 ):
     require_list_item(
         preview,
-        ("on", "pull_request_target", "paths-ignore"),
+        ("on", "pull_request", "paths-ignore"),
         path_item,
         "preview workflow",
     )
