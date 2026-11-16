@@ -238,10 +238,17 @@ public class WorldDraftTopologyCommitRepository {
   /** Reuses the original closed source and Version evidence validators for detached history. */
   WorldAuthoredVersionIdentityReceipt verifyOriginalSource(
       WorldDraftTopologyCommitPlan plan, String identityJson, String intakeJson) {
-    DraftCommitBinding binding = plan.binding();
+    return verifyOriginalSource(plan.binding(), plan.ownerBinding(), identityJson, intakeJson);
+  }
+
+  /** Same closed retained-source validation for a non-fresh component commit. */
+  WorldAuthoredVersionIdentityReceipt verifyOriginalSource(
+      DraftCommitBinding binding,
+      WorldDesignPublicationFenceEvidence.OwnerBinding o,
+      String identityJson,
+      String intakeJson) {
     JsonNode identity = mapper.readTree(identityJson);
     JsonNode intake = mapper.readTree(intakeJson);
-    var o = plan.ownerBinding();
     requireField(identity, "operation_id", o.versionIdentityOperationId());
     requireField(identity, "target_namespace", o.targetNamespace());
     requireField(identity, "canonical_tenant_id", o.canonicalTenantId());
