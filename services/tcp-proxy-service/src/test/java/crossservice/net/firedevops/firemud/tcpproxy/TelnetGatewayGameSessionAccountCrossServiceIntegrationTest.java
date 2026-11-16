@@ -398,7 +398,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetItemLoopStillSucceedsAfterWebSocketLogoutOnSharedRuntime() throws Exception {
+  void telnetItemLoopStillSucceedsAfterUnavailableWebSocketLogoutAndClientClose() throws Exception {
     ensureTestServicesStarted();
 
     try (GameplayWebSocketDriver webSocketClient = openReadyGatewayWebSocketClient("gateway-1")) {
@@ -453,12 +453,22 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               webSocketClient.awaitResponseMatching(
                   response -> response.contains("You drop Torch."), "drop response"))
           .contains("You drop Torch.");
+      SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
+      var originalSession =
+          sessionContextService.findByGameplayIdentity(
+              TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID);
+      assertThat(originalSession).isPresent();
       webSocketClient.send("LOGOUT");
       assertThat(
               webSocketClient.awaitResponseMatching(
-                  response -> response.contains("OK LOGOUT") && response.contains("Logged out."),
-                  "logout response"))
-          .contains("OK LOGOUT");
+                  response -> response.contains("ERROR LOGOUT_UNAVAILABLE"),
+                  "fail-closed logout response"))
+          .contains("Logout is temporarily unavailable")
+          .doesNotContain("OK LOGOUT");
+      assertThat(
+              sessionContextService.findByGameplayIdentity(
+                  TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID))
+          .isEqualTo(originalSession);
     }
 
     try (GameplayTelnetDriver telnetClient = openReadyTelnetClient()) {
