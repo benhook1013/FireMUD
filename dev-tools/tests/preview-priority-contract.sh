@@ -2428,6 +2428,7 @@ grep -Fq -- 'gh api --paginate --slurp' "$RECONCILER_RUN"
 grep -Fq -- 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Event scopes include automatic renders and direct closed cleanup.
 grep -Fq -- 'for active_run_scope in branch pull_request pull_request_target workflow_run' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert literal workflow query variables.
 grep -Fq -- 'actions/runs?event=${active_run_scope}&status=${active_status}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert workflow_run consumers are included without a branch filter.
 grep -Fq -- 'actions/runs?event=workflow_run&status=${active_status}&per_page=100' "$RECONCILER_RUN"
