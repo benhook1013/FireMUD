@@ -165,7 +165,7 @@ public final class AccountGameplayDelegationRedisClient {
 
   public static final String SCRIPT_ID = "account.game-session-delegation-pending-register.v1";
   public static final String ISSUER_PROJECTION_SCRIPT_ID =
-      "account.game-session-delegation-authority-project-issuer.v1";
+      "account.game-session-delegation-authority-project-issuer.v2";
   public static final String ACCOUNT_PROJECTION_SCRIPT_ID =
       AccountGenerationProjectionRedisContract.SCRIPT_ID;
   public static final String TENANT_PROJECTION_SCRIPT_ID =
@@ -175,7 +175,7 @@ public final class AccountGameplayDelegationRedisClient {
   public static final String ACTIVE_TRANSITION_SCRIPT_ID =
       "account.game-session-delegation-activate-committed.v1";
   private static final String AUTHORITY_PROJECTION_SCRIPT_RESOURCE =
-      "redis/lua/account-game-session-delegation-authority-project.lua";
+      "redis/lua/account-game-session-delegation-authority-project-v2.lua";
   private static final String ACTIVE_TRANSITION_SCRIPT_RESOURCE =
       "redis/lua/account-game-session-delegation-activate-committed.lua";
   public static final String TOKEN_KEY_PREFIX = "session:auth:token:";
@@ -751,13 +751,25 @@ public final class AccountGameplayDelegationRedisClient {
     try {
       RedisCommands<byte[], byte[]> commands = requirePinnedCommands(connection);
       requireAccountAclIdentity(commands);
+      // Validate the complete canonical retained issuer event before considering replacement.
+      // The v2 script compares these exact bytes atomically; a changed read cannot authorize CAS.
+      byte[] priorIssuerBytes = commands.get(issuerKey);
+      if (priorIssuerBytes != null) {
+        AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
+            priorIssuerBytes, "issuer", GameSessionAccountDelegationProfile.ISSUER);
+      }
+      boolean exactIssuer = Arrays.equals(priorIssuerBytes, issuerProjectionBytes);
       String loadedSha = commands.scriptLoad(scriptSource);
       if (loadedSha == null
           || !SHA1.matcher(loadedSha).matches()
           || !sha1(scriptSource).equals(loadedSha)) {
         throw unavailable();
       }
-      byte[][] issuerProjectionArguments = {issuerProjectionBytes};
+      byte[][] issuerProjectionArguments = {
+        ascii(priorIssuerBytes == null ? "ABSENT" : exactIssuer ? "VERIFY" : "PRESENT"),
+        priorIssuerBytes == null ? new byte[0] : priorIssuerBytes,
+        exactIssuer ? new byte[0] : issuerProjectionBytes
+      };
       Long issuerResult =
           commands.evalsha(
               loadedSha,
@@ -1461,14 +1473,15 @@ public final class AccountGameplayDelegationRedisClient {
         || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
         || descriptor.category() != ScriptCategory.SESSION_CAS
         || !REQUIRED_ACL_IDENTITY.equals(descriptor.principal())
-        || !canonicalSharedDescriptorMetadata(descriptor)
+        || !canonicalSharedDescriptorMetadata(descriptor, "v2")
         || !AUTHORITY_PROJECTION_SCRIPT_RESOURCE.equals(descriptor.resourcePath())
         || descriptor.keys().size() != 1
         || !"authorityProjection".equals(descriptor.keys().getFirst().name())
         || !AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX.equals(
             descriptor.keys().getFirst().ownedPrefix())
         || descriptor.keys().getFirst().hashTagDeclaration() != HashTagDeclaration.NOT_REQUIRED
-        || !argumentNames(descriptor).equals(List.of("canonicalProjectionUtf8"))) {
+        || !argumentNames(descriptor)
+            .equals(List.of("expectedMode", "expectedBytes", "candidateBytes"))) {
       throw unavailable();
     }
     return descriptor;
@@ -1569,13 +1582,18 @@ public final class AccountGameplayDelegationRedisClient {
   }
 
   private static boolean canonicalSharedDescriptorMetadata(RedisScriptDescriptor descriptor) {
+    return canonicalSharedDescriptorMetadata(descriptor, "v1");
+  }
+
+  private static boolean canonicalSharedDescriptorMetadata(
+      RedisScriptDescriptor descriptor, String callerVersion) {
     return descriptor.resetSensitivity() == RedisScriptDescriptor.ResetSensitivity.CLUSTER
         && descriptor.lossClass() == RedisScriptDescriptor.LossClass.SESSION_LEASE_CACHE_OR_WAKE_UP
         && descriptor.compatibilityLevel()
             == RedisScriptDescriptor.CompatibilityLevel.REQUIRES_CLUSTER_RESET
         && descriptor
             .supportedCoexistence()
-            .equals(List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "v1")))
+            .equals(List.of(new RedisScriptDescriptor.SupportedCoexistence(callerVersion, "v1")))
         && descriptor.legacyPayloadShape() == null;
   }
 

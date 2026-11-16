@@ -881,7 +881,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(issuerRegressionConnection))
-          .containsExactly("aclWhoami", "scriptLoad", "evalsha", "close");
+          .containsExactly("aclWhoami", "get", "scriptLoad", "evalsha", "close");
       assertThat(admin.get(ascii(issuerKey))).containsExactly(initialProjection[0]);
       assertThat(admin.get(ascii(accountKey))).containsExactly(accountBeforeIssuerRegression);
       assertThat(admin.get(ascii(accountKey))).containsExactly(initialProjection[1]);
@@ -896,7 +896,8 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(equalIssuerConflictConnection))
-          .doesNotContain("dispatch", "get");
+          .contains("get")
+          .doesNotContain("dispatch");
       assertProjectionBytes(admin, issuerKey, accountKey, initialProjection);
 
       byte[][] equalAccountConflict =
@@ -912,6 +913,87 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .contains("get")
           .doesNotContain("dispatch");
       assertProjectionBytes(admin, issuerKey, accountKey, initialProjection);
+
+      // The real current issuer owner refuses malformed retained evidence, even when a
+      // newer canonical candidate would pass the old Lua outer-shape/generation checks.
+      byte[][] newerProjection = projectionPair(accountId, 8L, 8L, "issuer-next", "account-next");
+      var malformedIssuer =
+          (tools.jackson.databind.node.ObjectNode) JSON.readTree(initialProjection[0]);
+      // Issuer projection canonical JSON is the owner's fixed insertion order, not RFC8785.
+      assertThat(JSON.writeValueAsBytes(malformedIssuer)).containsExactly(initialProjection[0]);
+      malformedIssuer.put("sourceEvent", "not-a-canonical-issuer-event");
+      var originalIssuer = JSON.readTree(initialProjection[0]);
+      for (String field :
+          List.of(
+              "schemaVersion",
+              "issuerId",
+              "issuerAuthGeneration",
+              "sourceVersion",
+              "outboxStreamKey",
+              "lastAppliedSourceOutboxSequence",
+              "lastAppliedSourceEventId",
+              "lastAppliedSourceEventDigest")) {
+        assertThat(malformedIssuer.get(field)).isEqualTo(originalIssuer.get(field));
+      }
+      byte[] malformedIssuerBytes = JSON.writeValueAsBytes(malformedIssuer);
+      admin.set(ascii(issuerKey), malformedIssuerBytes);
+      int malformedIssuerConnection = writerProvider.openedConnections();
+      assertThatThrownBy(
+              () ->
+                  redis.publishAuthorityProjections(
+                      accountId, newerProjection[0], newerProjection[1]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(writerProvider.trace(malformedIssuerConnection))
+          .containsExactly("aclWhoami", "get", "close");
+      assertThat(admin.get(ascii(issuerKey))).containsExactly(malformedIssuerBytes);
+      assertThat(admin.get(ascii(accountKey))).containsExactly(initialProjection[1]);
+      assertThat(admin.pttl(ascii(issuerKey))).isEqualTo(-1L);
+      admin.set(ascii(issuerKey), initialProjection[0]);
+
+      admin.pexpire(ascii(issuerKey), 60_000L);
+      Long originalIssuerExpiry = admin.pexpiretime(ascii(issuerKey));
+      assertThatThrownBy(
+              () ->
+                  redis.publishAuthorityProjections(
+                      accountId, newerProjection[0], newerProjection[1]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertProjectionBytes(admin, issuerKey, accountKey, initialProjection);
+      assertThat(admin.pexpiretime(ascii(issuerKey))).isEqualTo(originalIssuerExpiry);
+      admin.set(ascii(issuerKey), initialProjection[0]);
+
+      // Mutate through an independent fixture-admin connection after the Java read, exactly
+      // before the actual Lua CAS. ABSENT, PRESENT and VERIFY must all refuse without overwrite.
+      byte[][] concurrentProjection =
+          projectionPair(accountId, 9L, 9L, "issuer-concurrent", "account-concurrent");
+      for (String mode : List.of("ABSENT", "PRESENT", "VERIFY")) {
+        if (mode.equals("ABSENT")) admin.del(ascii(issuerKey));
+        else admin.set(ascii(issuerKey), initialProjection[0]);
+        byte[][] candidate = mode.equals("VERIFY") ? initialProjection : newerProjection;
+        int raceConnection = writerProvider.openedConnections();
+        writerProvider.beforeNextEval(() -> admin.set(ascii(issuerKey), concurrentProjection[0]));
+        assertThatThrownBy(
+                () -> redis.publishAuthorityProjections(accountId, candidate[0], candidate[1]))
+            .isInstanceOf(
+                AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+        assertThat(writerProvider.trace(raceConnection))
+            .containsExactly("aclWhoami", "get", "scriptLoad", "evalsha", "close");
+        assertThat(admin.get(ascii(issuerKey))).containsExactly(concurrentProjection[0]);
+        assertThat(admin.get(ascii(accountKey))).containsExactly(initialProjection[1]);
+        assertThat(admin.pttl(ascii(issuerKey))).isEqualTo(-1L);
+      }
+      admin.set(ascii(issuerKey), initialProjection[0]);
+      assertThat(
+              redis.publishAuthorityProjections(accountId, newerProjection[0], newerProjection[1]))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(
+              redis.publishAuthorityProjections(accountId, newerProjection[0], newerProjection[1]))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY);
+      assertProjectionBytes(admin, issuerKey, accountKey, newerProjection);
+      // Restore only these test-owned keys for the existing independent corruption vectors.
+      admin.set(ascii(issuerKey), initialProjection[0]);
+      admin.set(ascii(accountKey), initialProjection[1]);
 
       // A corrupt or expiring stored projection is not permission to replace it.
       byte[] malformedAccountProjection = ascii("{not-a-canonical-projection}");
@@ -973,7 +1055,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(boundaryRegressionConnection))
-          .doesNotContain("dispatch", "get");
+          .containsExactly("aclWhoami", "get", "scriptLoad", "evalsha", "close");
       assertProjectionBytes(admin, issuerKey, accountKey, signedBigintBoundary);
 
       TrackedProvider wrongRoleProvider = new TrackedProvider(fixtureAdmin);
@@ -4066,6 +4148,13 @@ class AccountGameplayDelegationRedisIntegrationTest {
   private static final class TrackedProvider
       implements AccountCoordinationPinnedConnectionProvider {
     private final RedisClient client;
+    private Runnable beforeNextEval;
+
+    private void beforeNextEval(Runnable action) {
+      if (beforeNextEval != null) throw new IllegalStateException("Unconsumed test CAS hook");
+      beforeNextEval = Objects.requireNonNull(action);
+    }
+
     private final List<List<String>> traces = new ArrayList<>();
     private final List<List<String>> dispatchedCommands = new ArrayList<>();
 
@@ -4102,7 +4191,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static StatefulRedisConnection<byte[], byte[]> observe(
+    private StatefulRedisConnection<byte[], byte[]> observe(
         StatefulRedisConnection<byte[], byte[]> delegate,
         List<String> trace,
         List<String> dispatches) {
@@ -4134,6 +4223,11 @@ class AccountGameplayDelegationRedisIntegrationTest {
                                 "pexpiretime")
                             .contains(name)) {
                           trace.add(name);
+                        }
+                        if (name.equals("evalsha") && beforeNextEval != null) {
+                          Runnable action = beforeNextEval;
+                          beforeNextEval = null;
+                          action.run();
                         }
                         return invoke(commands, commandMethod, commandArguments);
                       });
