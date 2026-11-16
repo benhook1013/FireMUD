@@ -205,11 +205,74 @@ class GrpcGameSessionCanonicalInitialAdmissionOwnerClientMtlsTest {
     }
   }
 
+  @Test
+  void interruptedReadCannotReturnProofAndFreshAuthenticatedReadRecovers(@TempDir Path temporary)
+      throws Exception {
+    var pki =
+        LoopbackMtlsTestPki.create(
+            temporary,
+            "Interrupted owner read test CA",
+            identity("gs", NAMESPACE, "game-session-service", true),
+            identity("world", NAMESPACE, "world-management-service", false));
+    var identity = holdIdentity();
+    var response = new AtomicReference<>(pendingResponse(identity));
+    var calls = new AtomicInteger();
+    var interrupted = new AtomicReference<GrpcGameSessionCanonicalInitialAdmissionOwnerClient>();
+    Server server =
+        startServer(
+            pki,
+            "gs",
+            response,
+            calls,
+            () -> {
+              if (calls.get() == 1) {
+                try {
+                  interrupted.get().close();
+                } catch (java.io.IOException failure) {
+                  throw new java.io.UncheckedIOException(failure);
+                }
+                // Graceful channel close may allow an in-flight response. This first request
+                // instead fails before any response bytes, so it cannot produce terminal proof.
+                throw Status.UNAVAILABLE
+                    .withDescription("Interrupted before owner response")
+                    .asRuntimeException();
+              }
+            });
+    try {
+      try (var client = client(pki, temporary, "world", server.getPort())) {
+        interrupted.set(client);
+        client.init();
+        // The server has authenticated and decoded the request, but sends no response before close.
+        assertThatThrownBy(() -> client.read(identity)).isInstanceOf(StatusRuntimeException.class);
+        assertThatThrownBy(() -> client.read(identity)).isInstanceOf(IllegalStateException.class);
+      }
+      try (var recovery = client(pki, temporary, "world", server.getPort())) {
+        recovery.init();
+        assertThat(recovery.read(identity))
+            .isEqualTo(
+                CanonicalInitialAdmissionOwnerGrpcCodec.requireResponse(identity, response.get()));
+      }
+      assertThat(calls).hasValue(2);
+    } finally {
+      stopServer(server);
+    }
+  }
+
   private static Server startServer(
       LoopbackMtlsTestPki.Pki pki,
       String serverAlias,
       AtomicReference<GetCanonicalInitialAdmissionOwnerProofResponse> response,
       AtomicInteger calls)
+      throws Exception {
+    return startServer(pki, serverAlias, response, calls, () -> {});
+  }
+
+  private static Server startServer(
+      LoopbackMtlsTestPki.Pki pki,
+      String serverAlias,
+      AtomicReference<GetCanonicalInitialAdmissionOwnerProofResponse> response,
+      AtomicInteger calls,
+      Runnable beforeResponse)
       throws Exception {
     var serverIdentity = pki.identity(serverAlias);
     var service =
@@ -243,6 +306,7 @@ class GrpcGameSessionCanonicalInitialAdmissionOwnerClientMtlsTest {
               } else {
                 assertThat(identity)
                     .isEqualTo(holdIdentity(identity.request().initialAdmissionOrigin()));
+                beforeResponse.run();
                 observer.onNext(readback);
                 observer.onCompleted();
               }

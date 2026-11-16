@@ -2456,6 +2456,97 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         null);
   }
 
+  private static GameSessionCanonicalInitialAdmissionOwnerProof settleAfterAuthenticatedClientClose(
+      Database world,
+      WorldCanonicalInstanceAssociationRepository associations,
+      WorldCanonicalInstanceLifecycleReadRepository lifecycles,
+      ServiceEndpointsProperties endpoints,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      GrpcChannelFactory factory,
+      WorldCanonicalInitialAdmissionHold.HoldIdentity identity)
+      throws Exception {
+    var repository =
+        new WorldCanonicalInitialAdmissionHoldRepository(
+            world.dsl(), world.manager(), associations, lifecycles);
+    var before = rows(world.dsl(), "initial_admission_bind_hold");
+    try (var interrupted =
+        new GrpcGameSessionCanonicalInitialAdmissionOwnerClient(
+            endpoints, pki.client("world-management-service"), factory, NAMESPACE)) {
+      interrupted.init();
+      interrupted.close();
+      var unavailableOwner = new WorldCanonicalInitialAdmissionHoldOwner(repository, interrupted);
+      assertThatThrownBy(() -> unavailableOwner.settleFromAuthenticatedOwnerRead(identity))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(rows(world.dsl(), "initial_admission_bind_hold")).isEqualTo(before);
+      var association =
+          associations
+              .readOwnerAssociation(identity.request().canonicalGameInstanceId())
+              .orElseThrow();
+      assertThatThrownBy(
+              () ->
+                  world
+                      .dsl()
+                      .execute(
+                          "UPDATE world_instance SET status='TERMINATING', "
+                              + "lifecycle_epoch=lifecycle_epoch+1,row_version=row_version+1 "
+                              + "WHERE id=? AND status='ACTIVE' AND lifecycle_epoch=?",
+                          association.worldInstanceId(),
+                          identity.request().activeLifecycleEpoch()))
+          .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("55000"));
+      assertThat(rows(world.dsl(), "initial_admission_bind_hold")).isEqualTo(before);
+    }
+    try (var recovered =
+        new GrpcGameSessionCanonicalInitialAdmissionOwnerClient(
+            endpoints, pki.client("world-management-service"), factory, NAMESPACE)) {
+      recovered.init();
+      var owner =
+          new WorldCanonicalInitialAdmissionHoldOwner(
+              repository,
+              expected -> {
+                var authenticated = recovered.read(expected);
+                try {
+                  recovered.close();
+                } catch (java.io.IOException failure) {
+                  throw new java.io.UncheckedIOException(failure);
+                }
+                assertThatThrownBy(() -> recovered.read(expected))
+                    .isInstanceOf(IllegalStateException.class);
+                // This is the actual owner-read/World-write boundary: no settlement has run yet.
+                assertThat(rows(world.dsl(), "initial_admission_bind_hold")).isEqualTo(before);
+                return authenticated;
+              });
+      var proof = owner.settleFromAuthenticatedOwnerRead(identity);
+      var settled = rows(world.dsl(), "initial_admission_bind_hold");
+      var replay = new WorldCanonicalInitialAdmissionHoldOwner(repository, ignored -> proof);
+      assertThat(replay.settleFromAuthenticatedOwnerRead(identity)).isEqualTo(proof);
+      assertThat(rows(world.dsl(), "initial_admission_bind_hold")).isEqualTo(settled);
+      var changedIdentity =
+          new WorldCanonicalInitialAdmissionHold.HoldIdentity(
+              identity.request(), identity.holdId(), UUID.randomUUID());
+      assertThatThrownBy(() -> replay.settleFromAuthenticatedOwnerRead(changedIdentity))
+          .isInstanceOf(
+              WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldEvidenceException.class);
+      var contradictory =
+          new GameSessionCanonicalInitialAdmissionOwnerProof(
+              identity,
+              proof.outcome() == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED
+                  ? GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED
+                  : GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+              proof.positiveDurableAbort() ? 1L : null,
+              proof.positiveDurableAbort() ? 42L : null,
+              proof.proofDigest(),
+              !proof.positiveDurableAbort(),
+              proof.terminalAt());
+      var conflict =
+          new WorldCanonicalInitialAdmissionHoldOwner(repository, ignored -> contradictory);
+      assertThatThrownBy(() -> conflict.settleFromAuthenticatedOwnerRead(identity))
+          .isInstanceOf(
+              WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldEvidenceException.class);
+      assertThat(rows(world.dsl(), "initial_admission_bind_hold")).isEqualTo(settled);
+      return proof;
+    }
+  }
+
   private static void assertCommittedHoldStored(
       DSLContext world,
       WorldCanonicalInitialAdmissionHold.HoldIdentity identity,
@@ -3176,7 +3267,15 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             .isEqualTo("STARTING");
         assertNoCanonicalAdmissionPointerArtifacts(gs.dsl(), request.initialAdmissionRequestId());
 
-        var abortedWorldTerminal = worldHoldOwner.settleFromAuthenticatedOwnerRead(identity);
+        var abortedWorldTerminal =
+            settleAfterAuthenticatedClientClose(
+                world,
+                associationRepository,
+                lifecycleRepository,
+                gsEndpoints,
+                pki,
+                factory,
+                identity);
         assertThat(abortedWorldTerminal.outcome())
             .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
         assertThat(abortedWorldTerminal.positiveDurableAbort()).isTrue();
@@ -3342,7 +3441,14 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           .isEqualTo(1L);
 
       GameSessionCanonicalInitialAdmissionOwnerProof worldTerminal =
-          worldHoldOwner.settleFromAuthenticatedOwnerRead(identity);
+          settleAfterAuthenticatedClientClose(
+              world,
+              associationRepository,
+              lifecycleRepository,
+              gsEndpoints,
+              pki,
+              factory,
+              identity);
       assertThat(worldTerminal.outcome())
           .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
       assertThat(worldTerminal.committedPointerVersion())
