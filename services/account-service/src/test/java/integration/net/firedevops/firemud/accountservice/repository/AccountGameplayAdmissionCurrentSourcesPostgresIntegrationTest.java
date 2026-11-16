@@ -3949,7 +3949,16 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                 } else if (key.equals(
                     AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
                         + GameSessionAccountDelegationProfile.ISSUER)) {
-                  authorityProjectionBytes[0] = arguments[0].clone();
+                  assertThat(arguments.length).isEqualTo(3);
+                  assertThat(arguments[1]).containsExactly(authorityProjectionBytes[0]);
+                  String mode = new String(arguments[0], StandardCharsets.US_ASCII);
+                  if ("VERIFY".equals(mode)) {
+                    assertThat(arguments[2]).isEmpty();
+                    return 0L;
+                  }
+                  assertThat(mode).isEqualTo("PRESENT");
+                  assertThat(arguments[2]).isNotEmpty();
+                  authorityProjectionBytes[0] = arguments[2].clone();
                 } else if (key.equals(
                     AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)) {
                   if (arguments.length == 3 && arguments[2].length > 0) {
