@@ -1510,6 +1510,150 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
   }
 
   @Test
+  void alteredTrustedProjectionRollsBackAgainstOriginalTypedPayloadBeforeUntamperedRetry()
+      throws Exception {
+    withCurrentStorageOwner(
+        fixture -> {
+          var dsl = fixture.dsl();
+          var plan = fixture.plan();
+          byte[] originalBinding = plan.binding().canonicalBytes();
+          var spawn =
+              plan.graph().nodes().stream()
+                  .filter(node -> node.mutation().hasWorldEntitySpawnBinding())
+                  .findFirst()
+                  .orElseThrow();
+          assertThat(spawn.mutation().getWorldEntitySpawnBinding().getSpawnCount()).isZero();
+          var altered =
+              new WorldDraftTopologyCommitRepository(
+                  dsl,
+                  new WorldDesignPublicationFenceRepository(
+                      dsl, new WorldAuthoredSourceIntakeRepository(dsl)),
+                  new tools.jackson.databind.ObjectMapper()) {
+                @Override
+                List<RevisionPayload> executionRevisions(WorldDraftTopologyCommitPlan input) {
+                  var revisions = new ArrayList<>(super.executionRevisions(input));
+                  for (int i = 0; i < revisions.size(); i++) {
+                    var revision = revisions.get(i);
+                    if (!revision.revisionId().equals(spawn.revisionId())) continue;
+                    var changed =
+                        spawn.mutation().toBuilder()
+                            .setWorldEntitySpawnBinding(
+                                spawn.mutation().getWorldEntitySpawnBinding().toBuilder()
+                                    .setSpawnCount(2))
+                            .build();
+                    try {
+                      revisions.set(
+                          i,
+                          new RevisionPayload(
+                              revision.revisionOrder(),
+                              revision.revisionId(),
+                              revision.owner(),
+                              JsonFormat.printer()
+                                  .omittingInsignificantWhitespace()
+                                  .print(changed)));
+                    } catch (com.google.protobuf.InvalidProtocolBufferException invalid) {
+                      throw new IllegalStateException(
+                          "Cannot encode controlled projection", invalid);
+                    }
+                  }
+                  return List.copyOf(revisions);
+                }
+              };
+          var before = retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables());
+          AtomicBoolean observedSqlMutation = new AtomicBoolean();
+          assertThatThrownBy(
+                  () ->
+                      fixture
+                          .write()
+                          .execute(
+                              status -> {
+                                try {
+                                  altered.store(plan);
+                                } catch (
+                                    WorldDesignPublicationFenceRepository.ConflictException
+                                        invalid) {
+                                  assertThat(invalid)
+                                      .hasMessage(
+                                          "World allocated row differs from every exact payload field");
+                                  // Observe actual guarded SQL effects in the still-live
+                                  // transaction:
+                                  // readback rejected changed semantics, not an earlier shape/SQL
+                                  // check.
+                                  Map<String, Long> changedCounts =
+                                      Map.of(
+                                          "region", 1L,
+                                          "zone", 1L,
+                                          "room", 2L,
+                                          "room_exit", 1L,
+                                          "generation_rule", 1L,
+                                          "world_entity_spawn_binding", 1L,
+                                          "world_authored_topology_identity", 7L,
+                                          "world_design_aggregate_epoch", 7L,
+                                          "world_design_scope_epoch", 1L,
+                                          "world_topology_draft_commit", 0L);
+                                  for (var entry : changedCounts.entrySet()) {
+                                    assertThat(
+                                            dsl.fetchSingle(
+                                                    "SELECT count(*) FROM " + entry.getKey())
+                                                .get(0, Long.class))
+                                        .as(
+                                            "actual uncommitted guarded SQL table %s",
+                                            entry.getKey())
+                                        .isEqualTo(entry.getValue());
+                                  }
+                                  assertThat(
+                                          dsl.fetchSingle(
+                                                  "SELECT spawn_count FROM world_entity_spawn_binding")
+                                              .get(0, Integer.class))
+                                      .isEqualTo(2);
+                                  observedSqlMutation.set(true);
+                                  throw invalid;
+                                }
+                                throw new AssertionError("Changed trusted projection was accepted");
+                              }))
+              .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+              .hasMessage("World allocated row differs from every exact payload field");
+          assertThat(observedSqlMutation).isTrue();
+          assertThat(plan.binding().canonicalBytes()).containsExactly(originalBinding);
+          assertThat(spawn.mutation().getWorldEntitySpawnBinding().getSpawnCount()).isZero();
+          assertThat(retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables()))
+              .isEqualTo(before);
+          assertThat(fixture.topology().readCommitted(plan)).isEmpty();
+          assertThat(dsl.fetchSingle("SHOW session_replication_role").get(0, String.class))
+              .isEqualTo("origin");
+
+          var stored =
+              Objects.requireNonNull(
+                  fixture.write().execute(status -> fixture.topology().store(plan)));
+          assertThat(stored.status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
+          assertCompleteCurrentStorage(fixture);
+          assertThat(
+                  dsl.fetchSingle("SELECT spawn_count FROM world_entity_spawn_binding")
+                      .get(0, Integer.class))
+              .isEqualTo(1);
+          var graph = new WorldCanonicalAuthoredGraphReader().read(plan, stored.graphBytes());
+          assertThat(
+                  graph
+                      .family(WorldCanonicalAuthoredGraph.Family.WORLD_ENTITY_SPAWN_BINDING)
+                      .getFirst()
+                      .content()
+                      .getWorldEntitySpawnBinding()
+                      .getSpawnCount())
+              .isEqualTo(1);
+          var committed = retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables());
+          var retry =
+              Objects.requireNonNull(
+                  fixture.write().execute(status -> fixture.topology().store(plan)));
+          assertThat(retry.resultBytes()).containsExactly(stored.resultBytes());
+          assertThat(fixture.topology().readCommitted(plan).orElseThrow().graphBytes())
+              .containsExactly(stored.graphBytes());
+          assertThat(plan.binding().canonicalBytes()).containsExactly(originalBinding);
+          assertThat(retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables()))
+              .isEqualTo(committed);
+        });
+  }
+
+  @Test
   void currentTopologyConcurrentExactFirstClaimsReturnOneOriginalStoredResult() throws Exception {
     withCurrentStorageOwner(
         fixture -> {
