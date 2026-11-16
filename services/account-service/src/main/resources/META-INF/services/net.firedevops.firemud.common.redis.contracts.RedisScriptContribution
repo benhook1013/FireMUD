@@ -1,2 +1,3 @@
 net.firedevops.firemud.accountservice.service.AccountGenerationProjectionRedisScriptContribution
 net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisScriptContribution
+net.firedevops.firemud.accountservice.service.IssuerGenerationProjectionRedisScriptContribution
