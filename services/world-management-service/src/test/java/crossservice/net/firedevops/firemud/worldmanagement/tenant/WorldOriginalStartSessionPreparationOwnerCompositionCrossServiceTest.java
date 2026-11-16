@@ -122,6 +122,7 @@ import net.firedevops.firemud.common.gamesession.GrpcOriginalStartSessionCurrent
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidenceReadClient;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcKeepAlivePolicy;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
@@ -4713,6 +4714,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     .trustManager(pki.ca().toFile())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build());
+    GrpcKeepAlivePolicy.configureServer(builder);
     if (deferredServices != null) builder.fallbackHandlerRegistry(deferredServices);
     if (Arrays.stream(receivers)
         .anyMatch(AccountInitialAdmissionSettlementReadGrpcService.class::isInstance)) {

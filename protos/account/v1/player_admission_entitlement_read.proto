@@ -28,8 +28,16 @@ message ReadPlayerAdmissionEntitlementRequest {
   repeated string initial_login_jwt = 2;
 }
 
-// Echo only selectors, never the presented credential. Evidence is exact bounded RFC 8785 UTF-8.
+// Response comparison binding, independent of the credential-bearing version 1 request.
+message PlayerAdmissionEntitlementReadResponseBinding {
+  repeated uint32 schema_version = 1;
+  repeated game_session.v1.ResolvePublishedRealmAdmissionTargetRequest target = 2;
+}
+
+// Evidence is exact bounded RFC 8785 UTF-8 and carries the verified scope token hash.
 message ReadPlayerAdmissionEntitlementResponse {
-  repeated PlayerAdmissionEntitlementReadSelectors request = 1;
+  reserved 1;
+  reserved "request";
   repeated bytes canonical_evidence = 2;
+  repeated PlayerAdmissionEntitlementReadResponseBinding binding = 3;
 }

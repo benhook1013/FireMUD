@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import net.firedevops.firemud.account.v1.PlayerAdmissionEntitlementReadResponseBinding;
 import net.firedevops.firemud.account.v1.PlayerAdmissionEntitlementReadSelectors;
 import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementRequest;
 import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementResponse;
@@ -81,7 +82,12 @@ public final class RuntimePlayerAdmissionEntitlementGrpcCodec {
     requireBinding(request, evidence);
     var wire =
         ReadPlayerAdmissionEntitlementResponse.newBuilder()
-            .addRequest(selectors(request))
+            .addBinding(
+                PlayerAdmissionEntitlementReadResponseBinding.newBuilder()
+                    .addSchemaVersion(2)
+                    .addTarget(
+                        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionRequest(
+                            request.target())))
             .addCanonicalEvidence(ByteString.copyFrom(evidence.canonicalBytes()))
             .build();
     if (wire.getSerializedSize() > MAX_RESPONSE_WIRE_BYTES) throw invalid();
@@ -93,8 +99,15 @@ public final class RuntimePlayerAdmissionEntitlementGrpcCodec {
     Objects.requireNonNull(expected);
     if (wire == null
         || wire.getSerializedSize() > MAX_RESPONSE_WIRE_BYTES
-        || !wire.getUnknownFields().asMap().isEmpty()
-        || !expected.equals(parseSelectors(one(wire.getRequestList())))) throw invalid();
+        || !wire.getUnknownFields().asMap().isEmpty()) throw invalid();
+    var binding = one(wire.getBindingList());
+    if (!binding.getUnknownFields().asMap().isEmpty()
+        || one(binding.getSchemaVersionList()) != 2
+        || !expected
+            .target()
+            .equals(
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
+                    one(binding.getTargetList())))) throw invalid();
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
             one(wire.getCanonicalEvidenceList()).toByteArray());
@@ -130,7 +143,9 @@ public final class RuntimePlayerAdmissionEntitlementGrpcCodec {
         || !target.tenantId().toString().equals(fields.get("tenantId"))
         || !target.readRequestId().toString().equals(fields.get("requestId"))
         || !request.expectedGameSessionWorkload().equals(fields.get("callerWorkload"))
-        || !request.connectScopeId().equals(fields.get("verifiedConnectScopeId"))) throw invalid();
+        || !RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(
+                request.connectScopeId())
+            .equals(evidence.verifiedConnectScopeTokenHash())) throw invalid();
     if (!(fields.get("target") instanceof Map<?, ?> actual)
         || !target.targetNamespace().equals(actual.get("targetNamespace"))
         || !target.tenantId().toString().equals(actual.get("tenantId"))

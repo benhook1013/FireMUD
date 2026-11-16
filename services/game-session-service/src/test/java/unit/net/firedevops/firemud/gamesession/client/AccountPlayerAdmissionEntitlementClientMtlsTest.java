@@ -122,7 +122,22 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
     var calls = new AtomicInteger();
     var observedJwt = new AtomicReference<String>();
     var observedPeer = new AtomicReference<String>();
-    Server server = server("account", calls, observedJwt, observedPeer, context, login.evidence());
+    var sentResponse = new AtomicReference<ReadPlayerAdmissionEntitlementResponse>();
+    Server server =
+        server(
+            "account",
+            calls,
+            observedJwt,
+            observedPeer,
+            context.resolvedTarget(),
+            Instant.ofEpochMilli(context.claims().expiresAtMillis()),
+            login.evidence(),
+            (value, sources) -> {},
+            () -> {},
+            (request, response) -> {
+              sentResponse.set(response);
+              return response;
+            });
     try (var client = client(server)) {
       client.init();
       assertThat(client.buildStub(mock(ManagedChannel.class)).getCallOptions().getCompressor())
@@ -135,7 +150,12 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
       assertThat(calls).hasValue(1);
       assertThat(observedJwt).hasValue(JWT);
       assertThat(observedPeer).hasValue(GS_PEER);
-      assertThat(new String(result.canonicalBytes(), StandardCharsets.UTF_8)).doesNotContain(JWT);
+      assertThat(result.verifiedConnectScopeTokenHash())
+          .isEqualTo(
+              RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(
+                  context.connectScopeId()));
+      assertThat(sentResponse.get().toByteString().toStringUtf8())
+          .doesNotContain(JWT, context.connectScopeId());
     } finally {
       stop(server);
     }
@@ -297,14 +317,17 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
     try (var client = client(server)) {
       client.init();
       var result = client.read(scope, ORIGINAL, TRANSPORT, READ_REQUEST, login, () -> true);
-      assertThat(result.fields())
-          .containsEntry("verifiedConnectScopeId", "direct-text-owned-scope");
+      assertThat(result.verifiedConnectScopeTokenHash())
+          .isEqualTo(
+              RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(
+                  "direct-text-owned-scope"));
       assertThat(((Map<?, ?>) result.fields().get("target")).get("connectScopeExpiresAt"))
           .isEqualTo(DIRECT_SCOPE_EXPIRY.toString());
       assertThat(calls).hasValue(1);
       assertThat(observedJwt).hasValue(JWT);
       assertThat(observedPeer).hasValue(GS_PEER);
-      assertThat(new String(result.canonicalBytes(), StandardCharsets.UTF_8)).doesNotContain(JWT);
+      assertThat(new String(result.canonicalBytes(), StandardCharsets.UTF_8))
+          .doesNotContain(JWT, "direct-text-owned-scope");
       assertThat(borrowed)
           .isNotEmpty()
           .allSatisfy(bytes -> assertThat(bytes).containsOnly((byte) 0));
@@ -519,6 +542,67 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
     }
   }
 
+  @Test
+  void directTextRejectsAuthenticatedCanonicalEvidenceForDifferentScope() throws Exception {
+    var target = context().resolvedTarget();
+    var login = loginCustody();
+    var scope = directTextScope(target, login, DIRECT_SCOPE_EXPIRY);
+    var calls = new AtomicInteger();
+    var observedJwt = new AtomicReference<String>();
+    var observedPeer = new AtomicReference<String>();
+    var staleRequest = new AtomicReference<RuntimePlayerAdmissionEntitlementGrpcCodec.Request>();
+    var sentResponse = new AtomicReference<ReadPlayerAdmissionEntitlementResponse>();
+    Server server =
+        server(
+            "account",
+            calls,
+            observedJwt,
+            observedPeer,
+            target,
+            DIRECT_SCOPE_EXPIRY,
+            login.evidence(),
+            (value, sources) -> {},
+            () -> {},
+            (request, response) -> {
+              var stale =
+                  new RuntimePlayerAdmissionEntitlementGrpcCodec.Request(
+                      request.target(), "stale-scope");
+              var staleEvidence =
+                  evidence(
+                      stale, target, DIRECT_SCOPE_EXPIRY, login.evidence(), (value, sources) -> {});
+              var encoded =
+                  response.toBuilder()
+                      .setCanonicalEvidence(0, ByteString.copyFrom(staleEvidence.canonicalBytes()))
+                      .build();
+              staleRequest.set(stale);
+              sentResponse.set(encoded);
+              return encoded;
+            });
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(
+              () -> client.read(scope, ORIGINAL, TRANSPORT, READ_REQUEST, login, () -> true))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThat(calls).hasValue(1);
+      assertThat(observedJwt).hasValue(JWT);
+      assertThat(observedPeer).hasValue(GS_PEER);
+      var wire = sentResponse.get();
+      var parsed =
+          RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
+              wire.getCanonicalEvidence(0).toByteArray());
+      assertThat(parsed.verifiedConnectScopeTokenHash())
+          .isEqualTo(RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash("stale-scope"))
+          .isNotEqualTo(
+              RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(
+                  scope.issued().connectScopeId()));
+      assertThat(
+              RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(staleRequest.get(), wire))
+          .isEqualTo(parsed);
+    } finally {
+      stop(server);
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"custody", "scope-expiry", "login-expiry", "closed-login"})
   void directTextRechecksLiveInputsAfterRpc(String change) throws Exception {
@@ -652,6 +736,39 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
       BiConsumer<Map<String, Object>, Map<String, Object>> drift,
       Runnable afterRead)
       throws Exception {
+    return server(
+        identity,
+        calls,
+        observedJwt,
+        observedPeer,
+        target,
+        scopeExpiry,
+        login,
+        drift,
+        afterRead,
+        (request, response) -> response);
+  }
+
+  @FunctionalInterface
+  private interface ResponseTransform {
+    ReadPlayerAdmissionEntitlementResponse apply(
+        RuntimePlayerAdmissionEntitlementGrpcCodec.Request request,
+        ReadPlayerAdmissionEntitlementResponse response)
+        throws Exception;
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      AtomicReference<String> observedJwt,
+      AtomicReference<String> observedPeer,
+      CanonicalPlayableTarget target,
+      Instant scopeExpiry,
+      CanonicalGameplayLoginResult.NonSecretEvidence login,
+      BiConsumer<Map<String, Object>, Map<String, Object>> drift,
+      Runnable afterRead,
+      ResponseTransform responseTransform)
+      throws Exception {
     var service =
         new AccountPlayerAdmissionEntitlementReadServiceGrpc
             .AccountPlayerAdmissionEntitlementReadServiceImplBase() {
@@ -671,7 +788,7 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
                   RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(
                       presented.request(), evidence);
               afterRead.run();
-              observer.onNext(response);
+              observer.onNext(responseTransform.apply(presented.request(), response));
               observer.onCompleted();
             } catch (Exception malformed) {
               observer.onError(
@@ -839,7 +956,7 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
     return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
         request.target().readRequestId(),
         request.expectedGameSessionWorkload(),
-        request.connectScopeId(),
+        RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(request.connectScopeId()),
         membership(request.target().accountId(), request.target().tenantId(), retained),
         target,
         facts,

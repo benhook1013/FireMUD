@@ -30,7 +30,7 @@ jobs:
       telnet_port: ${{ steps.derive.outputs.telnet_port }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
           egress-policy: audit
 
@@ -889,7 +889,7 @@ jobs:
             terminationGracePeriodSeconds: 0
             containers:
               - name: dev-demo-bootstrap
-                image: python:3.15-alpine@sha256:20a82dbc2783112ddb91d1534603f802d222a3e63e593cd002eb2ac534e70211
+                image: python:3.15-alpine@sha256:0f9552bb28711333da16915ec146f5e6bb44a7fdac9ced15dc17c2e0206346dd
                 command: ["python", "/tmp/bootstrap.py"]
                 env:
                   - name: BOOTSTRAP_MODE

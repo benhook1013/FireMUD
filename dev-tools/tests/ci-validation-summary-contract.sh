@@ -50,6 +50,10 @@ if len(marker_steps) != len(expected_markers) or {
     for name, condition in expected_markers.items()
 }:
     raise SystemExit('Four-way slow-service sources must declare their native partition-plan markers')
+split_markers = [step for step in ci['jobs']['validation-gate']['steps']
+                 if step.get('name') == 'Declare dev tool contract split']
+if split_markers != [{'name': 'Declare dev tool contract split', 'run': ':'}]:
+    raise SystemExit('Split contract inventory must retain its unconditional native source marker')
 names = [job['name'] for job in ci['jobs'].values()]
 for name in names:
     if '${{' not in name and json.dumps(name, ensure_ascii=False) not in script:
@@ -77,6 +81,9 @@ const pr = {
 };
 const row = (name, id) => ({ id, name, run_id: 70, run_attempt: 1, head_sha: head, status: 'completed', conclusion: 'success', steps: [{ name: 'Harden runner', status: 'completed', conclusion: 'success' }] });
 const jobs = payload.names.filter(name => !name.includes('${{') && name !== 'World Coverage Aggregate').map((name, i) => row(name, i + 1));
+jobs.find(job => job.name === 'Validation Gate').steps.push({
+  name: 'Declare dev tool contract split', status: 'completed', conclusion: 'success',
+});
 jobs.push(
   row('Build and Test (account-service / 1)', 90),
   row('Build and Test (account-service / 2)', 92),
@@ -146,6 +153,34 @@ async function noWrites(config, reject = false) {
   assert.match(successful.calls.creates[0].body, /✅ All validation checks passed/);
   assert.match(successful.calls.creates[0].body, /<!-- firemud-validation-summary -->/);
   assert.match(successful.calls.creates[0].body, /Dev Tools README contract: `success`/);
+  assert.match(successful.calls.creates[0].body, /Dev tool validation contracts: `success`/);
+  const historicalContracts = clone(jobs).filter(job => job.name !== 'Dev Tool Validation Contracts');
+  historicalContracts.find(job => job.name === 'Validation Gate').steps.pop();
+  const historicalContractsRun = harness({ jobs: historicalContracts }); await historicalContractsRun.run();
+  assert.equal(historicalContractsRun.calls.creates.length, 1);
+  assert.doesNotMatch(historicalContractsRun.calls.creates[0].body, /Dev tool validation contracts:/);
+  await noWrites({ jobs: clone(jobs).filter(job => job.name !== 'Dev Tool Validation Contracts') }, true);
+  await noWrites({ jobs: [...clone(jobs), row('Dev Tool Validation Contracts', 700)] }, true);
+  await noWrites({ jobs: clone(jobs).filter(job => job.name !== 'Dev Tool Contract Checks') }, true);
+  const duplicateMarker = clone(jobs);
+  duplicateMarker.find(job => job.name === 'Validation Gate').steps.push({
+    name: 'Declare dev tool contract split', status: 'completed', conclusion: 'success',
+  });
+  await noWrites({ jobs: duplicateMarker }, true);
+  for (const name of ['Dev Tool Contract Checks', 'Dev Tool Validation Contracts']) {
+    for (const conclusion of ['failure', 'cancelled', 'timed_out', 'skipped']) {
+      const contracts = clone(jobs); contracts.find(job => job.name === name).conclusion = conclusion;
+      const contractsRun = harness({ jobs: contracts }); await contractsRun.run();
+      assert.match(contractsRun.calls.creates[0].body,
+        conclusion === 'skipped' ? /All validation checks passed/ : /One or more validation checks failed/);
+      assert.ok(contractsRun.calls.creates[0].body.includes(
+        (name === 'Dev Tool Contract Checks' ? 'Dev tool contract checks' : 'Dev tool validation contracts')
+        + ': `' + conclusion + '`'));
+    }
+  }
+  const metadataSplit = clone(jobs);
+  for (const job of metadataSplit) { job.conclusion = 'skipped'; job.steps = []; }
+  assert.equal((await noWrites({ jobs: metadataSplit })).comments.length, 0);
   // A later native run publishes first; a delayed older callback may neither rewrite it nor delete it as a duplicate.
   const newerSource = { ...clone(source), id: 71, run_number: 8 };
   const newer = harness({ source: newerSource }); await newer.run();

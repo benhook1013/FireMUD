@@ -3,12 +3,15 @@ syntax = "proto3";
 package account.v1;
 
 import "shared/v1/errors.proto";
+import "account/v1/tenant_capacity_admission.proto";
 import "shared/v1/player_execution_context.proto";
 
 option java_package = "net.firedevops.firemud.account.v1";
 option java_multiple_files = true;
 
 service AccountService {
+  // Strict capacity owner. Available only through an explicitly composed bounded mTLS receiver.
+  rpc CommitTenantCapacityAdmission(CommitTenantCapacityAdmissionRequest) returns (CommitTenantCapacityAdmissionResponse);
   rpc Ping(PingRequest) returns (PingResponse);
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);

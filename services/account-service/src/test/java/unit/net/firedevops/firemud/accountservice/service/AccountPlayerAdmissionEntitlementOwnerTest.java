@@ -134,6 +134,16 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(value.fields()).containsEntry("variant", "PLAYER_ADMISSION");
     assertThat(value.fields().get("requestId")).isEqualTo(f.request.requestId().toString());
     assertThat(value.fields().get("callerWorkload")).isEqualTo(PEER);
+    assertThat(f.retainedCapacity).hasSize(1);
+    assertThat(
+            new String(value.canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                .contains(f.scope.connectScopeId()))
+        .isFalse();
+    assertThat(
+            f.retainedCapacity
+                .get(value.fields().get("evaluationIdentity"))
+                .get("canonical_evidence", byte[].class))
+        .containsExactly(value.canonicalBytes());
     assertThat(value.membershipSource().accountId()).isEqualTo(ACCOUNT.toString());
     assertThat(value.membershipSource().tenantId()).isEqualTo(TENANT.toString());
     assertThat(value.membershipSource().membershipExists()).isFalse();
@@ -145,7 +155,9 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(value.membershipSource().authorityTuple().membershipAuthorityGeneration())
         .containsExactlyEntriesOf(Map.of(TENANT.toString(), "1"));
     assertThat(value.fields())
-        .containsEntry("verifiedConnectScopeId", f.scope.connectScopeId())
+        .containsEntry(
+            "verifiedConnectScopeTokenHash", AccountJoinDigest.tokenHash(f.scope.connectScopeId()))
+        .doesNotContainKey("verifiedConnectScopeId")
         .containsEntry("sourceKind", "NON_PAID_DEMO");
     var binding = (Map<?, ?>) value.fields().get("target");
     assertThat(binding.get("realmId")).isEqualTo(f.scope.realmId().toString());
@@ -155,6 +167,29 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(value.toString()).doesNotContain("controlled-token", f.scope.connectScopeId());
     assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
     verifyNoInteractions(f.hosting, f.observer);
+  }
+
+  @Test
+  void capacityRetentionFailureRollsBackSourceCaptureWithoutReturningEvidence() throws Exception {
+    Fixture f = new Fixture(true);
+    f.refuseCapacityRetention = true;
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessage("Controlled capacity retention refusal");
+    assertThat(f.retainedCapacity).isEmpty();
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "rollback");
+  }
+
+  @Test
+  void missingCapacityRetentionReadbackRollsBackAsSourceUnavailable() throws Exception {
+    Fixture f = new Fixture(true);
+    f.missingCapacityRetentionReadback = true;
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable")
+        .hasNoCause();
+    assertThat(f.retainedCapacity).isEmpty();
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "rollback");
   }
 
   @Test
@@ -934,6 +969,9 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     private final CanonicalGameplayAdmissionDecisionReadClient targets =
         mock(CanonicalGameplayAdmissionDecisionReadClient.class);
     private final RecordingTransactions transactions = new RecordingTransactions();
+    private final Map<String, org.jooq.Record> retainedCapacity = new LinkedHashMap<>();
+    private boolean refuseCapacityRetention;
+    private boolean missingCapacityRetentionReadback;
     private final java.util.concurrent.atomic.AtomicReference<Instant> time =
         new java.util.concurrent.atomic.AtomicReference<>(NOW);
     private final FreshTenantCreationEvidence source = source();
@@ -1021,6 +1059,44 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
               PEER);
       controlledTarget(targets);
       var dsl = mock(DSLContext.class);
+      // Controlled retention content, not physical atomicity or Account source authentication.
+      when(dsl.execute(anyString(), any(Object[].class)))
+          .thenAnswer(
+              invocation -> {
+                String sql = invocation.getArgument(0, String.class);
+                if (!sql.startsWith("INSERT INTO account_tenant_capacity_evaluations "))
+                  throw new AssertionError(sql);
+                if (refuseCapacityRetention)
+                  throw new DataAccessException("Controlled capacity retention refusal");
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+                if (missingCapacityRetentionReadback) return 0;
+                Object[] values = (Object[]) invocation.getRawArguments()[1];
+                String id = (String) values[0];
+                if (retainedCapacity.containsKey(id)) return 0;
+                var row = mock(org.jooq.Record.class);
+                when(row.get("evaluation_identity", String.class)).thenReturn(id);
+                when(row.get("snapshot_identity", String.class)).thenReturn((String) values[1]);
+                when(row.get("tenant_uuid", UUID.class)).thenReturn((UUID) values[2]);
+                when(row.get("caller_workload", String.class)).thenReturn((String) values[3]);
+                when(row.get("owner_service", String.class)).thenReturn((String) values[4]);
+                when(row.get("canonical_evidence", byte[].class))
+                    .thenReturn(((byte[]) values[5]).clone());
+                when(row.get("evaluated_at", java.time.OffsetDateTime.class))
+                    .thenReturn((java.time.OffsetDateTime) values[6]);
+                when(row.get("expires_at", java.time.OffsetDateTime.class))
+                    .thenReturn((java.time.OffsetDateTime) values[7]);
+                retainedCapacity.put(id, row);
+                return 1;
+              });
+      when(dsl.fetchOne(anyString(), any(Object[].class)))
+          .thenAnswer(
+              invocation -> {
+                String sql = invocation.getArgument(0, String.class);
+                if (!sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
+                  throw new AssertionError(sql);
+                Object[] values = (Object[]) invocation.getRawArguments()[1];
+                return retainedCapacity.get((String) values[0]);
+              });
       var connection = mock(Connection.class);
       when(connection.getTransactionIsolation()).thenReturn(Connection.TRANSACTION_SERIALIZABLE);
       doAnswer(

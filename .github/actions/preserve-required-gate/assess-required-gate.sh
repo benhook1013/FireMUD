@@ -132,10 +132,19 @@ validation_cancelled_before_checks() {
      "gRPC Transport Configuration Sanity Checks", "PostgreSQL Runtime Upgrade Proof", "Validate Documentation",
      "YAML Lint", "Dockerfile Lint", "Helm Render Validation", "Helm Chart Lint", "Python Script Validation",
      "ShellCheck", "Frontend Checks", "Dev Tool Contract Checks", "Helm Transaction Proof", "Account Coverage Aggregate",
-     "Game Session Coverage Aggregate", "World Coverage Aggregate", "Validation Gate"] as $names
-    | type == "array" and length == 1 and .[0].total_count == 26 and (.[0].jobs | type) == "array" and
-      (.[0].jobs | length) == 26 and ([.[0].jobs[].id] | unique | length) == 26 and
-      ([.[0].jobs[].name] | sort) == ($names | sort) and
+     "Game Session Coverage Aggregate", "World Coverage Aggregate", "Validation Gate"] as $historical_names
+    | [$gate.steps[] | select(.name == "Declare dev tool contract split")] as $split_markers
+    | (if ($split_markers | length) == 1
+       then [($historical_names + ["Dev Tool Validation Contracts"])]
+       else [$historical_names, ($historical_names + ["Dev Tool Validation Contracts"])] end) as $inventories
+    | .[0] as $snapshot
+    | type == "array" and length == 1 and ($snapshot.jobs | type) == "array" and
+      ($split_markers | length) <= 1 and
+      any($inventories[]; . as $names |
+        $snapshot.total_count == ($names | length) and
+        ($snapshot.jobs | length) == ($names | length) and
+        ([$snapshot.jobs[].id] | unique | length) == ($names | length) and
+        ([$snapshot.jobs[].name] | sort) == ($names | sort)) and
       all(.[0].jobs[]; (.id | type) == "number" and .id > 0 and .id == (.id | floor) and
         .run_id == $run and .run_attempt == $attempt and .head_sha == $head and .status == "completed" and
         (.check_run_url | type) == "string" and

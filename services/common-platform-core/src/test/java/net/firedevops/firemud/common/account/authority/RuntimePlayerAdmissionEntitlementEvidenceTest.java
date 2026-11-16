@@ -15,9 +15,11 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Checkpoint;
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Snapshot;
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Controlled content fixtures, not source authentication, transport or owner execution. */
 class RuntimePlayerAdmissionEntitlementEvidenceTest {
@@ -26,6 +28,9 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
   private static final UUID REQUEST = UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final String PEER = "spiffe://firemud/ns/prod/sa/game-session-service";
   private static final String HASH = "a".repeat(64);
+  private static final String SCOPE = "controlled-scope";
+  private static final String SCOPE_HASH =
+      RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(SCOPE);
   private static final Instant NOW = Instant.parse("2026-11-02T00:00:00Z");
 
   @Test
@@ -35,7 +40,9 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
         .containsEntry("variant", "PLAYER_ADMISSION")
         .containsEntry("authorityAvailability", "AVAILABLE")
         .containsEntry("callerAccountId", ACCOUNT.toString())
-        .containsEntry("verifiedConnectScopeId", "controlled-scope")
+        .containsEntry("bundleVersion", "2")
+        .containsEntry("verifiedConnectScopeTokenHash", SCOPE_HASH)
+        .doesNotContainKey("verifiedConnectScopeId")
         .containsEntry("membershipExists", false)
         .containsEntry("membershipLifecycleState", "MISSING");
     assertThat(value.membershipSource().membershipAuthorityGeneration()).isEqualTo("1");
@@ -45,7 +52,9 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
     copy[0] = 0;
     value.fields().put("callerAccountId", TENANT.toString());
     assertThat(value.fields()).containsEntry("callerAccountId", ACCOUNT.toString());
-    assertThat(value.toString()).doesNotContain("controlled-scope");
+    assertThat(value.toString()).doesNotContain(SCOPE);
+    assertThat(new String(value.canonicalBytes(), StandardCharsets.UTF_8)).doesNotContain(SCOPE);
+    assertThat(value.verifiedConnectScopeTokenHash()).isEqualTo(SCOPE_HASH);
     assertThatThrownBy(
             () -> RuntimeTenantOperationEntitlementEvidence.parseCanonical(value.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class);
@@ -88,14 +97,7 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
     assertThatThrownBy(
             () ->
                 RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
-                    REQUEST,
-                    PEER,
-                    "controlled-scope",
-                    oversized,
-                    target(),
-                    facts(),
-                    sources(),
-                    NOW))
+                    REQUEST, PEER, SCOPE_HASH, oversized, target(), facts(), sources(), NOW))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Bounded list required");
   }
@@ -171,6 +173,52 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
   }
 
   @Test
+  void legacyBearerBundleAndNewBundleWithRawFieldFailClosed() throws Exception {
+    var value = capture(target(), facts(), sources(), NOW);
+    var legacy = value.fields();
+    legacy.put("bundleVersion", "1");
+    legacy.remove("verifiedConnectScopeTokenHash");
+    legacy.put("verifiedConnectScopeId", SCOPE);
+    Object evaluatedAt = legacy.remove("evaluatedAt");
+    Object requestId = legacy.remove("requestId");
+    legacy.remove("snapshotIdentity");
+    legacy.remove("evaluationIdentity");
+    String snapshot = RuntimePlayerAdmissionEntitlementEvidence.digest(legacy);
+    legacy.put("snapshotIdentity", snapshot);
+    legacy.put("evaluatedAt", evaluatedAt);
+    legacy.put("requestId", requestId);
+    legacy.put(
+        "evaluationIdentity",
+        RuntimePlayerAdmissionEntitlementEvidence.digest(
+            Map.of(
+                "snapshotIdentity", snapshot,
+                "requestId", requestId,
+                "callerWorkload", PEER,
+                "evaluatedAt", evaluatedAt)));
+    var rawField = value.fields();
+    rawField.put("verifiedConnectScopeId", SCOPE);
+    var mapper = JsonMapper.builder().build();
+    for (var fields : List.of(legacy, rawField)) {
+      byte[] bytes = Rfc8785CanonicalJson.canonicalizeUtf8(mapper.writeValueAsString(fields));
+      byte[] retained = bytes.clone();
+      assertThatThrownBy(() -> RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(bytes))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageNotContaining(SCOPE);
+      assertThat(bytes).containsExactly(retained);
+    }
+  }
+
+  @Test
+  void rawScopeCannotBeSuppliedAsTheVerifiedTokenHash() {
+    assertThatThrownBy(
+            () ->
+                RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
+                    REQUEST, PEER, SCOPE, membership(), target(), facts(), sources(), NOW))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Verified connect scope token hash required");
+  }
+
+  @Test
   void validityIsMinimumOfActualScopeCallerAndPaidReceiptBounds() {
     var source = sources();
     var demo = capture(target(), facts(), source, NOW);
@@ -202,7 +250,7 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
       Map<String, Object> source,
       Instant at) {
     return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
-        REQUEST, PEER, "controlled-scope", membership(), target, facts, source, at);
+        REQUEST, PEER, SCOPE_HASH, membership(), target, facts, source, at);
   }
 
   private static Map<String, Object> target() {

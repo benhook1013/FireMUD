@@ -25,6 +25,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
@@ -57,11 +58,13 @@ import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssoc
 import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
+import net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationAdmissionRepository.Admitted;
 import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationIntentRepository.OriginalIntent;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
@@ -359,6 +362,559 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
         .isEqualTo(initialXmin);
     assertThat(c.dsl.fetchCount(DSL.table("account_audit_outbox"))).isEqualTo(2);
   }
+
+  @Test
+  void capacityOwnerPersistenceFinalizesOneOriginalReservationAndUsageExactlyOnce() {
+    var f = capacityPersistenceFixture();
+    var calls = new java.util.concurrent.atomic.AtomicInteger();
+    var recovery =
+        new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+            f.owner,
+            f.context.dsl,
+            (request, reservation, deadline) -> {
+              calls.incrementAndGet();
+              return capacityObservation(
+                  request,
+                  reservation,
+                  net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                      .Disposition.COMMITTED);
+            },
+            java.time.Clock.systemUTC());
+    var result =
+        recovery.reconcile(
+            f.request,
+            net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                .NoCommitAction.RELEASE);
+    assertThat(result.reservationId()).isEqualTo(f.initial.reservationId());
+    assertThat(result.state())
+        .isEqualTo(
+            net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State.FINALIZED);
+    assertThat(
+            recovery.reconcile(
+                f.request,
+                net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                    .NoCommitAction.RELEASE))
+        .isEqualTo(result);
+    assertThat(calls).hasValue(1);
+    assertThat(
+            Objects.requireNonNull(
+                    f.context.dsl.fetchOne(
+                        "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+                        f.request.identity().tenantId()))
+                .get("held_units", Long.class))
+        .isZero();
+    assertThat(
+            Objects.requireNonNull(
+                    f.context.dsl.fetchOne(
+                        "SELECT used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+                        f.request.identity().tenantId()))
+                .get("used_units", Long.class))
+        .isEqualTo(17);
+  }
+
+  @Test
+  void overlappingRecoveryCallsCannotInvalidateTheSameWorkersLiveClaim() throws Exception {
+    var f = capacityPersistenceFixture();
+    var next =
+        new TenantCapacityAdmission.Request(
+                f.request.identity(),
+                UUID.randomUUID(),
+                f.request.capacityRearmFence() + 1,
+                f.request.targetNamespace(),
+                f.request.context(),
+                f.request.operation(),
+                f.request.priorShape(),
+                f.request.requestedShape(),
+                f.request.evidence(),
+                f.request.capacityDelta(),
+                null)
+            .withDigest();
+    var readStarted = new CountDownLatch(1);
+    var resumeRead = new CountDownLatch(1);
+    var calls = new AtomicInteger();
+    var secondWorkerCalls = new AtomicInteger();
+    var recoveryClock = Clock.fixed(f.request.evidence().evaluatedAt(), ZoneOffset.UTC);
+    var recovery =
+        new AccountTenantCapacityRecoveryWorker(
+            f.owner,
+            f.context.dsl,
+            (request, reservation, deadline) -> {
+              if (calls.incrementAndGet() == 1) {
+                readStarted.countDown();
+                try {
+                  assertThat(resumeRead.await(10, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException interrupted) {
+                  Thread.currentThread().interrupt();
+                  throw new AssertionError("Interrupted while waiting to resume read", interrupted);
+                }
+              }
+              return capacityObservation(
+                  request, reservation, AccountTenantCapacityRecoveryWorker.Disposition.COMMITTED);
+            },
+            recoveryClock);
+    var secondWorker =
+        new AccountTenantCapacityRecoveryWorker(
+            f.owner,
+            f.context.dsl,
+            (request, reservation, deadline) -> {
+              secondWorkerCalls.incrementAndGet();
+              return capacityObservation(
+                  request, reservation, AccountTenantCapacityRecoveryWorker.Disposition.COMMITTED);
+            },
+            recoveryClock);
+    var action = AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE;
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var pending = executor.submit(() -> recovery.reconcile(f.request, action));
+      try {
+        assertThat(readStarted.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> recovery.reconcile(f.request, action))
+            .hasMessage("ENTITLEMENT_UNAVAILABLE");
+        assertThatThrownBy(() -> recovery.rearm(f.request, next))
+            .hasMessage("ENTITLEMENT_UNAVAILABLE");
+        assertThatThrownBy(() -> secondWorker.reconcile(f.request, action))
+            .hasMessage("ENTITLEMENT_UNAVAILABLE");
+        assertThatThrownBy(() -> secondWorker.rearm(f.request, next))
+            .hasMessage("ENTITLEMENT_UNAVAILABLE");
+        assertThat(calls).hasValue(1);
+        assertThat(secondWorkerCalls).hasValue(0);
+      } finally {
+        resumeRead.countDown();
+      }
+      var result = pending.get(10, TimeUnit.SECONDS);
+      assertThat(result.state()).isEqualTo(TenantCapacityAdmission.State.FINALIZED);
+      assertThat(recovery.reconcile(f.request, action)).isEqualTo(result);
+      assertThat(calls).hasValue(1);
+      assertThat(secondWorkerCalls).hasValue(0);
+    }
+  }
+
+  @Test
+  void capacityIndeterminateReadbackCannotReleaseAndTerminalNoCommitReleasesSameHold() {
+    var f = capacityPersistenceFixture();
+    var disposition =
+        new java.util.concurrent.atomic.AtomicReference<>(
+            net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                .Disposition.INDETERMINATE);
+    var recovery =
+        new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+            f.owner,
+            f.context.dsl,
+            (request, reservation, deadline) ->
+                capacityObservation(request, reservation, disposition.get()),
+            java.time.Clock.systemUTC());
+    assertThat(
+            recovery.reconcile(
+                f.request,
+                net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                    .NoCommitAction.RELEASE))
+        .isEqualTo(f.initial);
+    assertThat(
+            Objects.requireNonNull(
+                    f.context.dsl.fetchOne(
+                        "SELECT held_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+                        f.request.identity().tenantId()))
+                .get("held_units", Long.class))
+        .isEqualTo(17);
+    // This is controlled source/claim proof, not production selected-owner CAS qualification.
+    disposition.set(
+        net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+            .Disposition.NOT_EXECUTED_AFTER_AUTHORIZATION);
+    var released =
+        recovery.reconcile(
+            f.request,
+            net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                .NoCommitAction.RELEASE);
+    assertThat(released.state())
+        .isEqualTo(
+            net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State.RELEASED);
+    assertThat(released.reservationId()).isEqualTo(f.initial.reservationId());
+    assertThat(released.reservationFence()).isEqualTo(f.initial.reservationFence() + 1);
+    assertThat(
+            recovery.reconcile(
+                f.request,
+                net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                    .NoCommitAction.RELEASE))
+        .isEqualTo(released);
+    assertThat(
+            Objects.requireNonNull(
+                    f.context.dsl.fetchOne(
+                        "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+                        f.request.identity().tenantId()))
+                .get("held_units", Long.class))
+        .isZero();
+    assertThat(f.context.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void capacityChangedAttemptConflictsWithoutUsageMutationAndIncompleteLedgerCannotBeSeeded() {
+    var f = capacityPersistenceFixture();
+    var changed =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+                f.request.identity(),
+                UUID.randomUUID(),
+                f.request.capacityRearmFence(),
+                f.request.targetNamespace(),
+                f.request.context(),
+                f.request.operation(),
+                f.request.priorShape(),
+                f.request.requestedShape(),
+                f.request.evidence(),
+                f.request.capacityDelta(),
+                null)
+            .withDigest();
+    assertThatThrownBy(
+            () ->
+                f.context.transaction.execute(
+                    status -> f.repository.exact(changed, f.repository.find(changed.identity()))))
+        .hasMessage("IDEMPOTENCY_CONFLICT");
+    assertThatThrownBy(
+            () ->
+                f.context.transaction.executeWithoutResult(
+                    status ->
+                        f.context.dsl.execute(
+                            "UPDATE account_tenant_capacity_usage SET held_units = held_units + 1, usage_revision = usage_revision + 1 WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+                            f.request.identity().tenantId())))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(
+            Objects.requireNonNull(
+                    f.context.dsl.fetchOne(
+                        "SELECT held_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+                        f.request.identity().tenantId()))
+                .get("held_units", Long.class))
+        .isEqualTo(17);
+    assertThat(f.context.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void boundedIndeterminateCapacityRecoveryQuarantinesTheOriginalCompleteHold() {
+    var f = capacityPersistenceFixture();
+    var calls = new java.util.concurrent.atomic.AtomicInteger();
+    var recovery =
+        new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+            f.owner,
+            f.context.dsl,
+            (request, reservation, deadline) -> {
+              calls.incrementAndGet();
+              throw new IllegalStateException("Controlled selected-owner unavailability");
+            },
+            java.time.Clock.systemUTC());
+    net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result result =
+        f.initial;
+    for (int attempt = 0; attempt < 12; attempt++) {
+      result =
+          recovery.reconcile(
+              f.request,
+              net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                  .NoCommitAction.RELEASE);
+      assertThat(result.reservationId()).isEqualTo(f.initial.reservationId());
+      assertThat(result.reservationFence()).isEqualTo(f.initial.reservationFence());
+    }
+    assertThat(result.state())
+        .isEqualTo(
+            net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State
+                .QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION);
+    assertThat(calls).hasValue(12);
+    assertThat(
+            recovery.reconcile(
+                f.request,
+                net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                    .NoCommitAction.RELEASE))
+        .isEqualTo(result);
+    assertThat(calls).hasValue(12);
+    assertThat(f.context.dsl.fetchCount(DSL.table("account_tenant_capacity_recovery_evidence")))
+        .isEqualTo(12);
+    var usage =
+        Objects.requireNonNull(
+            f.context.dsl.fetchOne(
+                "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+                f.request.identity().tenantId()),
+            "Capacity usage row is absent");
+    assertThat(usage.get("held_units", Long.class)).isEqualTo(17);
+    assertThat(usage.get("used_units", Long.class)).isZero();
+    var retained =
+        Objects.requireNonNull(
+            f.context.dsl.fetchOne(
+                "SELECT recovery_attempt_count, recovery_escalated_at, next_reconcile_at FROM account_tenant_capacity_reservations WHERE reservation_id = ?",
+                result.reservationId()),
+            "Capacity reservation row is absent");
+    assertThat(retained.get("recovery_attempt_count", Integer.class)).isEqualTo(12);
+    assertThat(retained.get("recovery_escalated_at")).isNotNull();
+    assertThat(retained.get("next_reconcile_at")).isNull();
+  }
+
+  @Test
+  void firstRecoveryAfterDeadlineFinalizesAnExactPositiveOnce() {
+    var f = capacityPersistenceFixture(true);
+    assertThat(Instant.now()).isAfter(f.initial.expiresAt().plusSeconds(60));
+    var calls = new java.util.concurrent.atomic.AtomicInteger();
+    var recovery =
+        new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+            f.owner,
+            f.context.dsl,
+            (request, reservation, deadline) -> {
+              calls.incrementAndGet();
+              assertThat(deadline).isAfter(Instant.now());
+              assertThat(deadline).isBeforeOrEqualTo(Instant.now().plusSeconds(5));
+              return capacityObservation(
+                  request,
+                  reservation,
+                  net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                      .Disposition.COMMITTED);
+            },
+            java.time.Clock.systemUTC());
+    var result =
+        recovery.reconcile(
+            f.request,
+            net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                .NoCommitAction.RELEASE);
+    assertThat(result.state())
+        .isEqualTo(
+            net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State.FINALIZED);
+    assertThat(result.reservationId()).isEqualTo(f.initial.reservationId());
+    assertThat(result.reservationFence()).isEqualTo(f.initial.reservationFence());
+    assertThat(
+            recovery.reconcile(
+                f.request,
+                net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                    .NoCommitAction.RELEASE))
+        .isEqualTo(result);
+    assertThat(calls).hasValue(1);
+    var usage =
+        f.context.dsl.fetchSingle(
+            "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+            f.request.identity().tenantId());
+    assertThat(usage.get("held_units", Long.class)).isZero();
+    assertThat(usage.get("used_units", Long.class)).isEqualTo(17);
+    assertThat(f.context.dsl.fetchCount(DSL.table("account_tenant_capacity_recovery_evidence")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void firstLateNegativeMalformedUnavailableAndOverBudgetReadsQuarantineWithoutReleasing() {
+    for (String outcome :
+        List.of("negative", "indeterminate", "malformed", "unavailable", "late")) {
+      var f = capacityPersistenceFixture(true);
+      assertThat(Instant.now()).isAfter(f.initial.expiresAt().plusSeconds(60));
+      var now = new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
+      var recoveryClock =
+          new java.time.Clock() {
+            @Override
+            public java.time.ZoneId getZone() {
+              return ZoneOffset.UTC;
+            }
+
+            @Override
+            public java.time.Clock withZone(java.time.ZoneId zone) {
+              return this;
+            }
+
+            @Override
+            public Instant instant() {
+              return now.get();
+            }
+          };
+      var calls = new java.util.concurrent.atomic.AtomicInteger();
+      var recovery =
+          new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+              f.owner,
+              f.context.dsl,
+              (request, reservation, deadline) -> {
+                calls.incrementAndGet();
+                assertThat(deadline).isEqualTo(now.get().plusSeconds(5));
+                if (outcome.equals("unavailable"))
+                  throw new IllegalStateException("Controlled source unavailable");
+                if (outcome.equals("late")) now.set(deadline);
+                var disposition =
+                    outcome.equals("negative")
+                        ? net.firedevops.firemud.accountservice.service
+                            .AccountTenantCapacityRecoveryWorker.Disposition
+                            .NOT_EXECUTED_AFTER_AUTHORIZATION
+                        : outcome.equals("indeterminate")
+                            ? net.firedevops.firemud.accountservice.service
+                                .AccountTenantCapacityRecoveryWorker.Disposition.INDETERMINATE
+                            : net.firedevops.firemud.accountservice.service
+                                .AccountTenantCapacityRecoveryWorker.Disposition.COMMITTED;
+                var observation = capacityObservation(request, reservation, disposition);
+                if (!outcome.equals("malformed")) return observation;
+                return new net.firedevops.firemud.accountservice.service
+                    .AccountTenantCapacityRecoveryWorker.Observation(
+                    "spiffe://firemud/ns/prod/sa/wrong-owner",
+                    observation.reservation(),
+                    observation.canonicalAttemptPayload(),
+                    observation.disposition(),
+                    observation.proofId(),
+                    observation.currentOwnerFence(),
+                    observation.authoritativeStateDigest(),
+                    observation.canonicalOwnerReadback());
+              },
+              recoveryClock);
+      var result =
+          recovery.reconcile(
+              f.request,
+              net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                  .NoCommitAction.RELEASE);
+      assertThat(result.state())
+          .as(outcome)
+          .isEqualTo(
+              net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State
+                  .QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION);
+      assertThat(result.reservationId()).isEqualTo(f.initial.reservationId());
+      assertThat(result.reservationFence()).isEqualTo(f.initial.reservationFence());
+      assertThat(
+              recovery.reconcile(
+                  f.request,
+                  net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                      .NoCommitAction.RELEASE))
+          .isEqualTo(result);
+      assertThat(calls).hasValue(1);
+      var usage =
+          f.context.dsl.fetchSingle(
+              "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'world-management-service'",
+              f.request.identity().tenantId());
+      assertThat(usage.get("held_units", Long.class)).isEqualTo(17);
+      assertThat(usage.get("used_units", Long.class)).isZero();
+      var retained =
+          f.context.dsl.fetchSingle(
+              "SELECT outcome, canonical_readback FROM account_tenant_capacity_recovery_evidence");
+      assertThat(retained.get("outcome", String.class))
+          .isEqualTo("QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION");
+      assertThat(retained.get("canonical_readback")).isNull();
+    }
+  }
+
+  /** Genuine same-transaction fresh creation; controlled entitlement and owner execution source. */
+  private static CapacityPersistenceFixture capacityPersistenceFixture() {
+    return capacityPersistenceFixture(false);
+  }
+
+  private static CapacityPersistenceFixture capacityPersistenceFixture(boolean expired) {
+    StorageContext c = storageContext();
+    var fixture = storageFixture(c);
+    var assembled = assembleStoredOwner(c, fixture, new AccountAuditOutboxRepository(c.dsl));
+    assembled.owner.complete(
+        fixture.intent.creationOperationId(),
+        assembled.terminal,
+        assembled.environment,
+        assembled.recent);
+    UUID tenant = assembled.terminal.evidence().receipt().orElseThrow().canonicalTenantId();
+    var base =
+        net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture.worldRequest(
+            17L);
+    // A retained historical reservation is inserted through the same controlled source fixture.
+    // No live producer accepts stale evidence, and no immutable row or database clock is changed.
+    var now =
+        java.time.Instant.now()
+            .minusSeconds(expired ? 120 : 0)
+            .truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    String json =
+        new String(base.evidence().canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8)
+            .replace(base.identity().tenantId().toString(), tenant.toString())
+            .replace(
+                net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture.NOW
+                    .toString(),
+                now.toString());
+    var evidence =
+        net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence.parse(
+            json.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Owner
+                .WORLD_MANAGEMENT);
+    var context =
+        (net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.WorldContext)
+            base.context();
+    var request =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+                new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Identity(
+                    tenant, base.identity().requestId(), base.identity().admissionId()),
+                base.admissionAttemptId(),
+                base.capacityRearmFence(),
+                base.targetNamespace(),
+                new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
+                    .WorldContext(
+                    tenant,
+                    context.operationId(),
+                    context.lifecycleId(),
+                    context.gameInstanceId(),
+                    context.ownerId(),
+                    context.ownerFence()),
+                base.operation(),
+                base.priorShape(),
+                base.requestedShape(),
+                evidence,
+                base.capacityDelta(),
+                null)
+            .withDigest();
+    var repository =
+        new net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository(c.dsl);
+    var initial =
+        c.transaction.execute(
+            status -> {
+              // Controlled fixture evidence deliberately bypasses the absent World producer.
+              // Production
+              // has no route to perform this insertion and World admission remains unavailable.
+              c.dsl.execute(
+                  "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz)",
+                  evidence.evaluationIdentity(),
+                  evidence.snapshotIdentity(),
+                  tenant,
+                  evidence.callerWorkload(),
+                  evidence.owner().service(),
+                  evidence.canonicalBytes(),
+                  net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
+                      .at(evidence.evaluatedAt()),
+                  net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
+                      .at(evidence.expiresAt()));
+              return repository.create(
+                  request,
+                  evidence.expiresAt(),
+                  Clock.fixed(evidence.evaluatedAt(), ZoneOffset.UTC));
+            });
+    var owner =
+        new net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner(
+            c.dsl,
+            c.accounts,
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountCanonicalRuntimeMembershipSnapshotRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountGameplayDelegationIssuanceRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository
+                    .class),
+            c.manager,
+            java.time.Clock.systemUTC(),
+            "prod");
+    return new CapacityPersistenceFixture(c, request, repository, owner, initial);
+  }
+
+  private static net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+          .Observation
+      capacityObservation(
+          net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+          net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result reservation,
+          net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                  .Disposition
+              disposition) {
+    return new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+        .Observation(
+        request.evidence().callerWorkload(),
+        reservation,
+        net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(request),
+        disposition,
+        request.admissionAttemptId(),
+        7,
+        "sha256:" + "e".repeat(64),
+        "controlled-owner-readback".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+  }
+
+  private record CapacityPersistenceFixture(
+      StorageContext context,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+      net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository repository,
+      net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner owner,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result initial) {}
 
   @Test
   void expiredCreatedSettlesSharedSourceHoldWithoutAnyAccountCreatorCompletion() {
@@ -763,6 +1319,8 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
   }
 
   private static void assertAtomicRowsBeforeFinal(StorageContext c) {
+    assertThat(c.dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isEqualTo(2);
+    assertThat(c.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
     for (String table :
         List.of(
             "account_fresh_tenant_identity_associations",
@@ -776,6 +1334,9 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
   }
 
   private static void assertAtomicRows(StorageContext c, int expected) {
+    assertThat(c.dsl.fetchCount(DSL.table("account_tenant_capacity_usage")))
+        .isEqualTo(2 * expected);
+    assertThat(c.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
     for (String table :
         List.of(
             "account_fresh_tenant_identity_associations",

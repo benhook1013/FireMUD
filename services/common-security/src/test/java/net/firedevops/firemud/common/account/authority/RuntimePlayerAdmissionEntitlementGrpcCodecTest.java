@@ -3,6 +3,8 @@ package net.firedevops.firemud.common.account.authority;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.ByteString;
+import com.google.protobuf.UnknownFieldSet;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -10,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementResponse;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.TenantBillingCutoff;
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Checkpoint;
@@ -29,6 +32,7 @@ class RuntimePlayerAdmissionEntitlementGrpcCodecTest {
   private static final String HASH = "a".repeat(64);
   private static final Instant NOW = Instant.parse("2026-11-02T00:00:00Z");
   private static final String TOKEN = "controlled.initial.jwt";
+  private static final String SCOPE = "controlled-scope";
 
   private static RuntimePlayerAdmissionEntitlementGrpcCodec.Request request(
       UUID account, UUID requestId) {
@@ -47,23 +51,28 @@ class RuntimePlayerAdmissionEntitlementGrpcCodecTest {
             REQUEST,
             7,
             3),
-        "controlled-scope");
+        SCOPE);
   }
 
   @Test
-  void exactRoundTripPreservesSelectorsAndNeverEchoesCredential() {
+  void exactRoundTripPreservesTargetAndNeverEchoesEitherCredential() {
     var request = request(ACCOUNT, REQUEST);
     var wire = RuntimePlayerAdmissionEntitlementGrpcCodec.toRequest(request, TOKEN);
     var presented = RuntimePlayerAdmissionEntitlementGrpcCodec.parseRequest(wire);
     assertThat(presented.request()).isEqualTo(request);
     assertThat(presented.initialLoginJwt()).isEqualTo(TOKEN);
-    assertThat(presented.toString()).doesNotContain(TOKEN, "controlled-scope");
-    assertThat(request.toString()).doesNotContain("controlled-scope");
+    assertThat(presented.toString()).doesNotContain(TOKEN, SCOPE);
+    assertThat(request.toString()).doesNotContain(SCOPE);
     var value = capture(target(), facts(), sources(), NOW);
     var response = RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(request, value);
     assertThat(RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(request, response))
         .isEqualTo(value);
-    assertThat(response.toByteString().toStringUtf8()).doesNotContain(TOKEN);
+    assertThat(response.getBinding(0).getSchemaVersionList()).containsExactly(2);
+    assertThat(response.getBinding(0).getTargetList())
+        .containsExactly(wire.getSelectors(0).getTarget(0));
+    assertThat(response.toByteString().toStringUtf8()).doesNotContain(TOKEN, SCOPE);
+    assertThat(value.verifiedConnectScopeTokenHash())
+        .isEqualTo(RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(SCOPE));
   }
 
   @Test
@@ -97,7 +106,16 @@ class RuntimePlayerAdmissionEntitlementGrpcCodecTest {
     for (var malformed :
         List.of(
             response.getDefaultInstanceForType(),
-            response.toBuilder().addRequest(response.getRequest(0)).build(),
+            response.toBuilder().addBinding(response.getBinding(0)).build(),
+            response.toBuilder()
+                .setBinding(0, response.getBinding(0).toBuilder().clearTarget())
+                .build(),
+            response.toBuilder()
+                .setBinding(0, response.getBinding(0).toBuilder().setSchemaVersion(0, 1))
+                .build(),
+            response.toBuilder()
+                .setBinding(0, response.getBinding(0).toBuilder().setUnknownFields(unknown))
+                .build(),
             response.toBuilder().addCanonicalEvidence(response.getCanonicalEvidence(0)).build(),
             response.toBuilder().setUnknownFields(unknown).build(),
             response.toBuilder()
@@ -107,6 +125,78 @@ class RuntimePlayerAdmissionEntitlementGrpcCodecTest {
               () -> RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(request, malformed))
           .isInstanceOf(IllegalArgumentException.class);
     }
+  }
+
+  @Test
+  void rejectsLegacyCredentialBearingResponseMalformedHashOrWrongTarget() throws Exception {
+    var request = request(ACCOUNT, REQUEST);
+    var value = capture(target(), facts(), sources(), NOW);
+    var response = RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(request, value);
+    var legacy =
+        ReadPlayerAdmissionEntitlementResponse.newBuilder()
+            .addCanonicalEvidence(response.getCanonicalEvidence(0))
+            .setUnknownFields(
+                UnknownFieldSet.newBuilder()
+                    .addField(
+                        1,
+                        UnknownFieldSet.Field.newBuilder()
+                            .addLengthDelimited(
+                                RuntimePlayerAdmissionEntitlementGrpcCodec.toRequest(request, TOKEN)
+                                    .getSelectors(0)
+                                    .toByteString())
+                            .build())
+                    .build())
+            .build();
+    var wrongTarget =
+        RuntimePlayerAdmissionEntitlementGrpcCodec.toRequest(
+                request(ACCOUNT, UUID.randomUUID()), TOKEN)
+            .getSelectors(0)
+            .getTarget(0);
+    String canonical = response.getCanonicalEvidence(0).toStringUtf8();
+    for (var invalid :
+        List.of(
+            ReadPlayerAdmissionEntitlementResponse.parseFrom(legacy.toByteArray()),
+            ReadPlayerAdmissionEntitlementResponse.parseFrom(
+                response.toBuilder()
+                    .setUnknownFields(legacy.getUnknownFields())
+                    .build()
+                    .toByteArray()),
+            response.toBuilder()
+                .setBinding(0, response.getBinding(0).toBuilder().setTarget(0, wrongTarget))
+                .build(),
+            response.toBuilder()
+                .setCanonicalEvidence(
+                    0,
+                    ByteString.copyFromUtf8(
+                        canonical.replace(value.verifiedConnectScopeTokenHash(), SCOPE)))
+                .build())) {
+      assertThatThrownBy(
+              () -> RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(request, invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
+  void rejectsValidCanonicalEvidenceForDifferentScope() {
+    var request = request(ACCOUNT, REQUEST);
+    var staleRequest =
+        new RuntimePlayerAdmissionEntitlementGrpcCodec.Request(request.target(), "stale-scope");
+    var exact = capture(target(), facts(), sources(), NOW);
+    var stale = capture(target(), facts(), sources(), NOW, staleRequest.connectScopeId());
+    var canonical = stale.canonicalBytes();
+    assertThat(RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(canonical))
+        .isEqualTo(stale);
+    assertThat(stale.verifiedConnectScopeTokenHash())
+        .isNotEqualTo(exact.verifiedConnectScopeTokenHash());
+    var response =
+        RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(request, exact).toBuilder()
+            .setCanonicalEvidence(0, ByteString.copyFrom(canonical))
+            .build();
+    assertThat(RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(staleRequest, response))
+        .isEqualTo(stale);
+    assertThatThrownBy(
+            () -> RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(request, response))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
@@ -133,8 +223,24 @@ class RuntimePlayerAdmissionEntitlementGrpcCodecTest {
       Map<String, Object> facts,
       Map<String, Object> source,
       Instant at) {
+    return capture(target, facts, source, at, SCOPE);
+  }
+
+  private static RuntimePlayerAdmissionEntitlementEvidence capture(
+      Map<String, Object> target,
+      Map<String, Object> facts,
+      Map<String, Object> source,
+      Instant at,
+      String scope) {
     return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
-        REQUEST, PEER, "controlled-scope", membership(), target, facts, source, at);
+        REQUEST,
+        PEER,
+        RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(scope),
+        membership(),
+        target,
+        facts,
+        source,
+        at);
   }
 
   private static Map<String, Object> target() {

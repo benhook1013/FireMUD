@@ -371,8 +371,74 @@ VALIDATION_DISCOVERY_COMMAND = (
     "python3 -m unittest discover -s dev-tools/validation "
     "-p 'test_*.py' --durations 0"
 )
+REQUIRED_GATE_COMMAND = "bash ./dev-tools/tests/pr-required-gate-context-contract.sh"
+SPLIT_JOB = "dev-tool-validation-contracts"
+SPLIT_STEP = "Validate dev tool validation contracts"
 DEV_TOOLS_TEST_DISCOVERY_COMMAND = "python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'"
 
+
+# Frozen full-run ownership: splitting lanes must neither lose nor repeat work.
+REMAINING_FULL_RUN_COMMANDS = (
+    'bash ./dev-tools/tests/cloc-report-contract.sh',
+    'bash ./dev-tools/tests/ci-lightweight-scope-contract.sh',
+    'bash ./dev-tools/tests/gradle-dependency-recovery-contract.sh',
+    'bash ./dev-tools/tests/workflow-version-authority-contract.sh',
+    'bash ./dev-tools/tests/workflow-tool-updater-contract.sh',
+    'bash ./dev-tools/tests/publisher-checksum-contract.sh',
+    'bash ./dev-tools/tests/jacoco-combined-report-contract.sh',
+    'bash ./dev-tools/tests/gradle-proof-tooling-contract.sh',
+    'bash ./dev-tools/tests/testcontainers-disabled-contract.sh',
+    'bash ./dev-tools/tests/pr-retarget-workflow-contract.sh',
+    'bash ./dev-tools/tests/static-analysis-summary-contract.sh',
+    'bash ./dev-tools/tests/ci-validation-summary-contract.sh',
+    'bash ./dev-tools/tests/security-summary-contract.sh',
+    'bash ./dev-tools/tests/pr-runtime-image-publication-contract.sh',
+    'bash ./dev-tools/tests/runtime-base-image-apt-contract.sh',
+    'bash ./dev-tools/tests/dev-demo-workflow-contract.sh',
+    'bash ./dev-tools/tests/erd-workflow-contract.sh',
+    'bash ./dev-tools/tests/smoke-transport-contract.sh',
+    'bash ./dev-tools/tests/reset-service-db-contract.sh',
+    'bash ./dev-tools/tests/preview-eligibility-contract.sh',
+    'bash ./dev-tools/tests/preview-priority-contract.sh',
+    'bash ./dev-tools/tests/gameplay-bridge-network-policy-contract.sh',
+    'bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh',
+    'bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh',
+    'bash ./dev-tools/tests/preview-runner-isolation-contract.sh',
+    'bash ./dev-tools/tests/preview-standalone-transport-certificates-contract.sh',
+    'bash ./dev-tools/tests/preview-ca-recovery-contract.sh',
+    'bash ./dev-tools/tests/trust-bootstrap-rbac-contract.sh',
+    'bash ./dev-tools/tests/trust-bootstrap-issuance-contract.sh',
+    'bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh',
+    'bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh',
+    'bash ./dev-tools/tests/account-jwt-bootstrap-fixture-contract.sh',
+    'bash ./dev-tools/tests/game-session-factory-qualification-contract.sh',
+    'bash ./dev-tools/tests/preview-cleanup-proof-contract.sh',
+    'bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh',
+    'bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh',
+    'bash ./dev-tools/tests/worktree-topology-contract.sh',
+    'bash ./dev-tools/tests/dev-tools-readme-contract.sh',
+    'bash ./dev-tools/tests/preflight-contract.sh',
+    'bash ./dev-tools/tests/verify-backups-velero-contract.sh',
+    'bash ./dev-tools/tests/verify-backups-cronjob-contract.sh',
+    'bash ./dev-tools/tests/backup-verifier-image-contract.sh',
+    'bash ./dev-tools/tests/kubectl-version-skew-contract.sh',
+    'bash ./dev-tools/tests/helm-transaction-proof-contract.sh',
+    'bash ./dev-tools/tests/account-workload-namespace-contract.sh',
+    'bash ./dev-tools/tests/preview-image-tag-contract.sh',
+    'bash ./dev-tools/tests/preview-merge-image-tag-contract.sh',
+    'bash ./dev-tools/tests/overlay-preflight-contract.sh',
+    'bash ./dev-tools/tests/validate-external-credentials-contract.sh',
+    'bash ./dev-tools/tests/observability-validator-contract.sh',
+    'bash ./dev-tools/tests/secret-compliance-contract.sh',
+    'bash ./dev-tools/tests/ensure-local-compose-env-contract.sh',
+    'bash ./dev-tools/tests/local-compose-mtls-contract.sh',
+    'bash ./dev-tools/tests/dev-certs-retention-contract.sh',
+    'bash ./dev-tools/tests/smoke-image-env-contract.sh',
+    'bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh',
+    'bash ./dev-tools/tests/architecture-doc-contracts.sh --defer-unit-tests',
+    'bash ./dev-tools/tests/lint-yaml-contract.sh',
+    "python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'",
+)
 
 def require_gating_run_step(workflow, job_id, name_suffix, command):
     label = f"ci {name_suffix} contract"
@@ -407,18 +473,23 @@ def executable_command_line(line):
     return line.strip().removeprefix("time ")
 
 
+def contract_command_location(command):
+    if command in (VALIDATION_DISCOVERY_COMMAND, REQUIRED_GATE_COMMAND):
+        return SPLIT_JOB, SPLIT_STEP
+    return "dev-tool-contract-checks", "Validate dev tool contracts"
+
+
 def require_dev_tool_contract_command(workflow, command):
     label = f"ci dev-tool contract command {command!r}"
     step = find_step(
         workflow,
-        "dev-tool-contract-checks",
-        "Validate dev tool contracts",
+        *contract_command_location(command),
         "ci workflow",
     )
     run = value_at(step, ("run",), label)
-    if not isinstance(run, str) or not any(
+    if not isinstance(run, str) or sum(
         executable_command_line(line) == command for line in run.splitlines()
-    ):
+    ) != 1:
         raise SystemExit(
             f"{label}: command must appear as an executable run-block line"
         )
@@ -445,17 +516,25 @@ def require_architecture_test_handoff(workflow):
             f"{label}: full contract path must defer discovery-covered architecture "
             "unit tests exactly once"
         )
-    if lines.count(VALIDATION_DISCOVERY_COMMAND) != 1:
-        raise SystemExit(
-            f"{label}: full contract path must run validation discovery with "
-            "per-test durations exactly once"
-        )
-    if lines.index(DEFERRED_ARCHITECTURE_COMMAND) >= lines.index(
-        VALIDATION_DISCOVERY_COMMAND
+    split_step = find_step(workflow, SPLIT_JOB, SPLIT_STEP, label)
+    if "if" in split_step or str(split_step.get("continue-on-error", "false")).lower() != "false":
+        raise SystemExit(f"{label}: split contracts must run and fail their job")
+    expected_condition = "${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}"
+    require_equal(workflow, ("jobs", SPLIT_JOB, "if"), expected_condition, label)
+    require_equal(workflow, ("jobs", SPLIT_JOB, "needs"), ["changes"], label)
+    if str(workflow["jobs"][SPLIT_JOB].get("continue-on-error", "false")).lower() != "false":
+        raise SystemExit(f"{label}: split job failures must fail validation")
+    for job_id, step_suffix, commands in (
+        ("dev-tool-contract-checks", "Validate dev tool contracts", REMAINING_FULL_RUN_COMMANDS),
+        (SPLIT_JOB, SPLIT_STEP, (REQUIRED_GATE_COMMAND, VALIDATION_DISCOVERY_COMMAND)),
     ):
-        raise SystemExit(
-            f"{label}: comprehensive validation discovery must follow deferred architecture tests"
-        )
+        contract = find_step(workflow, job_id, step_suffix, label)
+        actual = [executable_command_line(line) for line in contract["run"].splitlines()
+                  if executable_command_line(line).startswith(("bash ", "python3 "))]
+        if actual != list(commands):
+            raise SystemExit(f"{label}: {job_id} changed its exact full-run command ownership")
+    for command in (VALIDATION_DISCOVERY_COMMAND, REQUIRED_GATE_COMMAND):
+        require_dev_tool_contract_command(workflow, command)
 
     repository_root = Path(sys.argv[1]).resolve().parents[2]
     for module in DISCOVERABLE_ARCHITECTURE_UNIT_TEST_MODULES:
@@ -477,8 +556,7 @@ def mutate_dev_tool_contract_command(workflow, command):
     mutated = copy.deepcopy(workflow)
     step = find_step(
         mutated,
-        "dev-tool-contract-checks",
-        "Validate dev tool contracts",
+        *contract_command_location(command),
         "mutated ci workflow",
     )
     run = value_at(step, ("run",), "mutated ci workflow")
@@ -1517,7 +1595,22 @@ def gate_case(changes, expected):
     result = subprocess.run(["bash", "-e", "-c", gate["run"]], env={**os.environ, **base_env, **changes}, capture_output=True, text=True)
     if (result.returncode == 0) != expected:
         raise SystemExit(f"Validation Gate fixture {changes} unexpectedly returned {result.returncode}: {result.stdout} {result.stderr}")
+require_list_item(ci, ("jobs", "validation-gate", "needs"), SPLIT_JOB, "ci workflow")
+require_equal(gate, ("env", "DEV_TOOL_VALIDATION_CONTRACTS"),
+              "${{ needs.dev-tool-validation-contracts.result }}", "ci workflow")
 gate_case({}, True)
+for sibling in ("DEV_TOOL_CONTRACT_CHECKS", "DEV_TOOL_VALIDATION_CONTRACTS"):
+    for outcome in ("failure", "cancelled", "skipped", "timed_out", ""):
+        gate_case({sibling: outcome}, False)
+# Lightweight documentation and validation-Python retain their original lane.
+for design, validation in (("false", "false"), ("true", "false"), ("false", "true"), ("true", "true")):
+    lightweight = {"LIGHTWEIGHT_ONLY": "true", "DESIGN_DOCS_CHANGED": design,
+                   "VALIDATION_PYTHON_CHANGED": validation,
+                   "DEV_TOOL_CONTRACT_CHECKS": "success" if "true" in (design, validation) else "skipped",
+                   "DEV_TOOL_VALIDATION_CONTRACTS": "skipped"}
+    gate_case(lightweight, True)
+    for outcome in ("failure", "cancelled", ""):
+        gate_case({**lightweight, "DEV_TOOL_VALIDATION_CONTRACTS": outcome}, False)
 for flag, result, aggregate in (
     ("OTHER_MODULES_AFFECTED", "BUILD_AND_TEST", None),
     ("ACCOUNT_MODULE_AFFECTED", "BUILD_AND_TEST_ACCOUNT", "ACCOUNT_COVERAGE_AGGREGATE"),
@@ -1760,12 +1853,12 @@ for job_id, name_suffix, command in CI_GATING_STEPS:
         raise SystemExit(
             f"ci script execution contract accepted {name_suffix} {description}"
         )
-for command in DEV_TOOL_CONTRACT_COMMANDS:
+for command in (*DEV_TOOL_CONTRACT_COMMANDS, VALIDATION_DISCOVERY_COMMAND, REQUIRED_GATE_COMMAND):
     require_dev_tool_contract_command(ci, command)
     for replacement in ("", f"# time {command}", f'echo "time {command}"',
                         f'"time {command}"', f"time {command} || true", f"time {command} &"):
         mutation = mutate_dev_tool_contract_command(ci, command)
-        step = find_step(mutation, "dev-tool-contract-checks", "Validate dev tool contracts", "mutated ci workflow")
+        step = find_step(mutation, *contract_command_location(command), "mutated ci workflow")
         step["run"] += "\n" + replacement
         try:
             require_dev_tool_contract_command(mutation, command)
@@ -1778,6 +1871,7 @@ require_architecture_test_handoff(ci)
 for description, command in (
     ("missing deferred architecture command", DEFERRED_ARCHITECTURE_COMMAND),
     ("missing validation discovery", VALIDATION_DISCOVERY_COMMAND),
+    ("missing required-gate contract", REQUIRED_GATE_COMMAND),
 ):
     mutation = mutate_dev_tool_contract_command(ci, command)
     try:
@@ -1802,6 +1896,45 @@ for description, changes in (
     except SystemExit:
         continue
     raise SystemExit(f"ci architecture test handoff accepted {description}")
+for description, changes in (
+    ("disabled split step", {"if": "${{ false }}"}),
+    ("ignored split failure", {"continue-on-error": "true"}),
+    ("missing split command", {"run": "true"}),
+):
+    mutation = copy.deepcopy(ci)
+    find_step(mutation, SPLIT_JOB, SPLIT_STEP, "mutated ci workflow").update(changes)
+    try:
+        require_architecture_test_handoff(mutation)
+    except SystemExit:
+        continue
+    raise SystemExit(f"ci split contract accepted {description}")
+for job_id, suffix, command in (
+    ("dev-tool-contract-checks", "Validate dev tool contracts", VALIDATION_DISCOVERY_COMMAND),
+    (SPLIT_JOB, SPLIT_STEP, REQUIRED_GATE_COMMAND),
+    (SPLIT_JOB, SPLIT_STEP, REMAINING_FULL_RUN_COMMANDS[0]),
+):
+    mutation = copy.deepcopy(ci)
+    find_step(mutation, job_id, suffix, "mutated ci workflow")["run"] += "\n" + command
+    try:
+        require_architecture_test_handoff(mutation)
+    except SystemExit:
+        continue
+    raise SystemExit("ci split contract accepted duplicate or wrong-lane work")
+split_python = find_step(ci, SPLIT_JOB, "🐍 Set Up Python", "ci workflow")
+require_equal(split_python, ("uses",), "./.github/actions/setup-python", "ci workflow")
+require_equal(split_python, ("with", "requirements"), "ci", "ci workflow")
+split_node = find_step(ci, SPLIT_JOB, "Set up Node for Python Markdown contracts", "ci workflow")
+require_equal(split_node, ("uses",), "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1", "ci workflow")
+require_equal(split_node, ("with", "node-version-file"), ".node-version", "ci workflow")
+split_npm = find_step(ci, SPLIT_JOB, "Install pinned Markdown contract dependencies", "ci workflow")
+require_equal(split_npm, ("run",), "npm ci --ignore-scripts --no-audit --no-fund --prefix config/openapi", "ci workflow")
+for prerequisite in (split_python, split_node, split_npm):
+    if "if" in prerequisite or prerequisite.get("continue-on-error", "false") != "false":
+        raise SystemExit("Split prerequisite may not be skipped or ignore failure")
+split_steps = ci["jobs"][SPLIT_JOB]["steps"]
+if not (split_steps.index(split_python) < split_steps.index(split_node) < split_steps.index(split_npm)
+        < split_steps.index(find_step(ci, SPLIT_JOB, SPLIT_STEP, "ci workflow"))):
+    raise SystemExit("Split contracts must follow pinned Python, Node and npm prerequisites")
 require_equal(
     architecture_document_step,
     ("if",),
@@ -1816,10 +1949,21 @@ if architecture_run not in (
 ):
     raise SystemExit("ci architecture document contract must retain its exact executable command with optional timing")
 
+lightweight_python = find_step(ci, "dev-tool-contract-checks", "Validate non-runtime Python contracts", "ci workflow")
+require_equal(lightweight_python, ("if",),
+              "${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.validation_python_changed == 'true' }}",
+              "ci workflow")
+require_equal(lightweight_python, ("run",),
+              "TIMEFORMAT='python3 -m unittest discover -s dev-tools/validation -p test_*.py: real=%3R user=%3U sys=%3S'\n"
+              "time python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'\n",
+              "ci workflow")
+if lightweight_python.get("continue-on-error", "false") != "false":
+    raise SystemExit("Lightweight validation-Python contracts must still fail their original lane")
+
 require_contains(
-    complete_contract_step,
+    find_step(ci, SPLIT_JOB, SPLIT_STEP, "ci workflow"),
     ("run",),
-    "python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'",
+    VALIDATION_DISCOVERY_COMMAND,
     "ci workflow",
 )
 require_contains(

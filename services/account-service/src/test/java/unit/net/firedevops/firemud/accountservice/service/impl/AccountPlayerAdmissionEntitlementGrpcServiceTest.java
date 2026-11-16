@@ -285,6 +285,8 @@ class AccountPlayerAdmissionEntitlementGrpcServiceTest {
     binding.put("catalogRevision", "7");
     binding.put("pointerVersion", "3");
     var evidence = mock(RuntimePlayerAdmissionEntitlementEvidence.class);
+    String scopeHash = RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(SCOPE);
+    when(evidence.verifiedConnectScopeTokenHash()).thenReturn(scopeHash);
     when(evidence.fields())
         .thenReturn(
             Map.of(
@@ -296,8 +298,8 @@ class AccountPlayerAdmissionEntitlementGrpcServiceTest {
                 target.readRequestId().toString(),
                 "callerWorkload",
                 PEER,
-                "verifiedConnectScopeId",
-                SCOPE,
+                "verifiedConnectScopeTokenHash",
+                scopeHash,
                 "target",
                 binding));
     when(evidence.canonicalBytes())

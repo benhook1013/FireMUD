@@ -166,6 +166,10 @@ Gameplay command streams from clients into Game Session are intentionally **diff
 - Accepted command execution as durably tracked and idempotent, with automatic replay only for explicitly safe command classes.
 - Internal event/notification streams as at‑least‑once with required idempotency keys.
 
+## Keepalive Requirements
+
+Shared gRPC clients with keepalive enabled use a 30-second keepalive interval, a 5-second timeout, and permit pings while no calls are active. Internal gRPC servers use the same 30-second interval and 5-second timeout, permit pings without active calls, and accept client keepalives no more frequently than every 30 seconds. Every service configuration states all four server values explicitly, including `spring.grpc.server.keep-alive.permit-time: 30s`; the Spring gRPC 1.0.3 default permit interval is longer and is incompatible with the shared client interval. Manually composed clients and servers use the shared keepalive policy so they follow the same transport contract. Explicit server builder customizers may override the defaults when a supported caller requires different values, provided the paired client interval and idle-ping behavior remain compatible.
+
 ## TLS Requirements
 
 All internal gRPC calls use **mutual TLS**. FireMUD services now express the server-side TLS contract with Spring gRPC SSL bundles:
