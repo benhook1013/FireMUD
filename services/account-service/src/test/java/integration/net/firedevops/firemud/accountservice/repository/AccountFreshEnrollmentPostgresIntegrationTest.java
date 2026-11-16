@@ -159,6 +159,33 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
   }
 
   @Test
+  void currentSchemaMissingProvenanceConstraintFailsClosedWithoutEnrolling() throws Exception {
+    Context context = context(null);
+    controlledPolicies(context);
+    assertThatThrownBy(
+            () ->
+                context.transaction.executeWithoutResult(
+                    status -> {
+                      context.dsl.execute(
+                          "DROP TRIGGER account_fence_provenance_consistent ON account_issuance_fence_provenance");
+                      producer(context).enroll(request());
+                    }))
+        .rootCause()
+        .isInstanceOf(org.postgresql.util.PSQLException.class)
+        .hasMessageContaining("account_fence_provenance_consistent")
+        .hasMessageContaining("does not exist");
+    assertNoEnrollmentState(context);
+    // The deliberate test-only DDL is rolled back with the refused owner transaction.
+    assertThat(
+            context
+                .dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM pg_trigger WHERE tgname = 'account_fence_provenance_consistent' AND tgrelid = 'account_issuance_fence_provenance'::regclass")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+  }
+
+  @Test
   void sourceGuardsStillRefuseGenerationOrFenceAdvanceWithoutExactSourceEvidenceAtCommit()
       throws Exception {
     Context context = context(null);
