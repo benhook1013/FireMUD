@@ -472,8 +472,7 @@ public final class RunOwnedWorldFixedPresetResources {
       FixedPresetPlan plan,
       long worldInstanceId,
       long privateGameInstanceKey,
-      net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationRequest
-          request) {
+      net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest request) {
     Objects.requireNonNull(request, "request");
     if (!org.springframework.transaction.support.TransactionSynchronizationManager
             .isActualTransactionActive()

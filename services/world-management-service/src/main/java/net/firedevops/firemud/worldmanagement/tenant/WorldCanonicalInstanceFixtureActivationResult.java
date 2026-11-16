@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Objects;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest;
 
 /**
  * Owner-local fixture CAS receipt. Not Human lifecycle, admission or authenticated transport proof.

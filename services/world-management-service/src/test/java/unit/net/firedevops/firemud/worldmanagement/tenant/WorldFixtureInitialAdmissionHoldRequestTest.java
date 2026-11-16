@@ -6,6 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest;
+import net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest;
+import net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionTerminalProof;
 import org.junit.jupiter.api.Test;
 
 class WorldFixtureInitialAdmissionHoldRequestTest {

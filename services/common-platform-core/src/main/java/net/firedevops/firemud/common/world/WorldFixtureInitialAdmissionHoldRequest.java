@@ -1,10 +1,9 @@
-package net.firedevops.firemud.worldmanagement.tenant;
+package net.firedevops.firemud.common.world;
 
 import java.io.IOException;
 import java.util.Base64;
 import java.util.Objects;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
-import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 
 /**
  * Private fixture acquisition assertions, distinct from Human lifecycle and hold authority. The
@@ -23,6 +22,11 @@ public record WorldFixtureInitialAdmissionHoldRequest(
         || selector.activeLifecycleEpoch() != 2L) {
       throw new IllegalArgumentException("Fixture hold differs from its exact activation target");
     }
+  }
+
+  /** Decodes exact canonical value bytes; this is not owner authentication. */
+  public static WorldFixtureInitialAdmissionHoldRequest fromStored(byte[] bytes) {
+    return FixtureInitialAdmissionFrames.hold(bytes);
   }
 
   /** Binds the complete original attempt and exact activation identity, not a Human proof. */

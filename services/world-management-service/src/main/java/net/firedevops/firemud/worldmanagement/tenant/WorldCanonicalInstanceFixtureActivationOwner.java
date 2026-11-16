@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResources;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;

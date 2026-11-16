@@ -1,4 +1,4 @@
-package net.firedevops.firemud.worldmanagement.tenant;
+package net.firedevops.firemud.common.world;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -59,6 +59,11 @@ public record WorldFixtureInitialAdmissionTerminalProof(
             "Fixture commit requires exact pointer and audit evidence");
       }
     }
+  }
+
+  /** Decodes exact canonical value bytes; this is not owner authentication. */
+  public static WorldFixtureInitialAdmissionTerminalProof fromStored(byte[] bytes) {
+    return FixtureInitialAdmissionFrames.terminal(bytes);
   }
 
   /** Exact fixture terminal bytes; a digest of these bytes is not authentication. */

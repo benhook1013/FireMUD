@@ -13,6 +13,8 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState.HoldStatus;
+import net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest;
+import net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionTerminalProof;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.exception.DataAccessException;

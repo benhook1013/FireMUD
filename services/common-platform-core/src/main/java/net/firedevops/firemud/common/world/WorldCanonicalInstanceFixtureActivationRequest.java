@@ -1,4 +1,4 @@
-package net.firedevops.firemud.worldmanagement.tenant;
+package net.firedevops.firemud.common.world;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -30,6 +30,11 @@ public record WorldCanonicalInstanceFixtureActivationRequest(
       throw new IllegalArgumentException(
           "Fixture activation requires the original PREPARING epoch 1 and row version 0");
     }
+  }
+
+  /** Decodes exact canonical value bytes; this is not owner authentication. */
+  public static WorldCanonicalInstanceFixtureActivationRequest fromStored(byte[] bytes) {
+    return FixtureInitialAdmissionFrames.activation(bytes);
   }
 
   /** Canonical closed bytes retained as the immutable one-use operation request. */

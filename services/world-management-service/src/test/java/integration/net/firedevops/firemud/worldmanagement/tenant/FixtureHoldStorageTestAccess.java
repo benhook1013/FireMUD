@@ -2,6 +2,8 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.time.Instant;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
+import net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest;
+import net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionTerminalProof;
 
 /** Test-only access to private storage; stipulated terminal data is not authenticated transport. */
 public final class FixtureHoldStorageTestAccess {

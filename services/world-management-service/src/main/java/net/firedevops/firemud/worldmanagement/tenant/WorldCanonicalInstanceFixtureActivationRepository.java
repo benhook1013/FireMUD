@@ -10,6 +10,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResources;
 import org.jooq.DSLContext;
 import org.jooq.Record;

@@ -2355,8 +2355,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       WorldCanonicalInstanceAssociation association,
       RunOwnedWorldFixedPresetResources.FixedPresetPlan plan) {
     var request =
-        new net.firedevops.firemud.worldmanagement.tenant
-            .WorldCanonicalInstanceFixtureActivationRequest(
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest(
             UUID.randomUUID(),
             association.identity().canonicalTenantId(),
             association.identity().canonicalGameInstanceId(),
@@ -2424,8 +2423,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                     association.runOwnedFixture().worldPrivateKeys().gameInstanceId()))
         .isInstanceOf(IllegalStateException.class);
     var changed =
-        new net.firedevops.firemud.worldmanagement.tenant
-            .WorldCanonicalInstanceFixtureActivationRequest(
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest(
             UUID.randomUUID(),
             request.canonicalTenantId(),
             request.canonicalGameInstanceId(),
@@ -2454,7 +2452,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   private void assertFixtureHoldStorage(
       WorldCanonicalInstanceAssociationRepository associations,
       WorldCanonicalInstanceAssociation association,
-      net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceFixtureActivationRequest
+      net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest
           activation) {
     var i = association.identity();
     var selector =
@@ -2475,7 +2473,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             i.catalogRevision(),
             null);
     var request =
-        new net.firedevops.firemud.worldmanagement.tenant.WorldFixtureInitialAdmissionHoldRequest(
+        new net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest(
             selector, activation);
     var holds =
         new net.firedevops.firemud.worldmanagement.tenant
@@ -2537,7 +2535,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             i.catalogRevision(),
             null);
     var commitRequest =
-        new net.firedevops.firemud.worldmanagement.tenant.WorldFixtureInitialAdmissionHoldRequest(
+        new net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest(
             commitSelector, activation);
     var commitIdentity = holds.acquire(commitRequest);
     net.firedevops.firemud.worldmanagement.tenant.FixtureHoldStorageTestAccess
