@@ -69,6 +69,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Current-schema canonical journal proof with real source/APPLIED/freeze/capture SQL owners.
@@ -375,6 +376,134 @@ class WorldCanonicalFrozenTopologyJournalIntegrationTest {
     assertThat(service(dsl).readCommitted(fixture.request()).orElseThrow().captureId())
         .isEqualTo(captured.captureId());
     assertThat(snapshotRows()).isEqualTo(after);
+    assertOrigin();
+  }
+
+  @Test
+  void recomputedChecksumCannotHideChangedTypedRoomParent() throws Exception {
+    assertCorruptHistoricalClone("parent", "exact typed original payload");
+  }
+
+  @Test
+  void recomputedChecksumCannotHideDecimalPrivateSelector() throws Exception {
+    assertCorruptHistoricalClone("representation", "require integer representation");
+  }
+
+  @Test
+  void recomputedChecksumCannotHideChangedCanonicalTemplateIdentity() throws Exception {
+    assertCorruptHistoricalClone("template", "Canonical graph differs at template_id");
+  }
+
+  private static void assertCorruptHistoricalClone(String mutation, String diagnostic)
+      throws Exception {
+    var fixture = fixture();
+    var original = service(dsl).capture(fixture.request());
+    var before = snapshotRows();
+    var root = (ObjectNode) JSON.readTree(original.graphBytes());
+    ObjectNode room = null;
+    for (var row : root.path("rows")) {
+      if (row.path("mapping").path("family").asText().equals("ROOM")) {
+        room = (ObjectNode) row;
+      }
+    }
+    assertThat(room).isNotNull();
+    var content = (ObjectNode) Objects.requireNonNull(room).path("content");
+    var mapping = (ObjectNode) room.path("mapping");
+    switch (mutation) {
+      case "parent" -> {
+        long parent = content.path("zone_id").longValue();
+        assertThat(parent).isPositive().isLessThan(Long.MAX_VALUE);
+        content.put("zone_id", parent + 1);
+      }
+      case "representation" -> {
+        long parent = content.path("zone_id").longValue();
+        assertThat(parent).isPositive();
+        content.put("zone_id", parent + 0.0);
+      }
+      case "template" -> mapping.put("template_id", UUID.randomUUID().toString());
+      default -> throw new IllegalArgumentException("Unknown controlled corruption");
+    }
+    byte[] corrupted = JSON.writeValueAsBytes(root);
+    assertThat(corrupted).isNotEqualTo(original.graphBytes());
+    String checksum = WorldAuthoredGraphSnapshotCapture.sha256(corrupted);
+
+    // Damage is confined to a disposable session-local retained-row clone. No canonical
+    // trigger is disabled and no corrupt row is made into positive owner/capture evidence.
+    try (Connection connection = source.getConnection()) {
+      assertThat(connection.getAutoCommit()).isTrue();
+      var clone = DSL.using(connection, SQLDialect.POSTGRES);
+      assertThat(clone.fetchSingle("SHOW session_replication_role").get(0, String.class))
+          .isEqualTo("origin");
+      String searchPath = clone.fetchSingle("SHOW search_path").get(0, String.class);
+      clone.execute(
+          "CREATE TEMP TABLE world_canonical_frozen_topology AS SELECT * FROM "
+              + SCHEMA
+              + ".world_canonical_frozen_topology WHERE publication_fence=?",
+          fixture.request().freeze().publicationFence());
+      assertThat(
+              clone
+                  .fetchSingle(
+                      "SELECT pg_my_temp_schema()=c.relnamespace FROM pg_class c "
+                          + "WHERE c.oid='world_canonical_frozen_topology'::regclass")
+                  .get(0, Boolean.class))
+          .isTrue();
+      var deniedOwner = mock(WorldAuthoredGraphSnapshotRepository.class);
+      var deniedDigest = mock(WorldDraftDesignDigestService.class);
+      var reader =
+          new WorldCanonicalFrozenTopologyRepository(
+              clone, deniedOwner, topology(clone), deniedDigest);
+      // Both real repository overloads first accept exactly the unmodified copied journal.
+      assertThat(reader.readCommitted(fixture.request()).orElseThrow().resultBytes())
+          .containsExactly(original.resultBytes());
+      assertThat(reader.readCommitted(fixture.request().freeze()).orElseThrow().graphBytes())
+          .containsExactly(original.graphBytes());
+      assertThat(
+              clone.execute(
+                  "UPDATE world_canonical_frozen_topology SET graph_bytes=?,graph_sha256=? "
+                      + "WHERE publication_fence=?",
+                  corrupted,
+                  checksum,
+                  fixture.request().freeze().publicationFence()))
+          .isEqualTo(1);
+      var damaged =
+          clone.fetchSingle("SELECT graph_bytes,graph_sha256 FROM world_canonical_frozen_topology");
+      assertThat(damaged.get("graph_bytes", byte[].class)).containsExactly(corrupted);
+      assertThat(damaged.get("graph_sha256", String.class)).isEqualTo(checksum);
+      String unchangedClone =
+          clone
+              .fetchSingle(
+                  "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) "
+                      + "FROM world_canonical_frozen_topology t")
+              .get(0, String.class);
+      assertThatThrownBy(() -> reader.readCommitted(fixture.request()))
+          .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+          .hasMessageContaining(diagnostic);
+      assertThatThrownBy(() -> reader.readCommitted(fixture.request().freeze()))
+          .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+          .hasMessageContaining(diagnostic);
+      assertThat(
+              clone
+                  .fetchSingle(
+                      "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) "
+                          + "FROM world_canonical_frozen_topology t")
+                  .get(0, String.class))
+          .isEqualTo(unchangedClone);
+      verifyNoInteractions(deniedOwner, deniedDigest);
+      assertThat(clone.fetchSingle("SHOW search_path").get(0, String.class)).isEqualTo(searchPath);
+      assertThat(connection.getAutoCommit()).isTrue();
+    }
+    // Explicit schema qualification prevents TEMP shadowing from hiding canonical writes.
+    assertThat(snapshotRows()).isEqualTo(before);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT graph_bytes FROM "
+                        + SCHEMA
+                        + ".world_canonical_frozen_topology WHERE publication_fence=?",
+                    fixture.request().freeze().publicationFence())
+                .get(0, byte[].class))
+        .containsExactly(original.graphBytes());
+    assertThat(service(dsl).readCommitted(fixture.request()).orElseThrow().resultBytes())
+        .containsExactly(original.resultBytes());
     assertOrigin();
   }
 
@@ -690,6 +819,8 @@ class WorldCanonicalFrozenTopologyJournalIntegrationTest {
           table,
           dsl.fetch(
                   "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) FROM "
+                      + SCHEMA
+                      + "."
                       + table
                       + " t ORDER BY to_jsonb(t)::text,xmin::text")
               .getValues(0, String.class));
