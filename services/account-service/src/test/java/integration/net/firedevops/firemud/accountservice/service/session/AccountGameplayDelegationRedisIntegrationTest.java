@@ -357,6 +357,89 @@ class AccountGameplayDelegationRedisIntegrationTest {
     }
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void actualIssuerAdvanceAcrossProjectionRoundTripCannotReturnStaleSuccess(boolean publish) {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    UUID accountId = createFreshAccount(database, sources);
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String issuerKey =
+        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX + ACCOUNT_ISSUER;
+    String accountKey = AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId;
+    try (var adminConnection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = adminConnection.sync();
+      try {
+        var redis = redisClient(new TrackedProvider(writer));
+        var stable =
+            new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis);
+        var initial =
+            inTransaction(
+                database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+        byte[][] original =
+            AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(initial);
+        stable.publishCurrent(accountId);
+        assertProjectionBytes(admin, issuerKey, accountKey, original);
+        var changingManager =
+            new BeforeSecondTransactionManager(
+                database.manager(),
+                () ->
+                    inTransaction(
+                        database,
+                        () ->
+                            sources.appendIssuerAuthorityChange(
+                                ACCOUNT_ISSUER,
+                                "ISSUER_SECURITY_CHANGE",
+                                "donor-issuer-transition-" + UUID.randomUUID())));
+        var changing =
+            new AccountGameplayDelegationAuthorityProjection(sources, changingManager, redis);
+        assertThatThrownBy(
+                () -> {
+                  if (publish) changing.publishCurrent(accountId);
+                  else changing.observeCurrent(accountId);
+                })
+            .isInstanceOf(
+                AccountGameplayDelegationAuthorityProjection.StaleProjectionException.class);
+        var advanced =
+            inTransaction(
+                database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+        assertThat(advanced.issuer().generation()).isEqualTo(initial.issuer().generation() + 1L);
+        assertThat(advanced.issuer().checkpoint().sourceEventId()).isPresent();
+        assertThat(advanced.issuer().checkpoint().sourceEventDigest()).isPresent();
+        assertThat(advanced.account()).isEqualTo(initial.account());
+        assertProjectionBytes(admin, issuerKey, accountKey, original);
+        assertThatThrownBy(() -> stable.observeCurrent(accountId))
+            .isInstanceOf(
+                AccountGameplayDelegationAuthorityProjection.StaleProjectionException.class);
+        byte[][] exact =
+            AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(advanced);
+        stable.publishCurrent(accountId);
+        assertProjectionBytes(admin, issuerKey, accountKey, exact);
+        assertThat(stable.observeCurrent(accountId).issuerGeneration())
+            .isEqualTo(advanced.issuer().generation());
+        stable.publishCurrent(accountId);
+        assertProjectionBytes(admin, issuerKey, accountKey, exact);
+        assertThat(admin.pttl(ascii(issuerKey))).isEqualTo(-1L);
+        assertThat(admin.pttl(ascii(accountKey))).isEqualTo(-1L);
+        assertThat(
+                inTransaction(
+                    database,
+                    () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId)))
+            .isEqualTo(advanced);
+      } finally {
+        admin.del(ascii(issuerKey));
+        admin.del(ascii(accountKey));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
   @Test
   void olderCapturedProjectionCannotOverwriteNewerCommittedOwnerPublication() {
     TestContext database = newPostgresContext();
