@@ -2028,8 +2028,8 @@ def validate_metadata(
         fail("PR number must be a positive canonical decimal string")
     normalized_pr_number = int(pr_number)
     event = metadata.get("event")
-    if event not in {"pull_request_target", "repository_dispatch"}:
-        fail("metadata event must be pull_request_target or repository_dispatch")
+    if event not in {"pull_request", "repository_dispatch"}:
+        fail("metadata event must be pull_request or repository_dispatch")
     if event == "repository_dispatch" and metadata.get("action") != "deploy":
         fail("repository_dispatch render metadata action must be deploy")
     expected = {

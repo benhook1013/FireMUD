@@ -1,0 +1,78 @@
+name: Refresh Preview Runtime Base
+
+# Privileged metadata-only observer. Never check out PR code, download artifacts,
+# or interpret a PR-authored run title/output as authority.
+on:
+  workflow_run:
+    workflows: [PR Preview Environment]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  refresh:
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: read
+    concurrency:
+      group: preview-base-refresh-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    steps:
+      - name: Validate GitHub provenance and dispatch current runtime tuple
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const {data: run} = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: context.payload.workflow_run.id,
+            });
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const sha = /^[0-9a-f]{40}$/;
+            if (run.path !== '.github/workflows/preview.yml' ||
+                run.event !== 'pull_request' || run.conclusion !== 'success' ||
+                run.repository?.full_name !== repository ||
+                run.head_repository?.full_name !== repository ||
+                run.pull_requests?.length !== 1 || !sha.test(run.head_sha)) {
+              core.info('No trusted current PR source association; no dispatch.');
+              return;
+            }
+            const source = run.pull_requests[0];
+            const {data: pr} = await github.rest.pulls.get({
+              ...context.repo, pull_number: source.number,
+            });
+            if (pr.state !== 'open' || pr.head?.repo?.full_name !== repository ||
+                pr.base?.repo?.full_name !== repository ||
+                pr.head.sha !== run.head_sha || source.head?.sha !== run.head_sha ||
+                !['main', 'develop'].includes(pr.base.ref) ||
+                ['dependabot[bot]', 'renovate[bot]'].includes(pr.user?.login) ||
+                !sha.test(pr.merge_commit_sha)) {
+              core.info('Source is stale or ineligible; no dispatch.');
+              return;
+            }
+            const {data: base} = await github.rest.git.getRef({
+              ...context.repo, ref: `heads/${pr.base.ref}`,
+            });
+            if (!sha.test(base.object?.sha) || source.base?.sha === base.object.sha) {
+              core.info('No stale source base to repair; no dispatch.');
+              return;
+            }
+            const {data: merge} = await github.rest.repos.getCommit({
+              ...context.repo, ref: pr.merge_commit_sha,
+            });
+            if (merge.sha !== pr.merge_commit_sha || merge.parents?.length !== 2 ||
+                merge.parents[0].sha !== base.object.sha ||
+                merge.parents[1].sha !== pr.head.sha) {
+              core.info('Current merge is not the exact current base/head tuple; no dispatch.');
+              return;
+            }
+            await github.rest.repos.createDispatchEvent({
+              ...context.repo, event_type: 'pr-runtime-base-refresh',
+              client_payload: {
+                pr_number: String(pr.number), base_ref: pr.base.ref,
+                base_sha: base.object.sha, head_sha: pr.head.sha,
+                merge_sha: merge.sha, image_tag: `pr-merge-${merge.sha}`,
+              },
+            });

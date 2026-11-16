@@ -607,12 +607,12 @@ jobs:
           if [[ -n "$candidate_rows" ]]; then
             active_preview_run_sets=()
             for active_status in requested queued in_progress waiting pending; do
-              for active_run_scope in branch pull_request_target workflow_run; do
+              for active_run_scope in branch pull_request pull_request_target workflow_run; do
                 if [[ "$active_run_scope" == branch ]]; then
                   active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100"
                   active_run_branch_filtered=true
-                elif [[ "$active_run_scope" == pull_request_target ]]; then
-                  active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=pull_request_target&status=${active_status}&per_page=100"
+                elif [[ "$active_run_scope" == pull_request || "$active_run_scope" == pull_request_target ]]; then
+                  active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=${active_run_scope}&status=${active_status}&per_page=100"
                   active_run_branch_filtered=false
                 else
                   active_run_query="repos/${GITHUB_REPOSITORY}/actions/runs?event=workflow_run&status=${active_status}&per_page=100"
