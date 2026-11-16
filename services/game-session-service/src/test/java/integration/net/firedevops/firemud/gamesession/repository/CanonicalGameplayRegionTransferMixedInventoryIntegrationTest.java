@@ -252,13 +252,6 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
           .capacity(proof.sql)
           .authorize(
               proof.admission, template, account, issuer, proof.execution, transferDeadline());
-      // Only the real authorization above can FINAL. The extra envelopes deliberately reuse the
-      // fixture's original transition and model SQL dispatches that never reached Redis.
-      List<OriginalNewCapacityExecution> undelivered = new ArrayList<>();
-      for (int index = 1; index < cohortSize; index++) {
-        undelivered.add(proof.newControlledExecution());
-      }
-      undelivered.forEach(proof::seedUndeliveredDispatch);
       UUID transferId;
       List<CanonicalGameplayRegionOwnerTransferRepository.Item> captured;
       try (var finalReadback =
@@ -271,6 +264,14 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
                   issuer,
                   proof.execution,
                   transferDeadline())) {
+        // Complete real FINAL before bulk SQL fixture setup consumes the live admission window.
+        // The extra envelopes reuse the original transition and model dispatches that never reached
+        // Redis. Seed the complete mixed cohort before transfer capture begins.
+        List<OriginalNewCapacityExecution> undelivered = new ArrayList<>();
+        for (int index = 1; index < cohortSize; index++) {
+          undelivered.add(proof.newControlledExecution());
+        }
+        undelivered.forEach(proof::seedUndeliveredDispatch);
         transferId = proof.begin();
         int pages =
             (cohortSize + CanonicalGameplayRegionOwnerTransferRepository.PAGE_SIZE - 1)
