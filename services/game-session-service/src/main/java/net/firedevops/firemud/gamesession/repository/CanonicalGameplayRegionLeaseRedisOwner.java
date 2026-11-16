@@ -24,7 +24,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -470,6 +472,23 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
    * Holds the one ACL-verified connection across the SQL creation-permission claim and its sole
    * timeline EVALSHA. Closing without initialize leaves the timeline untouched.
    */
+  static final class InitializationNoWriteProof {
+    private final CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit;
+    private final AtomicBoolean consumed = new AtomicBoolean();
+
+    private InitializationNoWriteProof(
+        CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
+      this.permit = permit;
+    }
+
+    boolean consumeFor(
+        CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
+      return permit.operationId().equals(preparation.operationId())
+          && permit.sourceDigest().equals(preparation.sourceDigest())
+          && consumed.compareAndSet(false, true);
+    }
+  }
+
   static final class PreparedTimelineInitialization implements AutoCloseable {
     private final StatefulRedisConnection<byte[], byte[]> connection;
     private final RedisAsyncCommands<byte[], byte[]> commands;
@@ -626,6 +645,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
     LeaseGrant initialize(
         CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
+      return initialize(permit, ignored -> {});
+    }
+
+    LeaseGrant initialize(
+        CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit,
+        Consumer<InitializationNoWriteProof> noWriteRecovery) {
+      Objects.requireNonNull(noWriteRecovery, "noWriteRecovery");
       byte[][] evalArguments;
       synchronized (this) {
         requireNoAmbientTransaction();
@@ -636,6 +662,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
                 || !permit.sourceDigest().equals(preparation.sourceDigest()))) {
           throw unavailable();
         }
+        if (mayCreate && !permit.consumeDispatch()) throw unavailable();
         initialized = true;
         evalArguments = arguments.clone();
         evalArguments[TIMELINE_ARGUMENTS.size() - 1] = ascii(mayCreate ? "1" : "0");
@@ -666,18 +693,16 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       RuntimeException initializationFailure = null;
       Long outcome = null;
       try {
-        outcome =
-            await(
-                () -> {
-                  evalArguments[evalArguments.length - 1] =
-                      ascii(Long.toString(budget.absoluteDeadlineMillis()));
-                  RedisFuture<Long> future =
-                      commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, evalArguments);
-                  initialization.set(future);
-                  if (caller.isCancelled()) future.cancel(true);
-                  return future;
-                },
-                budget);
+        long timeout = Math.min(COMMAND_TIMEOUT_MILLIS, budget.remainingMillis());
+        evalArguments[evalArguments.length - 1] =
+            ascii(Long.toString(budget.absoluteDeadlineMillis()));
+        RedisFuture<Long> future =
+            commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, evalArguments);
+        initialization.set(future);
+        if (caller.isCancelled()) future.cancel(true);
+        // Retain the actual response before a post-wait deadline check. Expiry after a
+        // completed no-write response cannot turn that known result into unknown effects.
+        outcome = await(future, timeout);
       } catch (RuntimeException failure) {
         initializationFailure = failure;
       } finally {
@@ -692,8 +717,14 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
             initializationFailure.addSuppressed(disposalFailure);
         }
       }
+      // Only a completed -3 response proves no mutation. Timeout, cancellation,
+      // transport failure and Redis absence alone never mint this capability.
+      if (Long.valueOf(-3L).equals(outcome) && permit != null) {
+        noWriteRecovery.accept(new InitializationNoWriteProof(permit));
+      }
       if (initializationFailure != null) throw unavailable(initializationFailure);
       if (outcome == null || (outcome != 1L && outcome != 2L)) throw unavailable();
+      budget.check();
       return grant;
     }
 

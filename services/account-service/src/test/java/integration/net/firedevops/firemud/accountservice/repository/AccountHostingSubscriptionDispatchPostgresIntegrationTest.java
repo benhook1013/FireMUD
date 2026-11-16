@@ -79,7 +79,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void signedSuccessRetriesOnlyWhenItMatchesTheRetainedFirstInvoice() throws Exception {
+  void unconsentedSignedSuccessRetainsOperatorConflictOnlyForExactInvoice() throws Exception {
     var source = unpaidCancellationDataSource(null);
     var hosting = CanonicalHostingSubscriptionTestFixture.create(source);
     var checkout = hosting.awaitFirstInvoice();
@@ -97,8 +97,15 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var invoicesBefore =
         hosting.dsl().fetch("SELECT *, xmin::text FROM subscription_first_invoices");
     var linked = checkout.signedSuccess();
-    assertThat(payments.completeSigned(linked.payload(), linked.signature()).state())
-        .isEqualTo("RECONCILING");
+    var completion = payments.completeSigned(linked.payload(), linked.signature());
+    assertThat(completion.state()).isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
+    assertThat(completion.requestId()).isEqualTo(checkout.invoice().creationRequestId());
+    assertThat(payments.completeSigned(linked.payload(), linked.signature())).isEqualTo(completion);
+    assertThat(
+            hosting
+                .dsl()
+                .fetchCount(DSL.table("subscription_first_invoice_unconsented_paid_events")))
+        .isEqualTo(1);
 
     String unrelatedPayload =
         linked
