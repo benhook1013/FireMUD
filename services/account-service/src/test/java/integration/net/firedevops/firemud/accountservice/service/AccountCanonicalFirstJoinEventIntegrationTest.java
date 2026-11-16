@@ -869,7 +869,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
               Boolean.TRUE.equals(
                   fixture
                       .dsl
-                      .fetchOne(
+                      .fetchSingle(
                           "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? AND wait_event_type = 'Lock')",
                           waiterPid.get())
                       .get(0, Boolean.class));
@@ -1413,6 +1413,8 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
           "account_authority_source_records",
           "account_global_role_sources",
           "account_tenant_membership",
+          "account_tenant_membership_role_snapshots",
+          "account_tenant_membership_role_snapshot_roles",
           "account_membership_pair_authority",
           "account_authority_generations",
           "account_authority_issuance_fences",
