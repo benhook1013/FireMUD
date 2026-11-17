@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Synthetic negative contracts; these are not physical database evidence."""
 import importlib.util
-from pathlib import Path
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location('proof', Path(__file__).parents[1] / 'validation/account_donor_required_cases.py')
 proof = importlib.util.module_from_spec(SPEC)
@@ -17,7 +17,7 @@ class AccountRequiredCasesTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.contract = proof.required_cases()
-        self.name = sorted(self.contract)[0]
+        self.name = min(self.contract)
         self.path = self.root / 'TEST-obligated.xml'
         self.suite = ET.Element('testsuite', name=self.name, tests=str(len(self.contract[self.name])), failures='0', errors='0', skipped='0')
         for name in sorted(self.contract[self.name]):
