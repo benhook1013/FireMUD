@@ -883,6 +883,140 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
     assertThat(JSON.readTree(retainedV1.graphBytes()).has("regions")).isFalse();
   }
 
+  @Test
+  void retainedRegionReceiptCorruptionFailsActualIndependentReadWithoutWrites() throws Exception {
+    var f = fixture();
+    var batch =
+        stageBatch(f, List.of(f.region(), f.otherRegion()), List.of(1L, 1L), List.of(1L, 1L));
+    var batchResult = store(batch);
+    var canonicalBefore = canonicalReceiptOwnerRows();
+    for (var staged : List.of(retainedV1Input, batch)) {
+      var original = repository.readCommitted(staged).orElseThrow();
+      assertThat(original.resultBytes())
+          .containsExactly(staged == batch ? batchResult.resultBytes() : retainedV1.resultBytes());
+      byte[] corrupt = original.resultBytes();
+      corrupt[0] ^= 1;
+      assertThat(corrupt).isNotEqualTo(original.resultBytes());
+      dsl.connection(
+          connection -> {
+            assertThat(connection.getAutoCommit()).isTrue();
+            var clone = DSL.using(connection, SQLDialect.POSTGRES);
+            assertThat(one(clone, "SHOW session_replication_role").get(0, String.class))
+                .isEqualTo("origin");
+            // Negative retained-row fixture only. The canonical table and every installed guard
+            // remain untouched; a connection-local TEMP shadow supplies the damaged reader input.
+            clone.execute(
+                "CREATE TEMP TABLE world_region_draft_commit AS SELECT * FROM "
+                    + SCHEMA
+                    + ".world_region_draft_commit WHERE request_id=?",
+                staged.originalOperation().requestId());
+            assertThat(
+                    one(
+                            clone,
+                            "SELECT pg_my_temp_schema()=relnamespace FROM pg_class "
+                                + "WHERE oid='world_region_draft_commit'::regclass")
+                        .get(0, Boolean.class))
+                .isTrue();
+            var reader =
+                new WorldDraftExistingRegionCommitRepository(
+                    clone,
+                    new WorldDesignPublicationFenceRepository(
+                        clone, new WorldAuthoredSourceIntakeRepository(clone)),
+                    JSON);
+            // Prove this exact real reader accepts the unmodified copied v1/v2 receipt first.
+            assertThat(reader.readCommitted(staged).orElseThrow().resultBytes())
+                .containsExactly(original.resultBytes());
+            String before =
+                one(
+                        clone,
+                        "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) "
+                            + "FROM world_region_draft_commit t")
+                    .get(0, String.class);
+            assertThat(
+                    clone.execute(
+                        "UPDATE world_region_draft_commit SET result_bytes=? WHERE request_id=?",
+                        corrupt,
+                        staged.originalOperation().requestId()))
+                .isEqualTo(1);
+            assertThat(
+                    one(clone, "SELECT result_bytes FROM world_region_draft_commit")
+                        .get(0, byte[].class))
+                .containsExactly(corrupt);
+            String damaged =
+                one(
+                        clone,
+                        "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) "
+                            + "FROM world_region_draft_commit t")
+                    .get(0, String.class);
+            assertThat(damaged).isNotEqualTo(before);
+            assertThatThrownBy(() -> reader.readCommitted(staged))
+                .isExactlyInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+                .hasMessage(
+                    "Retained existing REGION bytes differ from the complete original input");
+            assertThat(
+                    one(
+                            clone,
+                            "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) "
+                                + "FROM world_region_draft_commit t")
+                        .get(0, String.class))
+                .isEqualTo(damaged);
+            // The independent normal connection still reads the untouched original receipt.
+            assertThat(repository.readCommitted(staged).orElseThrow().resultBytes())
+                .containsExactly(original.resultBytes());
+            assertThat(connection.getAutoCommit()).isTrue();
+          });
+      assertThat(canonicalReceiptOwnerRows()).isEqualTo(canonicalBefore);
+      assertThat(repository.readCommitted(staged).orElseThrow().graphBytes())
+          .containsExactly(original.graphBytes());
+    }
+    assertThat(one(dsl, "SHOW session_replication_role").get(0, String.class)).isEqualTo("origin");
+  }
+
+  private static java.util.Map<String, List<String>> canonicalReceiptOwnerRows() {
+    var rows = new LinkedHashMap<String, List<String>>();
+    for (String table :
+        List.of(
+            "region",
+            "zone",
+            "room",
+            "room_exit",
+            "generation_rule",
+            "world_entity_spawn_binding",
+            "world_authored_topology_identity",
+            "world_design_aggregate_epoch",
+            "world_design_scope_epoch",
+            "world_topology_draft_commit",
+            "world_authored_source_intake",
+            "world_authored_version_identity",
+            "world_authored_source_tenant_association",
+            "world_authored_source_tenant_key_reservation",
+            "world_design_publication_fence_owner",
+            "world_design_publication_fence_attempt",
+            "world_authored_graph_snapshot",
+            "world_design_revision_ledger",
+            "world_draft_graph_application",
+            "world_canonical_frozen_topology",
+            "world_region_draft_execution_manifest",
+            "world_draft_start_location_receipt",
+            "world_draft_graph_terminal_identity",
+            "world_draft_terminal_outcome",
+            "world_design_publication_account_binding",
+            "world_selected_publication_artifact_inventory",
+            "world_design_publication_terminal",
+            "world_region_draft_commit")) {
+      rows.put(
+          table,
+          dsl.fetch(
+                  "SELECT concat(to_jsonb(t)::text,'|xmin=',xmin::text) FROM "
+                      + SCHEMA
+                      + "."
+                      + table
+                      + " t ORDER BY to_jsonb(t)::text,xmin::text")
+              .getValues(0, String.class));
+    }
+    return java.util.Map.copyOf(rows);
+  }
+
   private static UUID region(Fixture f, int index) {
     return f.graph().plan().graph().nodes().stream()
         .filter(node -> node.mutation().hasRegion())
