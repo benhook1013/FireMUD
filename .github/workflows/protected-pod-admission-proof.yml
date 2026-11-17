@@ -29,7 +29,7 @@ jobs:
           ref: 60c507243987705094a3028e0b46f3bccd5d9504
           persist-credentials: false
 
-      - name: Set up repository-pinned Python and PyYAML
+      - name: Set up repository-pinned Python YAML tooling
         uses: ./.github/actions/setup-python
         with:
           requirements: yaml
