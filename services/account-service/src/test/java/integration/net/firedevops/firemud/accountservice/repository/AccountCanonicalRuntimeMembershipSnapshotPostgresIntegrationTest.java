@@ -166,6 +166,137 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
         .hasMessageContaining("Committed current membership role snapshot is absent");
   }
 
+  @Test
+  void capturesTwoActualOwnersInEitherDirectionWithoutChangingStoredRows() {
+    Fixture f = newFixture();
+    f.commitFirstJoin();
+    Account target = f.commitSecondMember();
+    List<String> before = f.schemaImage();
+    var forward =
+        f.inTransaction(
+            () ->
+                f.capture.capture(
+                    f.account.getAccountUuid(), target.getAccountUuid(), f.tenantUuid));
+    var reverse =
+        f.inTransaction(
+            () ->
+                f.capture.capture(
+                    target.getAccountUuid(), f.account.getAccountUuid(), f.tenantUuid));
+    assertThat(
+            net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.encode(forward))
+        .containsExactly(
+            net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.encode(
+                new net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.Pair(
+                    reverse.target(), reverse.actor())));
+    byte[] bytes =
+        net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.encode(forward);
+    assertThat(
+            net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.encode(
+                net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.decode(
+                    bytes)))
+        .containsExactly(bytes);
+    assertThat(f.schemaImage()).isEqualTo(before);
+    assertThatThrownBy(
+            () ->
+                f.capture.capture(
+                    f.account.getAccountUuid(), target.getAccountUuid(), f.tenantUuid))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("owner transaction");
+  }
+
+  @Test
+  void reverseCaptureContendersBothWaitOnFirstCanonicalOwnerBeforeAnySecondOwnerLock()
+      throws Exception {
+    Fixture f = newFixture();
+    f.commitFirstJoin();
+    Account target = f.commitSecondMember();
+    UUID actor = f.account.getAccountUuid(), other = target.getAccountUuid();
+    var ordered =
+        net.firedevops.firemud.accountservice.tenantrole.TransferCaptureBounds.orderedAccounts(
+            actor, other);
+    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    var firstPid = new java.util.concurrent.atomic.AtomicInteger();
+    var secondPid = new java.util.concurrent.atomic.AtomicInteger();
+    var jobs =
+        new java.util.ArrayList<
+            java.util.concurrent.Future<
+                net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.Pair>>();
+    List<String> before = f.schemaImage();
+    try {
+      f.inTransaction(
+          () -> {
+            f.dsl.fetchOne(
+                "SELECT account_uuid FROM accounts WHERE account_uuid=? FOR UPDATE",
+                ordered.getFirst());
+            jobs.add(
+                executor.submit(
+                    () ->
+                        f.inTransaction(
+                            () -> {
+                              f.dsl.execute("SET LOCAL lock_timeout='8s'");
+                              firstPid.set(
+                                  Objects.requireNonNull(
+                                          f.dsl.fetchOne("SELECT pg_backend_pid() AS pid"))
+                                      .get("pid", Integer.class));
+                              return f.capture.capture(actor, other, f.tenantUuid);
+                            })));
+            jobs.add(
+                executor.submit(
+                    () ->
+                        f.inTransaction(
+                            () -> {
+                              f.dsl.execute("SET LOCAL lock_timeout='8s'");
+                              secondPid.set(
+                                  Objects.requireNonNull(
+                                          f.dsl.fetchOne("SELECT pg_backend_pid() AS pid"))
+                                      .get("pid", Integer.class));
+                              return f.capture.capture(other, actor, f.tenantUuid);
+                            })));
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+            boolean bothBlocked = false;
+            while (System.nanoTime() < deadline) {
+              if (firstPid.get() > 0 && secondPid.get() > 0) {
+                int blocked =
+                    Objects.requireNonNull(
+                            f.dsl.fetchOne(
+                                "SELECT count(*) AS n FROM pg_stat_activity WHERE pid IN (?,?) AND wait_event_type='Lock' AND cardinality(pg_blocking_pids(pid))>0",
+                                firstPid.get(),
+                                secondPid.get()))
+                        .get("n", Integer.class);
+                if (blocked == 2) {
+                  bothBlocked = true;
+                  break;
+                }
+              }
+              java.util.concurrent.locks.LockSupport.parkNanos(
+                  java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(10));
+            }
+            assertThat(bothBlocked).isTrue();
+            assertThat(firstPid.get()).isNotEqualTo(secondPid.get());
+            // A reversed-order implementation would already own the second row and NOWAIT would
+            // fail.
+            assertThat(
+                    f.dsl.fetchOne(
+                        "SELECT account_uuid FROM accounts WHERE account_uuid=? FOR UPDATE NOWAIT",
+                        ordered.getLast()))
+                .isNotNull();
+            return null;
+          });
+      var forward = jobs.get(0).get(10, java.util.concurrent.TimeUnit.SECONDS);
+      var reverse = jobs.get(1).get(10, java.util.concurrent.TimeUnit.SECONDS);
+      assertThat(
+              net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.encode(forward))
+          .containsExactly(
+              net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.encode(
+                  new net.firedevops.firemud.accountservice.tenantrole.TransferCaptureCodec.Pair(
+                      reverse.target(), reverse.actor())));
+      assertThat(f.schemaImage()).isEqualTo(before);
+    } finally {
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(12, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
   private Fixture newFixture() {
     return new Fixture(newTestContext());
   }
@@ -205,6 +336,10 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
     private final AccountJoinOperationRepository operations;
     private final AccountCanonicalFirstJoinTerminalCoordinator terminalCoordinator;
     private final AccountCanonicalRuntimeMembershipSnapshotService snapshots;
+    private final net.firedevops.firemud.accountservice.tenantrole.AccountTransferCaptureRepository
+        capture;
+    private final AccountConnectScopeRepository connectScopes;
+    private DemoTenantEntitlementSnapshot entitlement;
     private final Account account;
     private final UUID tenantUuid = UUID.randomUUID();
     private final FreshTenantCreationEvidence tenantEvidence;
@@ -236,7 +371,7 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
           org.mockito.Mockito.mock(ApprovedLegacyTenantAssociationRepository.class);
       var retainedIdentityResolver =
           new AccountTenantIdentityResolver(legacyAssociationRepository, TEST_NAMESPACE);
-      var connectScopes =
+      this.connectScopes =
           new AccountConnectScopeRepository(dsl, retainedIdentityResolver, freshTenants);
       this.operations = new AccountJoinOperationRepository(dsl, connectScopes);
       var producer =
@@ -272,6 +407,9 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
               pairs,
               roles,
               outbox);
+      this.capture =
+          new net.firedevops.firemud.accountservice.tenantrole.AccountTransferCaptureRepository(
+              dsl, snapshotRepository, generations, pairs, roles);
       this.snapshots =
           new AccountCanonicalRuntimeMembershipSnapshotService(
               snapshotRepository, transactionManager);
@@ -310,7 +448,7 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
             operations.insertCanonicalIntent(requestId, scope, callerBinding);
             return null;
           });
-      DemoTenantEntitlementSnapshot entitlement =
+      this.entitlement =
           inTransaction(
               () ->
                   demoEntitlements.provision(
@@ -325,6 +463,30 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
                 entitlement.entitlementVersion());
             return null;
           });
+    }
+
+    private Account commitSecondMember() {
+      Account second = createAccount();
+      var secondScope = canonicalScope(second.getAccountUuid(), tenantUuid);
+      String request = UUID.randomUUID().toString();
+      String caller = "second-controlled-caller-" + UUID.randomUUID();
+      inTransaction(
+          () -> {
+            generations.initialize(
+                AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                    second.getAccountUuid(), tenantUuid));
+            connectScopes.insertCanonical(second.getId(), secondScope, provenance);
+            operations.insertCanonicalIntent(request, secondScope, caller);
+            operations.bindCanonicalPolicyEvidence(
+                request,
+                secondScope,
+                caller,
+                entitlement.allowPublicJoin(),
+                entitlement.entitlementVersion());
+            terminalCoordinator.commitCanonicalFirstJoin(secondScope, request, caller);
+            return null;
+          });
+      return second;
     }
 
     private void enrollAbsenceBaseline() {
