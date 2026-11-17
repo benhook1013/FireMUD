@@ -394,6 +394,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setCharacterName("Sora")
                                 .build())
                         .build())
@@ -416,7 +420,7 @@ class FriendsCommandHandlerTest {
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
-        .contains("Friends ONLINE [1/2]:")
+        .contains("Friends ONLINE:")
         .contains("1) Sora [acct #" + FRIEND_ACCOUNT_ID + "] - online");
     Mockito.verify(socialGroupsClient)
         .listFriends(1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
@@ -558,6 +562,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(false)
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                                 .setLastSeenAtMs(
                                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
                                 .build())
