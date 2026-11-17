@@ -16,7 +16,7 @@ public record FriendPresenceViewOutput(
       String status,
       Long linkedAtEpochMs,
       String displayName,
-      boolean online,
+      Boolean online,
       String worldSlug,
       String worldDisplayName,
       String realmSlug,

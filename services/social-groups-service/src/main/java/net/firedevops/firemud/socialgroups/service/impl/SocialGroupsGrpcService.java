@@ -642,9 +642,10 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
 
   private FriendPresenceEntry mapPresence(FriendPresenceDto presence) {
     FriendPresenceEntry.Builder entry =
-        FriendPresenceEntry.newBuilder()
-            .setFriendAccountId(presence.friendAccountId())
-            .setOnline(presence.online());
+        FriendPresenceEntry.newBuilder().setFriendAccountId(presence.friendAccountId());
+    if (presence.online() != null) {
+      entry.setOnline(presence.online());
+    }
     if (presence.gameInstanceId() != null) {
       entry.setGameInstanceId(Long.toString(presence.gameInstanceId()));
     }

@@ -212,6 +212,8 @@ message FriendPresenceEntry {
   reserved 12;
   reserved "recent_disposition";
   string friend_account_id = 1;
+  // Presence fields are disclosed only when visibility_policy is PUBLIC or FRIENDS_ONLY.
+  // Otherwise scalar defaults are redacted absence, not evidence that the friend is offline.
   bool online = 2;
   string game_instance_id = 3;
   string character_id = 4;

@@ -503,6 +503,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         responseObserver.onCompleted();
         return;
       }
+      long tenantId = Long.parseLong(request.getTenantId());
+      if (tenantId <= 0L || !Long.toString(tenantId).equals(request.getTenantId())) {
+        throw new IllegalArgumentException("tenantId must be canonical and positive");
+      }
       AccountProfileJson profile =
           AccountProfileJson.parse(request.getProfileJson(), StubProfile.DEFAULT_VISIBILITY_POLICY);
       StubProfile existing =
@@ -515,7 +519,13 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               profile.presenceVisibilityPolicy() == null
                   ? existing.presenceVisibilityPolicy()
                   : profile.presenceVisibilityPolicy()));
-      responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(true).build());
+      // Fixture request binding only, matching getProfile; not persisted tenant authority.
+      responseObserver.onNext(
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(true)
+              .setAccountId(accountUuidForTestFixture(accountId))
+              .setTenantId(Long.toString(tenantId))
+              .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
       responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(false).build());

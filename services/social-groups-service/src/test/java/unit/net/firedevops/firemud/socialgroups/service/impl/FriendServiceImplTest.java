@@ -284,7 +284,7 @@ class FriendServiceImplTest {
   }
 
   @Test
-  void listFriendsFallsBackToOfflineDefaultsWhenPresenceClientReturnsNull() {
+  void listFriendsDoesNotAssertOfflineWhenPresenceClientReturnsNull() {
     AccountFriendLink sora = new AccountFriendLink();
     sora.setId(7L);
     sora.setTenantId(11L);
@@ -301,7 +301,7 @@ class FriendServiceImplTest {
     var result = service.listFriends(11L, accountUuid(2L), FriendRosterFilter.ALL);
 
     assertEquals(1, result.totalCount());
-    assertEquals(false, result.friends().getFirst().presence().online());
+    assertNull(result.friends().getFirst().presence().online());
     assertEquals(null, result.friends().getFirst().presence().characterName());
     assertNull(result.friends().getFirst().presence().visibilityPolicy());
   }
@@ -821,7 +821,11 @@ class FriendServiceImplTest {
 
     assertEquals(2, result.totalCount());
     assertEquals(2, result.matchCount());
-    assertEquals(false, result.presences().get(0).online());
+    assertEquals(
+        0, service.listFriends(11L, accountUuid(2L), FriendRosterFilter.OFFLINE).friends().size());
+    assertEquals(0, service.getFriendRosterSummary(11L, accountUuid(2L)).offlineCount());
+    assertEquals(0, service.getFriendRosterSummary(11L, accountUuid(2L)).onlineCount());
+    assertNull(result.presences().get(0).online());
     assertNull(result.presences().get(0).visibilityPolicy());
     assertEquals(null, result.presences().get(0).characterName());
     assertEquals(null, result.presences().get(0).gameInstanceId());
@@ -834,7 +838,7 @@ class FriendServiceImplTest {
     assertEquals(null, result.presences().get(0).characterId());
     assertEquals(null, result.presences().get(0).activityState());
     assertEquals(null, result.presences().get(0).lastSeenAt());
-    assertEquals(false, result.presences().get(1).online());
+    assertNull(result.presences().get(1).online());
     assertNull(result.presences().get(1).visibilityPolicy());
     assertEquals(null, result.presences().get(1).gameInstanceId());
     assertEquals(null, result.presences().get(1).playableStateScope());
@@ -864,7 +868,9 @@ class FriendServiceImplTest {
     var summary = service.getFriendRosterSummary(11L, accountUuid(2L));
     assertEquals(2, summary.totalCount());
     assertEquals(0, summary.onlineCount());
-    assertEquals(2, summary.offlineCount());
+    assertEquals(0, summary.offlineCount());
+    assertEquals(
+        0, service.listFriends(11L, accountUuid(2L), FriendRosterFilter.OFFLINE).matchCount());
     assertEquals(0, summary.recentCount());
     assertEquals(0, summary.publicCount());
     assertEquals(0, summary.friendsOnlyCount());
@@ -918,7 +924,7 @@ class FriendServiceImplTest {
     assertEquals(1, result.matchCount());
     assertEquals(accountUuid(3L), result.presences().get(0).friendAccountId());
     assertNull(result.presences().get(0).visibilityPolicy());
-    assertEquals(false, result.presences().get(0).online());
+    assertNull(result.presences().get(0).online());
     assertEquals(null, result.presences().get(0).gameInstanceId());
     assertEquals(null, result.presences().get(0).playableStateScope());
     assertEquals(null, result.presences().get(0).worldSlug());

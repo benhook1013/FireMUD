@@ -101,6 +101,8 @@ The `ReadSocialRuntimeFamilyCatalog` adapter and Game Session client are current
 
 ### Friend Presence Privacy Contract
 
+Undisclosed presence is absence, not offline. Social REST and Game Session structured friend entries represent `online` as nullable: `null` means no disclosed fact, while `false` means an explicitly disclosed offline state. Consumers must not coerce `null` to `false`. The gRPC scalar shape is unchanged; only `PUBLIC` or `FRIENDS_ONLY` policy makes its online value meaningful, and an unspecified, private, or unknown policy must redact all presence fields. Deploy the updated Game Session consumer to obtain this behavior; an older consumer can still misinterpret the default scalar as offline. This corrects the JSON projection contract and is not a claim of backwards-compatible boolean-only client schemas.
+
 - Game Session owns raw live/recent gameplay-presence facts. Social & Groups is the only player-facing cross-game friend projection and obtains those facts through an internal caller-restricted bounded API.
 - The current non-pageable friend endpoints derive their roster from the tenant-scoped reciprocal-active query described above. The target contract's references to an unblocked friendship and current block-state revalidation are not current implementation claims.
 - `WHO` remains an in-world current-instance roster. Profile presence privacy does not make a physically present player invisible there; game-defined invisibility or perception mechanics are a separate gameplay concern.

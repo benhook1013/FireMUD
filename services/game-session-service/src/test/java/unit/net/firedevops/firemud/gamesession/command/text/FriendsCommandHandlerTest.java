@@ -222,6 +222,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setCharacterId("99")
                                 .setCharacterName("Sora")
                                 .setWorldSlug("demo")
@@ -296,6 +300,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(false)
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setLastSeenAtMs(
                                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
                                 .build())
@@ -319,7 +327,7 @@ class FriendsCommandHandlerTest {
               assertThat(entry.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID);
               assertThat(entry.lastSeenAtEpochMs())
                   .isEqualTo(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli());
-              assertThat(entry.visibilityPolicy()).isNull();
+              assertThat(entry.visibilityPolicy()).isEqualTo("PUBLIC");
             });
     String rendered =
         new TextPlayerOutputRenderer(
@@ -473,7 +481,8 @@ class FriendsCommandHandlerTest {
             entry -> {
               assertThat(entry.ordinal()).isEqualTo(2);
               assertThat(entry.friendAccountId()).isEqualTo(OTHER_FRIEND_ACCOUNT_ID);
-              assertThat(entry.visibilityPolicy()).isEqualTo("PRIVATE");
+              assertThat(entry.visibilityPolicy()).isNull();
+              assertThat(entry.online()).isNull();
             });
     assertThat(
             new TextPlayerOutputRenderer(
@@ -506,6 +515,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setCharacterName("Sora")
                                 .setPlayableStateScope(
                                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -796,6 +809,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setCharacterName("Sora")
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .build())
                         .build())
                 .build());
@@ -878,6 +895,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setCharacterName("Sora")
                                 .setWorldDisplayName("Demo World")
                                 .setRealmDisplayName("Live Realm")

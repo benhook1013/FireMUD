@@ -482,7 +482,9 @@ public class FriendsCommandHandler {
                 })
             .toList();
     boolean disclosureFiltered =
-        filter == FriendListFilter.ONLINE || filter == FriendListFilter.RECENT;
+        filter == FriendListFilter.ONLINE
+            || filter == FriendListFilter.OFFLINE
+            || filter == FriendListFilter.RECENT;
     boolean canonicalFiltered =
         filter == FriendListFilter.ALL
             || response.getFilter() == mapRosterFilter(filter)
@@ -512,6 +514,11 @@ public class FriendsCommandHandler {
 
   private FriendPresenceViewOutput.Entry toEntry(int ordinal, FriendRosterEntry entry) {
     FriendPresenceEntry presence = entry.getPresence();
+    String disclosedPolicy = visibilityPolicy(presence.getVisibilityPolicy());
+    boolean disclosed = "PUBLIC".equals(disclosedPolicy) || "FRIENDS_ONLY".equals(disclosedPolicy);
+    if (!disclosed) {
+      presence = FriendPresenceEntry.getDefaultInstance();
+    }
     String friendAccountId = requireFriendAccountId(entry.getFriendAccountId());
     String characterName =
         presence.getCharacterName().isBlank() ? null : presence.getCharacterName().trim();
@@ -522,7 +529,7 @@ public class FriendsCommandHandler {
         blankToNull(entry.getStatus()),
         entry.getCreatedAtMs() > 0 ? entry.getCreatedAtMs() : null,
         characterName != null ? characterName : "Friend #" + friendAccountId,
-        presence.getOnline(),
+        disclosed ? presence.getOnline() : null,
         blankToNull(presence.getWorldSlug()),
         blankToNull(presence.getWorldDisplayName()),
         blankToNull(presence.getRealmSlug()),
@@ -857,19 +864,19 @@ public class FriendsCommandHandler {
     ONLINE {
       @Override
       boolean matches(FriendPresenceViewOutput.Entry entry) {
-        return entry.online();
+        return Boolean.TRUE.equals(entry.online());
       }
     },
     OFFLINE {
       @Override
       boolean matches(FriendPresenceViewOutput.Entry entry) {
-        return !entry.online();
+        return Boolean.FALSE.equals(entry.online());
       }
     },
     RECENT {
       @Override
       boolean matches(FriendPresenceViewOutput.Entry entry) {
-        return !entry.online() && entry.lastSeenAtEpochMs() != null;
+        return Boolean.FALSE.equals(entry.online()) && entry.lastSeenAtEpochMs() != null;
       }
     },
     PUBLIC {

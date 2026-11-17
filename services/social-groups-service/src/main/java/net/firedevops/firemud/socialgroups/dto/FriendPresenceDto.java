@@ -4,7 +4,7 @@ import java.time.Instant;
 
 public record FriendPresenceDto(
     String friendAccountId,
-    boolean online,
+    Boolean online,
     Long gameInstanceId,
     String playableStateScope,
     String worldSlug,
@@ -19,7 +19,7 @@ public record FriendPresenceDto(
     Instant lastSeenAt) {
   public FriendPresenceDto(
       String friendAccountId,
-      boolean online,
+      Boolean online,
       Long gameInstanceId,
       String worldSlug,
       String worldDisplayName,
@@ -46,7 +46,7 @@ public record FriendPresenceDto(
 
   public FriendPresenceDto(
       String friendAccountId,
-      boolean online,
+      Boolean online,
       Long gameInstanceId,
       String worldSlug,
       String worldDisplayName,
@@ -76,7 +76,7 @@ public record FriendPresenceDto(
 
   public FriendPresenceDto(
       String friendAccountId,
-      boolean online,
+      Boolean online,
       Long gameInstanceId,
       String playableStateScope,
       String worldSlug,
@@ -107,7 +107,7 @@ public record FriendPresenceDto(
 
   public FriendPresenceDto(
       String friendAccountId,
-      boolean online,
+      Boolean online,
       Long gameInstanceId,
       String playableStateScope,
       String worldSlug,

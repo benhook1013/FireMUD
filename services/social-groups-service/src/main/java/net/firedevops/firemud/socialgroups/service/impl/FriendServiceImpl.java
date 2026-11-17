@@ -189,6 +189,7 @@ public class FriendServiceImpl implements FriendService {
     FriendRosterSnapshot snapshot = loadFriendRoster(tenantId, accountId, FriendRosterFilter.ALL);
     FriendRosterViewDto roster = snapshot.view();
     int onlineCount = 0;
+    int offlineCount = 0;
     int recentCount = 0;
     int publicCount = 0;
     int friendsOnlyCount = 0;
@@ -198,10 +199,11 @@ public class FriendServiceImpl implements FriendService {
     int isolatedCount = 0;
     int unspecifiedScopeCount = 0;
     for (FriendRosterEntryDto entry : roster.friends()) {
-      if (entry.presence().online()) {
+      if (Boolean.TRUE.equals(entry.presence().online())) {
         onlineCount++;
-      } else if (entry.presence().lastSeenAt() != null) {
-        recentCount++;
+      } else if (Boolean.FALSE.equals(entry.presence().online())) {
+        offlineCount++;
+        if (entry.presence().lastSeenAt() != null) recentCount++;
       }
       switch (visibilityPolicyFor(entry.friendAccountId(), snapshot.visibilityPolicies())) {
         case PUBLIC -> publicCount++;
@@ -219,7 +221,7 @@ public class FriendServiceImpl implements FriendService {
     return new FriendRosterSummaryDto(
         roster.totalCount(),
         onlineCount,
-        Math.max(0, roster.totalCount() - onlineCount),
+        offlineCount,
         recentCount,
         publicCount,
         friendsOnlyCount,
@@ -285,9 +287,9 @@ public class FriendServiceImpl implements FriendService {
     FriendPresenceDto presence = entry.presence();
     return switch (filter) {
       case ALL -> true;
-      case ONLINE -> presence.online();
-      case OFFLINE -> !presence.online();
-      case RECENT -> !presence.online() && presence.lastSeenAt() != null;
+      case ONLINE -> Boolean.TRUE.equals(presence.online());
+      case OFFLINE -> Boolean.FALSE.equals(presence.online());
+      case RECENT -> Boolean.FALSE.equals(presence.online()) && presence.lastSeenAt() != null;
       case PUBLIC ->
           visibilityPolicyFor(entry.friendAccountId(), visibilityPolicies)
               == FriendPresenceVisibilityPolicyValue.PUBLIC;
@@ -371,7 +373,7 @@ public class FriendServiceImpl implements FriendService {
   private FriendPresenceDto defaultPresence(String friendAccountId) {
     return new FriendPresenceDto(
         friendAccountId,
-        false,
+        null,
         null,
         null,
         null,

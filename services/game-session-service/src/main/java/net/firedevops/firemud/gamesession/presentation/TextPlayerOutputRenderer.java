@@ -458,7 +458,9 @@ public class TextPlayerOutputRenderer {
       return "Friends [0]: no linked friends. Use FRIENDS ADD <friendAccountId|characterName>.";
     }
     boolean disclosureFiltered =
-        "ONLINE".equalsIgnoreCase(output.filter()) || "RECENT".equalsIgnoreCase(output.filter());
+        "ONLINE".equalsIgnoreCase(output.filter())
+            || "OFFLINE".equalsIgnoreCase(output.filter())
+            || "RECENT".equalsIgnoreCase(output.filter());
     if (output.friends().isEmpty() && disclosureFiltered) {
       return "Friends "
           + output.filter().toUpperCase(java.util.Locale.ROOT)
@@ -601,6 +603,9 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendStatus(FriendPresenceViewOutput.Entry entry) {
+    if (entry.online() == null) {
+      return "presence unavailable";
+    }
     if (entry.online()) {
       StringBuilder line = new StringBuilder("online");
       String location = renderFriendLocation(entry);
@@ -637,6 +642,9 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendActivity(String activityState) {
+    if (activityState == null) {
+      return null;
+    }
     return switch (activityState) {
       case "AUTO_AFK" -> "idle";
       case "EXPLICIT_AFK" -> "AFK";

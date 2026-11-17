@@ -51,9 +51,9 @@ class FriendsFilteredDisclosureTest {
 
   @ParameterizedTest
   @CsvSource({
-    "ONLINE,PRIVATE", "RECENT,PRIVATE",
-    "ONLINE,MISSING", "RECENT,MISSING",
-    "ONLINE,UNKNOWN", "RECENT,UNKNOWN"
+    "ONLINE,PRIVATE", "RECENT,PRIVATE", "OFFLINE,PRIVATE",
+    "ONLINE,MISSING", "RECENT,MISSING", "OFFLINE,MISSING",
+    "ONLINE,UNKNOWN", "RECENT,UNKNOWN", "OFFLINE,UNKNOWN"
   })
   void nonDisclosableMatchesCannotRevealPresence(String filter, String policy) throws Exception {
     FriendPresenceViewOutput view =
@@ -74,9 +74,9 @@ class FriendsFilteredDisclosureTest {
 
   @ParameterizedTest
   @CsvSource({
-    "ONLINE,PUBLIC,true", "RECENT,PUBLIC,true",
-    "ONLINE,FRIENDS_ONLY,true", "RECENT,FRIENDS_ONLY,true",
-    "ONLINE,PUBLIC,false", "RECENT,FRIENDS_ONLY,false"
+    "ONLINE,PUBLIC,true", "RECENT,PUBLIC,true", "OFFLINE,PUBLIC,true",
+    "ONLINE,FRIENDS_ONLY,true", "RECENT,FRIENDS_ONLY,true", "OFFLINE,FRIENDS_ONLY,true",
+    "ONLINE,PUBLIC,false", "RECENT,FRIENDS_ONLY,false", "OFFLINE,PUBLIC,false"
   })
   void mixedRowsKeepOnlyDisclosedMatchesAndOriginalOrdinals(
       String filter, String policy, boolean matchingMetadata) throws Exception {
@@ -111,7 +111,7 @@ class FriendsFilteredDisclosureTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"ALL", "PRIVATE", "SHARED", "OFFLINE"})
+  @CsvSource({"ALL", "PRIVATE", "SHARED"})
   void unrelatedFiltersKeepExistingMetadataAndEmptyText(String filter) {
     FriendPresenceViewOutput view = render(filter, roster(filter, 19));
     assertThat(view.totalCount()).isEqualTo(20);
@@ -122,6 +122,37 @@ class FriendsFilteredDisclosureTest {
             "ALL".equals(filter)
                 ? "Friends [0]: no linked friends. Use FRIENDS ADD <friendAccountId|characterName>."
                 : "Friends " + filter + " [0/20]: no matching friends.");
+  }
+
+  @ParameterizedTest
+  @CsvSource({"PRIVATE", "MISSING", "UNKNOWN"})
+  void allRosterKeepsRelationshipWithoutInventingOfflinePresence(String policy) throws Exception {
+    FriendPresenceViewOutput view =
+        render(
+            "ALL", roster("ALL", 1, entry(2, OTHER_FRIEND_ACCOUNT_ID, "ONLINE", policy, "Secret")));
+    assertThat(view.friends())
+        .singleElement()
+        .satisfies(
+            value -> {
+              assertThat(value.friendAccountId()).isEqualTo(OTHER_FRIEND_ACCOUNT_ID);
+              assertThat(value.online()).isNull();
+              assertThat(value.visibilityPolicy()).isNull();
+              assertThat(value.characterName()).isNull();
+              assertThat(value.lastSeenAtEpochMs()).isNull();
+            });
+    assertThat(
+            text(
+                new net.firedevops.firemud.gamesession.presentation.FriendDetailViewOutput(
+                    view.friends().get(0))))
+        .contains("Presence: presence unavailable")
+        .doesNotContain("offline", "Secret", "Visibility:", "Last seen:");
+    String json = new ObjectMapper().writeValueAsString(view);
+    assertThat(json).doesNotContain("Secret", "1744336000000", "PRIVATE", "UNKNOWN");
+    assertThat(new ObjectMapper().readTree(json).path("friends").get(0).path("online").isNull())
+        .isTrue();
+    assertThat(text(view))
+        .contains("presence unavailable")
+        .doesNotContain("offline", "Secret", "last seen");
   }
 
   private FriendPresenceViewOutput render(String filter, ListFriendsResponse response) {
@@ -201,6 +232,13 @@ class FriendsFilteredDisclosureTest {
   }
 
   private static String text(FriendPresenceViewOutput view) {
+    return new TextPlayerOutputRenderer(
+            new net.firedevops.firemud.gamesession.config.PresentationProperties())
+        .render(net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(view));
+  }
+
+  private static String text(
+      net.firedevops.firemud.gamesession.presentation.FriendDetailViewOutput view) {
     return new TextPlayerOutputRenderer(
             new net.firedevops.firemud.gamesession.config.PresentationProperties())
         .render(net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(view));

@@ -824,6 +824,88 @@ class SocialGroupsGrpcServiceTest {
   }
 
   @Test
+  void listFriendsMapsUndisclosedPresenceWithoutInventingOnlineState() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, accountUuid(2L))).thenReturn(true);
+    Mockito.when(friend.listFriends(1L, accountUuid(2L), FriendRosterFilter.ALL))
+        .thenReturn(
+            new FriendRosterViewDto(
+                FriendRosterFilter.ALL,
+                1,
+                1,
+                List.of(
+                    new FriendRosterEntryDto(
+                        1,
+                        7L,
+                        1L,
+                        accountUuid(2L),
+                        accountUuid(3L),
+                        "active",
+                        Instant.parse("2026-04-10T01:02:03Z"),
+                        new FriendPresenceDto(
+                            accountUuid(3L),
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null)))));
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<ListFriendsResponse> ref = new AtomicReference<>();
+    service.listFriends(
+        net.firedevops.firemud.socialgroups.v1.ListFriendsRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId(accountUuid(2L))
+            .setFilter(
+                net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_ALL)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListFriendsResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(1, ref.get().getFriendsCount());
+    assertEquals(
+        net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_ALL,
+        ref.get().getFilter());
+    assertEquals(1, ref.get().getTotalCount());
+    assertEquals(1, ref.get().getMatchCount());
+    assertEquals(1, ref.get().getFriends(0).getOrdinal());
+    assertEquals("7", ref.get().getFriends(0).getFriendLinkId());
+    assertEquals(accountUuid(3L), ref.get().getFriends(0).getFriendAccountId());
+    assertEquals("active", ref.get().getFriends(0).getStatus());
+    assertEquals(
+        Instant.parse("2026-04-10T01:02:03Z").toEpochMilli(),
+        ref.get().getFriends(0).getCreatedAtMs());
+    assertEquals(
+        net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry.newBuilder()
+            .setFriendAccountId(accountUuid(3L))
+            .build(),
+        ref.get().getFriends(0).getPresence());
+  }
+
+  @Test
   void getFriendRosterSummaryMapsCanonicalCounts() {
     PingService ping = Mockito.mock(PingService.class);
     ChatService chat = Mockito.mock(ChatService.class);

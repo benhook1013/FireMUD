@@ -2157,6 +2157,11 @@ class PlayCommandHandlerTest {
         "outage",
         "malformed-error",
         "account",
+        "account-malformed",
+        "account-nil",
+        "account-numeric",
+        "account-uppercase",
+        "account-blank",
         "tenant",
         "world",
         "realm",
@@ -2182,6 +2187,11 @@ class PlayCommandHandlerTest {
               net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
                   .setMessage("unclassified failure"));
       case "account" -> grant.setAccountId("00000000-0000-4000-8000-000000000043");
+      case "account-malformed" -> grant.setAccountId("malformed");
+      case "account-nil" -> grant.setAccountId("00000000-0000-0000-0000-000000000000");
+      case "account-numeric" -> grant.setAccountId("123");
+      case "account-uppercase" -> grant.setAccountId(ACCOUNT_ID.toUpperCase(java.util.Locale.ROOT));
+      case "account-blank" -> grant.setAccountId("");
       case "tenant" -> grant.setTenantId("23");
       case "world" -> grant.setWorldSlug("other");
       case "realm" -> grant.setRealmSlug("other");

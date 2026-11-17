@@ -48,6 +48,17 @@ class AccountRuntimeStubServerTest {
           assertThat(json.path("displayName").asString()).isEqualTo("Demo-7");
           assertThat(json.path("bio").isNull()).isTrue();
           assertThat(json.path("presenceVisibilityPolicy").asString()).isEqualTo("FRIENDS_ONLY");
+          var updated =
+              stub.updateProfile(
+                  UpdateProfileRequest.newBuilder()
+                      .setAccountId(accountUuid)
+                      .setTenantId(Long.toString(tenantId))
+                      .setProfileJson(
+                          "{\"displayName\":\"Demo-7\",\"presenceVisibilityPolicy\":\"FRIENDS_ONLY\"}")
+                      .build());
+          assertThat(updated.getSuccess()).isTrue();
+          assertThat(updated.getAccountId()).isEqualTo(accountUuid);
+          assertThat(updated.getTenantId()).isEqualTo(Long.toString(tenantId));
         }
       } finally {
         channel.shutdownNow();
@@ -85,6 +96,29 @@ class AccountRuntimeStubServerTest {
                         .build());
         assertThat(response.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
         assertThat(response.getProfileJson()).isEmpty();
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
+        var updated =
+            stub.updateProfile(
+                UpdateProfileRequest.newBuilder()
+                    .setAccountId(accountUuid)
+                    .setTenantId(tenantId)
+                    .setProfileJson(
+                        "{\"displayName\":\"Changed\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                    .build());
+        assertThat(updated.getSuccess()).isFalse();
+        assertThat(updated.getAccountId()).isEmpty();
+        assertThat(updated.getTenantId()).isEmpty();
+        var unchanged =
+            stub.getProfile(
+                GetProfileRequest.newBuilder().setAccountId(accountUuid).setTenantId("1").build());
+        assertThat(
+                JsonMapper.builder()
+                    .build()
+                    .readTree(unchanged.getProfileJson())
+                    .path("presenceVisibilityPolicy")
+                    .asString())
+            .isEqualTo("FRIENDS_ONLY");
       } finally {
         channel.shutdownNow();
       }
