@@ -888,6 +888,96 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
   }
 
   @Test
+  void settledOriginalDraftDoesNotReleaseIndependentPublicationSourceOrder() throws Exception {
+    try (var fixture = fixture()) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      var proof = proof(f, issued.environment());
+      var draft = proof.original();
+      // Original owner evidence is stipulated here, not authenticated World transport.
+      f.tx(
+          () -> {
+            f.fences.reserve(draft);
+            f.fences.claimCommitOrder(draft);
+            for (var owner : draft.requiredOwners()) {
+              f.fences.recordOwnerReadback(
+                  draft,
+                  new DraftAuthorizationFenceBinding.OwnerReadback(
+                      owner,
+                      DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+                      draft.operationId(),
+                      draft.commitId(),
+                      draft.fenceId(),
+                      draft.inputDigest(),
+                      draft.canonicalBytes(),
+                      new byte[] {1}));
+            }
+            return null;
+          });
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_draft_authorization_is_settled(?)", draft.operationId())
+                  .get(0, Boolean.class))
+          .isTrue();
+      var service =
+          new AccountPublicationAuthorizationService(
+              issued.actors(), f.fences, new AccountPublicationAuthorizationRepository(f.dsl));
+      var publication =
+          service.authorize(issued.compact(), proof.selection(), issued.environment());
+      assertThat(publication.operationId()).isNotEqualTo(draft.operationId());
+      assertThat(publication.fenceId()).isNotEqualTo(draft.fenceId());
+      var retained =
+          f.dsl
+              .fetch(
+                  "SELECT to_jsonb(t)::text AS evidence, xmin::text AS row_version "
+                      + "FROM account_selected_publication_authorizations t ORDER BY to_jsonb(t)::text")
+              .intoMaps();
+      var change =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), publication.sources(), new byte[] {7});
+      for (int attempt = 0; attempt < 2; attempt++) {
+        assertThat(f.tx(() -> f.fences.requestSourceChange(change))).isFalse();
+        assertThat(f.tx(() -> f.fences.inspectSourceChange(change).status())).isEqualTo("WAITING");
+        assertThat(f.tx(() -> f.fences.sourceMutationPermitted(change))).isFalse();
+        assertThatThrownBy(
+                () ->
+                    f.tx(
+                        () -> {
+                          f.fences.markSourceCommitted(change);
+                          return null;
+                        }))
+            .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(
+                () ->
+                    f.tx(
+                        () ->
+                            f.dsl.execute(
+                                "UPDATE accounts SET role = 'admin' WHERE id = ?",
+                                f.account.getId())))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining("selected-publication");
+        assertThat(
+                service
+                    .authorize(issued.compact(), proof.selection(), issued.environment())
+                    .canonicalBytes())
+            .containsExactly(publication.canonicalBytes());
+        assertThat(
+                f.dsl
+                    .fetch(
+                        "SELECT to_jsonb(t)::text AS evidence, xmin::text AS row_version "
+                            + "FROM account_selected_publication_authorizations t ORDER BY to_jsonb(t)::text")
+                    .intoMaps())
+            .isEqualTo(retained);
+        assertThat(
+                f.dsl.fetchCount(
+                    org.jooq.impl.DSL.table("account_selected_publication_settlements")))
+            .isZero();
+      }
+    }
+  }
+
+  @Test
   void earlierWaitingSourceChangeWinsAndDeniedAuthenticationCreatesNoOperation() throws Exception {
     try (var fixture = fixture()) {
       var issued = fixture.issueCreator();
