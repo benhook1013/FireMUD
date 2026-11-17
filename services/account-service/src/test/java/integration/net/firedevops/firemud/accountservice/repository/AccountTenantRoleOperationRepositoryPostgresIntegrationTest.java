@@ -43,6 +43,39 @@ class AccountTenantRoleOperationRepositoryPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
+  void boundedTerminalReadPreservesValidBytesAndRefusesOversizedHistoryWithoutRewrite() {
+    TestContext context = newTestContext();
+    UUID actor=insertAccount(context.setupDsl());
+    UUID target=insertAccount(context.setupDsl());
+    UUID tenant=UUID.randomUUID();
+    for (boolean oversized : List.of(false,true)) {
+      Request request=request(UUID.randomUUID(),actor,tenant,target,Action.GRANT_DESIGNER,4,7);
+      String auditJson="{\"evidence\":\"" + (oversized ? "x".repeat(262144) : "small") + "\"}";
+      OperationEvidence committed=inTransaction(context.transaction(),()->{
+        assertThat(context.repository().claim(request).claimed()).isTrue();
+        return context.repository().complete(request,audit(UUID.randomUUID(),auditJson),
+            List.of(member(request,target,8,1,1,List.of("designer","player"),false)));
+      });
+      if (oversized) {
+        assertThatThrownBy(()->inTransaction(context.transaction(),()->
+            context.repository().findBoundedCommittedForUpdate(request.requestId())))
+            .isInstanceOf(IllegalStateException.class).hasMessageContaining("closed byte/cardinality");
+      } else {
+        OperationEvidence bounded=inTransaction(context.transaction(),()->
+            context.repository().findBoundedCommittedForUpdate(request.requestId()).orElseThrow());
+        assertThat(bounded.requestPayload()).containsExactly(committed.requestPayload());
+        assertThat(bounded.resultPayload()).containsExactly(committed.resultPayload());
+      }
+      OperationEvidence unchanged=inTransaction(context.transaction(),()->
+          context.repository().findForUpdate(request.requestId()).orElseThrow());
+      assertThat(unchanged.requestPayload()).containsExactly(committed.requestPayload());
+      assertThat(unchanged.resultPayload()).containsExactly(committed.resultPayload());
+    }
+    assertThat(inTransaction(context.transaction(),()->
+        context.repository().findBoundedCommittedForUpdate(UUID.randomUUID()))).isEmpty();
+  }
+
+  @Test
   void immutableJournalRetriesOriginalBytesAfterLaterRoleOperationAndRejectsChangedIntent() {
     TestContext context = newTestContext();
     UUID actor = insertAccount(context.setupDsl());

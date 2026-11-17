@@ -18,6 +18,24 @@ class AccountTenantRoleOperationRepositoryTest {
   private static final UUID REQUEST = UUID.fromString("44444444-4444-4444-8444-444444444444");
 
   @Test
+  void terminalStorageReadBoundsRejectOversizeNullAndWrongCardinality() {
+    var transfer = AccountTenantRoleOperationRepository.Action.TRANSFER_TENANT_ADMIN;
+    AccountTenantRoleOperationRepository.requireTerminalReadBounds(transfer,4096L,262144L,524288L,2L,65536L,131072L);
+    Long[][] bad = {
+      {4097L,1L,1L,2L,1L,2L}, {1L,262145L,1L,2L,1L,2L},
+      {1L,1L,524289L,2L,1L,2L}, {1L,1L,1L,3L,1L,3L},
+      {1L,1L,1L,1L,1L,1L}, {1L,1L,1L,2L,65537L,65537L},
+      {1L,1L,1L,2L,1L,131073L}, {1L,1L,1L,2L,2L,1L},
+      {0L,1L,1L,2L,1L,2L}, {null,1L,1L,2L,1L,2L},
+      {Long.MAX_VALUE,1L,1L,2L,1L,2L}
+    };
+    for (Long[] b : bad) {
+      assertThatThrownBy(() -> AccountTenantRoleOperationRepository.requireTerminalReadBounds(
+          transfer,b[0],b[1],b[2],b[3],b[4],b[5])).isInstanceOf(IllegalStateException.class);
+    }
+  }
+
+  @Test
   void requestsBindEveryIdentityActionAndExpectedVersion() {
     var grant = request(AccountTenantRoleOperationRepository.Action.GRANT_DESIGNER, 7L, 9L);
     var changedAction =
@@ -74,6 +92,9 @@ class AccountTenantRoleOperationRepositoryTest {
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
     try {
       assertThatThrownBy(() -> repository.claim(request))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("active Account write transaction");
+      assertThatThrownBy(() -> repository.findBoundedCommittedForUpdate(REQUEST))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("active Account write transaction");
       assertThatThrownBy(() -> repository.findForUpdate(REQUEST))

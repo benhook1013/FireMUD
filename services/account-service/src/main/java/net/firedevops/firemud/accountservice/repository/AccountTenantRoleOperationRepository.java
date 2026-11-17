@@ -219,6 +219,53 @@ public class AccountTenantRoleOperationRepository {
     return readOperationForUpdate(requestId);
   }
 
+  /**
+   * Opt-in storage read with fixed materialization limits, not caller/read-route authorization.
+   * Existing readers and committed data are unchanged. Requires a committed immutable operation;
+   * oversized history is refused, never truncated or rewritten. No registered caller uses this.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<OperationEvidence> findBoundedCommittedForUpdate(UUID requestId) {
+    requireWriteOwnerTransaction();
+    Objects.requireNonNull(requestId, "Tenant-role request ID is required");
+    Record sizes = dsl.fetchOne(
+        "SELECT status, action, octet_length(request_payload)::bigint AS request_bytes, "
+            + "octet_length(audit_payload)::bigint AS audit_bytes, "
+            + "octet_length(result_payload)::bigint AS result_bytes FROM " + OPERATIONS
+            + " WHERE request_id = ? FOR UPDATE", requestId);
+    if (sizes == null) return Optional.empty();
+    if (!"COMMITTED".equals(sizes.get("status", String.class))) {
+      throw new IllegalStateException("Bounded tenant-role read requires committed history");
+    }
+    // The parent FOR UPDATE lock also excludes FK insertions while the immutable member set
+    // is measured and read. SQL returns scalar lengths only, not BYTEA payloads or member arrays.
+    Record members = dsl.fetchOne(
+        "SELECT count(*) AS member_count, coalesce(max(octet_length(event_payload)),0)::bigint "
+            + "AS max_member_bytes, coalesce(sum(octet_length(event_payload)),0)::bigint "
+            + "AS member_bytes FROM " + MEMBERS + " WHERE request_id = ?", requestId);
+    if (members == null) throw new IllegalStateException("Tenant-role size observation unavailable");
+    requireTerminalReadBounds(
+        Action.parse(sizes.get("action", String.class)),
+        sizes.get("request_bytes", Long.class), sizes.get("audit_bytes", Long.class),
+        sizes.get("result_bytes", Long.class), members.get("member_count", Long.class),
+        members.get("max_member_bytes", Long.class), members.get("member_bytes", Long.class));
+    return readOperationForUpdate(requestId);
+  }
+
+  // Closed storage-only bounds. No new authority or retained-schema interpretation is introduced.
+  static void requireTerminalReadBounds(Action action, Long request, Long audit, Long result,
+      Long count, Long maxMember, Long totalMembers) {
+    long expected = action == Action.TRANSFER_TENANT_ADMIN ? 2 : 1;
+    if (action == null || request == null || audit == null || result == null || count == null
+        || maxMember == null || totalMembers == null || count != expected
+        || request <= 0 || request > 4096 || audit <= 0 || audit > 262144
+        || result <= 0 || result > 524288 || maxMember <= 0 || maxMember > 65536
+        || totalMembers < maxMember || totalMembers > expected * 65536
+        || request + audit + result + totalMembers > 1048576) {
+      throw new IllegalStateException("Tenant-role terminal read exceeds closed byte/cardinality bounds");
+    }
+  }
+
   private Optional<OperationEvidence> readOperationForUpdate(UUID requestId) {
     Record row =
         dsl.fetchOne(
