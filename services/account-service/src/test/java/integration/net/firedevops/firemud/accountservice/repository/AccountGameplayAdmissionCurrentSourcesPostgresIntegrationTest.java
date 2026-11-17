@@ -2723,7 +2723,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                 "--appendonly",
                 "yes",
                 "--appendfsync",
-                "always");
+                "always",
+                "--repl-diskless-sync-delay",
+                "0");
     private final GenericContainer<?> replica =
         new GenericContainer<>(TestContainerImages.redis())
             .withNetwork(network)
