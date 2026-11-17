@@ -14,6 +14,7 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
+import net.firedevops.firemud.accountservice.dto.AccountLeaveMembershipBinding;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -302,6 +303,169 @@ public class AccountMembershipAuthorityEventProducer {
         new PairTransition(true, next, readback.eventId(), readback.eventDigest(), false));
     return checkpoint;
   }
+
+  /**
+   * Stages one genuine canonical leave under the Account lock. The caller must retain its exact
+   * fence cause, audit and LEAVE terminal receipt in this same transaction; this is not a route.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public LeaveTransition publishCanonicalLeftMembershipChange(
+      AccountLeaveMembershipBinding binding) {
+    requireWritableOwnerTransaction();
+    Objects.requireNonNull(binding);
+    var account = lockCanonicalAccountOwner(binding.accountId());
+    var before =
+        membershipRepository
+            .findFreshMembershipForUpdate(binding.accountId(), binding.tenantId())
+            .orElseThrow();
+    var previous =
+        pairAuthorityRepository
+            .readForUpdate(binding.accountId(), binding.tenantId())
+            .orElseThrow();
+    var provenance =
+        new VerifiedTenantProvenance(
+            null,
+            TenantProvenanceKind.FRESH_GAME_DESIGN,
+            before.getTenantSourceOperationId(),
+            before.getTenantProvenanceDigest());
+    requireExactPairScope(previous, binding.accountId(), binding.tenantId(), provenance);
+    if (!"ACTIVE".equals(before.getLifecycleState())
+        || !previous.membershipExists()
+        || previous.eventSequence() <= 0
+        || previous.membershipVersion() != before.getMembershipVersion()
+        || previous.membershipAuthorityGeneration() != before.getMembershipAuthorityGeneration()) {
+      throw new IllegalStateException("LEAVE requires exact retained ACTIVE membership and pair");
+    }
+    roleSnapshotRepository
+        .findForCanonicalUpdate(
+            binding.accountId(),
+            binding.tenantId(),
+            provenance,
+            before.getId(),
+            before.getMembershipVersion())
+        .orElseThrow();
+    CompositeSnapshot original =
+        authorityGenerationRepository.readCompositeSnapshot(
+            ACCOUNT_JWT_ISSUER,
+            binding.accountId(),
+            List.of(binding.tenantId()),
+            List.of(binding.tenantId()));
+    IssuerAccountSourceSnapshot sources =
+        sourceEvidenceRepository.readCurrentIssuerAccountSources(
+            ACCOUNT_JWT_ISSUER, binding.accountId());
+    var tenant =
+        readCurrentTenantSourceEvent(
+            binding.tenantId(), provenance, only(original.tenants(), "tenant"));
+    requireCurrentAuthority(
+        original,
+        sources,
+        account.getId(),
+        binding.accountId(),
+        binding.tenantId(),
+        before,
+        provenance,
+        tenant);
+    String stream = membershipStreamKey(binding.accountId(), binding.tenantId());
+    Event priorEvent =
+        authorityOutboxRepository.findEvent(stream, previous.eventSequence()).orElseThrow();
+    var prior =
+        MembershipAuthorityEventV1Codec.verify(
+            new String(priorEvent.payload(), StandardCharsets.UTF_8));
+    requireCheckpointMatchesEvent(
+        authorityOutboxRepository.readCheckpoint(stream).orElseThrow(), priorEvent);
+    if (!Arrays.equals(prior.canonicalJsonUtf8(), priorEvent.payload())
+        || !previous.eventId().equals(priorEvent.eventId())
+        || !previous.eventDigest().equals(priorEvent.eventDigest())
+        || !priorEvent.eventId().equals(prior.eventId())
+        || !priorEvent.eventDigest().equals(prior.eventDigest())
+        || !binding.accountId().toString().equals(prior.accountId())
+        || !binding.tenantId().toString().equals(prior.tenantId())
+        || !"ACTIVE".equals(prior.membershipLifecycleState())
+        || !Map.of(binding.tenantId().toString(), Long.toString(previous.membershipVersion()))
+            .equals(prior.membershipVersion())
+        || !Long.toString(previous.membershipAuthorityGeneration())
+            .equals(prior.membershipAuthorityGeneration())) {
+      throw new IllegalStateException(
+          "LEAVE predecessor differs from the exact current membership event");
+    }
+    ScopeState beforeAuthority = only(original.memberships(), "membership");
+    ScopeState afterAuthority =
+        authorityGenerationRepository.advance(beforeAuthority, original.issuanceFence());
+    var left =
+        membershipRepository.stageFreshMembershipForLeave(
+            binding.accountId(), binding.tenantId(), before);
+    roleSnapshotRepository.replaceCanonical(
+        left,
+        binding.accountId(),
+        binding.tenantId(),
+        provenance,
+        left.getMembershipVersion(),
+        List.of());
+    CompositeSnapshot advanced =
+        authorityGenerationRepository.readCompositeSnapshot(
+            ACCOUNT_JWT_ISSUER,
+            binding.accountId(),
+            List.of(binding.tenantId()),
+            List.of(binding.tenantId()));
+    if (afterAuthority.generation() != left.getMembershipAuthorityGeneration()
+        || !afterAuthority.issuanceFence().equals(advanced.issuanceFence())) {
+      throw new IllegalStateException("LEAVE authority and membership advances differ");
+    }
+    long sequence = Math.incrementExact(previous.eventSequence());
+    String eventRequest = "leave:" + binding.requestId();
+    String eventId =
+        UUID.nameUUIDFromBytes(
+                ("account-leave-membership/v1:" + binding.requestId())
+                    .getBytes(StandardCharsets.UTF_8))
+            .toString();
+    Event event =
+        authorityOutboxRepository.append(
+            stream,
+            eventRequest,
+            allocated -> {
+              if (allocated != sequence)
+                throw new IllegalStateException("LEAVE event sequence changed");
+              var sealed =
+                  MembershipAuthorityEventV1Codec.seal(
+                      membershipEventPreimage(
+                          binding.accountId(),
+                          binding.tenantId(),
+                          left,
+                          List.of(),
+                          advanced,
+                          sources,
+                          tenant,
+                          eventId,
+                          eventRequest,
+                          sequence,
+                          true));
+              return new EventEvidence(
+                  sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
+            });
+    Event readback = authorityOutboxRepository.findEvent(stream, sequence).orElseThrow();
+    if (!event.equals(readback)) throw new IllegalStateException("LEAVE event readback differs");
+    pairAuthorityRepository.commitLeave(
+        previous, new PairTransition(true, sequence, event.eventId(), event.eventDigest(), true));
+    return new LeaveTransition(
+        left.getId(),
+        before.getMembershipVersion(),
+        before.getMembershipAuthorityGeneration(),
+        left.getMembershipVersion(),
+        left.getMembershipAuthorityGeneration(),
+        beforeAuthority,
+        afterAuthority,
+        event);
+  }
+
+  public record LeaveTransition(
+      long membershipId,
+      long beforeVersion,
+      long beforeGeneration,
+      long version,
+      long generation,
+      ScopeState beforeAuthority,
+      ScopeState afterAuthority,
+      Event event) {}
 
   /** Rechecks actual Account policy sources under the caller's final membership transaction. */
   @Transactional(propagation = Propagation.MANDATORY)
@@ -619,8 +783,32 @@ public class AccountMembershipAuthorityEventProducer {
       String eventId,
       String requestId,
       long sequence) {
-    UUID accountUuid = scope.accountId();
-    UUID tenantUuid = scope.tenantId();
+    return membershipEventPreimage(
+        scope.accountId(),
+        scope.tenantId(),
+        membership,
+        roles,
+        authority,
+        sourceSnapshot,
+        tenantSourceEvent,
+        eventId,
+        requestId,
+        sequence,
+        false);
+  }
+
+  private static Map<String, Object> membershipEventPreimage(
+      UUID accountUuid,
+      UUID tenantUuid,
+      AccountTenantMembership membership,
+      List<String> roles,
+      CompositeSnapshot authority,
+      IssuerAccountSourceSnapshot sourceSnapshot,
+      TenantAuthorityEventV1Codec.Event tenantSourceEvent,
+      String eventId,
+      String requestId,
+      long sequence,
+      boolean invalidated) {
     String streamKey = membershipStreamKey(accountUuid, tenantUuid);
     ScopeState tenant = only(authority.tenants(), "tenant");
     ScopeState member = only(authority.memberships(), "membership");
@@ -681,7 +869,7 @@ public class AccountMembershipAuthorityEventProducer {
     event.put("issuanceFence", decimal(authority.issuanceFence().value()));
     event.put("roles", roles);
     event.put("gameplayAdmissionAllowed", membership.isGameplayAdmissionAllowed());
-    event.put("callerBoundAuthorityInvalidated", false);
+    event.put("callerBoundAuthorityInvalidated", invalidated);
     return event;
   }
 

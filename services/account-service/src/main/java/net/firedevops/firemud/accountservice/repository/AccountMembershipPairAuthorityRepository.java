@@ -307,6 +307,98 @@ public class AccountMembershipPairAuthorityRepository {
     return actual;
   }
 
+  /** Advances an existing positive pair after its exact left membership event was appended. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public PairAuthority commitLeave(PairAuthority expected, PairTransition transition) {
+    requireOwnerWriteTransaction();
+    Objects.requireNonNull(expected);
+    Objects.requireNonNull(transition);
+    requireFreshProvenance(expected.provenance());
+    long nextSequence = increment(expected.eventSequence(), "membership event sequence");
+    long nextVersion = increment(expected.membershipVersion(), "membership version");
+    long nextGeneration =
+        increment(expected.membershipAuthorityGeneration(), "membership authority generation");
+    if (!expected.membershipExists()
+        || expected.eventSequence() <= 0L
+        || !transition.membershipExists()
+        || transition.eventSequence() != nextSequence
+        || !transition.callerBoundAuthorityInvalidated()
+        || !expected.equals(
+            readForUpdate(expected.accountUuid(), expected.tenantUuid()).orElseThrow())) {
+      throw new IllegalStateException("Leave requires the exact current positive pair");
+    }
+    Record ownerEvidence =
+        dsl.fetchOne(
+            "SELECT EXISTS (SELECT 1 FROM account_authority_outbox_events next_event "
+                + "JOIN account_authority_outbox_streams stream USING (outbox_stream_key) "
+                + "JOIN account_authority_outbox_events prior_event USING (outbox_stream_key) "
+                + "JOIN accounts account ON account.account_uuid = ? "
+                + "JOIN account_tenant_membership member ON member.account_id = account.id AND member.tenant_uuid = ? "
+                + "WHERE next_event.outbox_stream_key = ? AND next_event.outbox_sequence = ? "
+                + "AND next_event.event_id = ? AND next_event.event_digest = ? AND stream.last_sequence = ? "
+                + "AND prior_event.outbox_sequence = ? AND prior_event.event_id = ? AND prior_event.event_digest = ? "
+                + "AND convert_from(prior_event.payload, 'UTF8')::JSONB ->> 'membershipLifecycleState' = 'ACTIVE' "
+                + "AND member.lifecycle_state = 'INACTIVE' AND member.gameplay_admission_allowed IS FALSE "
+                + "AND member.membership_version = ? AND member.membership_authority_generation = ?)",
+            expected.accountUuid(),
+            expected.tenantUuid(),
+            "account:auth-authority:v1:membership/"
+                + expected.accountUuid()
+                + "/"
+                + expected.tenantUuid(),
+            nextSequence,
+            transition.eventId(),
+            transition.eventDigest(),
+            nextSequence,
+            expected.eventSequence(),
+            expected.eventId(),
+            expected.eventDigest(),
+            nextVersion,
+            nextGeneration);
+    if (ownerEvidence == null || !Boolean.TRUE.equals(ownerEvidence.get(0, Boolean.class))) {
+      throw new IllegalStateException(
+          "Leave pair requires actual current membership and event evidence");
+    }
+    int changed =
+        dsl.execute(
+            "UPDATE "
+                + TABLE
+                + " SET membership_version = ?, membership_authority_generation = ?, last_event_sequence = ?, "
+                + "last_event_id = ?, last_event_digest = ?, last_transition_invalidated = TRUE "
+                + "WHERE account_uuid = ? AND tenant_uuid = ? AND membership_exists IS TRUE "
+                + "AND membership_version = ? AND membership_authority_generation = ? "
+                + "AND last_event_sequence = ? AND last_event_id = ? AND last_event_digest = ?",
+            nextVersion,
+            nextGeneration,
+            nextSequence,
+            transition.eventId(),
+            transition.eventDigest(),
+            expected.accountUuid(),
+            expected.tenantUuid(),
+            expected.membershipVersion(),
+            expected.membershipAuthorityGeneration(),
+            expected.eventSequence(),
+            expected.eventId(),
+            expected.eventDigest());
+    if (changed != 1) throw new IllegalStateException("Leave pair compare-and-advance failed");
+    PairAuthority actual =
+        readForUpdate(expected.accountUuid(), expected.tenantUuid()).orElseThrow();
+    PairAuthority required =
+        new PairAuthority(
+            expected.accountUuid(),
+            expected.tenantUuid(),
+            expected.provenance(),
+            true,
+            nextVersion,
+            nextGeneration,
+            nextSequence,
+            transition.eventId(),
+            transition.eventDigest(),
+            true);
+    if (!required.equals(actual)) throw new IllegalStateException("Leave pair readback differs");
+    return actual;
+  }
+
   /** Advances only the stream checkpoint for the exact retained membership facts. */
   PairAuthority commitPaidAuthorityCheckpoint(
       PairAuthority expected, AccountAuthorityOutboxRepository.Event event) {

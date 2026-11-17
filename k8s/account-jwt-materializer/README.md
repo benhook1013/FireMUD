@@ -1,0 +1,9 @@
+# Account JWT materializer source intake
+
+This module retains the bounded one-shot Account signer custodian from the original donor handoff. Account remains the lifecycle and promotion authority under [ADR 0014](../../design/architecture/decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md). The materializer accepts only protected binding and credential files, verifies Account and Kubernetes identities, and correlates each Secret observation with the exact Account operation before any key-generation or Secret-write step. It is not registered as a runtime service or deployed by this source intake.
+
+Focused local proof covers 23 boundary and 15 flow tests, including four observation-response substitutions in both entry modes that deny before any Secret PATCH or generation/promotion result. Enabled main/test Checkstyle and SpotBugs and formatting checks pass. These controlled tests do not prove deployed credentials, real Account/Kubernetes transport, signer rotation, readiness convergence, or production custody.
+
+The optional readiness harness is excluded because its original `IssueReadinessProbes` protobuf is absent from the current Account API. The later bootstrap fixture is also excluded: its referenced `account-jwt-bootstrap-account.py` and `account-jwt-bootstrap-redis.py` helpers were not included in the donor snapshot or recovered history. This module does not substitute for those missing dependencies or complete the full bootstrap handoff. No Docker image, RBAC, workload, timer, credential, or activation asset is included.
+
+Validate the source with `bash dev-tools/validation/run-locked-gradle.sh :account-jwt-materializer:test :account-jwt-materializer:check -PfullCheck`. Running the packaged custodian against an environment remains a separate authorized deployment and custody qualification step.
