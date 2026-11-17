@@ -472,6 +472,27 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
                 net.firedevops.firemud.accountservice.repository
                     .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException
                     .class);
+        // The current owner must also refuse an explicit no-mutation terminal while mixed.
+        assertThatThrownBy(
+                () ->
+                    transaction(
+                        fixture.transaction(),
+                        () -> {
+                          var pending =
+                              fixture
+                                  .sourceChanges()
+                                  .findByTokenHash(tokenHash(seed.rawToken()))
+                                  .orElseThrow();
+                          fixture
+                              .sourceChanges()
+                              .markSourceAborted(
+                                  pending,
+                                  DraftAuthorizationFenceRepository.SourceChangeAbortReason
+                                      .DEFINITIVE_ABORT);
+                          return null;
+                        }))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Owner outcomes unresolved");
         assertThat(snapshot(fixture, seed)).isEqualTo(sourceBefore);
         assertThat(
                 fixture
