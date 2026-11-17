@@ -8,6 +8,8 @@ plugins {
     id("net.firedevops.firemud.jooq-conventions")
 }
 
+apply(from = "${rootDir}/gradle/world-proof-migration-inputs.gradle")
+
 firemudJooq {
     packageName.set("net.firedevops.firemud.worldmanagement.jooq")
 }
