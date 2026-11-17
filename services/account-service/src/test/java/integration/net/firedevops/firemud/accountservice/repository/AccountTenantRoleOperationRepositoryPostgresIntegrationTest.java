@@ -190,6 +190,81 @@ class AccountTenantRoleOperationRepositoryPostgresIntegrationTest {
         .isZero();
   }
 
+  @Test
+  void transferJournalRequiresBothExactMembersAndDoesNotPersistAnIncompleteClaim() {
+    TestContext context = newTestContext();
+    UUID actor = insertAccount(context.setupDsl());
+    UUID target = insertAccount(context.setupDsl());
+    Request request =
+        request(
+            UUID.randomUUID(),
+            actor,
+            UUID.randomUUID(),
+            target,
+            Action.TRANSFER_TENANT_ADMIN,
+            4,
+            7);
+
+    assertThatThrownBy(
+            () -> inTransaction(context.transaction(), () -> context.repository().claim(request)))
+        .hasStackTraceContaining("Incomplete Account tenant-role operation cannot commit");
+    assertThat(
+            inTransaction(
+                context.transaction(),
+                () -> context.repository().findForUpdate(request.requestId())))
+        .isEmpty();
+
+    MemberResult actorMember = member(request, actor, 5, 2, 2, List.of("player"), true);
+    MemberResult targetMember =
+        member(request, target, 8, 1, 1, List.of("player", "tenantAdmin"), false);
+    AuditEvidence audit = audit(UUID.randomUUID(), "{\"transfer\":true}");
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () -> {
+                      assertThat(context.repository().claim(request).claimed()).isTrue();
+                      return context.repository().complete(request, audit, List.of(targetMember));
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("member result count");
+    assertThat(
+            inTransaction(
+                context.transaction(),
+                () -> context.repository().findForUpdate(request.requestId())))
+        .isEmpty();
+
+    OperationEvidence committed =
+        inTransaction(
+            context.transaction(),
+            () -> {
+              assertThat(context.repository().claim(request).claimed()).isTrue();
+              return context
+                  .repository()
+                  .complete(request, audit, List.of(targetMember, actorMember));
+            });
+    assertThat(committed.status()).isEqualTo("COMMITTED");
+    assertThat(committed.members()).hasSize(2);
+    for (MemberResult expected : List.of(actorMember, targetMember)) {
+      MemberResult actual =
+          committed.members().stream()
+              .filter(value -> value.accountUuid().equals(expected.accountUuid()))
+              .findFirst()
+              .orElseThrow();
+      assertThat(actual).usingRecursiveComparison().isEqualTo(expected);
+      assertThat(actual.eventPayload()).containsExactly(expected.eventPayload());
+    }
+    OperationEvidence replay =
+        inTransaction(
+            context.transaction(),
+            () -> {
+              Claim claim = context.repository().claim(request);
+              assertThat(claim.claimed()).isFalse();
+              return claim.replay().orElseThrow();
+            });
+    assertExactOperation(committed, replay);
+  }
+
   private TestContext newTestContext() {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
