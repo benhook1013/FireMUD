@@ -63,6 +63,17 @@ class AccountRedisContainerStartupRecoveryIntegrationTest {
               .STARTUP_ATTEMPTS);
     }
 
+    // A test-owned running container is an identity, not a value of its mutable attempt history.
+    @Override
+    public boolean equals(Object other) {
+      return this == other;
+    }
+
+    @Override
+    public int hashCode() {
+      return System.identityHashCode(this);
+    }
+
     @Override
     protected void waitUntilContainerStarted() {
       super.waitUntilContainerStarted();
