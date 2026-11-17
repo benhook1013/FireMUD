@@ -58,6 +58,9 @@ import tools.jackson.databind.node.ObjectNode;
 @Testcontainers(disabledWithoutDocker = false)
 @SuppressWarnings("resource")
 class WorldPrivateFreshOperationPostgresIntegrationTest {
+  // V1054, V1055 and V1056 each append one immutable seal after V1053's epoch 7.
+  private static final long CURRENT_CATALOG_EPOCH = 10L;
+
   private static final String NS = "firemud";
   private static final String DIGEST = "sha256:" + "a".repeat(64);
   private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -214,7 +217,7 @@ class WorldPrivateFreshOperationPostgresIntegrationTest {
       assertThat(
               f.dsl
                   .fetch(
-                      "SELECT to_jsonb(h)::TEXT||':'||xmin::TEXT value FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1050' AND version IS DISTINCT FROM '1051' AND version IS DISTINCT FROM '1052' AND version IS DISTINCT FROM '1053' ORDER BY installed_rank")
+                      "SELECT to_jsonb(h)::TEXT||':'||xmin::TEXT value FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1050' AND version IS DISTINCT FROM '1051' AND version IS DISTINCT FROM '1052' AND version IS DISTINCT FROM '1053' AND version IS DISTINCT FROM '1054' AND version IS DISTINCT FROM '1055' AND version IS DISTINCT FROM '1056' ORDER BY installed_rank")
                   .getValues(0, String.class))
           .isEqualTo(history);
       assertThat(
@@ -392,7 +395,7 @@ class WorldPrivateFreshOperationPostgresIntegrationTest {
       assertThat(
               f.dsl
                   .fetch(
-                      "SELECT to_jsonb(h)::TEXT||':'||xmin::TEXT value FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1049' AND version IS DISTINCT FROM '1050' AND version IS DISTINCT FROM '1051' AND version IS DISTINCT FROM '1052' AND version IS DISTINCT FROM '1053' ORDER BY installed_rank")
+                      "SELECT to_jsonb(h)::TEXT||':'||xmin::TEXT value FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1049' AND version IS DISTINCT FROM '1050' AND version IS DISTINCT FROM '1051' AND version IS DISTINCT FROM '1052' AND version IS DISTINCT FROM '1053' AND version IS DISTINCT FROM '1054' AND version IS DISTINCT FROM '1055' AND version IS DISTINCT FROM '1056' ORDER BY installed_rank")
                   .getValues(0, String.class))
           .isEqualTo(history);
       assertThatThrownBy(() -> oldOwner.readExact(oldSnapshot.request()))
@@ -401,7 +404,7 @@ class WorldPrivateFreshOperationPostgresIntegrationTest {
           new WorldRuntimeFamilyCatalogRepository(f.dsl, f.manager, f.schema, NS)
               .read(new WorldRuntimeFamilyCatalog.Request(UUID.randomUUID(), NS))
               .catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(7);
+      assertThat(catalog.catalogEpoch()).isEqualTo(CURRENT_CATALOG_EPOCH);
       assertThat(catalog.families())
           .extracting(WorldRuntimeFamilyCatalog.Family::familyId)
           .contains(
@@ -412,7 +415,8 @@ class WorldPrivateFreshOperationPostgresIntegrationTest {
       assertThat(
               f.dsl
                   .fetchSingle(
-                      "SELECT catalog_bytes=world_runtime_family_catalog_bytes(catalog_epoch) FROM world_runtime_family_catalog_epoch WHERE catalog_epoch=7")
+                      "SELECT catalog_bytes=world_runtime_family_catalog_bytes(catalog_epoch) FROM world_runtime_family_catalog_epoch WHERE catalog_epoch=?",
+                      CURRENT_CATALOG_EPOCH)
                   .get(0, Boolean.class))
           .isTrue();
       assertThat(f.count("world_private_fresh_operation")).isZero();
