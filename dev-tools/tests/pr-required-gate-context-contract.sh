@@ -3508,6 +3508,9 @@ const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+const currentRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Current reviewed trusted refresh definition\n")]);
+const canonicalCurrentTrustedRefreshRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256")
+  .update(currentRefreshBytes).digest("hex");
 const previousRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Previous trusted refresh definition\n")]);
 const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256")
   .update(previousRefreshBytes).digest("hex");
@@ -3564,10 +3567,10 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
       }}}};
   const verifier = knownPlay ? "verifyKnownPlayFailure" : "verifyCanonicalSmokeProducer";
   const accepted = await new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
-    "canonicalRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
+    "canonicalRuntimeWorkflowSha256", "canonicalCurrentTrustedRefreshRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
     `${fn}; return ${verifier}(data.run, data.candidate, data.identity);`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
-      canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
+      canonicalCurrentTrustedRefreshRuntimeWorkflowSha256, canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
       data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {repository: {default_branch: "develop"}, pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}},
@@ -3683,6 +3686,26 @@ function markerAccepted(overrides = {}) {
     }, event), true, "exact old fail-red default-branch producer remains a diagnostic exception only");
   }
   assert.equal(await verify(() => {}, "repository_dispatch"), true);
+  const useCurrentRefresh = data => Object.assign(data.definitions[workflowPath], {
+    content: currentRefreshBytes.toString("base64"), size: currentRefreshBytes.length,
+  });
+  for (const knownPlay of [true, false]) {
+    assert.equal(await verify(useCurrentRefresh, "repository_dispatch", knownPlay), true,
+      "the exact reviewed current trusted definition may attest only a typed refresh");
+    assert.equal(await verify(useCurrentRefresh, "pull_request", knownPlay), false,
+      "a trusted-default-only definition cannot attest PR source");
+    assert.equal(await verify(data => {
+      useCurrentRefresh(data);
+      const unreviewed = Buffer.concat([currentRefreshBytes, Buffer.from("\n# unreviewed change\n")]);
+      Object.assign(data.definitions[workflowPath], {content: unreviewed.toString("base64"), size: unreviewed.length});
+    }, "repository_dispatch", knownPlay), false, "a nearby unreviewed default definition remains denied");
+  }
+  assert.equal(await verify(data => {
+    useCurrentRefresh(data);
+    const cleanupPath = "dev-tools/smoke/run-owned-compose.sh";
+    const changed = Buffer.concat([Buffer.from(data.definitions[cleanupPath].content, "base64"), Buffer.from("\n# changed cleanup\n")]);
+    Object.assign(data.definitions[cleanupPath], {content: changed.toString("base64"), size: changed.length});
+  }, "repository_dispatch"), false, "the reviewed workflow pin cannot bypass exact cleanup input attestation");
   const usePreviousRefresh = data => Object.assign(data.definitions[workflowPath], {
     content: previousRefreshBytes.toString("base64"), size: previousRefreshBytes.length,
   });
