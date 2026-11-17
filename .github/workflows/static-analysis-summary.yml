@@ -14,10 +14,11 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: static-analysis-summary-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}
+  group: static-analysis-summary-pr-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
   # Serialize the CodeQL and license completion events so a pending summary
-  # cannot race a terminal summary into creating two comments. A superseded head
-  # cannot replace the pending callback for the current head.
+  # cannot race a terminal summary into creating two comments. Every validated
+  # callback snapshots the live tuple, so an older-head wake can replace pending
+  # work without losing current-head reconciliation. Never cancel active writes.
   cancel-in-progress: false
 
 jobs:
@@ -37,22 +38,22 @@ jobs:
         with:
           script: |
             const pullRequests = context.payload.workflow_run.pull_requests || [];
-            if (pullRequests.length === 0) {
-              core.info("No pull request is attached to this workflow run.");
+            if (pullRequests.length !== 1) {
+              core.info("Exactly one pull request must be attached to this workflow run.");
               return;
             }
 
             const pullRequest = pullRequests[0];
             const issueNumber = pullRequest.number;
-            const headSha = context.payload.workflow_run.head_sha;
+            if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) return;
+            const sourceHeadSha = context.payload.workflow_run.head_sha;
+            if (!/^[0-9a-f]{40}$/.test(sourceHeadSha || "")) return;
             const { data: currentPullRequest } = await github.rest.pulls.get({
               ...context.repo,
               pull_number: issueNumber,
             });
-            if (currentPullRequest.head?.sha !== headSha) {
-              core.info("The source run belongs to a superseded pull-request head.");
-              return;
-            }
+            const headSha = currentPullRequest.head?.sha;
+            if (!/^[0-9a-f]{40}$/.test(headSha || "")) return;
             const baseSha = currentPullRequest.base?.sha;
             if (!baseSha) {
               throw new Error("The current pull-request base SHA is unavailable.");
@@ -63,11 +64,11 @@ jobs:
               ".github/workflows/license-scan.yml": "License Gate",
             })[sourceWorkflowPath];
             // The completion is a wake signal, never proof for the current base.
-            // An older-base callback can replace a pending callback in this head's
-            // concurrency group, so validate its original title and snapshot the live tuple.
+            // An older-head or older-base callback may replace pending work for this PR.
+            // Validate its original identity, then derive proof only from the live tuple.
             const sourceBaseSha = String(context.payload.workflow_run.display_title || "")
               .match(/ base-([0-9a-f]{40}) head-/)?.[1];
-            const expectedSourceTitle = `${sourceWorkflowName} pr-${issueNumber} base-${sourceBaseSha} head-${headSha}`;
+            const expectedSourceTitle = `${sourceWorkflowName} pr-${issueNumber} base-${sourceBaseSha} head-${sourceHeadSha}`;
             if (
               currentPullRequest.state !== "open" ||
               !sourceWorkflowName ||
@@ -76,7 +77,7 @@ jobs:
                 context.payload.workflow_run.name !== expectedSourceTitle) ||
               context.payload.workflow_run.display_title !== expectedSourceTitle
             ) {
-              core.info("The source run is not bound to the current open pull request and head.");
+              core.info("The source run is not attributable to this open pull request.");
               return;
             }
             const detailChecks = [

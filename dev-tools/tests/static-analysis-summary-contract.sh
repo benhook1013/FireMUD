@@ -27,8 +27,8 @@ grep -Fq 'per_page: 100' "$workflow"
 grep -Fq 'cancel-in-progress: false' "$workflow"
 # GitHub expressions are literal workflow text, not shell expansions.
 # shellcheck disable=SC2016
-grep -Fq 'group: static-analysis-summary-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}' "$workflow"
-grep -Fq 'currentPullRequest.head?.sha !== headSha' "$workflow"
+grep -Fq 'group: static-analysis-summary-pr-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}' "$workflow"
+grep -Fq 'const headSha = currentPullRequest.head?.sha;' "$workflow"
 grep -Fq 'context.payload.workflow_run.display_title !== expectedSourceTitle' "$workflow"
 grep -Fq 'finalPullRequest.base?.sha !== baseSha' "$workflow"
 grep -Fq 'workflowRun?.display_title === expectedTitle' "$workflow"
@@ -87,6 +87,7 @@ let currentBaseSha = baseSha;
 let currentBaseRef = "develop";
 let pullRequestReads = 0;
 let changeBaseDuringRun = false;
+let changeHeadDuringRun = false;
 let deleteStatus = null;
 let existingBody = "### Static Analysis Summary\nold";
 const calls = { paginate: [], deleted: [], updated: [], created: [] };
@@ -97,6 +98,7 @@ const github = {
   rest: {
     pulls: { get: async () => {
       pullRequestReads += 1;
+      if (changeHeadDuringRun && pullRequestReads === 2) currentHeadSha = "e".repeat(40);
       if (changeBaseDuringRun && pullRequestReads === 2) currentBaseSha = "c".repeat(40);
       return { data: { state: "open", head: { sha: currentHeadSha }, base: { sha: currentBaseSha, ref: currentBaseRef } } };
     } },
@@ -317,7 +319,8 @@ async function assertCompletionOrders() {
             if (!completed.has(key) && absentCounterpart) return [];
             return rows.filter((row) => [100, 200, 300].includes(row.id)).map((row) => ({ ...row,
               id: row.id + (currentBaseSha === baseSha ? 0 : 1000),
-              display_title: row.display_title.replace(`base-${baseSha}`, `base-${currentBaseSha}`),
+              head_sha: currentHeadSha,
+              display_title: row.display_title.replace(`base-${baseSha}`, `base-${currentBaseSha}`).replace(`head-${headSha}`, `head-${currentHeadSha}`),
               status: completed.has(key) ? "completed" : "in_progress",
               conclusion: completed.has(key) ? "success" : null,
             }));
@@ -370,6 +373,15 @@ async function assertCompletionOrders() {
           await callback(counterpart);
           if (updates !== writes) throw new Error("older-base callback must not regress the current-base snapshot");
         }
+        // Both producer orders must recover current-head proof even if the
+        // final wake is an obsolete head and all current-head wakes coalesced.
+        currentHeadSha = "f".repeat(40);
+        await callback(first);
+        if (!comments[0].body.includes("CodeQL gate: `failure`")) {
+          throw new Error("stale-head wake must reconcile live-head failure");
+        }
+        await callback(counterpart);
+        currentHeadSha = headSha;
         currentBaseSha = "e".repeat(40);
         currentTuplePublished = false;
         await callback(first);
@@ -384,6 +396,40 @@ async function assertCompletionOrders() {
     github.paginate = originalPaginate;
     github.rest.issues = originalIssues;
     global.setTimeout = originalTimeout;
+  }
+}
+async function assertInterruptedRecovery() {
+  const originalPaginate = github.paginate;
+  const reset = () => {
+    currentHeadSha = headSha; currentBaseSha = baseSha; pullRequestReads = 0;
+    Object.assign(context.payload.workflow_run, {
+      name: "CodeQL Analysis", path: ".github/workflows/codeql.yml", head_sha: headSha,
+      display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+    });
+    for (const values of Object.values(calls)) values.length = 0;
+  };
+  reset();
+  changeHeadDuringRun = true;
+  await run(github, context, core);
+  if (calls.updated.length || calls.created.length || calls.deleted.length) {
+    throw new Error("head movement during reconciliation must not write stale proof");
+  }
+  changeHeadDuringRun = false;
+  reset();
+  github.paginate = async () => { throw new Error("provider interrupted"); };
+  let failed = false;
+  try { await run(github, context, core); } catch (error) {
+    if (error.message !== "provider interrupted") throw error;
+    failed = true;
+  } finally { github.paginate = originalPaginate; }
+  if (!failed || calls.updated.length || calls.created.length || calls.deleted.length) {
+    throw new Error("failed snapshot must propagate without publication");
+  }
+  // A retained/pending callback or explicit rerun can recover; no false success
+  // or automatic retry is invented when the provider is unavailable.
+  await run(github, context, core);
+  if (calls.updated.length !== 1 || !calls.updated[0].body.includes("checks failed")) {
+    throw new Error("later callback must recover after interrupted reconciliation");
   }
 }
 run(github, context, core).then(async () => {
@@ -401,11 +447,12 @@ run(github, context, core).then(async () => {
     throw new Error("unrelated source names must not query runs or alter comments");
   }
   context.payload.workflow_run.name = "CodeQL Analysis";
-  currentHeadSha = "d".repeat(40);
+  context.payload.workflow_run.head_sha = "invalid";
   return run(github, context, core).then(() => {
     if (calls.paginate.length !== 4 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
-      throw new Error("superseded source head should not query runs or alter comments");
+      throw new Error("malformed source head should not query runs or alter comments");
     }
+    context.payload.workflow_run.head_sha = headSha;
     currentHeadSha = headSha;
     currentBaseSha = baseSha;
     pullRequestReads = 0;
@@ -461,6 +508,7 @@ run(github, context, core).then(async () => {
                 if (error?.status !== 500) throw error;
                 deleteStatus = null;
                 await assertCompletionOrders();
+                await assertInterruptedRecovery();
                 console.log("static analysis summary behavioral contract passed");
               },
             );
