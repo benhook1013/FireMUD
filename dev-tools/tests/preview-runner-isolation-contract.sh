@@ -305,6 +305,16 @@ def check_preview_source_permissions(job_name: str, job: dict[str, Any]) -> None
         )
 
 
+# During the approved event-policy transition, the old default-branch
+# pull_request_target workflow still exists. It must not cancel the new read-only
+# plan/render, while successive runs within the new mode still supersede.
+for job_name, prefix in (("preview-plan", "preview-readonly-plan-"), ("preview-render", "preview-readonly-render-")):
+    concurrency = preview_jobs[job_name].get("concurrency", {})
+    assert concurrency.get("cancel-in-progress") is True
+    group = concurrency.get("group", "")
+    assert group.startswith(prefix) and "${{" in group
+    assert "github.event.pull_request.number" in group if job_name == "preview-plan" else "needs.preview-plan.outputs.pr_number" in group
+
 for job_name, job in preview_jobs.items():
     if not isinstance(job, dict):
         raise AssertionError(f"preview job {job_name} is not a mapping")

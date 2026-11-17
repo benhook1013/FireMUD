@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && (github.event.action != 'labeled' && github.event.action != 'unlabeled' || github.event.label.name == 'preview:priority') && (github.event.action != 'edited' || github.event.changes.base != null)) }}
     concurrency:
-      group: preview-plan-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}
+      group: preview-readonly-plan-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}
       cancel-in-progress: true
     outputs:
       action: ${{ steps.derive.outputs.action }}
@@ -514,7 +514,7 @@ jobs:
     permissions:
       contents: read
     concurrency:
-      group: preview-render-${{ needs.preview-plan.outputs.pr_number }}
+      group: preview-readonly-render-${{ needs.preview-plan.outputs.pr_number }}
       cancel-in-progress: true
     steps:
       - name: Harden runner
