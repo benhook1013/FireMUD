@@ -2701,6 +2701,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
   /** Run-owned local primary/replica used only for the authenticated Account-owner case. */
   static final class PhysicalRedisFixture implements AutoCloseable {
+    static final int STARTUP_ATTEMPTS = 2;
     private static final int REDIS_PORT = 6379;
     private static final String ACCOUNT_PASSWORD = UUID.randomUUID().toString().replace("-", "");
     private static final String PRIMARY_ALIAS = "account-gameplay-admission-primary";
@@ -2711,6 +2712,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     private final Network network = Network.newNetwork();
     private final GenericContainer<?> primary =
         new GenericContainer<>(TestContainerImages.redis())
+            // Bound startup recreation before any fixture data or application actions exist.
+            .withStartupAttempts(STARTUP_ATTEMPTS)
             .withNetwork(network)
             .withNetworkAliases(PRIMARY_ALIAS)
             .withExposedPorts(REDIS_PORT)
@@ -2723,7 +2726,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                 "--appendonly",
                 "yes",
                 "--appendfsync",
-                "always");
+                "always",
+                "--repl-diskless-sync-delay",
+                "0");
     private final GenericContainer<?> replica =
         new GenericContainer<>(TestContainerImages.redis())
             .withNetwork(network)

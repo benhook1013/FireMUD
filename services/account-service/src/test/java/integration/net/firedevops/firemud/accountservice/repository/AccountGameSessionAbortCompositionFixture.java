@@ -88,6 +88,7 @@ abstract class AccountGameSessionAbortCompositionFixture {
   }
 
   final class Session implements AutoCloseable {
+    private long phaseStartedAt = System.nanoTime();
     private final PhysicalRedisFixture redis = PhysicalRedisFixture.start();
     final AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.Fixture accountFixture;
     final CanonicalGameplayAdmissionAbortCompositionFixture gs;
@@ -122,7 +123,9 @@ abstract class AccountGameSessionAbortCompositionFixture {
         boolean includeWrongPeerIdentity)
         throws Exception {
       try {
+        markPhase("redis_start");
         accountFixture = accountFixtures.newFixture(redis.client());
+        markPhase("account_fixture");
         var issuance = accountFixture.committedCandidate.identity();
         var credential =
             accountFixture.responseRecoveryOwner.recoverInitialLoginResponse(
@@ -150,6 +153,7 @@ abstract class AccountGameSessionAbortCompositionFixture {
                 candidate.issuerIndexLayoutVersion(),
                 candidate.issuerIndexPartitionCount(),
                 java.math.BigInteger.valueOf(prepareMemberRepair || installedBootstrap ? 3 : 2));
+        markPhase("account_credential_candidate");
         gs =
             new CanonicalGameplayAdmissionAbortCompositionFixture(
                 accountFixture.dataSource,
@@ -157,6 +161,7 @@ abstract class AccountGameSessionAbortCompositionFixture {
                 redis.issuerOwnerClient(),
                 installedBootstrap);
         if (prepareMemberRepair) gs.prepareMemberRepairRedis();
+        markPhase("gs_fixture");
         pkiDirectory = Files.createTempDirectory(temporaryDirectory, "actual-abort-mtls-");
         var identities =
             new ArrayList<>(
@@ -175,6 +180,7 @@ abstract class AccountGameSessionAbortCompositionFixture {
                 pkiDirectory,
                 "Account GS abort test CA",
                 identities.toArray(LoopbackMtlsTestPki.IdentitySpec[]::new));
+        markPhase("pki_generation");
         if (claimedNeverAdmitted) {
           gsServer =
               CanonicalGameplayAdmissionAbortManualFactory
@@ -219,12 +225,14 @@ abstract class AccountGameSessionAbortCompositionFixture {
                 accountFixture.committedIssuanceOwner,
                 Clock.systemUTC());
         restartAccount();
+        markPhase("mtls_servers_clients");
         lease =
             client
                 .acquire(requestId, jwt, gs.candidate(), gs.target(), gs.generation())
                 .originalLeaseEvidence();
         if (claimedNeverAdmitted) gs.claimOriginalNewCandidateWithoutDispatch(lease);
         else gs.publish(lease);
+        markPhase("initial_acquire_claim");
       } catch (Exception | Error setupFailure) {
         try {
           close();
@@ -412,11 +420,22 @@ abstract class AccountGameSessionAbortCompositionFixture {
           .abortFirstNew(gs.transitionId(), callerToken);
     }
 
+    private void markPhase(String phase) {
+      long now = System.nanoTime();
+      if (Boolean.getBoolean("firemud.gameplay.fixture-phase-diagnostics")) {
+        System.out.println(
+            "ACCOUNT_ABORT_PHASE " + phase + " elapsed_ms=" + ((now - phaseStartedAt) / 1_000_000));
+      }
+      phaseStartedAt = now;
+    }
+
     @Override
     public void close() throws Exception {
+      markPhase("case_actions");
       try {
         if (client != null) client.close();
         if (reverse != null) reverse.close();
+        markPhase("close_clients");
       } finally {
         try {
           if (accountServer != null) accountServer.shutdownNow();
@@ -424,11 +443,14 @@ abstract class AccountGameSessionAbortCompositionFixture {
           if (accountServer != null)
             assertThat(accountServer.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
           if (gsServer != null) assertThat(gsServer.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+          markPhase("close_servers");
         } finally {
           try {
             if (gs != null) gs.close();
+            markPhase("close_gs");
           } finally {
             redis.close();
+            markPhase("close_redis");
           }
         }
       }
