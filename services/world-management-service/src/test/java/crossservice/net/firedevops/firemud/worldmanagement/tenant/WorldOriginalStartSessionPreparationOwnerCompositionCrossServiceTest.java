@@ -3913,6 +3913,137 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         null);
   }
 
+  /**
+   * Uses the existing authenticated terminal producer, not synthetic permission or lifecycle
+   * writes.
+   */
+  private static GameSessionCanonicalInitialAdmissionOwnerProof
+      settleAbortedHoldWhileCanonicalSnapshotIsOpen(
+          Database world,
+          WorldCanonicalInstanceAssociationRepository associations,
+          WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest,
+          WorldCanonicalInitialAdmissionHold.HoldIdentity identity,
+          java.util.concurrent.Callable<GameSessionCanonicalInitialAdmissionOwnerProof> settle)
+          throws Exception {
+    var holdRead = new CountDownLatch(1);
+    var settlementCommitted = new CountDownLatch(1);
+    var paused = new AtomicBoolean();
+    var readerPid = new java.util.concurrent.atomic.AtomicInteger();
+    var lifecycleReads = new java.util.concurrent.atomic.AtomicInteger();
+    var listener =
+        new org.jooq.impl.DefaultExecuteListener() {
+          @Override
+          public void fetchEnd(org.jooq.ExecuteContext context) {
+            String sql = context.sql();
+            if (sql == null
+                || !sql.startsWith(
+                    "SELECT * FROM initial_admission_bind_hold WHERE hold_id=? AND hold_fence=?")
+                || !paused.compareAndSet(false, true)) return;
+            var inside =
+                DSL.using(
+                    Objects.requireNonNull(context.connection(), "Actual hold-read connection"),
+                    SQLDialect.POSTGRES);
+            var settings =
+                inside.fetchSingle(
+                    "SELECT pg_backend_pid(), current_setting('transaction_isolation'), "
+                        + "current_setting('transaction_read_only')");
+            readerPid.set(settings.get(0, Integer.class));
+            assertThat(settings.get(1, String.class)).isEqualTo("repeatable read");
+            assertThat(settings.get(2, String.class)).isEqualTo("on");
+            assertThat(
+                    inside
+                        .fetchSingle(
+                            "SELECT status FROM initial_admission_bind_hold WHERE hold_id=?",
+                            identity.holdId())
+                        .get(0, String.class))
+                .isEqualTo("PENDING");
+            holdRead.countDown();
+            try {
+              assertThat(settlementCommitted.await(30, TimeUnit.SECONDS)).isTrue();
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException("Interrupted canonical snapshot probe", interrupted);
+            }
+            // This query uses the actual repository transaction connection after the separate
+            // authenticated writer committed. It must not observe the new terminal row.
+            assertThat(
+                    inside
+                        .fetchSingle(
+                            "SELECT status FROM initial_admission_bind_hold WHERE hold_id=?",
+                            identity.holdId())
+                        .get(0, String.class))
+                .isEqualTo("PENDING");
+          }
+
+          @Override
+          public void executeStart(org.jooq.ExecuteContext context) {
+            String sql = context.sql();
+            if (sql != null && sql.startsWith("SELECT * FROM world_instance WHERE id=?")) {
+              var inside =
+                  DSL.using(
+                      Objects.requireNonNull(context.connection(), "Actual lifecycle connection"),
+                      SQLDialect.POSTGRES);
+              assertThat(inside.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class))
+                  .isEqualTo(readerPid.get());
+              lifecycleReads.incrementAndGet();
+            }
+          }
+        };
+    var observedDsl = DSL.using(world.dsl().configuration().derive(listener));
+    var observedLifecycles =
+        new WorldCanonicalInstanceLifecycleReadRepository(
+            observedDsl, world.manager(), associations);
+    var observedRepository =
+        new WorldCanonicalInitialAdmissionHoldRepository(
+            observedDsl, world.manager(), associations, observedLifecycles);
+    var workers = Executors.newSingleThreadExecutor();
+    var reading =
+        workers.submit(
+            () -> observedRepository.readState(identity, lifecycleRequest).orElseThrow());
+    try {
+      assertThat(holdRead.await(15, TimeUnit.SECONDS)).isTrue();
+      var proof = settle.call();
+      assertThat(proof.outcome())
+          .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
+      assertThat(world.dsl().fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class))
+          .isNotEqualTo(readerPid.get());
+      assertThat(
+              world
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM initial_admission_bind_hold WHERE hold_id=?",
+                      identity.holdId())
+                  .get(0, String.class))
+          .isEqualTo("ABORTED");
+      settlementCommitted.countDown();
+      var snapshot = reading.get(15, TimeUnit.SECONDS);
+      assertThat(snapshot.holdIdentity()).isEqualTo(identity);
+      assertThat(snapshot.holdStatus().name()).isEqualTo("PENDING");
+      assertThat(snapshot.isPendingAtExpectedActiveEpoch()).isTrue();
+      assertThat(lifecycleReads.get()).isPositive();
+      var freshRepository =
+          new WorldCanonicalInitialAdmissionHoldRepository(
+              world.dsl(),
+              world.manager(),
+              associations,
+              new WorldCanonicalInstanceLifecycleReadRepository(
+                  world.dsl(), world.manager(), associations));
+      assertThat(
+              freshRepository
+                  .readState(identity, lifecycleRequest)
+                  .orElseThrow()
+                  .holdStatus()
+                  .name())
+          .isEqualTo("ABORTED");
+      return proof;
+    } finally {
+      settlementCommitted.countDown();
+      reading.cancel(true);
+      workers.shutdownNow();
+      assertThat(workers.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
   private static GameSessionCanonicalInitialAdmissionOwnerProof settleAfterAuthenticatedClientClose(
       Database world,
       WorldCanonicalInstanceAssociationRepository associations,
@@ -4725,14 +4856,20 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         assertNoCanonicalAdmissionPointerArtifacts(gs.dsl(), request.initialAdmissionRequestId());
 
         var abortedWorldTerminal =
-            settleAfterAuthenticatedClientClose(
+            settleAbortedHoldWhileCanonicalSnapshotIsOpen(
                 world,
                 associationRepository,
-                lifecycleRepository,
-                gsEndpoints,
-                pki,
-                factory,
-                identity);
+                lifecycleRequest,
+                identity,
+                () ->
+                    settleAfterAuthenticatedClientClose(
+                        world,
+                        associationRepository,
+                        lifecycleRepository,
+                        gsEndpoints,
+                        pki,
+                        factory,
+                        identity));
         assertThat(abortedWorldTerminal.outcome())
             .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
         assertThat(abortedWorldTerminal.positiveDurableAbort()).isTrue();
