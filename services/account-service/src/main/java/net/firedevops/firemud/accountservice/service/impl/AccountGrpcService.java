@@ -978,7 +978,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           || !Long.valueOf(tenantId).equals(dto.tenantId())) {
         throw new IllegalStateException("Profile authority returned a different owner");
       }
-      UpdateProfileResponse response = UpdateProfileResponse.newBuilder().setSuccess(true).build();
+      UpdateProfileResponse response =
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(true)
+              .setAccountId(dto.accountId())
+              .setTenantId(dto.tenantId().toString())
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
