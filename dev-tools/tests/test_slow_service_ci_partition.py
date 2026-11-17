@@ -59,7 +59,7 @@ def make_plan(module="account-service", run_attempt="2"):
         plan["tasks"]["integrationTest"] = {
             "class_universe": required,
             "expected_test_classes": required,
-            "assignments": {name: index + 1 for index, name in enumerate(required)},
+            "assignments": {name: index % 4 + 1 for index, name in enumerate(required)},
         }
     return plan
 
@@ -712,7 +712,7 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                     SOURCE_SHA,
                     "2",
                 ),
-                7,  # Four unit and three obligated physical execution files.
+                8,  # Four unit and four obligated physical partition execution files.
             )
             copied = {
                 path.relative_to(verified_classes_dir).as_posix(): path.read_bytes()
