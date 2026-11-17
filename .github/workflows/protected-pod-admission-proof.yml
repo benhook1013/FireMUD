@@ -1,0 +1,288 @@
+name: Temporary Protected Pod Admission Proof
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/protected-pod-admission-proof.yml
+      - .github/actions/load-workflow-tool-versions/**
+      - .github/actions/setup-kubectl/**
+      - .github/actions/setup-python/**
+      - config/workflow-tool-versions.env
+      - dev-tools/hosted/trust-bootstrap/**
+      - k8s/trust-bootstrap/deployment-admission.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  admission-only:
+    if: ${{ github.repository == 'benhook1013/FireMUD' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out approved immutable proof source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: 60c507243987705094a3028e0b46f3bccd5d9504
+          persist-credentials: false
+
+      - name: Set up repository-pinned Python and PyYAML
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
+
+      - name: Load repository-pinned workflow tools
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
+      - name: Set up repository-pinned kubectl
+        uses: ./.github/actions/setup-kubectl
+
+      - name: Install checksum-verified kind
+        env:
+          KIND_VERSION: ${{ steps.workflow-tool-versions.outputs.kind-version }}
+          KIND_LINUX_AMD64_SHA256: ${{ steps.workflow-tool-versions.outputs.kind-linux-amd64-sha256 }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 || "$(uname -m)" != x86_64 ]]; then
+            echo "kind proof requires a GitHub-hosted Linux x64 runner" >&2
+            exit 1
+          fi
+          if [[ "${RUNNER_ENVIRONMENT:-}" != github-hosted ]]; then
+            echo "proof requires an ephemeral GitHub-hosted runner" >&2
+            exit 1
+          fi
+          install_directory="${RUNNER_TEMP:?}/firemud-pod-admission-tools"
+          mkdir -p -- "$install_directory"
+          chmod 0700 "$install_directory"
+          kind_binary="$install_directory/kind"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 90 --max-filesize 134217728 \
+            "https://kind.sigs.k8s.io/dl/v${KIND_VERSION:?}/kind-linux-amd64" \
+            -o "$kind_binary"
+          binary_bytes="$(wc -c < "$kind_binary")"
+          if [[ "$binary_bytes" -le 0 || "$binary_bytes" -gt 134217728 ]]; then
+            echo "downloaded kind binary is outside the allowed size" >&2
+            exit 1
+          fi
+          printf '%s  %s\n' "${KIND_LINUX_AMD64_SHA256:?}" "$kind_binary" | sha256sum --check --status
+          chmod 0755 "$kind_binary"
+          printf '%s\n' "$install_directory" >> "$GITHUB_PATH"
+
+      - name: Derive run-local proof paths
+        env:
+          SOURCE_SHA: 60c507243987705094a3028e0b46f3bccd5d9504
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          KIND_CLUSTER_NAME="firemud-pod-admission-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}-${SOURCE_SHA:0:8}"
+          PROOF_DIR="${RUNNER_TEMP:?}/firemud-pod-admission-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          KUBECONFIG="$PROOF_DIR/kubeconfig"
+          printf 'KIND_CLUSTER_NAME=%s\nPROOF_DIR=%s\nKUBECONFIG=%s\n' \
+            "$KIND_CLUSTER_NAME" "$PROOF_DIR" "$KUBECONFIG" >> "$GITHUB_ENV"
+
+      - name: Create run-owned cluster and execute native admission probes
+        id: proof
+        env:
+          KIND_NODE_IMAGE: ${{ steps.workflow-tool-versions.outputs.kind-node-image }}
+          SOURCE_SHA: 60c507243987705094a3028e0b46f3bccd5d9504
+        run: |
+          set -euo pipefail
+          if [[ -e "$PROOF_DIR" || -L "$PROOF_DIR" ]]; then
+            echo "run-specific proof directory already exists; refusing reuse" >&2
+            exit 1
+          fi
+          install -d -m 0700 -- "$PROOF_DIR"
+          evidence="$PROOF_DIR/admission-only.txt"
+          claim="$PROOF_DIR/cluster-ownership.claim"
+
+          probe_resources() {
+            local label="$1"
+            printf 'resource_probe=%s\n' "$label"
+            printf 'logical_cpus=%s\n' "$(nproc)"
+            awk '/MemAvailable:/ { printf "available_memory_kib=%s\n", $2 }' /proc/meminfo
+            df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | awk '{ printf "runner_temp_available_bytes=%s\n", $1 }'
+            docker stats --no-stream --format 'cluster_container={{.Name}} memory={{.MemUsage}} cpu={{.CPUPerc}}' \
+              "${KIND_CLUSTER_NAME}-control-plane" 2>/dev/null || true
+          }
+
+          elapsed() {
+            local label="$1"
+            local started="$2"
+            printf '%s_seconds=%s\n' "$label" "$(( $(date +%s) - started ))"
+          }
+
+          owned_cleanup() {
+            local status=$?
+            trap - EXIT INT TERM
+            local node="${KIND_CLUSTER_NAME}-control-plane"
+            local expected_claim actual_claim
+            expected_claim="$(printf 'cluster=%s\nrun_id=%s\nrun_attempt=%s\nsource_sha=%s' \
+              "$KIND_CLUSTER_NAME" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$SOURCE_SHA")"
+            if [[ ! -f "$claim" || -L "$claim" ]]; then
+              printf 'cleanup=refused_unclaimed_cluster\n'
+              status=1
+            elif ! actual_claim="$(cat "$claim")" || [[ "$actual_claim" != "$expected_claim" ]]; then
+              printf 'cleanup=refused_invalid_ownership_claim\n'
+              status=1
+            elif docker inspect "$node" >/dev/null 2>&1; then
+              local owner_label
+              owner_label="$(docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' "$node" 2>/dev/null || true)"
+              if [[ "$owner_label" == "$KIND_CLUSTER_NAME" ]]; then
+                kind delete cluster --name "$KIND_CLUSTER_NAME" --kubeconfig "$KUBECONFIG" || status=$?
+              else
+                printf 'cleanup=refused_unverified_node_identity node=%s label=%s\n' "$node" "$owner_label"
+                status=1
+              fi
+            else
+              printf 'cleanup=no_owned_cluster_node_present\n'
+            fi
+            exit "$status"
+          }
+
+          run_proof() {
+            trap owned_cleanup EXIT INT TERM
+            printf 'source_sha=%s\n' "$SOURCE_SHA"
+            printf 'cluster_name=%s\n' "$KIND_CLUSTER_NAME"
+            printf 'node_image=%s\n' "$KIND_NODE_IMAGE"
+            printf 'proof_scope=native_admission_only\n'
+            printf 'unproved=tls,cni,socket_routing,pod_process_attribution,replacement_races,shared_key_closure,promotion\n'
+            probe_resources before_cluster_creation
+
+            if [[ ! "$KIND_CLUSTER_NAME" =~ ^firemud-pod-admission-[0-9]+-[0-9]+-[0-9a-f]{8}$ ]]; then
+              echo "run-owned cluster name did not match the expected unique form" >&2
+              exit 1
+            fi
+            if [[ -e "$KUBECONFIG" || -L "$KUBECONFIG" ]]; then
+              echo "run-specific kubeconfig already exists; refusing reuse" >&2
+              exit 1
+            fi
+            existing_clusters="$(kind get clusters)"
+            if grep -Fxq "$KIND_CLUSTER_NAME" <<< "$existing_clusters"; then
+              echo "run-specific kind cluster already exists; refusing reuse" >&2
+              exit 1
+            fi
+
+            expected_claim="$(printf 'cluster=%s\nrun_id=%s\nrun_attempt=%s\nsource_sha=%s' \
+              "$KIND_CLUSTER_NAME" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$SOURCE_SHA")"
+            ( set -o noclobber; printf '%s\n' "$expected_claim" > "$claim" )
+
+            phase_started="$(date +%s)"
+            kind create cluster --name "$KIND_CLUSTER_NAME" --image "$KIND_NODE_IMAGE" \
+              --kubeconfig "$KUBECONFIG" --wait 180s
+            expected_context="kind-${KIND_CLUSTER_NAME}"
+            actual_context="$(kubectl --kubeconfig "$KUBECONFIG" config current-context)"
+            [[ "$actual_context" == "$expected_context" ]] || {
+              echo "created kubeconfig did not select the exact run-owned context" >&2
+              exit 1
+            }
+            node_label="$(docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' \
+              "${KIND_CLUSTER_NAME}-control-plane")"
+            [[ "$node_label" == "$KIND_CLUSTER_NAME" ]] || {
+              echo "kind node ownership label did not match this run" >&2
+              exit 1
+            }
+            server_version="$(kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" version -o json \
+              | jq -er '.serverVersion.gitVersion')"
+            expected_server_version="${KIND_NODE_IMAGE#*:v}"
+            expected_server_version="${expected_server_version%%@*}"
+            [[ "${server_version#v}" == "$expected_server_version"* ]] || {
+              echo "Kubernetes API version did not match the pinned kind node image" >&2
+              exit 1
+            }
+            printf 'kubernetes_context=%s\n' "$actual_context"
+            printf 'kubernetes_server_version=%s\n' "$server_version"
+            elapsed cluster_create_and_identity_check "$phase_started"
+
+            namespace="$(kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" \
+              get namespace dev --ignore-not-found -o name)"
+            [[ -z "$namespace" ]] || {
+              echo "fresh cluster unexpectedly already contains dev namespace" >&2
+              exit 1
+            }
+
+            phase_started="$(date +%s)"
+            # Publisher's pause:3.10 linux/amd64 manifest was verified against response-byte SHA-256.
+            pause_image='registry.k8s.io/pause@sha256:7c38f24774e3cbd906d2d33c38354ccf787635581c122965132c9bd309754d4a'
+            printf 'pause_image_from_verified_publisher=%s\n' "$pause_image"
+            kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" \
+              create -f k8s/trust-bootstrap/deployment-admission.yaml
+            sed "s|registry.k8s.io/pause:3.10|$pause_image|g" \
+              dev-tools/hosted/trust-bootstrap/fixtures/protected-pod-admission-proof.yaml \
+              | kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" create -f -
+            elapsed policy_and_fixture_creation "$phase_started"
+
+            phase_started="$(date +%s)"
+            for app in account-service game-session-service; do
+              kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" -n dev \
+                rollout status "deployment/$app" --timeout=180s
+            done
+            elapsed fixture_rollout "$phase_started"
+
+            phase_started="$(date +%s)"
+            for app in account-service game-session-service; do
+              proof_pod="$(kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" -n dev \
+                get pods -l "app=$app" -o json \
+                | jq -er '.items | select(length == 1) | .[0].metadata.name')"
+              printf 'fixture_pod_%s=%s\n' "$app" "$proof_pod"
+              bash dev-tools/hosted/trust-bootstrap/prove-protected-pod-boundary.sh \
+                --context "$expected_context" --namespace dev --pod "$proof_pod"
+            done
+            elapsed server_dry_run_admission_probes "$phase_started"
+            probe_resources before_cleanup
+            printf 'result=admission_only_passed\n'
+          }
+
+          run_proof 2>&1 | tee "$evidence"
+          grep -Fq 'PASS native admission only;' "$evidence"
+          grep -Fq 'UNPROVED:' "$evidence"
+
+      - name: Tear down only this run-owned cluster
+        if: always()
+        run: |
+          set -euo pipefail
+          started="$(date +%s)"
+          if [[ -z "${KIND_CLUSTER_NAME:-}" || -z "${PROOF_DIR:-}" || -z "${KUBECONFIG:-}" ]]; then
+            echo "cleanup=not_claimed_paths_unavailable"
+            exit 0
+          fi
+          node="${KIND_CLUSTER_NAME}-control-plane"
+          evidence="$PROOF_DIR/admission-only.txt"
+          claim="$PROOF_DIR/cluster-ownership.claim"
+          expected_claim="$(printf 'cluster=%s\nrun_id=%s\nrun_attempt=%s\nsource_sha=%s' \
+            "$KIND_CLUSTER_NAME" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "60c507243987705094a3028e0b46f3bccd5d9504")"
+          if [[ ! -f "$claim" || -L "$claim" ]]; then
+            echo "cleanup=not_claimed_no_cluster_deletion"
+            exit 0
+          fi
+          actual_claim="$(cat "$claim")"
+          if [[ "$actual_claim" != "$expected_claim" ]]; then
+            printf 'cleanup=refused_invalid_ownership_claim\n' | tee -a "$evidence"
+            exit 1
+          fi
+          if docker inspect "$node" >/dev/null 2>&1; then
+            owner_label="$(docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' "$node" 2>/dev/null || true)"
+            if [[ "$owner_label" != "$KIND_CLUSTER_NAME" ]]; then
+              printf 'cleanup=refused_unverified_node_identity node=%s label=%s\n' "$node" "$owner_label" \
+                | tee -a "$evidence"
+              exit 1
+            fi
+            kind delete cluster --name "$KIND_CLUSTER_NAME" --kubeconfig "$KUBECONFIG"
+          else
+            printf 'cleanup=no_owned_cluster_node_present\n' | tee -a "$evidence"
+          fi
+          if [[ -d "$PROOF_DIR" ]]; then
+            printf 'cleanup_seconds=%s\n' "$(( $(date +%s) - started ))" | tee -a "$evidence"
+          fi
+
+      - name: Upload bounded admission-only evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: protected-pod-admission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/firemud-pod-admission-${{ github.run_id }}-${{ github.run_attempt }}/admission-only.txt
+          if-no-files-found: warn
+          retention-days: 1
