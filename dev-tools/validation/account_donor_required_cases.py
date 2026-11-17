@@ -34,6 +34,11 @@ def verify_partition(reports: Path, selected_classes: set[str]) -> set[str]:
     suites_seen: set[str] = set()
     for path in sorted(reports.glob('TEST-*.xml')):
         root = ET.parse(path).getroot()
+        # Gradle emits namespace-free JUnit. Unsupported structures cannot
+        # establish a successful required outcome, even with zero totals.
+        if any(not isinstance(node.tag, str) or '{' in node.tag or ':' in node.tag
+               for node in root.iter()):
+            raise ValueError('unsupported namespaced JUnit structure')
         name = root.get('name', '')
         if name not in required:
             continue

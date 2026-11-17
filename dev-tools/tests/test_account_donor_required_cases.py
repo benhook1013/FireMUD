@@ -49,6 +49,22 @@ class AccountRequiredCasesTest(unittest.TestCase):
                 with self.assertRaises(ValueError): self.verify()
                 self.suite[0].remove(child)
 
+    def test_namespaced_outcomes_refused_despite_zero_totals(self):
+        for tag in ('failure', 'error', 'skipped'):
+            with self.subTest(tag=tag):
+                child = ET.SubElement(self.suite[0], '{urn:unsupported}' + tag)
+                with self.assertRaisesRegex(ValueError, 'namespaced'):
+                    self.verify()
+                self.suite[0].remove(child)
+
+    def test_namespaced_structural_elements_refused(self):
+        for target in (self.suite, self.suite[0]):
+            original = target.tag
+            target.tag = '{urn:unsupported}' + original
+            with self.assertRaisesRegex(ValueError, 'namespaced'):
+                self.verify()
+            target.tag = original
+
     def test_duplicate_method_cannot_replace_obligation(self):
         self.suite[-1].set('name', self.suite[0].get('name'))
         with self.assertRaises(ValueError): self.verify()
