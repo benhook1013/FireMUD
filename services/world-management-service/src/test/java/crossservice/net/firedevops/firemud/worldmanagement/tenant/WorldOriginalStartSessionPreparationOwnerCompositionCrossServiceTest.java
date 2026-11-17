@@ -361,6 +361,21 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void independentActualFrozenCaptureCannotReplaceOriginalPreparationInput() throws Exception {
+    compose(
+        Refusal.NONE,
+        9_007_199_254_740_993L,
+        temporary,
+        ActivationFailure.NONE,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true);
+  }
+
+  @Test
   void originalGameSessionLeaseExpiresWhileActualPreparationWaitsOnOwnerLock() throws Exception {
     compose(Refusal.PREPARATION_LEASE_EXPIRED);
   }
@@ -614,6 +629,31 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       boolean playerCreatedPlacement,
       boolean advanceInstallationBeforeRetry)
       throws Exception {
+    compose(
+        refusal,
+        reservationClaimFence,
+        proofDirectory,
+        activationFailure,
+        exerciseCanonicalInitialAdmissionHold,
+        exerciseCoupledCanonicalInitialAdmission,
+        abortCanonicalInitialAdmission,
+        playerCreatedPlacement,
+        advanceInstallationBeforeRetry,
+        false);
+  }
+
+  private void compose(
+      Refusal refusal,
+      long reservationClaimFence,
+      Path proofDirectory,
+      ActivationFailure activationFailure,
+      boolean exerciseCanonicalInitialAdmissionHold,
+      boolean exerciseCoupledCanonicalInitialAdmission,
+      boolean abortCanonicalInitialAdmission,
+      boolean playerCreatedPlacement,
+      boolean advanceInstallationBeforeRetry,
+      boolean exerciseIndependentCapture)
+      throws Exception {
     if (abortCanonicalInitialAdmission && !exerciseCoupledCanonicalInitialAdmission) {
       throw new IllegalArgumentException("Admission abort proof requires the coupled owner path");
     }
@@ -756,6 +796,52 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   preparedInput.versionIdentity(),
                   preparedInput.topologyPlan())
               : preparedInput;
+      if (exerciseIndependentCapture) {
+        var secondTenant = UUID.randomUUID();
+        var second =
+            capturePreparationSource(
+                world, secondTenant, controlledSource("independent-second-capture", secondTenant));
+        var secondTopology = WorldCanonicalInstanceTopologyPlan.create(second.captured());
+        assertThat(secondTopology.captureId()).isNotEqualTo(input.captureId());
+        assertThat(secondTopology.tenantId()).isNotEqualTo(input.topologyPlan().tenantId());
+        assertThat(secondTopology.versionId()).isNotEqualTo(input.topologyPlan().versionId());
+        assertThat(secondTopology.entries()).hasSize(5);
+        // Both captures are real, independently admitted World owner facts in this same schema.
+        // The substituted input is intentionally incoherent; it must allocate nothing.
+        var tables =
+            world
+                .dsl()
+                .fetch(
+                    "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename")
+                .getValues(0, String.class)
+                .toArray(String[]::new);
+        var beforeSubstitution = rows(world.dsl(), tables);
+        assertThatThrownBy(
+                () ->
+                    new WorldCanonicalInstancePreparation.Input(
+                        input.gameSessionReadRequest(),
+                        input.gameSessionReadEvidence(),
+                        input.gameSessionOwnerAttemptId(),
+                        input.gameSessionOwnerFence(),
+                        input.completeLaunchBinding(),
+                        input.versionIdentity(),
+                        secondTopology))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage(
+                "Canonical preparation topology differs from its exact Version identity and frozen commit");
+        assertThatThrownBy(
+                () ->
+                    new WorldCanonicalInstanceAssociation.Claim(
+                        input.gameSessionReadRequest(),
+                        input.gameSessionReadEvidence(),
+                        1L,
+                        input.completeLaunchBinding(),
+                        second.version()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage(
+                "Canonical instance claim differs from its exact World launch/source/version evidence");
+        assertThat(rows(world.dsl(), tables)).isEqualTo(beforeSubstitution);
+      }
       var operation =
           new WorldCanonicalInstancePreparation.OriginalStartSessionOperationInput(
               tuple.canonicalBytes(),
@@ -1017,6 +1103,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   .build();
           // Controlled transport wrapper only. The real World verifier authenticates the peer;
           // Account and GS receivers below are their actual unregistered owner adapters.
+          var observedInput = new AtomicReference<>(input);
           var socket =
               ServerServiceDefinition.builder("controlled.proof.World")
                   .addMethod(
@@ -1035,7 +1122,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                               if (recovering.get())
                                 recovered.set(
                                     service.recoverExactTerminal(identity.get()).orElseThrow());
-                              else result.set(service.prepare(input, operation));
+                              else result.set(service.prepare(observedInput.get(), operation));
                               observer.onNext(Empty.getDefaultInstance());
                               observer.onCompleted();
                             } catch (RuntimeException denied) {
@@ -1137,6 +1224,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     "world_instance",
                     "world_canonical_instance_association",
                     "world_canonical_instance_preparation",
+                    "world_canonical_instance_topology_identity",
+                    "region_instance",
+                    "zone_instance",
+                    "room_instance",
+                    "room_instance_exit",
                     "world_canonical_instance_execution",
                     "world_canonical_instance_activation_fence",
                     "world_runtime_installation_registration",
@@ -1489,6 +1581,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                         .startLocation());
             assertThat(prepared.runtimeRoomInstanceId()).isPositive();
             assertThat(prepared.runtimeRoomInstanceId()).isGreaterThan(127L);
+            assertMaterializedTopologyAndAssociation(world.dsl(), input, prepared, association);
             assertThat(
                     world
                         .dsl()
@@ -1556,6 +1649,12 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   .isEqualTo(after.get("world_runtime_required_owner_snapshot"));
               after = afterAdvance;
             }
+            var refreshedInput = refreshGameSessionObservation(gs.dsl(), input);
+            assertThat(refreshedInput.gameSessionReadRequest().readRequestId())
+                .isNotEqualTo(input.gameSessionReadRequest().readRequestId());
+            assertThat(WorldCanonicalInstancePreparationRepository.inputJson(refreshedInput))
+                .isEqualTo(WorldCanonicalInstancePreparationRepository.inputJson(input));
+            observedInput.set(refreshedInput);
             ClientCalls.blockingUnaryCall(
                 channel,
                 method,
@@ -2280,6 +2379,313 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   // Subtract adjacent cumulative milestones for phase durations. Exit markers do not imply success.
+  private static void assertMaterializedTopologyAndAssociation(
+      DSLContext dsl,
+      WorldCanonicalInstancePreparation.Input input,
+      WorldCanonicalInstancePreparation.Result prepared,
+      WorldCanonicalInstanceAssociationRepository associations) {
+    var topology = input.topologyPlan();
+    assertThat(prepared.captureId()).isEqualTo(topology.captureId());
+    assertThat(prepared.graphSha256())
+        .isEqualTo(
+            dsl.fetchSingle(
+                    "SELECT graph_sha256 FROM world_canonical_frozen_topology WHERE capture_id=?",
+                    topology.captureId())
+                .get(0, String.class));
+    assertThat(prepared.regionCount()).isEqualTo(1);
+    assertThat(prepared.zoneCount()).isEqualTo(1);
+    assertThat(prepared.roomCount()).isEqualTo(2);
+    assertThat(prepared.exitCount()).isEqualTo(1);
+    assertThat(prepared.storageStatus()).isEqualTo("MATERIALIZED_UNVERIFIED");
+    assertThat(associations.readOwnerAssociation(input.canonicalGameInstanceId()))
+        .contains(prepared.association());
+    assertThat(prepared.association().completeLaunchBinding())
+        .isEqualTo(input.completeLaunchBinding());
+    assertThat(prepared.association().versionIdentity()).isEqualTo(input.versionIdentity());
+
+    var read = input.gameSessionReadEvidence();
+    var launch = input.completeLaunchBinding();
+    var source = launch.sourceIntakeReceipt();
+    var descriptor = launch.descriptor();
+    var expected = new TreeMap<String, Object>();
+    expected.put("schema_version", (short) 2);
+    expected.put("canonical_game_instance_id", input.canonicalGameInstanceId());
+    expected.put("canonical_target_namespace", read.targetNamespace());
+    expected.put("canonical_tenant_id", read.canonicalTenantId());
+    expected.put("canonical_world_slug", read.worldSlug());
+    expected.put("playable_state_namespace_id", read.playableStateNamespaceId());
+    expected.put("playable_state_scope", "SHARED");
+    expected.put("public_production", true);
+    expected.put("playtest_lifecycle_id", null);
+    expected.put("playtest_state_generation", null);
+    expected.put("canonical_realm_id", read.canonicalRealmId());
+    expected.put("catalog_revision", read.catalogRevision());
+    expected.put("control_plane_request_id", read.controlPlaneRequestId());
+    expected.put("world_instance_id", prepared.association().worldInstanceId());
+    expected.put("canonical_launch_binding_operation_id", launch.operationId());
+    expected.put("version_identity_operation_id", input.versionIdentity().operationId());
+    expected.put("canonical_version_id", input.versionIdentity().canonicalVersionId());
+    expected.put("local_tenant_key", source.localTenantKey());
+    expected.put(
+        "private_game_instance_key",
+        prepared.association().worldPrepareFields().privateGameInstanceKey());
+    expected.put("game_template_id", descriptor.gameTemplateId());
+    expected.put("launch_descriptor_id", descriptor.launchDescriptorId());
+    expected.put("local_version_key", input.versionIdentity().localVersionKey());
+    expected.put(
+        "script_patch_version",
+        descriptor.scriptPatchVersionPresent() ? descriptor.scriptPatchVersion() : null);
+    expected.put("runtime_flags_json", descriptor.runtimeFlagsJson());
+    expected.put("generation_config_revision", descriptor.generationConfigRevision());
+    expected.put("release_bundle_id", descriptor.releaseBundleId());
+    expected.put("published_release_bundle_ref", descriptor.publishedReleaseBundleRef());
+    expected.put("version_state_epoch", descriptor.versionStateEpoch());
+    expected.put("remap_set_id", descriptor.remapSetIdPresent() ? descriptor.remapSetId() : null);
+    expected.put("intake_operation_id", source.operationId());
+    expected.put("intake_request_id", source.intakeRequestId());
+    expected.put("source_operation_id", source.sourceOperationId());
+    expected.put("source_evidence_digest", source.sourceEvidenceDigest());
+    expected.put("intake_request_digest", source.requestDigest());
+    expected.put("intake_receipt_digest", source.receiptDigest());
+    expected.put("descriptor_request_digest", descriptor.requestDigest());
+    expected.put("descriptor_result_digest", descriptor.resultDigest());
+    expected.put(
+        "release_attestation_digest", launch.evidence().releaseAttestation().evidenceDigest());
+    for (String fixtureColumn :
+        List.of(
+            "canonical_authority_kind",
+            "fixture_provenance_digest",
+            "game_session_tenant_id",
+            "game_session_game_instance_id",
+            "game_design_version_id",
+            "preparation_input_digest",
+            "preparing_lifecycle_epoch",
+            "game_session_association_response_bytes")) {
+      expected.put(fixtureColumn, null);
+    }
+    var retained =
+        dsl.fetchSingle(
+            "SELECT * FROM world_canonical_instance_association WHERE canonical_game_instance_id=?",
+            input.canonicalGameInstanceId());
+    assertThat(retained.intoMap().keySet()).containsExactlyInAnyOrderElementsOf(expected.keySet());
+    expected.forEach(
+        (column, value) -> {
+          if (value == null) assertThat(retained.get(column)).as(column).isNull();
+          else assertThat(retained.get(column, value.getClass())).as(column).isEqualTo(value);
+        });
+
+    var mappings =
+        dsl.fetch(
+            "SELECT family,template_id FROM world_canonical_instance_topology_identity WHERE world_instance_id=? AND canonical_game_instance_id=?",
+            prepared.association().worldInstanceId(),
+            input.canonicalGameInstanceId());
+    assertThat(mappings.getValues("family", String.class))
+        .containsExactlyInAnyOrder("REGION", "ZONE", "ROOM", "ROOM", "ROOM_EXIT");
+    assertThat(mappings.getValues("template_id", UUID.class))
+        .containsExactlyInAnyOrderElementsOf(
+            topology.entries().stream().map(entry -> entry.identity().templateId()).toList());
+    for (var entry : topology.entries()) {
+      assertThat(
+              dsl.fetchSingle(
+                      """
+          SELECT count(*)=1 FROM world_canonical_instance_topology_identity m
+          JOIN world_authored_topology_identity a
+            ON a.family=m.family AND a.template_id=m.template_id
+            AND a.private_row_key=m.template_private_row_key
+          WHERE m.world_instance_id=? AND m.canonical_game_instance_id=?
+            AND m.family=? AND m.template_id=?
+            AND a.version_identity_operation_id=? AND a.request_id=? AND a.commit_id=?
+          """,
+                      prepared.association().worldInstanceId(),
+                      input.canonicalGameInstanceId(),
+                      entry.identity().family().name(),
+                      entry.identity().templateId(),
+                      input.versionIdentity().operationId(),
+                      topology.sourceBinding().plan().binding().requestId(),
+                      topology.sourceBinding().plan().binding().commitId())
+                  .get(0, Boolean.class))
+          .as("exact frozen-to-runtime mapping %s", entry.identity())
+          .isTrue();
+    }
+    var region =
+        dsl.fetchSingle(
+            """
+        SELECT r.name='Selected region' AND r.weather='RAIN' AND r.shard_id=7
+          AND r.generation_seed=89123 AND r.generator_type=''
+          AND r.generator_params=''
+          AND r.spacing_multiplier=1.75 AS authored_payload,
+          i.name=r.name AND i.weather=r.weather AND i.shard_id=r.shard_id
+          AND i.generation_seed=r.generation_seed AND i.generator_type=r.generator_type
+          AND i.generator_params=r.generator_params AND i.spacing_multiplier=r.spacing_multiplier
+          AND i.version=0 AS runtime_payload,
+          i.world_instance_id=m.world_instance_id AND i.tenant_id=r.tenant_id
+          AND i.game_instance_id=w.game_instance_id AND m.runtime_identity=i.canonical_region_instance_id
+          AND m.runtime_room_instance_id IS NULL AS scope
+        FROM world_canonical_instance_topology_identity m
+        JOIN region r ON r.id=m.template_private_row_key
+        JOIN region_instance i ON i.id=m.runtime_row_id
+        JOIN world_instance w ON w.id=m.world_instance_id
+        WHERE m.world_instance_id=? AND m.family='REGION'
+        """,
+            prepared.association().worldInstanceId());
+    assertThat(region.intoMap().values())
+        .as("all authored and runtime REGION fields")
+        .containsOnly(true);
+    var zone =
+        dsl.fetchSingle(
+            """
+        SELECT z.name='Selected zone' AND i.name=z.name AND i.version=0 AS payload,
+          z.region_id=parent.template_private_row_key AND i.region_instance_id=parent.runtime_row_id
+          AND i.template_zone_id=z.id AND i.zone_instance_id=i.id AS parent,
+          i.tenant_id=z.tenant_id AND i.game_instance_id=w.game_instance_id
+          AND m.runtime_identity=i.canonical_zone_instance_id
+          AND m.runtime_room_instance_id IS NULL AS scope
+        FROM world_canonical_instance_topology_identity m
+        JOIN zone z ON z.id=m.template_private_row_key
+        JOIN zone_instance i ON i.id=m.runtime_row_id
+        JOIN world_instance w ON w.id=m.world_instance_id
+        JOIN world_canonical_instance_topology_identity parent
+          ON parent.world_instance_id=m.world_instance_id AND parent.family='REGION'
+        WHERE m.world_instance_id=? AND m.family='ZONE'
+        """,
+            prepared.association().worldInstanceId());
+    assertThat(zone.intoMap().values())
+        .as("ZONE payload and exact REGION parent")
+        .containsOnly(true);
+    var rooms =
+        dsl.fetch(
+            """
+        SELECT r.name,r.description,r.name_localized_variants_json,r.description_localized_variants_json,
+          i.name=r.name AND i.description=r.description
+          AND i.name_localized_variants_json=r.name_localized_variants_json
+          AND i.description_localized_variants_json=r.description_localized_variants_json
+          AND i.version=0 AS payload,
+          r.zone_id=parent.template_private_row_key AND i.zone_instance_id=parent.runtime_row_id
+          AND i.region_instance_id=z.region_instance_id AND i.template_room_id=r.id
+          AND i.room_instance_row_id=i.id AS parents,
+          i.tenant_id=r.tenant_id AND i.game_instance_id=w.game_instance_id
+          AND m.runtime_room_instance_id=i.id AND m.runtime_identity IS NULL AS scope
+        FROM world_canonical_instance_topology_identity m
+        JOIN room r ON r.id=m.template_private_row_key
+        JOIN room_instance i ON i.id=m.runtime_row_id
+        JOIN world_instance w ON w.id=m.world_instance_id
+        JOIN world_canonical_instance_topology_identity parent
+          ON parent.world_instance_id=m.world_instance_id AND parent.family='ZONE'
+        JOIN zone_instance z ON z.id=parent.runtime_row_id
+        WHERE m.world_instance_id=? AND m.family='ROOM'
+        ORDER BY r.name
+        """,
+            prepared.association().worldInstanceId());
+    assertThat(rooms).hasSize(2);
+    assertThat(rooms.getValues("name", String.class))
+        .containsExactly("Selected destination", "Selected start");
+    assertThat(rooms.getValues("description", String.class))
+        .containsExactly(
+            "A distinct destination beyond the gate.", "The eastern gate opens onto a ridge.");
+    assertThat(rooms.getValues("name_localized_variants_json", String.class))
+        .containsExactly("{\"fr\":\"Arrivee\"}", "{\"fr\":\"Depart\"}");
+    assertThat(rooms.getValues("description_localized_variants_json", String.class))
+        .containsExactly("{\"fr\":\"La crete\"}", "{\"fr\":\"La porte est\"}");
+    for (String column : List.of("payload", "parents", "scope")) {
+      assertThat(rooms.getValues(column, Boolean.class)).as(column).containsExactly(true, true);
+    }
+    var exit =
+        dsl.fetchSingle(
+            """
+        SELECT e.direction='EAST' AND e.cost=13 AND i.direction=e.direction AND i.cost=e.cost
+          AND i.version=0 AS payload,
+          e.from_room_id=f.template_private_row_key AND e.to_room_id=t.template_private_row_key
+          AND i.from_room_instance_record_id=f.runtime_room_instance_id
+          AND i.to_room_instance_record_id=t.runtime_room_instance_id
+          AND f.runtime_room_instance_id<>t.runtime_room_instance_id
+          AND fr.name='Selected start' AND tr.name='Selected destination'
+          AND f.runtime_room_instance_id=? AS endpoints,
+          i.tenant_id=e.tenant_id AND i.game_instance_id=w.game_instance_id
+          AND m.runtime_identity IS NULL AND m.runtime_room_instance_id IS NULL AS scope
+        FROM world_canonical_instance_topology_identity m
+        JOIN room_exit e ON e.id=m.template_private_row_key
+        JOIN room_instance_exit i ON i.id=m.runtime_row_id
+        JOIN world_instance w ON w.id=m.world_instance_id
+        JOIN world_canonical_instance_topology_identity f
+          ON f.world_instance_id=m.world_instance_id AND f.family='ROOM' AND f.template_private_row_key=e.from_room_id
+        JOIN world_canonical_instance_topology_identity t
+          ON t.world_instance_id=m.world_instance_id AND t.family='ROOM' AND t.template_private_row_key=e.to_room_id
+        JOIN room_instance fr ON fr.id=f.runtime_row_id
+        JOIN room_instance tr ON tr.id=t.runtime_row_id
+        WHERE m.world_instance_id=? AND m.family='ROOM_EXIT'
+        """,
+            prepared.runtimeRoomInstanceId(),
+            prepared.association().worldInstanceId());
+    assertThat(exit.intoMap().values())
+        .as("EXIT cost and distinct canonical endpoint mappings")
+        .containsOnly(true);
+  }
+
+  private static WorldCanonicalInstancePreparation.Input refreshGameSessionObservation(
+      DSLContext gs, WorldCanonicalInstancePreparation.Input input) {
+    var previous = input.gameSessionReadEvidence();
+    var request =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            UUID.randomUUID(),
+            previous.targetNamespace(),
+            previous.canonicalTenantId(),
+            previous.worldSlug(),
+            previous.canonicalGameInstanceId(),
+            previous.controlPlaneRequestId(),
+            previous.launchDescriptorId(),
+            previous.descriptorRequestDigest(),
+            previous.descriptorResultDigest(),
+            previous.releaseAttestationEvidenceDigest());
+    var retained =
+        new CanonicalGameInstanceLaunchAssociationRepository(gs, NAMESPACE)
+            .readOriginalStartSessionAssociation(request)
+            .orElseThrow();
+    assertThat(retained.ownerAttemptId()).isEqualTo(input.gameSessionOwnerAttemptId());
+    assertThat(retained.ownerFence()).isEqualTo(input.gameSessionOwnerFence());
+    var actual = retained.association();
+    var read =
+        new WorldCanonicalInstanceAssociation.GameSessionReadRequest(
+            request.readRequestId(),
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.gameInstanceUuid(),
+            request.controlPlaneRequestId(),
+            request.launchDescriptorId(),
+            request.expectedDescriptorRequestDigest(),
+            request.expectedDescriptorResultDigest(),
+            request.expectedReleaseAttestationEvidenceDigest());
+    var evidence =
+        new WorldCanonicalInstanceAssociation.GameSessionReadEvidence(
+            request.readRequestId(),
+            previous.targetNamespace(),
+            previous.canonicalTenantId(),
+            previous.worldSlug(),
+            previous.canonicalGameInstanceId(),
+            previous.controlPlaneRequestId(),
+            previous.launchDescriptorId(),
+            previous.descriptorRequestDigest(),
+            previous.descriptorResultDigest(),
+            previous.releaseAttestationEvidenceDigest(),
+            actual.playableStateNamespaceId(),
+            actual.playableStateScope().name(),
+            actual.publicProduction(),
+            retained.canonicalRealmId(),
+            retained.catalogRevision(),
+            actual.currentGameInstanceStatus().name(),
+            actual.currentRowVersion(),
+            previous.descriptor(),
+            previous.releaseAttestation());
+    return new WorldCanonicalInstancePreparation.Input(
+        read,
+        evidence,
+        input.gameSessionOwnerAttemptId(),
+        input.gameSessionOwnerFence(),
+        input.completeLaunchBinding(),
+        input.versionIdentity(),
+        input.topologyPlan());
+  }
+
   private static void logCompositionTiming(long startedNanos, String phase) {
     long elapsedNanos = System.nanoTime() - startedNanos;
     LOGGER.info(
@@ -4673,16 +5079,17 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         .build();
   }
 
-  private static WorldCanonicalInstancePreparation.Input preparationInputs(
-      Database world,
-      Database gs,
-      StartSessionPostAuthorizationExecutionTuple tuple,
-      GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
-      UUID tenant,
-      boolean playerCreatedPlacement,
-      AtomicReference<RealmPolicyPublishedEvidence.PublishedSet> createdPublication,
-      AuthoredWorldSourceEvidence source)
-      throws Exception {
+  private record CapturedPreparationSource(
+      WorldAuthoredSourceIntakeReceipt intake,
+      WorldAuthoredVersionIdentityReceipt version,
+      String publicationId,
+      AccountPublicationAuthorizationBinding publicationAccountBinding,
+      WorldSelectedPublicationArtifactInventoryEvidence inventoryEvidence,
+      WorldCanonicalFrozenTopology captured,
+      WorldPublishedStartLocationEvidence selector) {}
+
+  private static CapturedPreparationSource capturePreparationSource(
+      Database world, UUID tenant, AuthoredWorldSourceEvidence source) throws Exception {
     var intakeRepository = new WorldAuthoredSourceIntakeRepository(world.dsl());
     var versionRepository = new WorldAuthoredVersionIdentityRepository(world.dsl());
     var intake =
@@ -4870,6 +5277,35 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             new WorldPublishedStartLocationRepository(world.dsl(), frozenRepository, applications)
                 .readCommitted(captureRequest)
                 .orElseThrow());
+
+    return new CapturedPreparationSource(
+        intake,
+        version,
+        publicationId,
+        publicationAccountBinding,
+        inventoryEvidence,
+        captured,
+        selector);
+  }
+
+  private static WorldCanonicalInstancePreparation.Input preparationInputs(
+      Database world,
+      Database gs,
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
+      UUID tenant,
+      boolean playerCreatedPlacement,
+      AtomicReference<RealmPolicyPublishedEvidence.PublishedSet> createdPublication,
+      AuthoredWorldSourceEvidence source)
+      throws Exception {
+    var capturedSource = capturePreparationSource(world, tenant, source);
+    var intake = capturedSource.intake();
+    var version = capturedSource.version();
+    var publicationId = capturedSource.publicationId();
+    var publicationAccountBinding = capturedSource.publicationAccountBinding();
+    var inventoryEvidence = capturedSource.inventoryEvidence();
+    var captured = capturedSource.captured();
+    var selector = capturedSource.selector();
 
     var gsSources = new GameSessionAuthoredWorldSourceRepository(gs.dsl());
     var gsReceipt =
@@ -5651,7 +6087,13 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 regionId,
                 regionId,
                 WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
-            .setRegion(RegionDesignMutation.newBuilder().setName("Selected region"))
+            .setRegion(
+                RegionDesignMutation.newBuilder()
+                    .setName("Selected region")
+                    .setWeather("RAIN")
+                    .setShardId(7)
+                    .setGenerationSeed(89123L)
+                    .setSpacingMultiplier(1.75))
             .build());
     mutations.add(
         mutation(
@@ -5673,6 +6115,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             .setRoom(
                 RoomDesignMutation.newBuilder()
                     .setName("Selected start")
+                    .setDescription("The eastern gate opens onto a ridge.")
+                    .setNameLocalizedVariantsJson("{\"fr\":\"Depart\"}")
+                    .setDescriptionLocalizedVariantsJson("{\"fr\":\"La porte est\"}")
                     .setZoneId(zoneId.toString()))
             .build());
     mutations.add(
@@ -5684,6 +6129,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             .setRoom(
                 RoomDesignMutation.newBuilder()
                     .setName("Selected destination")
+                    .setDescription("A distinct destination beyond the gate.")
+                    .setNameLocalizedVariantsJson("{\"fr\":\"Arrivee\"}")
+                    .setDescriptionLocalizedVariantsJson("{\"fr\":\"La crete\"}")
                     .setZoneId(zoneId.toString()))
             .build());
     mutations.add(
@@ -5696,8 +6144,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 RoomExitDesignMutation.newBuilder()
                     .setFromRoomId(firstRoomId.toString())
                     .setToRoomId(secondRoomId.toString())
-                    .setDirection("EAST"))
+                    .setDirection("EAST")
+                    .setCost(13))
             .build());
+    // Opaque REGION generatorType/params remain empty: current selected inventory refuses them.
     // This original preparation proof declares zero generation and spawn intent.
     // Nonempty published intent remains refused by the canonical production owner.
 
