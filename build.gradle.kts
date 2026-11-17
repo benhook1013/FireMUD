@@ -448,6 +448,19 @@ subprojects {
                 }
                 filter.setIncludePatterns(*includePatterns.toTypedArray())
                 filter.setFailOnNoMatchingTests(false)
+                // Required Account owner-local physical proof must execute in this
+                // job, not replay cached/up-to-date XML. Compile and unit tasks
+                // retain their normal cache behavior; unrelated partitions do too.
+                val requiredAccountPhysicalClasses = setOf(
+                    "integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest",
+                    "integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest",
+                    "integration.net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingPostgresIntegrationTest"
+                )
+                if (project.name == "account-service" && name == "integrationTest" &&
+                    selectedClasses.any { it in requiredAccountPhysicalClasses }) {
+                    outputs.upToDateWhen { false }
+                    outputs.doNotCacheIf("Required Account physical proof must execute") { true }
+                }
             }
         }
     }

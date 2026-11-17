@@ -27,6 +27,9 @@ import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEve
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountEvent;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.OwnerReadback;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -518,6 +521,16 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
 
   @Test
   void existingIssuerInitializationReadsExactSourceWithoutWritingThroughPendingOriginalHold() {
+    assertIssuerSourceRemainsHeld(null);
+  }
+
+  @Test
+  void bothMixedOwnerVectorsKeepActualIssuerMutationAndRetryFenced() {
+    assertIssuerSourceRemainsHeld(Outcome.COMMITTED);
+    assertIssuerSourceRemainsHeld(Outcome.DEFINITIVELY_ABORTED);
+  }
+
+  private void assertIssuerSourceRemainsHeld(Outcome worldOutcome) {
     TestContext context = newTestContext();
     DSLContext dsl = context.dsl();
     TransactionTemplate transaction = context.transaction();
@@ -591,6 +604,28 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
           fences.reserve(holder);
           fences.claimCommitOrder(holder);
         });
+    if (worldOutcome != null) {
+      // Stipulated owner terminal evidence only, never an authenticated publisher.
+      for (Owner owner : List.of(Owner.WORLD, Owner.GAME_DESIGN)) {
+        Outcome outcome =
+            owner == Owner.WORLD
+                ? worldOutcome
+                : worldOutcome == Outcome.COMMITTED
+                    ? Outcome.DEFINITIVELY_ABORTED
+                    : Outcome.COMMITTED;
+        var readback =
+            new OwnerReadback(
+                owner,
+                outcome,
+                holder.operationId(),
+                holder.commitId(),
+                holder.fenceId(),
+                holder.inputDigest(),
+                holder.canonicalBytes(),
+                ("retained-" + owner + "-" + outcome).getBytes(StandardCharsets.UTF_8));
+        transaction.executeWithoutResult(status -> fences.recordOwnerReadback(holder, readback));
+      }
+    }
     Map<String, List<Map<String, Object>>> retained = new java.util.LinkedHashMap<>();
     for (String table :
         List.of(
@@ -612,21 +647,23 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     }
     var observed = transaction.execute(status -> sources.initializeIssuerIfAbsent(ISSUER));
     assertThat(observed).isEqualTo(original);
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status ->
-                        sources.appendIssuerAuthorityChange(
-                            ISSUER,
-                            "SIGNER_COMPROMISE",
-                            "blocked-held-issuer-" + UUID.randomUUID())))
-        .rootCause()
-        .isInstanceOf(org.postgresql.util.PSQLException.class)
-        .hasMessageContaining("Required creator source is held until every original owner settles")
-        .satisfies(
-            failure ->
-                assertThat(((org.postgresql.util.PSQLException) failure).getSQLState())
-                    .isEqualTo("55P03"));
+    String blockedRequestId = "blocked-held-issuer-" + UUID.randomUUID();
+    for (int attempt = 0; attempt < 2; attempt++) {
+      assertThatThrownBy(
+              () ->
+                  transaction.executeWithoutResult(
+                      status ->
+                          sources.appendIssuerAuthorityChange(
+                              ISSUER, "SIGNER_COMPROMISE", blockedRequestId)))
+          .rootCause()
+          .isInstanceOf(org.postgresql.util.PSQLException.class)
+          .hasMessageContaining(
+              "Required creator source is held until every original owner settles")
+          .satisfies(
+              failure ->
+                  assertThat(((org.postgresql.util.PSQLException) failure).getSQLState())
+                      .isEqualTo("55P03"));
+    }
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne(
