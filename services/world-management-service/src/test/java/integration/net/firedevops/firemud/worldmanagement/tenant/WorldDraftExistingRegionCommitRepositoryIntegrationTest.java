@@ -83,6 +83,9 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
   private static String catalogBeforeUpgrade;
   private static String consumerBeforeUpgrade;
   private static String freshGuardBeforeUpgrade;
+  private static StagedDelta retainedV1Input;
+  private static WorldDraftExistingRegionStoredEvidence retainedV1;
+  private static String retainedV1History;
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -106,6 +109,10 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
     consumerBeforeUpgrade =
         function("world_consume_region_execution_manifest(text,text,jsonb,jsonb)");
     freshGuardBeforeUpgrade = function("world_guard_graph_application()");
+    migration(source, SCHEMA, "1054").migrate();
+    retainedV1Input = stage(retained, retained.region(), "Retained v1", 1, 1);
+    retainedV1 = storeV1(retainedV1Input);
+    retainedV1History = history(retainedV1Input);
     migration(source, SCHEMA, null).migrate();
     repository = new WorldDraftExistingRegionCommitRepository(dsl, fence, JSON);
   }
@@ -563,6 +570,10 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
   }
 
   private static Fixture fixture() throws Exception {
+    return fixture(2);
+  }
+
+  private static Fixture fixture(int regionCount) throws Exception {
     long sourceRow = NEXT_SOURCE_ROW.incrementAndGet();
     UUID tenant = UUID.randomUUID();
     UUID version = UUID.randomUUID();
@@ -621,7 +632,7 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
               .setFamily(WorldDesignAggregateType.valueOf("WORLD_DESIGN_AGGREGATE_TYPE_" + family))
               .setCount(
                   family.equals("REGION")
-                      ? 2
+                      ? regionCount
                       : family.equals("ZONE") || family.equals("ROOM") ? 1 : 0));
     }
     var inbound = WorldInboundSourceClosureDeclaration.newBuilder().setSchemaVersion(1);
@@ -631,21 +642,33 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
     }
     declaration.setInboundSourceClosure(inbound);
     var mutations =
-        List.of(
-            mutation(commit, region, region, "REGION", 0, 0)
-                .setRegion(RegionDesignMutation.newBuilder().setName("Original"))
-                .setFreshGraphDeclaration(declaration)
-                .build(),
-            mutation(commit, other, other, "REGION", 0, 0)
-                .setRegion(RegionDesignMutation.newBuilder().setName("Other"))
-                .build(),
-            mutation(commit, zone, region, "ZONE", 0, 0)
-                .setZone(
-                    ZoneDesignMutation.newBuilder().setName("Zone").setRegionId(region.toString()))
-                .build(),
-            mutation(commit, room, region, "ROOM", 0, 0)
-                .setRoom(RoomDesignMutation.newBuilder().setName("Room").setZoneId(zone.toString()))
-                .build());
+        new ArrayList<>(
+            List.of(
+                mutation(commit, region, region, "REGION", 0, 0)
+                    .setRegion(RegionDesignMutation.newBuilder().setName("Original"))
+                    .setFreshGraphDeclaration(declaration)
+                    .build(),
+                mutation(commit, other, other, "REGION", 0, 0)
+                    .setRegion(RegionDesignMutation.newBuilder().setName("Other"))
+                    .build(),
+                mutation(commit, zone, region, "ZONE", 0, 0)
+                    .setZone(
+                        ZoneDesignMutation.newBuilder()
+                            .setName("Zone")
+                            .setRegionId(region.toString()))
+                    .build(),
+                mutation(commit, room, region, "ROOM", 0, 0)
+                    .setRoom(
+                        RoomDesignMutation.newBuilder().setName("Room").setZoneId(zone.toString()))
+                    .build()));
+    for (int i = 2; i < regionCount; i++) {
+      UUID extra = UUID.randomUUID();
+      mutations.add(
+          i,
+          mutation(commit, extra, extra, "REGION", 0, 0)
+              .setRegion(RegionDesignMutation.newBuilder().setName("Extra " + i))
+              .build());
+    }
     var target =
         new DraftCommitBinding.TargetProof(
             tenant, version, 901, "source", sourceRow, "source", "NEW_GAME_ROW");
@@ -655,6 +678,283 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
         WorldSelectedFullPublicationEvidenceFixture.applyGraph(
             dsl, manager, NAMESPACE, binding, source);
     return new Fixture(graph, region, other, zone);
+  }
+
+  @Test
+  void completeBatchChangesTwoRegionsPreservesThirdAndReplaysWholeOperationAfterFreeze()
+      throws Exception {
+    var f = fixture(3);
+    UUID third = region(f, 2);
+    store(stage(f, third, "Unrelated current content", 1, 1));
+    String unrelated = physicalRegion(f, third);
+    String immutable = retainedFacts(f);
+    var batch =
+        stageBatch(f, List.of(f.region(), f.otherRegion()), List.of(1L, 1L), List.of(1L, 1L));
+    var result = store(batch);
+    assertThat(result.status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
+    var graph = JSON.readTree(result.graphBytes());
+    assertThat(graph.path("schemaVersion").asText()).isEqualTo("2");
+    assertThat(graph.path("regions").size()).isEqualTo(2);
+    assertThat(graph.path("regions").get(0).path("mapping").path("template_id").asText())
+        .isEqualTo(f.region().toString());
+    assertThat(graph.path("regions").get(1).path("mapping").path("template_id").asText())
+        .isEqualTo(f.otherRegion().toString());
+    assertEpochs(f, f.region(), 2, 2);
+    assertEpochs(f, f.otherRegion(), 2, 2);
+    assertThat(physicalRegion(f, third)).isEqualTo(unrelated);
+    assertThat(retainedFacts(f)).isEqualTo(immutable);
+    assertThat(
+            one(dsl, "SELECT count(*) FROM world_region_draft_execution_manifest")
+                .get(0, Long.class))
+        .isZero();
+    String originalHistory = history(batch);
+    store(stage(f, f.region(), "Later first", 2, 2));
+    store(stage(f, f.otherRegion(), "Later second", 2, 2));
+    write.execute(
+        status ->
+            fence.claimFreeze(
+                freeze(f),
+                () ->
+                    new WorldDesignPublicationFenceEvidence.Checkpoint(
+                        f.graph().selectedCommit().commitId().toString(), "c".repeat(64), 4)));
+    String before = currentFacts(f);
+    assertThat(store(batch).resultBytes()).containsExactly(result.resultBytes());
+    assertThat(repository.readCommitted(batch).orElseThrow().graphBytes())
+        .containsExactly(result.graphBytes());
+    assertThat(history(batch)).isEqualTo(originalHistory);
+    var binding = batch.originalOperation().binding();
+    var first = binding.revisions().getFirst();
+    var firstMutation = WorldDesignMutationRevision.newBuilder();
+    JsonFormat.parser().merge(first.payload(), firstMutation);
+    var subset =
+        binding(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            List.of(firstMutation.build()));
+    var subsetInput =
+        stageBinding(f, subset, operation(subset, f.graph().plan().ownerBinding()), REVIEW_DIGEST);
+    assertThatThrownBy(() -> store(subsetInput)).hasMessageContaining("changed complete input");
+    var reordered = new ArrayList<WorldDesignMutationRevision>();
+    for (var revision : batch.delta().revisions().reversed()) reordered.add(revision.mutation());
+    var changed =
+        binding(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            reordered);
+    var changedInput =
+        stageBinding(
+            f, changed, operation(changed, f.graph().plan().ownerBinding()), REVIEW_DIGEST);
+    assertThatThrownBy(() -> store(changedInput)).hasMessageContaining("changed complete input");
+    assertThat(currentFacts(f)).isEqualTo(before);
+    assertThat(retainedFacts(f)).isEqualTo(immutable);
+  }
+
+  @Test
+  void staleLastSubtreeRollsBackEveryEarlierBatchMutationEpochAndReceipt() throws Exception {
+    var f = fixture();
+    var batch =
+        stageBatch(f, List.of(f.region(), f.otherRegion()), List.of(1L, 1L), List.of(1L, 0L));
+    String before = currentFacts(f);
+    String retained = retainedFacts(f);
+    assertThatThrownBy(() -> store(batch)).hasStackTraceContaining("DRAFT_WRITE_CONFLICT");
+    assertThat(currentFacts(f)).isEqualTo(before);
+    assertThat(retainedFacts(f)).isEqualTo(retained);
+    assertThat(repository.readCommitted(batch)).isEmpty();
+    assertThat(
+            one(dsl, "SELECT count(*) FROM world_region_draft_execution_manifest")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  @Test
+  void exactConcurrentBatchReplayAndOverlappingReversedBatchesHaveNoPartialWinner()
+      throws Exception {
+    var exactFixture = fixture();
+    var exact =
+        stageBatch(
+            exactFixture,
+            List.of(exactFixture.region(), exactFixture.otherRegion()),
+            List.of(1L, 1L),
+            List.of(1L, 1L));
+    assertThat(concurrent(exact, exact)).containsExactly(true, true);
+    assertThat(
+            one(
+                    dsl,
+                    "SELECT count(*) FROM world_region_draft_commit WHERE request_id=?",
+                    exact.originalOperation().requestId())
+                .get(0, Long.class))
+        .isEqualTo(1);
+    var f = fixture();
+    var first =
+        stageBatch(f, List.of(f.region(), f.otherRegion()), List.of(1L, 1L), List.of(1L, 1L));
+    var reverse =
+        stageBatch(f, List.of(f.otherRegion(), f.region()), List.of(1L, 1L), List.of(1L, 1L));
+    assertThat(concurrent(first, reverse).stream().filter(Boolean::booleanValue).count())
+        .isEqualTo(1);
+    assertEpochs(f, f.region(), 2, 2);
+    assertEpochs(f, f.otherRegion(), 2, 2);
+    assertThat(
+            one(
+                    dsl,
+                    "SELECT count(*) FROM world_region_draft_commit WHERE canonical_tenant_id=?",
+                    f.graph().selectedCommit().target().canonicalTenantId())
+                .get(0, Long.class))
+        .isEqualTo(1);
+    assertThat(
+            one(dsl, "SELECT count(*) FROM world_region_draft_execution_manifest")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  @Test
+  void disjointCompleteBatchesFromOneReviewedBasePreserveBothCurrentChanges() throws Exception {
+    var f = fixture(4);
+    var first =
+        stageBatch(f, List.of(f.region(), f.otherRegion()), List.of(1L, 1L), List.of(1L, 1L));
+    var second =
+        stageBatch(f, List.of(region(f, 2), region(f, 3)), List.of(1L, 1L), List.of(1L, 1L));
+    String retained = retainedFacts(f);
+    assertThat(concurrent(first, second)).containsExactly(true, true);
+    for (int i = 0; i < 4; i++) assertEpochs(f, region(f, i), 2, 2);
+    assertThat(retainedFacts(f)).isEqualTo(retained);
+    assertThat(repository.readCommitted(first)).isPresent();
+    assertThat(repository.readCommitted(second)).isPresent();
+  }
+
+  @Test
+  void completeBatchSqlRejectsMissingReorderedDuplicateAndChangedWholeVectorsBeforeEffects()
+      throws Exception {
+    var f = fixture();
+    var staged =
+        stageBatch(f, List.of(f.region(), f.otherRegion()), List.of(1L, 1L), List.of(1L, 1L));
+    var executions = WorldDraftExistingRegionCommitRepository.executionRevisions(staged.delta());
+    var variants =
+        List.of(
+            List.of(executions.getFirst()),
+            executions.reversed(),
+            List.of(executions.getFirst(), executions.getFirst()));
+    for (var variant : variants) {
+      String before = currentFacts(f);
+      assertThatThrownBy(
+              () ->
+                  write.execute(
+                      status ->
+                          dsl.fetch(
+                              "SELECT world_store_guarded_existing_regions(?::jsonb,?::jsonb,?::jsonb)",
+                              WorldDraftTopologyCommitRepository.ownerBindingJson(
+                                  staged.originalOperation().ownerBinding()),
+                              staged.originalOperation().binding().canonicalJson(),
+                              JSON.writeValueAsString(variant))))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(currentFacts(f)).isEqualTo(before);
+    }
+    var changed =
+        (tools.jackson.databind.node.ObjectNode)
+            JSON.readTree(staged.originalOperation().binding().canonicalJson());
+    ((tools.jackson.databind.node.ArrayNode) changed.path("affectedUnits")).remove(0);
+    String before = currentFacts(f);
+    assertThatThrownBy(
+            () ->
+                write.execute(
+                    status ->
+                        dsl.fetch(
+                            "SELECT world_store_guarded_existing_regions(?::jsonb,?::jsonb,?::jsonb)",
+                            WorldDraftTopologyCommitRepository.ownerBindingJson(
+                                staged.originalOperation().ownerBinding()),
+                            changed.toString(),
+                            JSON.writeValueAsString(executions))))
+        .hasStackTraceContaining("complete exact UUID");
+    assertThat(currentFacts(f)).isEqualTo(before);
+  }
+
+  @Test
+  void originalV1054SingleReceiptRemainsByteExactAfterBatchUpgradeAndLaterChanges()
+      throws Exception {
+    assertThat(repository.readCommitted(retainedV1Input).orElseThrow().resultBytes())
+        .containsExactly(retainedV1.resultBytes());
+    assertThat(store(retainedV1Input).graphBytes()).containsExactly(retainedV1.graphBytes());
+    assertThat(history(retainedV1Input)).isEqualTo(retainedV1History);
+    assertThat(new String(retainedV1.resultBytes(), StandardCharsets.UTF_8))
+        .contains("world-draft-existing-region-storage/v1");
+    assertThat(JSON.readTree(retainedV1.graphBytes()).has("regions")).isFalse();
+  }
+
+  private static UUID region(Fixture f, int index) {
+    return f.graph().plan().graph().nodes().stream()
+        .filter(node -> node.mutation().hasRegion())
+        .map(node -> node.templateId())
+        .toList()
+        .get(index);
+  }
+
+  private static StagedDelta stageBatch(
+      Fixture f, List<UUID> regions, List<Long> aggregate, List<Long> scope) throws Exception {
+    UUID commit = UUID.randomUUID();
+    var mutations = new ArrayList<WorldDesignMutationRevision>();
+    for (int i = 0; i < regions.size(); i++) {
+      UUID region = regions.get(i);
+      mutations.add(
+          mutation(commit, region, region, "REGION", aggregate.get(i), scope.get(i))
+              .setRegion(
+                  RegionDesignMutation.newBuilder()
+                      .setName("Batch " + region)
+                      .setGenerationSeed(Long.MAX_VALUE))
+              .build());
+    }
+    var binding =
+        binding(
+            f.graph().selectedCommit().target(),
+            UUID.randomUUID(),
+            commit,
+            f.graph().selectedCommit().commitId().toString(),
+            mutations);
+    return stageBinding(
+        f, binding, operation(binding, f.graph().plan().ownerBinding()), REVIEW_DIGEST);
+  }
+
+  private static WorldDraftExistingRegionStoredEvidence storeV1(StagedDelta staged) {
+    return Objects.requireNonNull(
+        write.execute(
+            status -> {
+              var plan = staged.delta();
+              var binding = plan.binding();
+              var owner = fence.lockOpenAndResolve(plan.ownerBinding());
+              String snapshot =
+                  one(
+                          dsl,
+                          "SELECT world_store_guarded_existing_region(?::jsonb,?::jsonb,?::jsonb)::text",
+                          WorldDraftTopologyCommitRepository.ownerBindingJson(plan.ownerBinding()),
+                          binding.canonicalJson(),
+                          JSON.writeValueAsString(
+                              WorldDraftExistingRegionCommitRepository.executionRevision(plan)))
+                      .get(0, String.class);
+              var stored = WorldDraftExistingRegionStoredEvidence.create(staged, snapshot);
+              dsl.execute(
+                  "INSERT INTO world_region_draft_commit (target_namespace,canonical_tenant_id,canonical_version_id,"
+                      + "request_id,commit_id,version_identity_operation_id,local_tenant_key,local_version_key,"
+                      + "owner_binding_json,binding_json,binding_digest,graph_bytes,graph_sha256,result_bytes,storage_status)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  plan.ownerBinding().targetNamespace(),
+                  binding.target().canonicalTenantId(),
+                  binding.target().canonicalVersionId(),
+                  binding.requestId(),
+                  binding.commitId(),
+                  plan.ownerBinding().versionIdentityOperationId(),
+                  owner.localTenantKey(),
+                  owner.localVersionKey(),
+                  WorldDraftTopologyCommitRepository.ownerBindingJson(plan.ownerBinding()),
+                  binding.canonicalJson(),
+                  binding.digest(),
+                  stored.graphBytes(),
+                  WorldAuthoredGraphSnapshotCapture.sha256(stored.graphBytes()),
+                  stored.resultBytes(),
+                  WorldDraftExistingRegionStoredEvidence.STATUS);
+              return stored;
+            }));
   }
 
   private static DraftCommitBinding binding(

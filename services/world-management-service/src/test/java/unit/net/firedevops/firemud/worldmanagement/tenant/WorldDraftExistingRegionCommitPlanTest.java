@@ -35,13 +35,13 @@ class WorldDraftExistingRegionCommitPlanTest {
     var plan = WorldDraftExistingRegionCommitPlan.create(original, owner);
     assertThat(plan.binding()).isSameAs(original);
     assertThat(plan.ownerBinding()).isSameAs(owner);
-    assertThat(plan.regionTemplateId()).isEqualTo(REGION);
-    assertThat(plan.mutation()).isEqualTo(mutation());
-    plan.mutation().toBuilder().setAggregateId(id(99).toString()).build();
-    assertThat(plan.mutation()).isEqualTo(mutation());
+    assertThat(plan.revisions().getFirst().regionTemplateId()).isEqualTo(REGION);
+    assertThat(plan.revisions().getFirst().mutation()).isEqualTo(mutation());
+    plan.revisions().getFirst().mutation().toBuilder().setAggregateId(id(99).toString()).build();
+    assertThat(plan.revisions().getFirst().mutation()).isEqualTo(mutation());
     assertThat(plan.binding().baseCommitId()).isEqualTo("exact-reviewed-base");
     assertThat(plan.binding().revisions().getFirst().payload()).isEqualTo("opaque-other-owner");
-    assertThat(plan.mutation().getRegion().getSpacingMultiplier()).isZero();
+    assertThat(plan.revisions().getFirst().mutation().getRegion().getSpacingMultiplier()).isZero();
     // A pure existing-region plan does not widen the fresh writer's accepted input.
     assertThatIllegalArgumentException()
         .isThrownBy(() -> WorldDraftTopologyCommitPlan.create(original, owner));
@@ -158,7 +158,7 @@ class WorldDraftExistingRegionCommitPlanTest {
   }
 
   @Test
-  void rejectsMultipleWorldMutationsRatherThanGuessingUpdateOrder() {
+  void rejectsRepeatedRegionMutationsRatherThanGuessingUpdateOrder() {
     var original = binding(json(mutation()), units());
     var revisions = new ArrayList<>(original.revisions());
     revisions.add(
@@ -175,6 +175,56 @@ class WorldDraftExistingRegionCommitPlanTest {
             original.baseCommitId(),
             revisions,
             original.affectedUnits()));
+  }
+
+  @Test
+  void acceptsOrderedDistinctRegionBatchWithExactFourTupleVectorAndDefensiveInput() {
+    var original = binding(json(mutation()), units());
+    var second =
+        mutation().toBuilder()
+            .setAggregateId(id(97).toString())
+            .setScopeId(id(97).toString())
+            .setLogicalRevisionId(id(98).toString())
+            .build();
+    var revisions = new ArrayList<>(original.revisions());
+    revisions.add(
+        new DraftCommitBinding.RevisionPayload("2", id(98), Owner.WORLD_MANAGEMENT, json(second)));
+    var vector = new ArrayList<>(original.affectedUnits());
+    for (var unit : units()) {
+      vector.add(
+          new AffectedUnit(
+              unit.owner(),
+              unit.aggregateType(),
+              id(97).toString(),
+              unit.scopeType(),
+              id(97).toString(),
+              unit.expectedEpoch()));
+    }
+    var binding =
+        DraftCommitBinding.create(
+            original.target(),
+            original.requestId(),
+            COMMIT,
+            original.baseCommitId(),
+            revisions,
+            vector);
+    var plan = WorldDraftExistingRegionCommitPlan.create(binding, owner());
+    assertThat(plan.revisions()).hasSize(2);
+    assertThat(plan.revisions().stream().map(value -> value.regionTemplateId()).toList())
+        .containsExactly(REGION, id(97));
+    assertThat(plan.binding()).isEqualTo(binding);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> plan.revisions().clear())
+        .isInstanceOf(UnsupportedOperationException.class);
+    for (var incomplete : List.of(vector.subList(0, vector.size() - 1), original.affectedUnits())) {
+      rejected(
+          DraftCommitBinding.create(
+              original.target(),
+              original.requestId(),
+              COMMIT,
+              original.baseCommitId(),
+              revisions,
+              incomplete));
+    }
   }
 
   private static WorldDesignMutationRevision mutation() {

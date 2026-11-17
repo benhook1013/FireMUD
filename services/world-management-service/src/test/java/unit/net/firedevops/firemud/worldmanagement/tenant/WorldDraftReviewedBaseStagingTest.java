@@ -75,7 +75,8 @@ class WorldDraftReviewedBaseStagingTest {
     assertThat(staged.historicalBase()).isSameAs(graph);
     assertThat(staged.historicalBase().rows().getFirst().content().getRegion().getName())
         .isEqualTo("Historical region");
-    assertThat(staged.delta().mutation().getRegion().getName()).isEqualTo("Incoming delta");
+    assertThat(staged.delta().revisions().getFirst().mutation().getRegion().getName())
+        .isEqualTo("Incoming delta");
     assertThat(staged.delta().binding()).isSameAs(incoming);
     verify(repository).readSynchronized(companion.baseVisibility());
   }

@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -21,10 +22,11 @@ import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Pure input validation for one existing REGION property mutation. This is not a storage lookup,
- * permission, APPLIED result, or callable update route. World must resolve the full scoped UUID
- * against retained authored-Version/source lineage and protect the original COMMIT_ORDER at commit.
- * The fresh topology writer cannot consume this plan. Numeric selectors are never accepted.
+ * Pure input validation for one or more distinct existing REGION property mutations. This is not a
+ * storage lookup, permission, APPLIED result, or callable update route. World must resolve the full
+ * scoped UUID against retained authored-Version/source lineage and protect the original
+ * COMMIT_ORDER at commit. The fresh topology writer cannot consume this plan. Numeric selectors are
+ * never accepted.
  */
 public final class WorldDraftExistingRegionCommitPlan {
   private static final JsonMapper STRICT_JSON =
@@ -34,18 +36,29 @@ public final class WorldDraftExistingRegionCommitPlan {
           .build();
   private final DraftCommitBinding binding;
   private final OwnerBinding ownerBinding;
-  private final UUID regionTemplateId;
-  private final WorldDesignMutationRevision mutation;
+  private final List<RegionRevision> revisions;
 
-  private WorldDraftExistingRegionCommitPlan(
-      DraftCommitBinding binding,
-      OwnerBinding ownerBinding,
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Built protobuf messages are immutable; builders are never retained.")
+  public record RegionRevision(
+      String revisionOrder,
+      UUID revisionId,
       UUID regionTemplateId,
       WorldDesignMutationRevision mutation) {
+    public RegionRevision {
+      Objects.requireNonNull(revisionOrder, "revisionOrder");
+      Objects.requireNonNull(revisionId, "revisionId");
+      Objects.requireNonNull(regionTemplateId, "regionTemplateId");
+      Objects.requireNonNull(mutation, "mutation");
+    }
+  }
+
+  private WorldDraftExistingRegionCommitPlan(
+      DraftCommitBinding binding, OwnerBinding ownerBinding, List<RegionRevision> revisions) {
     this.binding = binding;
     this.ownerBinding = ownerBinding;
-    this.regionTemplateId = regionTemplateId;
-    this.mutation = mutation;
+    this.revisions = List.copyOf(revisions);
   }
 
   public static WorldDraftExistingRegionCommitPlan create(
@@ -63,68 +76,78 @@ public final class WorldDraftExistingRegionCommitPlan {
         binding.revisions().stream()
             .filter(revision -> revision.owner() == Owner.WORLD_MANAGEMENT)
             .toList();
-    require(revisions.size() == 1, "Exactly one existing REGION revision is supported");
-    var revision = revisions.getFirst();
-    var mutation = parse(revision.payload());
-    require(
-        binding.commitId().toString().equals(mutation.getCommitId())
-            && revision.revisionId().toString().equals(mutation.getLogicalRevisionId()),
-        "REGION payload differs from its enclosing commit/revision identity");
-    require(
-        mutation.getAggregateType() == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION
-            && mutation.getScopeType()
-                == WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE
-            && mutation.getOperation()
-                == WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT
-            && mutation.getScopeMutationPolicy()
-                == WorldDesignScopeMutationPolicy.WORLD_DESIGN_SCOPE_MUTATION_POLICY_UNSPECIFIED
-            && mutation.hasRegion()
-            && !mutation.hasFreshGraphDeclaration(),
-        "Only an existing REGION property UPSERT without fresh/replacement declaration is supported");
-    UUID region = canonicalUuid(mutation.getAggregateId());
-    require(
-        region.equals(canonicalUuid(mutation.getScopeId())),
-        "REGION_SUBTREE must select the same canonical REGION UUID");
-    require(
-        mutation.getExpectedDraftRevisionEpoch() >= 0
-            && mutation.getExpectedDraftRevisionEpoch() < Long.MAX_VALUE
-            && mutation.getExpectedDraftScopeRevisionEpoch() >= 0
-            && mutation.getExpectedDraftScopeRevisionEpoch() < Long.MAX_VALUE,
-        "REGION epochs must be nonnegative and incrementable");
-    var regionInput = mutation.getRegion();
-    require(
-        !regionInput.getName().isBlank()
-            && regionInput.getName().codePointCount(0, regionInput.getName().length()) <= 100
-            && regionInput.getWeather().codePointCount(0, regionInput.getWeather().length()) <= 50
-            && regionInput
-                    .getGeneratorType()
-                    .codePointCount(0, regionInput.getGeneratorType().length())
-                <= 50
-            && regionInput.getShardId() >= 0
-            && Double.isFinite(regionInput.getSpacingMultiplier())
-            && regionInput.getSpacingMultiplier() >= 0,
-        "REGION properties exceed storage constraints");
-    var expected =
-        List.of(
-            new AffectedUnit(
-                Owner.WORLD_MANAGEMENT,
-                "REGION",
-                region.toString(),
-                "AGGREGATE",
-                region.toString(),
-                Long.toString(mutation.getExpectedDraftRevisionEpoch())),
-            new AffectedUnit(
-                Owner.WORLD_MANAGEMENT,
-                "REGION",
-                region.toString(),
-                "REGION_SUBTREE",
-                region.toString(),
-                Long.toString(mutation.getExpectedDraftScopeRevisionEpoch())));
+    require(!revisions.isEmpty(), "At least one existing REGION revision is required");
+    var decoded = new ArrayList<RegionRevision>();
+    var expected = new ArrayList<AffectedUnit>();
+    var regions = new HashSet<UUID>();
+    var identities = new HashSet<UUID>();
+    for (var revision : revisions) {
+      var mutation = parse(revision.payload());
+      require(
+          binding.commitId().toString().equals(mutation.getCommitId())
+              && revision.revisionId().toString().equals(mutation.getLogicalRevisionId()),
+          "REGION payload differs from its enclosing commit/revision identity");
+      require(
+          mutation.getAggregateType() == WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION
+              && mutation.getScopeType()
+                  == WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE
+              && mutation.getOperation()
+                  == WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT
+              && mutation.getScopeMutationPolicy()
+                  == WorldDesignScopeMutationPolicy.WORLD_DESIGN_SCOPE_MUTATION_POLICY_UNSPECIFIED
+              && mutation.hasRegion()
+              && !mutation.hasFreshGraphDeclaration(),
+          "Only an existing REGION property UPSERT without fresh/replacement declaration is supported");
+      UUID region = canonicalUuid(mutation.getAggregateId());
+      require(
+          regions.add(region) && identities.add(revision.revisionId()),
+          "Repeated REGION target or revision identity is unsupported");
+      require(
+          region.equals(canonicalUuid(mutation.getScopeId())),
+          "REGION_SUBTREE must select the same canonical REGION UUID");
+      require(
+          mutation.getExpectedDraftRevisionEpoch() >= 0
+              && mutation.getExpectedDraftRevisionEpoch() < Long.MAX_VALUE
+              && mutation.getExpectedDraftScopeRevisionEpoch() >= 0
+              && mutation.getExpectedDraftScopeRevisionEpoch() < Long.MAX_VALUE,
+          "REGION epochs must be nonnegative and incrementable");
+      var regionInput = mutation.getRegion();
+      require(
+          !regionInput.getName().isBlank()
+              && regionInput.getName().codePointCount(0, regionInput.getName().length()) <= 100
+              && regionInput.getWeather().codePointCount(0, regionInput.getWeather().length()) <= 50
+              && regionInput
+                      .getGeneratorType()
+                      .codePointCount(0, regionInput.getGeneratorType().length())
+                  <= 50
+              && regionInput.getShardId() >= 0
+              && Double.isFinite(regionInput.getSpacingMultiplier())
+              && regionInput.getSpacingMultiplier() >= 0,
+          "REGION properties exceed storage constraints");
+      expected.addAll(
+          List.of(
+              new AffectedUnit(
+                  Owner.WORLD_MANAGEMENT,
+                  "REGION",
+                  region.toString(),
+                  "AGGREGATE",
+                  region.toString(),
+                  Long.toString(mutation.getExpectedDraftRevisionEpoch())),
+              new AffectedUnit(
+                  Owner.WORLD_MANAGEMENT,
+                  "REGION",
+                  region.toString(),
+                  "REGION_SUBTREE",
+                  region.toString(),
+                  Long.toString(mutation.getExpectedDraftScopeRevisionEpoch()))));
+      decoded.add(
+          new RegionRevision(revision.revisionOrder(), revision.revisionId(), region, mutation));
+    }
     var actual = binding.affectedUnits(Owner.WORLD_MANAGEMENT);
     require(
         actual.size() == expected.size() && new HashSet<>(actual).equals(new HashSet<>(expected)),
         "Existing REGION input requires the exact complete aggregate/subtree epoch vector");
-    return new WorldDraftExistingRegionCommitPlan(binding, ownerBinding, region, mutation);
+    return new WorldDraftExistingRegionCommitPlan(binding, ownerBinding, decoded);
   }
 
   public DraftCommitBinding binding() {
@@ -135,15 +158,8 @@ public final class WorldDraftExistingRegionCommitPlan {
     return ownerBinding;
   }
 
-  public UUID regionTemplateId() {
-    return regionTemplateId;
-  }
-
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP",
-      justification = "Built protobuf messages are immutable; mutable builders are never retained.")
-  public WorldDesignMutationRevision mutation() {
-    return mutation;
+  public List<RegionRevision> revisions() {
+    return revisions;
   }
 
   private static WorldDesignMutationRevision parse(String payload) {

@@ -15,7 +15,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * Retained component-storage bytes only, never APPLIED, synchronized truth or Account permission.
- * The snapshot is one exact current-row delta, not a replacement historical graph.
+ * The snapshot is an exact current-row delta batch, not a replacement historical graph.
  */
 final class WorldDraftExistingRegionStoredEvidence {
   static final String STATUS = "STORED_PERMISSION_UNVERIFIED";
@@ -62,7 +62,9 @@ final class WorldDraftExistingRegionStoredEvidence {
               JSON.writeValueAsString(
                   Map.of(
                       "schema",
-                      "world-draft-existing-region-storage/v1",
+                      graph.has("regions")
+                          ? "world-draft-existing-region-storage/v2"
+                          : "world-draft-existing-region-storage/v1",
                       "status",
                       STATUS,
                       "operationBytesBase64",
@@ -99,13 +101,16 @@ final class WorldDraftExistingRegionStoredEvidence {
             && base.localVersionKey() > 0,
         "Existing REGION storage differs from original reviewed operation");
     staged.companion().baseVisibility().requireValid();
-    var selected =
-        base.family(Family.REGION).stream()
-            .filter(row -> row.template().templateId().equals(plan.regionTemplateId()))
-            .toList();
-    require(
-        selected.size() == 1 && selected.getFirst().scope().equals(selected.getFirst().template()),
-        "Reviewed base lacks the exact scoped REGION template");
+    for (var revision : plan.revisions()) {
+      var selected =
+          base.family(Family.REGION).stream()
+              .filter(row -> row.template().templateId().equals(revision.regionTemplateId()))
+              .toList();
+      require(
+          selected.size() == 1
+              && selected.getFirst().scope().equals(selected.getFirst().template()),
+          "Reviewed base lacks the exact scoped REGION template");
+    }
   }
 
   static WorldDraftExistingRegionStoredEvidence create(StagedDelta staged, String snapshot) {
@@ -134,12 +139,37 @@ final class WorldDraftExistingRegionStoredEvidence {
   }
 
   private static void validateSnapshot(StagedDelta staged, JsonNode graph) {
-    var plan = staged.delta();
+    var regions = snapshots(graph);
+    var revisions = staged.delta().revisions();
+    require(regions.size() == revisions.size(), "Complete ordered REGION batch snapshot required");
+    for (int i = 0; i < revisions.size(); i++) {
+      validateRegionSnapshot(staged, revisions.get(i), regions.get(i));
+    }
+  }
+
+  static List<JsonNode> snapshots(JsonNode graph) {
+    if (graph != null && graph.isObject() && graph.has("regions")) {
+      require(
+          graph.size() == 2
+              && graph.path("schemaVersion").asText().equals("2")
+              && graph.path("regions").isArray()
+              && !graph.path("regions").isEmpty(),
+          "Complete ordered REGION batch envelope required");
+      var rows = new java.util.ArrayList<JsonNode>();
+      graph.path("regions").forEach(rows::add);
+      return List.copyOf(rows);
+    }
+    require(
+        graph != null && graph.isObject() && graph.size() == 5,
+        "Complete existing REGION snapshot required");
+    return List.of(graph);
+  }
+
+  private static void validateRegionSnapshot(
+      StagedDelta staged, WorldDraftExistingRegionCommitPlan.RegionRevision plan, JsonNode graph) {
     var operation = staged.originalOperation();
     var binding = operation.binding();
-    if (graph == null || !graph.isObject() || graph.size() != 5) {
-      throw new ConflictException("Complete existing REGION snapshot required");
-    }
+    require(graph.isObject() && graph.size() == 5, "Complete existing REGION snapshot required");
     var mapping = graph.path("mapping");
     var before = graph.path("oldRegion");
     var after = graph.path("newRegion");

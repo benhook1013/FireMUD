@@ -4,6 +4,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -48,38 +49,40 @@ final class WorldDraftExistingRegionCommitRepository {
     if (prior.isPresent()) return prior.orElseThrow();
     var plan = staged.delta();
     var binding = staged.originalOperation().binding();
-    var execution = executionRevision(plan);
+    var execution = executionRevisions(plan);
     // PostgreSQL JSONB, trigger-owned OLD/NEW manifests and CAS are intentionally behind one
     // narrow SQL function; generated table DSL cannot express this stored operation.
     Record changed =
         dsl.fetchOne(
-            "SELECT world_store_guarded_existing_region(?::jsonb,?::jsonb,?::jsonb)::text AS snapshot",
+            "SELECT world_store_guarded_existing_regions(?::jsonb,?::jsonb,?::jsonb)::text AS snapshot",
             WorldDraftTopologyCommitRepository.ownerBindingJson(plan.ownerBinding()),
             binding.canonicalJson(),
             mapper.writeValueAsString(execution));
     if (changed == null)
       throw new ConflictException("Existing REGION mutation returned no snapshot");
     var snapshot = mapper.readTree(changed.get("snapshot", String.class));
-    var mapping = snapshot.path("mapping");
-    Record actual =
-        dsl.fetchOne(
-            "SELECT to_jsonb(i)::text AS mapping,to_jsonb(r)::text AS region,"
-                + "to_jsonb(a)::text AS aggregate,to_jsonb(s)::text AS scope "
-                + "FROM world_authored_topology_identity i "
-                + "JOIN region r ON r.id=i.private_row_key AND r.tenant_id=i.tenant_id AND r.version_id=i.version_id "
-                + "JOIN world_design_aggregate_epoch a ON a.tenant_id=i.tenant_id AND a.version_id=i.version_id "
-                + "AND a.aggregate_type='REGION' AND a.aggregate_id=i.private_row_key "
-                + "JOIN world_design_scope_epoch s ON s.tenant_id=i.tenant_id AND s.version_id=i.version_id "
-                + "AND s.scope_type='REGION_SUBTREE' AND s.scope_id=i.template_id::text WHERE i.id=?",
-            mapping.path("id").asLong());
-    if (actual == null
-        || !snapshot.path("mapping").equals(mapper.readTree(actual.get("mapping", String.class)))
-        || !snapshot.path("newRegion").equals(mapper.readTree(actual.get("region", String.class)))
-        || !snapshot
-            .path("aggregate")
-            .equals(mapper.readTree(actual.get("aggregate", String.class)))
-        || !snapshot.path("scope").equals(mapper.readTree(actual.get("scope", String.class)))) {
-      throw new ConflictException("Existing REGION independent physical readback differs");
+    for (var region : WorldDraftExistingRegionStoredEvidence.snapshots(snapshot)) {
+      var mapping = region.path("mapping");
+      Record actual =
+          dsl.fetchOne(
+              "SELECT to_jsonb(i)::text AS mapping,to_jsonb(r)::text AS region,"
+                  + "to_jsonb(a)::text AS aggregate,to_jsonb(s)::text AS scope "
+                  + "FROM world_authored_topology_identity i "
+                  + "JOIN region r ON r.id=i.private_row_key AND r.tenant_id=i.tenant_id AND r.version_id=i.version_id "
+                  + "JOIN world_design_aggregate_epoch a ON a.tenant_id=i.tenant_id AND a.version_id=i.version_id "
+                  + "AND a.aggregate_type='REGION' AND a.aggregate_id=i.private_row_key "
+                  + "JOIN world_design_scope_epoch s ON s.tenant_id=i.tenant_id AND s.version_id=i.version_id "
+                  + "AND s.scope_type='REGION_SUBTREE' AND s.scope_id=i.template_id::text WHERE i.id=?",
+              mapping.path("id").asLong());
+      if (actual == null
+          || !region.path("mapping").equals(mapper.readTree(actual.get("mapping", String.class)))
+          || !region.path("newRegion").equals(mapper.readTree(actual.get("region", String.class)))
+          || !region
+              .path("aggregate")
+              .equals(mapper.readTree(actual.get("aggregate", String.class)))
+          || !region.path("scope").equals(mapper.readTree(actual.get("scope", String.class)))) {
+        throw new ConflictException("Existing REGION independent physical readback differs");
+      }
     }
     var stored = WorldDraftExistingRegionStoredEvidence.create(staged, snapshot.toString());
     dsl.execute(
@@ -159,15 +162,17 @@ final class WorldDraftExistingRegionCommitRepository {
       throw new ConflictException("Existing REGION retained snapshot digest differs");
     }
     var snapshot = mapper.readTree(new String(graph, StandardCharsets.UTF_8));
-    Record mapping =
-        dsl.fetchOne(
-            "SELECT to_jsonb(i)::text AS mapping FROM world_authored_topology_identity i WHERE id=?",
-            snapshot.path("mapping").path("id").asLong());
-    if (mapping == null
-        || !snapshot
-            .path("mapping")
-            .equals(mapper.readTree(mapping.get("mapping", String.class)))) {
-      throw new ConflictException("Existing REGION retained creation mapping differs");
+    for (var region : WorldDraftExistingRegionStoredEvidence.snapshots(snapshot)) {
+      Record mapping =
+          dsl.fetchOne(
+              "SELECT to_jsonb(i)::text AS mapping FROM world_authored_topology_identity i WHERE id=?",
+              region.path("mapping").path("id").asLong());
+      if (mapping == null
+          || !region
+              .path("mapping")
+              .equals(mapper.readTree(mapping.get("mapping", String.class)))) {
+        throw new ConflictException("Existing REGION retained creation mapping differs");
+      }
     }
     return Optional.of(
         WorldDraftExistingRegionStoredEvidence.fromStored(
@@ -182,17 +187,27 @@ final class WorldDraftExistingRegionCommitRepository {
    */
   static DraftCommitBinding.RevisionPayload executionRevision(
       WorldDraftExistingRegionCommitPlan plan) {
-    var original =
-        plan.binding().revisions().stream()
-            .filter(revision -> revision.owner() == DraftCommitBinding.Owner.WORLD_MANAGEMENT)
-            .findFirst()
-            .orElseThrow();
+    if (plan.revisions().size() != 1) {
+      throw new IllegalArgumentException("Singular execution requires exactly one REGION");
+    }
+    return executionRevision(plan.revisions().getFirst());
+  }
+
+  static List<DraftCommitBinding.RevisionPayload> executionRevisions(
+      WorldDraftExistingRegionCommitPlan plan) {
+    return plan.revisions().stream()
+        .map(WorldDraftExistingRegionCommitRepository::executionRevision)
+        .toList();
+  }
+
+  private static DraftCommitBinding.RevisionPayload executionRevision(
+      WorldDraftExistingRegionCommitPlan.RegionRevision revision) {
     try {
       return new DraftCommitBinding.RevisionPayload(
-          original.revisionOrder(),
-          original.revisionId(),
-          original.owner(),
-          JsonFormat.printer().omittingInsignificantWhitespace().print(plan.mutation()));
+          revision.revisionOrder(),
+          revision.revisionId(),
+          DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+          JsonFormat.printer().omittingInsignificantWhitespace().print(revision.mutation()));
     } catch (InvalidProtocolBufferException invalid) {
       throw new IllegalArgumentException("Cannot encode existing REGION typed projection", invalid);
     }

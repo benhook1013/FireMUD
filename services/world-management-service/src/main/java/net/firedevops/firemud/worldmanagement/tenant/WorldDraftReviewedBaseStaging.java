@@ -8,7 +8,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalAuthoredGraph
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
 
 /**
- * Unregistered read-only validation seam for one existing REGION delta against its reviewed base.
+ * Unregistered read-only validation seam for existing REGION deltas against its reviewed base.
  *
  * <p>This committed read runs before any future write transaction. No current graph is replaced, no
  * SQL mutation is staged, and no COMMIT_ORDER or authorization is acquired. A historical graph is
@@ -65,13 +65,15 @@ final class WorldDraftReviewedBaseStaging {
         || !binding.target().canonicalVersionId().equals(historicalBase.versionId())) {
       throw new ConflictException("World reviewed-base snapshot differs from the canonical target");
     }
-    var selected =
-        historicalBase.family(Family.REGION).stream()
-            .filter(row -> row.template().templateId().equals(delta.regionTemplateId()))
-            .toList();
-    if (selected.size() != 1
-        || !selected.getFirst().scope().equals(selected.getFirst().template())) {
-      throw new ConflictException("Reviewed base lacks the exact scoped REGION template");
+    for (var revision : delta.revisions()) {
+      var selected =
+          historicalBase.family(Family.REGION).stream()
+              .filter(row -> row.template().templateId().equals(revision.regionTemplateId()))
+              .toList();
+      if (selected.size() != 1
+          || !selected.getFirst().scope().equals(selected.getFirst().template())) {
+        throw new ConflictException("Reviewed base lacks the exact scoped REGION template");
+      }
     }
     return new StagedDelta(originalOperation, companion, historicalBase, delta);
   }
