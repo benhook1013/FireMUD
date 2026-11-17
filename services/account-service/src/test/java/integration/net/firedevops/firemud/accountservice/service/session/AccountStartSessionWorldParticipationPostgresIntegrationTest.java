@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 import javax.crypto.spec.SecretKeySpec;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository;
@@ -471,6 +472,44 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
           .isEqualTo(redeemed.responseEnvelopeExpiresAt());
       assertThat(account.tx(() -> repository.findHistoricalExact(UUID.randomUUID(), 1L))).isEmpty();
 
+      // This is a real Account source-change journal against the participation's exact sources.
+      // The eventual World terminal below remains stipulated, not authenticated producer proof.
+      var fences = new DraftAuthorizationFenceRepository(account.dsl);
+      var sourceChange =
+          new DraftAuthorizationFenceRepository.SourceChange(
+              UUID.randomUUID(), first.sources(), new byte[] {1, 7, 3});
+      assertThat(account.tx(() -> fences.requestSourceChange(sourceChange))).isFalse();
+      var waitingRows = sourceChangeRows(account.dsl);
+      var pendingParticipationRows = retainedRows(account.dsl);
+      for (int retry = 0; retry < 2; retry++) {
+        assertThat(account.tx(() -> fences.requestSourceChange(sourceChange))).isFalse();
+        assertThat(account.tx(() -> fences.sourceMutationPermitted(sourceChange))).isFalse();
+        assertThat(account.tx(() -> fences.sourceAbortPermitted(sourceChange))).isFalse();
+        assertThatThrownBy(
+                () ->
+                    account.tx(
+                        () -> {
+                          fences.markSourceCommitted(sourceChange);
+                          return null;
+                        }))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Owner outcomes unresolved");
+        assertThatThrownBy(
+                () ->
+                    account.tx(
+                        () -> {
+                          fences.markSourceAborted(
+                              sourceChange,
+                              DraftAuthorizationFenceRepository.SourceChangeAbortReason
+                                  .DEFINITIVE_ABORT);
+                          return null;
+                        }))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Owner outcomes unresolved");
+        assertThat(sourceChangeRows(account.dsl)).isEqualTo(waitingRows);
+        assertThat(retainedRows(account.dsl)).isEqualTo(pendingParticipationRows);
+      }
+
       var committedTerminal =
           terminal(first, WorldStartSessionExecutionTerminal.Outcome.COMMITTED, 73L);
       StoredSettlement committed = account.tx(() -> repository.settleExact(committedTerminal));
@@ -490,6 +529,29 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                               .findSettlementExact(
                                   first.participationId(), first.participationFence())
                               .orElseThrow())
+                  .terminalBytes())
+          .containsExactly(committed.terminalBytes());
+
+      assertThat(account.tx(() -> fences.requestSourceChange(sourceChange))).isTrue();
+      assertThat(account.tx(() -> fences.sourceMutationPermitted(sourceChange))).isTrue();
+      assertThat(account.tx(() -> fences.sourceAbortPermitted(sourceChange))).isTrue();
+      assertThat(sourceChangeRows(account.dsl)).isEqualTo(waitingRows);
+      // Finish with a no-mutation abort, not a fabricated authority source write.
+      account.tx(
+          () -> {
+            fences.markSourceAborted(
+                sourceChange,
+                DraftAuthorizationFenceRepository.SourceChangeAbortReason.DEFINITIVE_ABORT);
+            return null;
+          });
+      assertThat(account.tx(() -> fences.readSourceChange(sourceChange)).status())
+          .isEqualTo("SOURCE_ABORTED");
+      assertThat(
+              account.tx(
+                  () ->
+                      repository
+                          .findSettlementExact(first.participationId(), first.participationFence())
+                          .orElseThrow())
                   .terminalBytes())
           .containsExactly(committed.terminalBytes());
 
@@ -969,6 +1031,23 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
           table,
           dsl.fetch(
                   "SELECT row_to_json(t)::text AS body FROM "
+                      + table
+                      + " t ORDER BY row_to_json(t)::text")
+              .getValues("body", String.class));
+    }
+    return result;
+  }
+
+  private static Map<String, List<String>> sourceChangeRows(DSLContext dsl) {
+    Map<String, List<String>> result = new java.util.TreeMap<>();
+    for (String table :
+        List.of(
+            "account_draft_authorization_source_changes",
+            "account_draft_authorization_changed_scopes")) {
+      result.put(
+          table,
+          dsl.fetch(
+                  "SELECT row_to_json(t)::text || ':' || xmin::text AS body FROM "
                       + table
                       + " t ORDER BY row_to_json(t)::text")
               .getValues("body", String.class));
