@@ -8,17 +8,23 @@ No scheduling, selectors, or current required-CI decisions are changed here.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 CONTRACT = Path(__file__).with_suffix('.json')
 
 
 def required_cases() -> dict[str, set[str]]:
-    data = json.loads(CONTRACT.read_text())
-    if data.get('schema_version') != 1:
-        raise ValueError('unsupported Account proof contract')
-    return {name: set(cases) for name, cases in data['required_cases'].items()}
+    required = {}
+    for contract in (CONTRACT, Path(__file__).with_name('account_current_join_required_cases.json')):
+        data = json.loads(contract.read_text())
+        if data.get('schema_version') != 1:
+            raise ValueError('unsupported Account proof contract')
+        for name, cases in data['required_cases'].items():
+            if name in required:
+                raise ValueError('Account proof contracts overlap')
+            required[name] = set(cases)
+    return required
 
 
 def verify_partition(reports: Path, selected_classes: set[str]) -> set[str]:

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "scope": "Current canonical Account JOIN component proof: storage10, scope11, firstJOIN29, paidJOIN5. Not literal donor2976 worker/expiry/conversion recovery or public runtime activation. Distinct from donor3097 hosted/Draft obligations.",
+  "required_cases": {
+    "integration.net.firedevops.firemud.accountservice.repository.AccountFirstJoinAuthorityStorageIntegrationTest": [
+      "appendsContiguousPerStreamAndReplaysOnlyExactRequestEvidence()",
+      "callerRollbackRemovesAppendAndConcurrentExactRetriesShareOneSequence()",
+      "canonicalUpgradeWaitsForLegacyWriterAndPreservesItsUnverifiedIdentity()",
+      "databaseRejectsDeletingAHeadWithRetainedHistoryWithoutChangingEvidence()",
+      "databaseRejectsRetainedEventMutationAndStillAllowsExactAppendAndStreamAdvance()",
+      "databaseRejectsTruncatingOutboxHistoryAndPreservesEventsAndCheckpoint()",
+      "evidenceFactoryFailureRollsBackStreamCreationAndDoesNotAdvanceHead()",
+      "exhaustedSequenceRejectsAppendWithoutChangingEventCheckpointOrCallerSentinel()",
+      "missingHeadWithNoExactHistoryIsEmptyDespiteAnotherStreamsRetainedEvent()",
+      "v38DoesNotBackfillRetainedMembershipAndCanonicalRoleSnapshotRequiresExactSource()"
+    ],
+    "integration.net.firedevops.firemud.accountservice.repository.AccountCanonicalJoinScopePersistenceIntegrationTest": [
+      "boundPendingUnavailableDiagnosticsNeverDowngradePolicyAndExactRecoveryOnlyClearsDiagnostics()",
+      "definitiveFailureRetainsOriginalIntentAndOptionalPolicyAndExactlyReplaysWithoutRewrite[1] bound=false",
+      "definitiveFailureRetainsOriginalIntentAndOptionalPolicyAndExactlyReplaysWithoutRewrite[2] bound=true",
+      "definitivePublicJoinDenialRetainsItsAlreadyBoundNegativePolicy()",
+      "expiredScopeCleanupSkipsImmutableV2BeforeLimitingV1Batch()",
+      "failedJournalRejectsConflictingCallerRequestAndRetainedScopeWithoutRewritingReceipt()",
+      "firstInvoiceAndCapacityUpgradeFromParent1036Through1041PreservesCanonicalRowsAndHistory()",
+      "journalDiagnosticsAndDefinitiveFailureRollBackAsOneTransaction[1] bound=false",
+      "journalDiagnosticsAndDefinitiveFailureRollBackAsOneTransaction[2] bound=true",
+      "migrationRetainsV1AndStoresExactV2ScopeAndPendingIntentWithoutMembershipOrEvent()",
+      "sqlGuardsRefuseRetryableTerminalOutcomesPolicyDowngradeInventedProofAndTerminalMutation()"
+    ],
+    "integration.net.firedevops.firemud.accountservice.service.AccountPaidCanonicalFirstJoinPostgresIntegrationTest": [
+      "changedOperationPolicyCannotCommitAgainstAnOlderPaidReceipt()",
+      "expiredPaidReceiptIsUnavailableAndNeverSelectsDemo()",
+      "finalCommitFailureRollsBackMembershipRolesPairEventAuditAndTerminalReceipt()",
+      "paidJoinCommitsOnePlayerEventAuditAndReceiptThenExactlyReplaysWithoutProviderIo()",
+      "providerFactsChangedBeforeCommitRollbackAllStagedWritesThenSameOriginalCanRecover()"
+    ],
+    "integration.net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinEventIntegrationTest": [
+      "[1] alreadyActive = false",
+      "[1] terminalState = \"COMMITTED\"",
+      "[2] alreadyActive = true",
+      "[2] terminalState = \"FAILED_UNBOUND\"",
+      "[3] terminalState = \"FAILED_BOUND\"",
+      "activeJoinRetainsExactSnapshotWithoutAnotherEventOrAuditAndReplays()",
+      "activeNonAdmittingSnapshotWithoutPlayerRoleRemainsSuccessfulAndUnchanged()",
+      "browserFacadeComposesRealV2ProducerReaderAndTerminalOwnersAndReplaysCommittedReceipt()",
+      "browserFacadeReplaysCommittedJoinProofAfterMembershipBecomesInactive()",
+      "canonicalLeaveAndIndependentSecurityChangeAdvanceOneCompositeFenceInBothOrders()",
+      "canonicalLeaveAndSecurityWriterSerializeAtTheAccountLockInBothOrders()",
+      "canonicalLeaveCommitsMembershipFenceWithoutAnySecurityMutationAndReplaysHistoricalReceipt()",
+      "canonicalLeaveCutoverPreservesExactLegacySecuritySourceAndEventBytes()",
+      "canonicalLeaveInvalidatesCapturedSourceWithoutChangingSecurityGeneration()",
+      "canonicalLeaveOfAbsentMembershipReturnsNoOpWithoutInitializingAuthority()",
+      "canonicalLeaveRejectsUnbackedFenceAdvanceAndWrongCausalEventWithFullRollback()",
+      "canonicalLeaveTerminalFailureRollsBackMembershipFenceRolesEventAuditAndIntent()",
+      "changedEntitlementPreventsAStalePendingJoinFromCommittingMembership()",
+      "closingEnrollmentPreservesAnActiveMembersEventFreeJoinSnapshot()",
+      "commitsExactEventAndPairAndReplaysOnlyTheSameCallerOperation()",
+      "concurrentExactTerminalAttemptsShareOneMembershipEventAuditAndReceipt()",
+      "directFacadeComposesItsOwnAuthenticatedProducerWithRealV2ReaderAndJoinOwners()",
+      "inactiveJoinRestoresOneVersionAndEventWithoutChangingIndependentGeneration()",
+      "nullCommittedOutcomeIsRejectedByTerminalReceiptShapeGuard()",
+      "pairCasFailureRollsBackMembershipAndTheActualOutboxAppend()",
+      "pendingSplitTransitionCannotBeReclassifiedAsAnEventFreeActiveJoin()",
+      "restoreTerminalFailureRollsBackMemberRolesPairEventAndAudit()",
+      "terminalCoordinatorCommitsAuditAndOperationWithTheFirstEventAndReplaysExactly()",
+      "terminalJournalFailureRollsBackMembershipEventPairAndAuditTogether()"
+    ]
+  }
+}
