@@ -85,6 +85,7 @@ jobs:
               "spring-cloud-gateway",
               "tcp-proxy-service",
               "world-management-service",
+              "recovery-controller-service",
               "hosted-environment-identity-controller",
               "load-testing",
             ];
@@ -100,6 +101,7 @@ jobs:
               "spring-cloud-gateway",
               "tcp-proxy-service",
               "world-management-service",
+              "recovery-controller-service",
               "hosted-environment-identity-controller",
             ];
             let outputs;

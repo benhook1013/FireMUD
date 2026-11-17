@@ -1,5 +1,9 @@
 # Player Access and Session
 
+## Initial Gameplay Recovery Foundation Status
+
+The source-only recovery-controller journal and typed request foundation are retained under PlatformOperations donor consolidation. Focused proof covers immutable scope conflicts, exact continuation/resume tuples, ambiguous-effect refusal, owner-readback-gated journal transitions, and fail-closed recover entry. This is not a runtime recovery capability: Account redemption, genuine exclusive-fence/lock acquisition, independent owner evidence, authenticated ingress/dispatch, and isolated deployment/restore topology remain unimplemented activation dependencies. See the [canonical recovery boundary](../../architecture/system-architecture-backup-recovery.md#source-only-initial-gameplay-release-foundation). No donor/source-note closure follows from this partial foundation.
+
 ## Target-State Authority
 
 This is a non-normative implementation tracker for player access and session. Canonical target-state authentication, admission, session, and reconnection contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, and does not redefine those contracts.

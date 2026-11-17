@@ -23,6 +23,7 @@ const ALL_MODULES = [
   "common-test-support",
   "common-web-support",
   ...ALL_SERVICES,
+  "recovery-controller-service",
   "hosted-environment-identity-controller",
   "load-testing",
 ];
@@ -36,6 +37,7 @@ const MODULE_PATHS = new Map([
 
 const BOOTABLE_MODULES = new Set([
   ...ALL_SERVICES,
+  "recovery-controller-service",
   "hosted-environment-identity-controller",
 ]);
 
