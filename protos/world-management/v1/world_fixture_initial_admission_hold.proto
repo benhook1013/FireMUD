@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Explicit, unregistered fixture-purpose owner surface. Human hold messages and authority
+// remain separate. Request bytes are selectors, never authenticated owner evidence.
+service WorldFixtureInitialAdmissionHoldService {
+  rpc AcquireFixtureInitialAdmissionHold(FixtureInitialAdmissionHoldOperationRequest)
+      returns (FixtureInitialAdmissionHoldOperationResponse);
+  rpc ReadFixtureInitialAdmissionHoldIdentity(FixtureInitialAdmissionHoldOperationRequest)
+      returns (FixtureInitialAdmissionHoldOperationResponse);
+  rpc ReadFixtureInitialAdmissionHoldState(FixtureInitialAdmissionHoldOperationRequest)
+      returns (FixtureInitialAdmissionHoldOperationResponse);
+}
+
+message FixtureInitialAdmissionHoldOperationRequest {
+  string read_request_id = 1;
+  bytes fixture_hold_request_bytes = 2;
+  // Required only for state reads; acquisition and identity reads reject this field.
+  bytes hold_identity_bytes = 3;
+}
+
+message FixtureInitialAdmissionHoldOperationResponse {
+  string read_request_id = 1;
+  bytes fixture_hold_request_bytes = 2;
+  bytes hold_identity_bytes = 3;
+  // Present only for state reads.
+  bytes hold_state_bytes = 4;
+}

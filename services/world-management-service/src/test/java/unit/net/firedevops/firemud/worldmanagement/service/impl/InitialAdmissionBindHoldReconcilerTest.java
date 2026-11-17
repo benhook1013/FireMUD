@@ -48,6 +48,30 @@ class InitialAdmissionBindHoldReconcilerTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void explicitlyComposedFixtureRecoveryRunsWithoutReinterpretingItAsLegacyEvidence() {
+    InitialAdmissionBindHoldRepository repository =
+        Mockito.mock(InitialAdmissionBindHoldRepository.class);
+    when(repository.findNonterminalLegacy(32)).thenReturn(List.of());
+    var fixture =
+        Mockito.mock(
+            net.firedevops.firemud.worldmanagement.tenant.WorldFixtureInitialAdmissionHoldOwner
+                .class);
+    ObjectProvider<
+            net.firedevops.firemud.worldmanagement.tenant.WorldFixtureInitialAdmissionHoldOwner>
+        fixtures = Mockito.mock(ObjectProvider.class);
+    when(fixtures.getIfAvailable()).thenReturn(fixture);
+    InitialAdmissionBindHoldService service = Mockito.mock(InitialAdmissionBindHoldService.class);
+    new InitialAdmissionBindHoldReconciler(
+            repository, service, mockProvider(), new SimpleMeterRegistry(), fixtures)
+        .reconcilePendingHolds();
+    verify(fixture).reconcilePending(32);
+    Mockito.verifyNoInteractions(service);
+    verify(repository).findNonterminalLegacy(32);
+    Mockito.verify(repository, Mockito.never()).findNonterminal(Mockito.anyInt());
+  }
+
+  @Test
   void failedReconciliationRequiredCasDoesNotStopTheRemainingBatch() {
     InitialAdmissionBindHold first = hold(3L);
     InitialAdmissionBindHold second = hold(4L);
@@ -55,7 +79,7 @@ class InitialAdmissionBindHoldReconcilerTest {
         Mockito.mock(InitialAdmissionBindHoldRepository.class);
     InitialAdmissionBindHoldService service = Mockito.mock(InitialAdmissionBindHoldService.class);
     ObjectProvider<GameSessionInitialAdmissionBindProofClient> proofClientProvider = mockProvider();
-    when(repository.findNonterminal(32)).thenReturn(List.of(first, second));
+    when(repository.findNonterminalLegacy(32)).thenReturn(List.of(first, second));
     when(proofClientProvider.getIfAvailable()).thenReturn(null);
     doThrow(new IllegalStateException("stale reconciliation CAS"))
         .when(service)
@@ -167,7 +191,7 @@ class InitialAdmissionBindHoldReconcilerTest {
   private static InitialAdmissionBindHoldRepository repositoryWith(InitialAdmissionBindHold hold) {
     InitialAdmissionBindHoldRepository repository =
         Mockito.mock(InitialAdmissionBindHoldRepository.class);
-    when(repository.findNonterminal(32)).thenReturn(List.of(hold));
+    when(repository.findNonterminalLegacy(32)).thenReturn(List.of(hold));
     return repository;
   }
 

@@ -1774,8 +1774,25 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                         + "AND tgname = 'gs_canonical_instance_launch_complete_catalog_identity'")
                 .formatJSON();
         String v1011Guard = launchGuardProjection(predecessor, true);
+        // Capture the exact immediately preceding guard identity before V1067's two necessary
+        // purpose-qualified trigger replacements. Earlier guard-history assertions stay exact.
+        migration(predecessor, "1066.1").migrate();
+        migration(predecessor, "1066.1").validate();
+        if (stagedOriginalHistory) {
+          assertThat(otherGuardProjection(predecessor)).isEqualTo(otherGuards);
+        }
+        FixturePurposeGuardSnapshot beforeFixtureGuards = fixturePurposeGuards(predecessor);
+        String beforeFixtureHistory = migrationHistoryProjection(predecessor, "1066.1");
+        String beforeFixtureAttempts = allAttemptProjection(predecessor);
+        String beforeFixtureSources = predecessorSourceProjection(predecessor);
         migration(predecessor, null).migrate();
         migration(predecessor, null).validate();
+        assertFixturePurposeGuardTransition(predecessor, beforeFixtureGuards);
+        assertThat(migrationHistoryProjection(predecessor, "1066.1"))
+            .isEqualTo(beforeFixtureHistory);
+        assertThat(allAttemptProjection(predecessor)).isEqualTo(beforeFixtureAttempts);
+        assertThat(predecessorSourceProjection(predecessor)).isEqualTo(beforeFixtureSources);
+        assertAddedFixtureColumnsRemainNull(predecessor);
         assertPrivateCatalogColumnsNull(predecessor, prepared.catalog().creationRequestId());
         assertV1013RetentionLaunchForeignKey(predecessor);
         assertV1040CompletionForeignKeyTriggers(predecessor);
@@ -1799,7 +1816,6 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 "catalog_row.complete_policy_set_evidence IS NULL",
                 "octet_length(catalog_row.complete_policy_set_evidence) = 0");
         if (stagedOriginalHistory) {
-          assertThat(otherGuardProjection(predecessor)).isEqualTo(otherGuards);
           assertThat(attemptProjection(predecessor, request)).isEqualTo(originalFullAttempt);
         }
         assertThat(
@@ -1986,10 +2002,11 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   private static String allAttemptProjection(Fixture fixture) {
+    assertAddedFixtureColumnsRemainNull(fixture);
     return fixture
         .dsl
         .fetchSingle(
-            "SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(attempt)) "
+            "SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(attempt) - ARRAY['authority_kind', 'fixture_request_bytes', 'fixture_policy_request_bytes', 'fixture_policy_seal_evidence_digest']) "
                 + "ORDER BY initial_admission_request_id)::TEXT FROM game_session_canonical_initial_admission_attempt attempt")
         .get(0, String.class);
   }
@@ -2347,6 +2364,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
   /** Entire original source, namespace, catalog, runtime, launch and original-pin heap evidence. */
   private static String predecessorSourceProjection(Fixture fixture) {
+    assertAddedFixtureColumnsRemainNull(fixture);
     String privateCatalogColumns =
         CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
             .map(column -> "'" + column + "'")
@@ -2365,7 +2383,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + privateCatalogColumns
                 + "]) ORDER BY realm_id) FROM game_session_canonical_realm_catalog source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY id) FROM game_instances source),"
-                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest']) ORDER BY game_instance_id) FROM game_session_canonical_instance_launch source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest', 'fixture_canonical_version_id']) ORDER BY game_instance_id) FROM game_session_canonical_instance_launch source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_operator_attempt source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_template_association_pin source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_launch_descriptor_pin source))::TEXT AS projection")
@@ -2608,13 +2626,15 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   /** Every pre1006 attempt column, including byte values, and the original heap xmin. */
   private static String predecessorAttemptProjection(
       Fixture fixture, CanonicalInitialAdmissionRequest request) {
+    assertAddedFixtureColumnsRemainNull(fixture);
     return fixture
         .dsl
         .fetchSingle(
             "SELECT jsonb_build_array(xmin::TEXT, to_jsonb(attempt) - ARRAY["
                 + "'account_protection_evidence_version', 'account_protection_id', "
                 + "'account_protection_fence', 'original_owner_attempt_id', 'original_owner_mutation_id', "
-                + "'original_owner_fence', 'account_protection_evidence_bytes'])::TEXT AS projection "
+                + "'original_owner_fence', 'account_protection_evidence_bytes', 'authority_kind', 'fixture_request_bytes', "
+                + "'fixture_policy_request_bytes', 'fixture_policy_seal_evidence_digest'])::TEXT AS projection "
                 + "FROM game_session_canonical_initial_admission_attempt attempt "
                 + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
             NAMESPACE,
@@ -2652,10 +2672,12 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
   private static String attemptProjection(
       Fixture fixture, CanonicalInitialAdmissionRequest request) {
+    assertAddedFixtureColumnsRemainNull(fixture);
     return fixture
         .dsl
         .fetchSingle(
-            "SELECT xmin::text || '/' || to_jsonb(attempt)::text AS projection "
+            "SELECT xmin::text || '/' || (to_jsonb(attempt) - ARRAY['authority_kind', 'fixture_request_bytes', "
+                + "'fixture_policy_request_bytes', 'fixture_policy_seal_evidence_digest'])::text AS projection "
                 + "FROM game_session_canonical_initial_admission_attempt attempt WHERE target_namespace = ? "
                 + "AND initial_admission_request_id = ?",
             request.targetNamespace(),
@@ -2935,8 +2957,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     return fixture
         .dsl
         .fetchSingle(
-            "SELECT jsonb_agg(to_jsonb(history) ORDER BY installed_rank)::TEXT FROM flyway_schema_history history "
-                + "WHERE version::NUMERIC <= ?::NUMERIC",
+            "SELECT jsonb_agg(jsonb_build_array(history.xmin::TEXT, to_jsonb(history)) ORDER BY installed_rank)::TEXT "
+                + "FROM flyway_schema_history history WHERE installed_rank <= "
+                + "(SELECT installed_rank FROM flyway_schema_history WHERE version = ?)",
             frontier)
         .get(0, String.class);
   }
@@ -3047,6 +3070,331 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
               assertThat(trigger.get("tgenabled", String.class)).isEqualTo("O");
               assertThat(trigger.get("tgisinternal", Boolean.class)).isTrue();
             });
+  }
+
+  /** Only explicitly named V1067 columns are omitted from historical JSON, and all must be NULL. */
+  private static void assertAddedFixtureColumnsRemainNull(Fixture fixture) {
+    for (String table :
+        List.of(
+            "game_session_canonical_initial_admission_attempt",
+            "game_session_canonical_initial_admission_intent",
+            "game_session_canonical_instance_launch")) {
+      List<String> fields =
+          table.endsWith("launch")
+              ? List.of("fixture_canonical_version_id")
+              : List.of(
+                  "authority_kind",
+                  "fixture_request_bytes",
+                  "fixture_policy_request_bytes",
+                  "fixture_policy_seal_evidence_digest");
+      String names =
+          fields.stream()
+              .map(field -> "'" + field + "'")
+              .collect(java.util.stream.Collectors.joining(", "));
+      int present =
+          fixture
+              .dsl
+              .fetchSingle(
+                  "SELECT count(*) FROM information_schema.columns "
+                      + "WHERE table_schema = current_schema() AND table_name = ? AND column_name IN ("
+                      + names
+                      + ")",
+                  table)
+              .get(0, Integer.class);
+      assertThat(present).as("V1067 field group on %s", table).isIn(0, fields.size());
+      if (present == 0) continue;
+      String nonNull =
+          fields.stream()
+              .map(field -> field + " IS NOT NULL")
+              .collect(java.util.stream.Collectors.joining(" OR "));
+      assertThat(
+              fixture
+                  .dsl
+                  .fetchSingle("SELECT count(*) FROM " + table + " WHERE " + nonNull)
+                  .get(0, Long.class))
+          .as("Historical %s acquires no fixture authority", table)
+          .isZero();
+    }
+  }
+
+  private record FixturePurposeGuardSnapshot(
+      List<java.util.Map<String, Object>> triggers,
+      List<java.util.Map<String, Object>> functions,
+      List<java.util.Map<String, Object>> extendedFunctions) {}
+
+  private static FixturePurposeGuardSnapshot fixturePurposeGuards(Fixture fixture) {
+    var triggers =
+        fixture
+            .dsl
+            .fetch(
+                "SELECT t.oid::TEXT AS oid, t.tgrelid::TEXT AS relation_oid, c.relname::TEXT AS relation_name, "
+                    + "t.tgname::TEXT AS trigger_name, t.tgfoid::TEXT AS function_oid, t.tgtype::INTEGER AS trigger_type, "
+                    + "t.tgenabled::TEXT AS enabled, t.tgisinternal AS internal, t.tgconstraint::TEXT AS constraint_oid, "
+                    + "t.tgdeferrable AS deferrable, t.tginitdeferred AS initially_deferred, t.tgnargs::INTEGER AS argument_count, "
+                    + "t.tgattr::TEXT AS attribute_numbers, encode(t.tgargs, 'hex') AS arguments, t.tgqual::TEXT AS predicate_tree, "
+                    + "pg_get_triggerdef(t.oid) AS definition FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                    + "WHERE t.tgrelid IN ('game_session_canonical_instance_launch'::regclass, "
+                    + "'game_session_canonical_initial_admission_attempt'::regclass, 'game_session_canonical_initial_admission_intent'::regclass) "
+                    + "ORDER BY t.tgrelid, t.tgname")
+            .intoMaps();
+    // These two existing functions deliberately gain fixture-only branches in V1067. Their
+    // trigger identities remain in the complete metadata comparison above, not ignored globally.
+    var functions =
+        fixture
+            .dsl
+            .fetch(
+                "SELECT DISTINCT p.oid::TEXT AS function_oid, p.proname::TEXT AS function_name, "
+                    + "pg_get_functiondef(p.oid) AS definition FROM pg_proc p JOIN pg_trigger t ON t.tgfoid = p.oid "
+                    + "WHERE t.tgrelid IN ('game_session_canonical_instance_launch'::regclass, "
+                    + "'game_session_canonical_initial_admission_attempt'::regclass, 'game_session_canonical_initial_admission_intent'::regclass) "
+                    + "AND NOT t.tgisinternal AND p.oid NOT IN ('require_game_session_canonical_initial_admission_atomic_evidence()'::regprocedure, "
+                    + "'reject_game_session_canonical_initial_admission_protection_truncate()'::regprocedure) ORDER BY function_oid")
+            .intoMaps();
+    var extendedFunctions =
+        fixture
+            .dsl
+            .fetch(
+                "SELECT p.oid::TEXT AS function_oid, p.proname::TEXT AS function_name, "
+                    + "pg_get_functiondef(p.oid) AS definition FROM pg_proc p WHERE p.oid IN ("
+                    + "'require_game_session_canonical_initial_admission_atomic_evidence()'::regprocedure, "
+                    + "'reject_game_session_canonical_initial_admission_protection_truncate()'::regprocedure, "
+                    + "'require_game_session_canonical_initial_admission_catalog()'::regprocedure, "
+                    + "'reserve_game_session_tenant_scope()'::regprocedure) ORDER BY function_name")
+            .intoMaps();
+    return new FixturePurposeGuardSnapshot(triggers, functions, extendedFunctions);
+  }
+
+  private static void assertFixturePurposeGuardTransition(
+      Fixture fixture, FixturePurposeGuardSnapshot before) {
+    var after = fixturePurposeGuards(fixture);
+    assertOnlyExactFixtureGuardExtensions(before, after);
+    assertThat(after.triggers()).hasSize(before.triggers().size() + 5);
+    for (var expected : before.functions()) {
+      var actual =
+          fixture
+              .dsl
+              .fetchSingle(
+                  "SELECT p.oid::TEXT AS function_oid, p.proname::TEXT AS function_name, "
+                      + "pg_get_functiondef(p.oid) AS definition FROM pg_proc p WHERE p.oid = CAST(? AS OID)",
+                  expected.get("function_oid"))
+              .intoMap();
+      assertThat(actual)
+          .as("Unchanged original function %s", expected.get("function_name"))
+          .isEqualTo(expected);
+    }
+    var humanFunctions =
+        before.functions().stream()
+            .filter(
+                function ->
+                    postgresIdentifier(
+                            "require_game_session_canonical_initial_admission_account_terminal_evidence")
+                        .equals(function.get("function_name")))
+            .toList();
+    assertThat(humanFunctions).hasSize(1);
+    String humanFunctionOid = humanFunctions.getFirst().get("function_oid").toString();
+    assertThat(humanFunctions.getFirst().get("definition").toString())
+        .contains("IF TG_OP = 'DELETE' THEN");
+
+    List<String> replaced =
+        List.of(
+            "game_session_canonical_initial_admission_v44_terminal_evidence",
+            "game_session_canonical_initial_admission_intent_v44_immutable");
+    for (var old : before.triggers()) {
+      var candidates =
+          after.triggers().stream()
+              .filter(
+                  current ->
+                      old.get("relation_oid").equals(current.get("relation_oid"))
+                          && old.get("trigger_name").equals(current.get("trigger_name")))
+              .toList();
+      assertThat(candidates).hasSize(1);
+      var current = candidates.getFirst();
+      if (!replaced.contains(old.get("trigger_name"))) {
+        assertThat(current)
+            .as("Unrelated original guard %s", old.get("trigger_name"))
+            .isEqualTo(old);
+        continue;
+      }
+      assertThat(old.get("predicate_tree")).isNull();
+      assertThat(current.get("oid")).isNotEqualTo(old.get("oid"));
+      assertThat(current.get("function_oid"))
+          .isEqualTo(humanFunctionOid)
+          .isEqualTo(old.get("function_oid"));
+      assertThat(current.get("trigger_type")).isEqualTo(23); // BEFORE INSERT/UPDATE, row-level.
+      assertThat(old.get("trigger_type"))
+          .isEqualTo(old.get("trigger_name").toString().contains("intent") ? 31 : 23);
+      assertThat(current.get("predicate_tree")).isNotNull();
+      assertThat(current.get("definition").toString())
+          .containsPattern(
+              "WHEN\\s*\\(\\(*new\\.authority_kind\\s+IS\\s+NULL\\)*\\)\\s+EXECUTE FUNCTION");
+      var oldIdentity = new java.util.LinkedHashMap<>(old);
+      var currentIdentity = new java.util.LinkedHashMap<>(current);
+      for (String field : List.of("oid", "trigger_type", "predicate_tree", "definition")) {
+        oldIdentity.remove(field);
+        currentIdentity.remove(field);
+      }
+      assertThat(currentIdentity).isEqualTo(oldIdentity);
+    }
+    assertFixturePurposeTrigger(
+        fixture,
+        after,
+        "game_session_canonical_initial_admission_intent",
+        "gs_initial_admission_intent_delete",
+        "require_game_session_canonical_initial_admission_account_terminal_evidence",
+        11,
+        false);
+    assertFixturePurposeTrigger(
+        fixture,
+        after,
+        "game_session_canonical_initial_admission_intent",
+        "gs_fixture_initial_intent_guard",
+        "require_gs_fixture_initial_admission",
+        23,
+        false);
+    assertFixturePurposeTrigger(
+        fixture,
+        after,
+        "game_session_canonical_initial_admission_attempt",
+        "gs_fixture_initial_attempt_guard",
+        "require_gs_fixture_initial_admission",
+        23,
+        false);
+    assertFixturePurposeTrigger(
+        fixture,
+        after,
+        "game_session_canonical_initial_admission_intent",
+        "gs_fixture_intent_atomic",
+        "require_gs_fixture_initial_atomic_intent",
+        21,
+        true);
+    assertFixturePurposeTrigger(
+        fixture,
+        after,
+        "game_session_canonical_initial_admission_attempt",
+        "gs_fixture_attempt_atomic",
+        "require_gs_fixture_initial_atomic_intent",
+        21,
+        true);
+    String fixtureGuard =
+        fixture
+            .dsl
+            .fetchSingle(
+                "SELECT pg_get_functiondef('require_gs_fixture_initial_admission()'::regprocedure)")
+            .get(0, String.class);
+    assertThat(fixtureGuard)
+        .contains(
+            "NEW.authority_kind IS DISTINCT FROM OLD.authority_kind",
+            "IF NEW.authority_kind IS NULL THEN RETURN NEW; END IF;",
+            "NEW.account_protection_evidence_bytes IS NOT NULL");
+  }
+
+  /**
+   * These exact historical function names are ASCII PostgreSQL identifiers, limited to 63 bytes.
+   */
+  private static String postgresIdentifier(String declaredName) {
+    return declaredName.substring(0, Math.min(63, declaredName.length()));
+  }
+
+  /**
+   * Exact V1067 deltas only: deleting these literal fixture arms must recover each old definition.
+   */
+  private static void assertOnlyExactFixtureGuardExtensions(
+      FixturePurposeGuardSnapshot before, FixturePurposeGuardSnapshot after) {
+    assertThat(before.extendedFunctions()).hasSize(4);
+    assertThat(after.extendedFunctions()).hasSize(4);
+    for (var original : before.extendedFunctions()) {
+      String name = original.get("function_name").toString();
+      var matches =
+          after.extendedFunctions().stream()
+              .filter(function -> name.equals(function.get("function_name")))
+              .toList();
+      assertThat(matches).hasSize(1);
+      var current = matches.getFirst();
+      assertThat(current.get("function_oid")).isEqualTo(original.get("function_oid"));
+      String definition = current.get("definition").toString();
+      if (postgresIdentifier("reject_game_session_canonical_initial_admission_protection_truncate")
+          .equals(name)) {
+        String fixtureCondition =
+            "WHERE hold_identity_bytes IS NOT NULL OR authority_kind = 'RUN_OWNED_FIXTURE')";
+        assertThat(definition).containsOnlyOnce(fixtureCondition);
+        definition = definition.replace(fixtureCondition, "WHERE hold_identity_bytes IS NOT NULL)");
+      } else {
+        String owner =
+            "require_game_session_canonical_initial_admission_catalog".equals(name)
+                ? "NEW"
+                : "attempt";
+        String originalPredicate =
+            java.util.regex.Pattern.quote(
+                    "launch.complete_launch_binding_evidence -> 'releaseAttestation' ->> 'canonicalVersionId'")
+                + "\\s*= "
+                + java.util.regex.Pattern.quote(owner + ".canonical_version_id::text");
+        String fixtureArm =
+            " OR gs_fixture_admission_launch_matches("
+                + owner
+                + ".target_namespace, "
+                + owner
+                + ".initial_admission_request_id, "
+                + owner
+                + ".canonical_version_id, "
+                + owner
+                + ".canonical_game_instance_id))";
+        var pattern =
+            java.util.regex.Pattern.compile(
+                "\\((" + originalPredicate + ")" + java.util.regex.Pattern.quote(fixtureArm));
+        assertThat(pattern.matcher(definition).results().count())
+            .as("Only exact fixture version arm in %s", name)
+            .isEqualTo(1);
+        definition = pattern.matcher(definition).replaceAll("$1");
+        if (postgresIdentifier("require_game_session_canonical_initial_admission_atomic_evidence")
+            .equals(name)) {
+          String fixtureAbort =
+              "                    OR (attempt.authority_kind = 'RUN_OWNED_FIXTURE'\n"
+                  + "                        AND attempt.expected_prior_pointer_version IS NULL\n"
+                  + "                        AND attempt.prior_pointer_request_id IS NULL\n"
+                  + "                        AND attempt.prior_pointer_request_digest IS NULL\n"
+                  + "                        AND attempt.prior_pointer_audit_event_id IS NULL)\n";
+          assertThat(definition).containsOnlyOnce(fixtureAbort);
+          definition = definition.replace(fixtureAbort, "");
+        }
+      }
+      assertThat(definition)
+          .as("Unchanged Human body after exact fixture delta in %s", name)
+          .isEqualTo(original.get("definition"));
+    }
+  }
+
+  private static void assertFixturePurposeTrigger(
+      Fixture fixture,
+      FixturePurposeGuardSnapshot snapshot,
+      String table,
+      String name,
+      String function,
+      int type,
+      boolean deferred) {
+    var matches =
+        snapshot.triggers().stream()
+            .filter(
+                trigger ->
+                    table.equals(trigger.get("relation_name"))
+                        && name.equals(trigger.get("trigger_name")))
+            .toList();
+    assertThat(matches).hasSize(1);
+    var trigger = matches.getFirst();
+    assertThat(trigger.get("function_oid"))
+        .isEqualTo(
+            fixture
+                .dsl
+                .fetchSingle("SELECT CAST(CAST(? AS REGPROCEDURE) AS OID)::TEXT", function + "()")
+                .get(0, String.class));
+    assertThat(trigger.get("trigger_type")).isEqualTo(type);
+    assertThat(trigger.get("enabled")).isEqualTo("O");
+    assertThat(trigger.get("internal")).isEqualTo(false);
+    assertThat(trigger.get("deferrable")).isEqualTo(deferred);
+    assertThat(trigger.get("initially_deferred")).isEqualTo(deferred);
+    assertThat(trigger.get("argument_count")).isEqualTo(0);
+    assertThat(trigger.get("arguments")).isEqualTo("");
+    assertThat(trigger.get("attribute_numbers")).isEqualTo("");
+    assertThat(trigger.get("predicate_tree")).isNull();
   }
 
   private static String otherGuardProjection(Fixture fixture) {

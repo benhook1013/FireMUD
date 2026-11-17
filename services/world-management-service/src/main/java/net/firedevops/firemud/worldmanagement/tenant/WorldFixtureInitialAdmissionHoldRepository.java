@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Ho
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState.HoldStatus;
 import net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest;
+import net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionTerminalProof;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -52,6 +53,10 @@ public final class WorldFixtureInitialAdmissionHoldRepository {
   public HoldIdentity acquire(WorldFixtureInitialAdmissionHoldRequest fixtureRequest) {
     Objects.requireNonNull(fixtureRequest, "fixtureRequest");
     Request request = fixtureRequest.selector();
+    if (request.initialAdmissionOrigin()
+        != WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER) {
+      throw new IllegalArgumentException("Fixture first OPEN supports NO_PRIOR_POINTER only");
+    }
     requireNoAmbientTransaction("Canonical World hold acquisition");
     return writeTransaction.execute(
         status -> {
@@ -160,7 +165,8 @@ public final class WorldFixtureInitialAdmissionHoldRepository {
           requireReadOnlyRepeatableReadOwnerTransaction();
           Record row =
               dsl.fetchOne(
-                  "SELECT * FROM initial_admission_bind_hold "
+                  "SELECT h.*, world_fixture_hold_binding_valid(h) AS retained_fixture_valid "
+                      + "FROM initial_admission_bind_hold h "
                       + "WHERE canonical_target_namespace=? AND canonical_tenant_id=? "
                       + "AND canonical_world_slug=? AND canonical_game_instance_id=? "
                       + "AND initial_admission_request_id=? AND canonical_request_bytes=?",
@@ -172,6 +178,7 @@ public final class WorldFixtureInitialAdmissionHoldRepository {
                   request.canonicalRequestBytes());
           if (row == null) return Optional.empty();
           requireFixtureBinding(row, fixtureRequest);
+          requireRetainedActivationBinding(row);
           return Optional.of(requireStoredIdentity(row, request));
         });
   }
@@ -204,6 +211,97 @@ public final class WorldFixtureInitialAdmissionHoldRepository {
                               "Fixture activation receipt unavailable"));
           requireAssociationTarget(identity.request(), association);
           return Optional.of(parseStatus(required(row, "status", String.class)));
+        });
+  }
+
+  /**
+   * Complete retained fixture identity and actual lifecycle in one physical owner snapshot.
+   * Terminal historical reads need not reinterpret the original STARTING allocation as current.
+   */
+  public Optional<WorldFixtureInitialAdmissionHoldState> readStateEvidence(
+      WorldFixtureInitialAdmissionHoldRequest fixture, HoldIdentity identity) {
+    Objects.requireNonNull(fixture, "fixture");
+    Objects.requireNonNull(identity, "identity");
+    if (!fixture.selector().equals(identity.request())) {
+      throw new InvalidHoldEvidenceException("Fixture selector differs");
+    }
+    requireNoAmbientTransaction("Fixture hold state evidence read");
+    return readTransaction.execute(
+        status -> {
+          requireReadOnlyRepeatableReadOwnerTransaction();
+          Record held =
+              dsl.fetchOne(
+                  "SELECT h.*, world_fixture_hold_binding_valid(h) AS retained_fixture_valid "
+                      + "FROM initial_admission_bind_hold h WHERE hold_id=? AND hold_fence=?",
+                  identity.holdId(),
+                  identity.holdFence());
+          if (held == null) return Optional.empty();
+          requireStoredIdentity(held, fixture.selector(), identity);
+          requireFixtureBinding(held, fixture);
+          requireRetainedActivationBinding(held);
+          Record lifecycle =
+              dsl.fetchOne(
+                  "SELECT * FROM world_instance WHERE tenant_id=? AND game_instance_id=?",
+                  required(held, "tenant_id", Long.class),
+                  required(held, "game_instance_id", Long.class));
+          Request request = fixture.selector();
+          if (lifecycle == null
+              || !required(lifecycle, "version_id", Long.class)
+                  .equals(required(held, "version_id", Long.class))
+              || !request
+                  .targetNamespace()
+                  .equals(required(lifecycle, "canonical_target_namespace", String.class))
+              || !request
+                  .canonicalTenantId()
+                  .equals(required(lifecycle, "canonical_tenant_id", UUID.class))
+              || !request
+                  .worldSlug()
+                  .equals(required(lifecycle, "canonical_world_slug", String.class))
+              || !request
+                  .canonicalGameInstanceId()
+                  .equals(required(lifecycle, "canonical_game_instance_id", UUID.class))
+              || !request.realmId().equals(required(lifecycle, "canonical_realm_id", UUID.class))
+              || !request
+                  .playableStateNamespaceId()
+                  .equals(required(lifecycle, "playable_state_namespace_id", UUID.class))
+              || !request
+                  .playableStateScope()
+                  .equals(required(lifecycle, "playable_state_scope", String.class))
+              || request.expectedCatalogRevision()
+                  != required(lifecycle, "catalog_revision", Long.class)
+              || lifecycle.get("canonical_launch_binding_operation_id", UUID.class) != null) {
+            throw new InvalidHoldEvidenceException("Fixture lifecycle target differs");
+          }
+          return Optional.of(
+              new WorldFixtureInitialAdmissionHoldState(
+                  fixture,
+                  identity,
+                  parseStatus(required(held, "status", String.class)),
+                  required(lifecycle, "status", String.class),
+                  required(lifecycle, "lifecycle_epoch", Long.class),
+                  required(lifecycle, "row_version", Long.class)));
+        });
+  }
+
+  /**
+   * Bounded retained recovery selectors only; each result is independently authenticated at use.
+   */
+  public java.util.List<WorldFixtureInitialAdmissionHoldRequest> pendingFixtureRequests(int limit) {
+    if (limit < 1 || limit > 256) throw new IllegalArgumentException("Fixture scan limit invalid");
+    requireNoAmbientTransaction("Fixture hold recovery scan");
+    return readTransaction.execute(
+        status -> {
+          requireReadOnlyRepeatableReadOwnerTransaction();
+          return dsl.fetch(
+                  "SELECT fixture_hold_request_bytes FROM initial_admission_bind_hold "
+                      + "WHERE fixture_hold_request_bytes IS NOT NULL "
+                      + "AND status IN ('PENDING','RECONCILIATION_REQUIRED') "
+                      + "ORDER BY updated_at,hold_id LIMIT ?",
+                  limit)
+              .map(
+                  row ->
+                      WorldFixtureInitialAdmissionHoldRequest.fromStored(
+                          required(row, "fixture_hold_request_bytes", byte[].class)));
         });
   }
 
@@ -274,6 +372,13 @@ public final class WorldFixtureInitialAdmissionHoldRepository {
               proofBytes,
               proofBytesDigest);
         });
+  }
+
+  private static void requireRetainedActivationBinding(Record row) {
+    if (!Boolean.TRUE.equals(row.get("retained_fixture_valid", Boolean.class))) {
+      throw new InvalidHoldEvidenceException(
+          "Retained fixture hold lost its exact association or committed activation receipt");
+    }
   }
 
   private static void requireFixtureBinding(

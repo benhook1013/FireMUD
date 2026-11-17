@@ -94,7 +94,8 @@ public final class WorldCanonicalInstanceFixtureActivationOwner {
     return read(request, null, null);
   }
 
-  private Optional<WorldCanonicalInstanceFixtureActivationResult> read(
+  /** Revalidates the complete fresh authenticated source against the retained ACTIVE receipt. */
+  Optional<WorldCanonicalInstanceFixtureActivationResult> read(
       WorldCanonicalInstanceFixtureActivationRequest request,
       RunOwnedCanonicalWorldLaunchEvidence evidence,
       PreparedWorldInstanceRequest originalRequest) {

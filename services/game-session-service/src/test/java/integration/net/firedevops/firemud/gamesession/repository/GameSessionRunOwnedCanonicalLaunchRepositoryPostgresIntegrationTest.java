@@ -187,7 +187,7 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
             "SELECT game_session_tenant_id, game_instance_id, game_instance_uuid, "
                 + "catalog_creation_request_id, catalog_revision, fixture_policy_request_bytes, "
                 + "fixture_policy_seal_operation_id, fixture_policy_seal_request_digest, "
-                + "fixture_policy_seal_evidence_digest FROM game_session_canonical_instance_launch "
+                + "fixture_policy_seal_evidence_digest, fixture_canonical_version_id FROM game_session_canonical_instance_launch "
                 + "WHERE target_namespace = ? AND control_plane_request_id = ?",
             NAMESPACE,
             fixtureOperationId.toString());
@@ -207,6 +207,8 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
         .isEqualTo(evidence.fixturePolicySeal().requestDigest());
     assertThat(launchRow.get("fixture_policy_seal_evidence_digest", String.class))
         .isEqualTo(evidence.fixturePolicySeal().evidenceDigest());
+    assertThat(launchRow.get("fixture_canonical_version_id", UUID.class))
+        .isEqualTo(UUID.fromString(evidence.publishedReleaseBundle().getCanonicalVersionId()));
 
     Record runtime =
         requiredRecord(
@@ -783,7 +785,15 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
     assertThat(currentColumns.get(catalog))
         .containsExactlyInAnyOrderElementsOf(expectedCatalogColumns);
     String launch = "game_session_canonical_instance_launch";
-    assertThat(currentColumns.get(launch)).containsExactlyElementsOf(originalColumns.get(launch));
+    var expectedLaunchColumns = new java.util.ArrayList<>(originalColumns.get(launch));
+    expectedLaunchColumns.add("fixture_canonical_version_id");
+    assertThat(currentColumns.get(launch)).containsExactlyElementsOf(expectedLaunchColumns);
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle("SELECT fixture_canonical_version_id FROM " + launch)
+                .get("fixture_canonical_version_id"))
+        .isNull();
     fixture
         .dsl
         .fetch("SELECT " + String.join(", ", privateColumns) + " FROM " + catalog)
@@ -1315,6 +1325,499 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
   private static UUID uuid(int value) {
     return UUID.fromString(String.format("%08d-1111-4111-8111-111111111111", value));
   }
+
+  @Test
+  void canonicalFixtureFirstOpenCommitsRunningPointerAuditAndOriginalProvenanceThenReplays() {
+    var admission = admission();
+    var remoteCalls = new java.util.concurrent.atomic.AtomicInteger();
+    var owner =
+        new net.firedevops.firemud.gamesession.data.RunOwnedCanonicalInitialAdmissionOwner(
+            admission.fixedSource,
+            admission.repository,
+            new net.firedevops.firemud.gamesession.data.RunOwnedCanonicalInitialAdmissionOwner
+                .WorldTransport() {
+              @Override
+              public net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                      .HoldIdentity
+                  acquire(
+                      net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest
+                          request) {
+                assertThat(
+                        admission.fixture.dsl.fetchCount(
+                            DSL.table("game_session_canonical_initial_admission_intent")))
+                    .isEqualTo(1);
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isFalse();
+                remoteCalls.incrementAndGet();
+                return admission.hold;
+              }
+
+              @Override
+              public void verifyActive(
+                  net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest
+                      request,
+                  net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                          .HoldIdentity
+                      hold) {
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isFalse();
+                assertThat(hold).isEqualTo(admission.hold);
+                throw new AssertionError("Repository owns fresh ACTIVE verification");
+              }
+            });
+    var committed = owner.open(admission.request);
+    assertThat(committed.outcome())
+        .isEqualTo(
+            net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionTerminalProof.Outcome
+                .COMMITTED);
+    assertThat(committed.pointerVersion()).isEqualTo(1L);
+    assertThat(committed.auditEventId()).isPositive();
+    assertThat(owner.open(admission.request)).isEqualTo(committed);
+    assertThat(remoteCalls).hasValue(1);
+    assertThat(admission.worldVerifications).hasValue(1);
+    assertThat(admission.repository.readFixtureTerminal(admission.request)).contains(committed);
+    assertThat(
+            admission
+                .fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT a.terminal_at = (p.updated_at AT TIME ZONE 'UTC') "
+                        + "AND a.terminal_at = (e.occurred_at AT TIME ZONE 'UTC') AS exact_utc "
+                        + "FROM game_session_canonical_initial_admission_attempt a "
+                        + "JOIN gameplay_admission_pointer p ON p.id=a.pointer_id "
+                        + "JOIN gameplay_admission_pointer_event e ON e.id=a.audit_event_id")
+                .get("exact_utc", Boolean.class))
+        .isTrue();
+    var runtime =
+        requiredRecord(
+            admission.fixture.dsl,
+            "SELECT status, row_version FROM game_instances WHERE id = ?",
+            admission.launch.gameInstanceId());
+    assertThat(runtime.get("status", String.class)).isEqualTo("RUNNING");
+    assertThat(runtime.get("row_version", Long.class)).isEqualTo(1L);
+    var intent =
+        requiredRecord(
+            admission.fixture.dsl, "SELECT * FROM game_session_canonical_initial_admission_intent");
+    assertThat(intent.get("fixture_request_bytes", byte[].class))
+        .containsExactly(admission.request.canonicalBytes());
+    assertThat(intent.get("fixture_policy_request_bytes", byte[].class))
+        .containsExactly(admission.evidence.fixturePolicyRequestBytes());
+    assertThat(intent.get("release_attestation_digest")).isNull();
+    assertThat(intent.get("original_start_session_tuple")).isNull();
+    var attempt =
+        requiredRecord(
+            admission.fixture.dsl,
+            "SELECT * FROM game_session_canonical_initial_admission_attempt");
+    for (String field :
+        java.util.List.of(
+            "account_protection_evidence_version",
+            "account_protection_id",
+            "account_protection_fence",
+            "original_owner_attempt_id",
+            "original_owner_mutation_id",
+            "original_owner_fence",
+            "account_protection_evidence_bytes")) {
+      assertThat(attempt.get(field)).isNull();
+    }
+    assertThatThrownBy(
+            () -> admission.repository.abortFixture(admission.request, admission.hold, "too late"))
+        .isInstanceOf(IllegalStateException.class);
+    // Later mutable lifecycle cannot turn historical original allocation into fresh admission.
+    admission.fixture.dsl.execute(
+        "UPDATE game_instances SET status = 'STOPPED', row_version = 2 WHERE id = ?",
+        admission.launch.gameInstanceId());
+    assertThat(owner.open(admission.request)).isEqualTo(committed);
+    assertThat(remoteCalls).hasValue(1);
+    assertThat(admission.worldVerifications).hasValue(1);
+  }
+
+  @Test
+  void fixtureHoldLostResponseRetainsPreHoldIntentAndExactRetryCommitsOnce() {
+    var admission = admission();
+    var first = new java.util.concurrent.atomic.AtomicBoolean(true);
+    var owner =
+        new net.firedevops.firemud.gamesession.data.RunOwnedCanonicalInitialAdmissionOwner(
+            admission.fixedSource,
+            admission.repository,
+            new net.firedevops.firemud.gamesession.data.RunOwnedCanonicalInitialAdmissionOwner
+                .WorldTransport() {
+              @Override
+              public net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                      .HoldIdentity
+                  acquire(
+                      net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest
+                          request) {
+                if (first.getAndSet(false))
+                  throw new IllegalStateException("controlled lost World hold response");
+                return admission.hold;
+              }
+
+              @Override
+              public void verifyActive(
+                  net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest
+                      request,
+                  net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                          .HoldIdentity
+                      hold) {}
+            });
+    assertThatThrownBy(() -> owner.open(admission.request))
+        .hasMessageContaining("lost World hold response");
+    assertThat(
+            requiredRecord(
+                    admission.fixture.dsl,
+                    "SELECT state FROM game_session_canonical_initial_admission_intent")
+                .get("state"))
+        .isEqualTo("PENDING_HOLD");
+    assertThat(
+            admission.fixture.dsl.fetchCount(
+                DSL.table("game_session_canonical_initial_admission_attempt")))
+        .isZero();
+    var proof = owner.open(admission.request);
+    assertThat(proof.outcome())
+        .isEqualTo(
+            net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionTerminalProof.Outcome
+                .COMMITTED);
+    assertThat(admission.fixture.dsl.fetchCount(DSL.table("gameplay_admission_pointer")))
+        .isEqualTo(1);
+    assertThat(admission.fixture.dsl.fetchCount(DSL.table("gameplay_admission_pointer_event")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void fixtureFirstOpenRollsBackRunningAndPointerWhenAuditFailsAndCanAbortIrreversibly() {
+    var admission = admission();
+    admission.repository.reserveFixtureIntent(admission.request);
+    admission.repository.attachFixtureHold(admission.request, admission.hold);
+    admission.fixture.dsl.execute(
+        "CREATE FUNCTION fail_fixture_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+            + "RAISE EXCEPTION 'controlled audit rollback'; END; $$");
+    admission.fixture.dsl.execute(
+        "CREATE TRIGGER fail_fixture_audit BEFORE INSERT ON gameplay_admission_pointer_event "
+            + "FOR EACH ROW EXECUTE FUNCTION fail_fixture_audit()");
+    assertThatThrownBy(() -> admission.repository.commitFixture(admission.request, admission.hold))
+        .hasStackTraceContaining("controlled audit rollback");
+    assertThat(admission.fixture.dsl.fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(admission.fixture.dsl.fetchCount(DSL.table("gameplay_admission_pointer_event")))
+        .isZero();
+    assertThat(
+            requiredRecord(admission.fixture.dsl, "SELECT status FROM game_instances")
+                .get("status"))
+        .isEqualTo("STARTING");
+    assertThat(admission.repository.readFixtureTerminal(admission.request).orElseThrow().outcome())
+        .isEqualTo(
+            net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionTerminalProof.Outcome
+                .PENDING);
+    admission.repository.abortFixture(admission.request, admission.hold, "explicit exact abort");
+    var aborted = admission.repository.readFixtureTerminal(admission.request).orElseThrow();
+    assertThat(aborted.positiveDurableAbort()).isTrue();
+    admission.repository.abortFixture(admission.request, admission.hold, "explicit exact abort");
+    assertThat(admission.repository.readFixtureTerminal(admission.request)).contains(aborted);
+    assertThatThrownBy(() -> admission.repository.commitFixture(admission.request, admission.hold))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                admission.fixture.dsl.execute(
+                    "UPDATE game_session_canonical_initial_admission_attempt SET status = 'PENDING'"))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+  }
+
+  @Test
+  void historicalFixtureAbortRetryAfterLifecycleChangeUsesOnlyImmutableProvenance() {
+    var admission = admission();
+    var launchOwner = org.mockito.Mockito.spy(admission.fixture.launchRepository);
+    var world =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.data.RunOwnedCanonicalInitialAdmissionOwner
+                .WorldTransport.class);
+    var repository =
+        new net.firedevops.firemud.gamesession.repository
+            .CanonicalFixtureInitialAdmissionRepository(
+            admission.fixture.dsl,
+            admission.fixedSource,
+            launchOwner,
+            admission.fixture.transactions.getTransactionManager(),
+            world);
+    repository.reserveFixtureIntent(admission.request);
+    repository.attachFixtureHold(admission.request, admission.hold);
+    repository.abortFixture(admission.request, admission.hold, "original explicit abort");
+    var original = repository.readFixtureTerminal(admission.request).orElseThrow();
+    admission.fixture.dsl.execute(
+        "UPDATE game_instances SET status = 'STOPPED', row_version = 1 WHERE id = ?",
+        admission.launch.gameInstanceId());
+    org.mockito.Mockito.clearInvocations(launchOwner);
+    repository.abortFixture(admission.request, admission.hold, "original explicit abort");
+    var owner =
+        new net.firedevops.firemud.gamesession.data.RunOwnedCanonicalInitialAdmissionOwner(
+            admission.fixedSource, repository, world);
+    assertThat(owner.abort(admission.request, "original explicit abort")).isEqualTo(original);
+    assertThat(repository.readFixtureTerminal(admission.request)).contains(original);
+    assertThatThrownBy(
+            () ->
+                repository.abortFixture(admission.request, admission.hold, "changed abort reason"))
+        .hasMessageContaining("reason is immutable");
+    var changedHold =
+        new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity(
+            admission.request.selector(), UUID.randomUUID(), UUID.randomUUID());
+    assertThatThrownBy(
+            () ->
+                repository.abortFixture(admission.request, changedHold, "original explicit abort"))
+        .hasMessageContaining("hold differs");
+    org.mockito.Mockito.verify(launchOwner, org.mockito.Mockito.never())
+        .lockVerifiedFixtureLaunchInOwnerTransaction(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verifyNoInteractions(world);
+    assertThatThrownBy(
+            () ->
+                admission.fixture.dsl.execute(
+                    "UPDATE game_session_canonical_initial_admission_attempt SET abort_proof_digest = ?",
+                    "sha256:" + "a".repeat(64)))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(admission.fixture.dsl.fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(admission.fixture.dsl.fetchCount(DSL.table("gameplay_admission_pointer_event")))
+        .isZero();
+  }
+
+  @Test
+  void
+      fixtureRejectsClosedOriginBeforeIntentAndPhysicalStorageRejectsOriginAndProvenanceMutation() {
+    var admission = admission();
+    var closed =
+        fixtureRequest(
+            admission.evidence,
+            admission.launch,
+            net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                .InitialAdmissionOrigin.EXPECT_CLOSED);
+    var transport =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.data.RunOwnedCanonicalInitialAdmissionOwner
+                .WorldTransport.class);
+    var owner =
+        new net.firedevops.firemud.gamesession.data.RunOwnedCanonicalInitialAdmissionOwner(
+            admission.fixedSource, admission.repository, transport);
+    assertThatThrownBy(() -> owner.open(closed)).hasMessageContaining("NO_PRIOR_POINTER");
+    org.mockito.Mockito.verifyNoInteractions(transport);
+    assertThat(
+            admission.fixture.dsl.fetchCount(
+                DSL.table("game_session_canonical_initial_admission_intent")))
+        .isZero();
+    admission.repository.reserveFixtureIntent(admission.request);
+    var columns =
+        new java.util.LinkedHashMap<>(
+            requiredRecord(
+                    admission.fixture.dsl,
+                    "SELECT * FROM game_session_canonical_initial_admission_intent")
+                .intoMap());
+    columns.put("initial_admission_request_id", closed.selector().initialAdmissionRequestId());
+    columns.put("request_digest", closed.selector().initialAdmissionRequestDigest());
+    columns.put("canonical_hold_request_bytes", closed.selector().canonicalRequestBytes());
+    columns.put("fixture_request_bytes", closed.canonicalBytes());
+    assertThatThrownBy(
+            () ->
+                insertOwnerRow(
+                    admission.fixture, "game_session_canonical_initial_admission_intent", columns))
+        .hasStackTraceContaining("exact fresh original request");
+    var wrongPolicy =
+        new java.util.LinkedHashMap<>(
+            requiredRecord(
+                    admission.fixture.dsl,
+                    "SELECT * FROM game_session_canonical_initial_admission_intent")
+                .intoMap());
+    var changedRequest =
+        fixtureRequest(
+            admission.evidence,
+            admission.launch,
+            net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                .InitialAdmissionOrigin.NO_PRIOR_POINTER);
+    wrongPolicy.put(
+        "initial_admission_request_id", changedRequest.selector().initialAdmissionRequestId());
+    wrongPolicy.put("request_digest", changedRequest.selector().initialAdmissionRequestDigest());
+    wrongPolicy.put(
+        "canonical_hold_request_bytes", changedRequest.selector().canonicalRequestBytes());
+    wrongPolicy.put(
+        "canonical_lifecycle_request_bytes", changedRequest.activation().canonicalBytes());
+    wrongPolicy.put("fixture_request_bytes", changedRequest.canonicalBytes());
+    wrongPolicy.put("fixture_policy_request_bytes", new byte[] {1});
+    assertThatThrownBy(
+            () ->
+                insertOwnerRow(
+                    admission.fixture,
+                    "game_session_canonical_initial_admission_intent",
+                    wrongPolicy))
+        .hasStackTraceContaining("actual original launch/catalog provenance");
+    admission.repository.attachFixtureHold(admission.request, admission.hold);
+    assertThatThrownBy(
+            () ->
+                admission.fixture.dsl.execute(
+                    "UPDATE game_session_canonical_initial_admission_intent SET fixture_policy_request_bytes = ?",
+                    new byte[] {1}))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                admission.fixture.dsl.execute(
+                    "UPDATE game_session_canonical_initial_admission_intent SET authority_kind = NULL"))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                admission.fixture.dsl.execute(
+                    "TRUNCATE game_session_canonical_initial_admission_intent"))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+  }
+
+  @Test
+  void fixtureActualCasRefusesLegacyPointerCreatedAfterHoldAndRetainsExactAbort() {
+    var admission = admission();
+    admission.repository.reserveFixtureIntent(admission.request);
+    admission.repository.attachFixtureHold(admission.request, admission.hold);
+    admission.fixture.dsl.execute(
+        "INSERT INTO gameplay_admission_pointer (world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+            + "game_instance_id, pointer_version, visible, requires_character_selection, state_scope, character_creation_policy, last_updated_by, last_update_reason, public_production_realm, representation_version) "
+            + "VALUES (?, ?, 'legacy world', 'legacy realm', 990001, 990002, 1, TRUE, FALSE, 'SHARED', 'ALLOW_NEW', 'test', 'controlled prior pointer', FALSE, 1)",
+        admission.launch.catalog().snapshot().worldSlug(),
+        admission.launch.catalog().snapshot().realmSlug());
+    assertThatThrownBy(() -> admission.repository.commitFixture(admission.request, admission.hold))
+        .hasMessageContaining("prior pointer");
+    assertThat(
+            requiredRecord(admission.fixture.dsl, "SELECT status FROM game_instances")
+                .get("status"))
+        .isEqualTo("STARTING");
+    assertThat(admission.fixture.dsl.fetchCount(DSL.table("gameplay_admission_pointer_event")))
+        .isZero();
+    admission.repository.abortFixture(
+        admission.request, admission.hold, "actual prior pointer conflict");
+    assertThat(
+            admission
+                .repository
+                .readFixtureTerminal(admission.request)
+                .orElseThrow()
+                .positiveDurableAbort())
+        .isTrue();
+    assertThat(admission.fixture.dsl.fetchCount(DSL.table("gameplay_admission_pointer")))
+        .isEqualTo(1);
+  }
+
+  private static Admission admission() {
+    var f = fixture();
+    var evidence = launchEvidence(source(SOURCE_GAME_ROW_ID), OWNER_ACCOUNT_ID);
+    var launch = f.launchRepository.createVerifiedFixtureStartingLaunch(evidence);
+    var source =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwner.class);
+    org.mockito.Mockito.when(source.loadFixedVerifiedEvidence()).thenReturn(evidence);
+    var request =
+        fixtureRequest(
+            evidence,
+            launch,
+            net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                .InitialAdmissionOrigin.NO_PRIOR_POINTER);
+    var hold =
+        new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity(
+            request.selector(), UUID.randomUUID(), UUID.randomUUID());
+    var verifications = new java.util.concurrent.atomic.AtomicInteger();
+    // Controlled World owner observations only. Genuine cross-owner authentication is separate
+    // proof.
+    var world =
+        new net.firedevops.firemud.gamesession.data.RunOwnedCanonicalInitialAdmissionOwner
+            .WorldTransport() {
+          @Override
+          public net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity
+              acquire(
+                  net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest
+                      requested) {
+            throw new AssertionError("Repository must not acquire remote holds");
+          }
+
+          @Override
+          public void verifyActive(
+              net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest requested,
+              net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity
+                  identity) {
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive())
+                .isFalse();
+            assertThat(requested).isEqualTo(request);
+            assertThat(identity).isEqualTo(hold);
+            verifications.incrementAndGet();
+          }
+        };
+    var repository =
+        new net.firedevops.firemud.gamesession.repository
+            .CanonicalFixtureInitialAdmissionRepository(
+            f.dsl, source, f.launchRepository, f.transactions.getTransactionManager(), world);
+    return new Admission(f, evidence, launch, source, repository, request, hold, verifications);
+  }
+
+  private static net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest
+      fixtureRequest(
+          RunOwnedInitialAdmissionLaunchEvidence evidence,
+          FixtureCanonicalInstanceLaunch launch,
+          net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                  .InitialAdmissionOrigin
+              origin) {
+    var c = launch.catalog().snapshot();
+    UUID version = UUID.fromString(evidence.publishedReleaseBundle().getCanonicalVersionId());
+    String id = UUID.randomUUID().toString();
+    Long prior =
+        origin
+                == net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                    .InitialAdmissionOrigin.EXPECT_CLOSED
+            ? 1L
+            : null;
+    String digest =
+        net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest
+            .computeRequestDigest(
+                NAMESPACE,
+                c.tenantId(),
+                c.worldSlug(),
+                c.realmId(),
+                c.playableStateNamespaceId(),
+                c.stateScope(),
+                launch.gameInstanceUuid(),
+                version,
+                2L,
+                c.catalogRevision(),
+                net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind
+                    .valueOf(origin.name()),
+                prior,
+                id);
+    return new net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest(
+        new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request(
+            NAMESPACE,
+            c.tenantId(),
+            c.worldSlug(),
+            c.realmId(),
+            c.playableStateNamespaceId(),
+            c.stateScope(),
+            launch.gameInstanceUuid(),
+            version,
+            2L,
+            id,
+            digest,
+            origin,
+            c.catalogRevision(),
+            prior),
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceFixtureActivationRequest(
+            UUID.randomUUID(),
+            c.tenantId(),
+            launch.gameInstanceUuid(),
+            evidence.fixturePolicySeal().evidenceDigest(),
+            1L,
+            0L));
+  }
+
+  private record Admission(
+      Fixture fixture,
+      RunOwnedInitialAdmissionLaunchEvidence evidence,
+      FixtureCanonicalInstanceLaunch launch,
+      net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwner fixedSource,
+      net.firedevops.firemud.gamesession.repository.CanonicalFixtureInitialAdmissionRepository
+          repository,
+      net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest request,
+      net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity hold,
+      java.util.concurrent.atomic.AtomicInteger worldVerifications) {}
 
   private static Fixture fixture() {
     return fixture(null);

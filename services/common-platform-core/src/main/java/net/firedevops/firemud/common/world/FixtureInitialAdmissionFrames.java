@@ -60,6 +60,21 @@ final class FixtureInitialAdmissionFrames {
     return result;
   }
 
+  static WorldFixtureInitialAdmissionHoldState state(byte[] bytes) {
+    JsonNode root = read(bytes);
+    var result =
+        new WorldFixtureInitialAdmissionHoldState(
+            hold(binary(root, "requestBytesBase64")),
+            WorldCanonicalInitialAdmissionHold.HoldIdentity.fromStored(
+                binary(root, "holdIdentityBytesBase64")),
+            WorldCanonicalInitialAdmissionHoldState.HoldStatus.valueOf(text(root, "status")),
+            text(root, "lifecycleState"),
+            Long.parseLong(text(root, "lifecycleEpoch")),
+            Long.parseLong(text(root, "lifecycleRowVersion")));
+    exact(bytes, result.canonicalBytes());
+    return result;
+  }
+
   private static JsonNode read(byte[] bytes) {
     if (bytes == null || bytes.length == 0 || bytes.length > MAX_BYTES) throw invalid();
     try {

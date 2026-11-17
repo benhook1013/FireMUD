@@ -132,6 +132,16 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
     return independent;
   }
 
+  /**
+   * Independently qualifies immutable fixture catalog provenance without reading mutable runtime.
+   */
+  public FixtureCanonicalRealmCatalog readVerifiedFixtureCatalog(
+      RunOwnedInitialAdmissionLaunchEvidence evidence) {
+    requireNoActiveOwnerTransaction();
+    Objects.requireNonNull(evidence, "evidence").requireVerifiedFixture();
+    return catalogRepository.readVerifiedFixtureRealm(evidence);
+  }
+
   public FixtureCanonicalInstanceLaunch readVerifiedFixtureLaunch(
       RunOwnedInitialAdmissionLaunchEvidence evidence) {
     requireNoActiveOwnerTransaction();
@@ -273,9 +283,9 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
                 + " game_template_id, launch_descriptor_id, version_id, release_bundle_id, generation_config_revision,"
                 + " version_state_epoch, complete_launch_binding_evidence, catalog_creation_request_id, catalog_revision,"
                 + " catalog_source_intake_operation_id, catalog_source_intake_request_id, fixture_policy_request_bytes,"
-                + " fixture_policy_seal_operation_id, fixture_policy_seal_request_digest, fixture_policy_seal_evidence_digest)"
+                + " fixture_policy_seal_operation_id, fixture_policy_seal_request_digest, fixture_policy_seal_evidence_digest, fixture_canonical_version_id)"
                 + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FRESH_SOURCE_BOUND', ?, ?, ?, ?, ?, 'SHARED', TRUE,"
-                + " 0, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?)",
+                + " 0, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             workloadNamespace,
             descriptor.controlPlaneRequestId(),
             association.gameSessionTenantId(),
@@ -308,7 +318,8 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
             evidence.fixturePolicyRequestBytes(),
             seal.operationId(),
             seal.requestDigest(),
-            seal.evidenceDigest()),
+            seal.evidenceDigest(),
+            UUID.fromString(evidence.publishedReleaseBundle().getCanonicalVersionId())),
         "fixture canonical launch association");
   }
 
@@ -324,6 +335,8 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
     var fresh = evidence.creationEvidence();
     var seal = evidence.fixturePolicySeal();
     if (row == null
+        || !UUID.fromString(evidence.publishedReleaseBundle().getCanonicalVersionId())
+            .equals(row.get("fixture_canonical_version_id", UUID.class))
         || row.get("original_start_session_tuple", byte[].class) != null
         || !Arrays.equals(
             evidence.fixturePolicyRequestBytes(),

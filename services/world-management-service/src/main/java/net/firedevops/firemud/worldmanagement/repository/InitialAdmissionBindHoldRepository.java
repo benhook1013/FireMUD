@@ -69,6 +69,19 @@ public class InitialAdmissionBindHoldRepository {
     return rows.map(this::toEntity);
   }
 
+  /** Legacy reconciliation cannot reinterpret a canonical Human or fixture row as numeric proof. */
+  public List<InitialAdmissionBindHold> findNonterminalLegacy(int limit) {
+    Result<Record> rows =
+        dsl.fetch(
+            "SELECT "
+                + SELECT_COLUMNS
+                + " FROM initial_admission_bind_hold WHERE canonical_request_bytes IS NULL "
+                + "AND status IN ('PENDING','RECONCILIATION_REQUIRED') "
+                + "ORDER BY updated_at,hold_id LIMIT ?",
+            Math.max(1, Math.min(limit, 256)));
+    return rows.map(this::toEntity);
+  }
+
   public boolean hasNonterminalForRealm(long tenantId, String realmUuid) {
     Record result =
         dsl.fetchOne(

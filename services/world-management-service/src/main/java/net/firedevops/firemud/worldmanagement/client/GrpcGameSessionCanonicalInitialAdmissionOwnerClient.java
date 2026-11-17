@@ -24,7 +24,8 @@ public final class GrpcGameSessionCanonicalInitialAdmissionOwnerClient
     extends AbstractReloadingBlockingGrpcClient<
         CanonicalInitialAdmissionOwnerProofReadServiceGrpc
             .CanonicalInitialAdmissionOwnerProofReadServiceBlockingStub>
-    implements GameSessionCanonicalInitialAdmissionOwnerClient {
+    implements GameSessionCanonicalInitialAdmissionOwnerClient,
+        GameSessionFixtureInitialAdmissionOwnerClient {
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
@@ -77,6 +78,43 @@ public final class GrpcGameSessionCanonicalInitialAdmissionOwnerClient
       throw new IllegalStateException(
           "Game Session returned invalid canonical initial-admission owner proof", invalid);
     }
+  }
+
+  /** Exact fixed-leaf fixture purpose, separate from Human owner proof decoding. */
+  @Override
+  public net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionTerminalProof readFixture(
+      net.firedevops.firemud.common.world.WorldFixtureInitialAdmissionHoldRequest request,
+      HoldIdentity identity,
+      String expectedGameSessionLeafSha256) {
+    requireNoAmbientOwnerTransaction();
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(identity, "identity");
+    if (!workloadNamespace.equals(request.selector().targetNamespace())
+        || expectedGameSessionLeafSha256 == null
+        || !expectedGameSessionLeafSha256.matches("[0-9a-f]{64}")) {
+      throw new IllegalArgumentException("Fixed fixture owner binding required");
+    }
+    var lookup =
+        net.firedevops.firemud.common.world.FixtureInitialAdmissionGrpcCodec.Lookup.fresh(
+            request, identity);
+    String peer = "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service";
+    var channel =
+        requireInitializedStub("Canonical Game Session owner client is unavailable").getChannel();
+    var response =
+        net.firedevops.firemud.gamesession.v1.GameSessionFixtureInitialAdmissionOwnerReadServiceGrpc
+            .newBlockingStub(channel)
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withMaxInboundMessageSize(
+                net.firedevops.firemud.common.world.FixtureInitialAdmissionGrpcCodec.MAX_WIRE_BYTES)
+            .withCallCredentials(
+                new GrpcServerPeerIdentityCallCredentials(peer, expectedGameSessionLeafSha256))
+            .withInterceptors(
+                new GrpcServerPeerIdentityClientInterceptor(peer, expectedGameSessionLeafSha256))
+            .getFixtureInitialAdmissionOwner(
+                net.firedevops.firemud.common.world.FixtureInitialAdmissionGrpcCodec
+                    .toTerminalRequest(lookup));
+    return net.firedevops.firemud.common.world.FixtureInitialAdmissionGrpcCodec
+        .requireTerminalResponse(lookup, response);
   }
 
   @Override
