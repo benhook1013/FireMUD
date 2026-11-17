@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +54,13 @@ def make_plan(module="account-service", run_attempt="2"):
         plan["tasks"]["test"]["class_universe"].append(name)
         plan["tasks"]["test"]["expected_test_classes"].append(name)
         plan["tasks"]["test"]["assignments"][name] = partition
+    if module == "account-service":
+        required = sorted(PARTITION.ACCOUNT_PROOF.required_cases())
+        plan["tasks"]["integrationTest"] = {
+            "class_universe": required,
+            "expected_test_classes": required,
+            "assignments": {name: index + 1 for index, name in enumerate(required)},
+        }
     return plan
 
 
@@ -247,6 +255,20 @@ def write_artifact(root, plan, partition, attempt):
         f'<testsuite><testcase classname="{class_name}" name="runs" /></testsuite>\n',
         encoding="utf-8",
     )
+    if plan["module"] == "account-service":
+        integration = manifest["tasks"]["integrationTest"]
+        selected = integration["selected_classes"]
+        if selected:
+            (destination / "jacoco/integrationTest.exec").write_bytes(b"physical execution data")
+        required = PARTITION.ACCOUNT_PROOF.required_cases()
+        for name in selected:
+            suite = ET.Element("testsuite", name=name, tests=str(len(required[name])),
+                               failures="0", errors="0", skipped="0")
+            for case in sorted(required[name]):
+                ET.SubElement(suite, "testcase", classname=name, name=case)
+            xml = destination / "test-results/integrationTest" / ("TEST-" + name + ".xml")
+            xml.parent.mkdir(parents=True, exist_ok=True)
+            ET.ElementTree(suite).write(xml)
     return destination
 
 
@@ -620,6 +642,28 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
             ):
                 PARTITION.verify_artifact_reports(artifact_dir, runnable_manifest)
 
+    def test_account_required_case_negatives_reach_actual_aggregate(self):
+        for mutation in ("missing", "skipped", "namespaced_failure", "absent_suite"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                module = "account-service"
+                provenance = make_provenance(module)
+                selection = PARTITION.selection_document(provenance, module, RUN_ID, SOURCE_SHA, "2")
+                inputs, selection_path, verified, artifacts = prepare_aggregate(Path(temporary), module, selection)
+                report = next((artifacts[1] / "test-results/integrationTest").glob("TEST-*.xml"))
+                tree = ET.parse(report); suite = tree.getroot()
+                if mutation == "missing":
+                    suite.remove(suite[-1]); suite.set("tests", str(len(suite)))
+                elif mutation == "skipped":
+                    ET.SubElement(suite[0], "skipped")
+                elif mutation == "namespaced_failure":
+                    ET.SubElement(suite[0], "{urn:unsupported}failure")
+                else:
+                    report.unlink()
+                if mutation != "absent_suite": tree.write(report)
+                with self.assertRaises(ValueError):
+                    PARTITION.verify_aggregate(inputs, selection_path, verified, module, RUN_ID, SOURCE_SHA, "2")
+                self.assertFalse(verified.exists(), "failed proof must not publish verified class outputs")
+
     def test_partial_retry_uses_latest_outcomes_and_physical_execution_attempts(self):
         module = "account-service"
         provenance = make_provenance(module)
@@ -668,7 +712,7 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                     SOURCE_SHA,
                     "2",
                 ),
-                4,
+                7,  # Four unit and three obligated physical execution files.
             )
             copied = {
                 path.relative_to(verified_classes_dir).as_posix(): path.read_bytes()
