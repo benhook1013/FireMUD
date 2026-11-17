@@ -158,6 +158,107 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   }
 
   @Test
+  void concurrentExactTerminalAttemptsShareOneMembershipEventAuditAndReceipt() throws Exception {
+    Fixture fixture = newFixture();
+    var locked = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var firstPid = new java.util.concurrent.atomic.AtomicInteger();
+    var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    try {
+      // Real owner transactions, not a synthetic COMMITTED-to-PENDING rewrite or a reconciler.
+      var first =
+          executor.submit(
+              () ->
+                  fixture.inReadCommittedTransaction(
+                      () -> {
+                        firstPid.set(
+                            fixture
+                                .dsl
+                                .fetchSingle("SELECT pg_backend_pid()")
+                                .get(0, Integer.class));
+                        fixture.operations.lockAccount(fixture.account.getId());
+                        locked.countDown();
+                        try {
+                          if (!release.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                            throw new IllegalStateException(
+                                "First terminal attempt release timed out");
+                        } catch (InterruptedException interrupted) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(interrupted);
+                        }
+                        return fixture.commitFirstJoin();
+                      }));
+      assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      var second =
+          executor.submit(
+              () ->
+                  fixture.inReadCommittedTransaction(
+                      () -> {
+                        waiterPid.set(
+                            fixture
+                                .dsl
+                                .fetchSingle("SELECT pg_backend_pid()")
+                                .get(0, Integer.class));
+                        return fixture.commitFirstJoin();
+                      }));
+      long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+      boolean blocked = false;
+      while (System.nanoTime() < deadline) {
+        blocked =
+            Boolean.TRUE.equals(
+                fixture
+                    .dsl
+                    .fetchSingle(
+                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? "
+                            + "AND wait_event_type = 'Lock' AND ? = ANY(pg_blocking_pids(pid)))",
+                        waiterPid.get(),
+                        firstPid.get())
+                    .get(0, Boolean.class));
+        if (blocked) break;
+        Thread.sleep(10);
+      }
+      assertThat(blocked)
+          .as("exact retry physically waits on the first owner transaction")
+          .isTrue();
+      assertThat(second.isDone()).isFalse();
+      release.countDown();
+      var committed = first.get(30, java.util.concurrent.TimeUnit.SECONDS);
+      assertThat(second.get(30, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(committed);
+      var operation =
+          fixture.inTransaction(
+              () ->
+                  fixture
+                      .operations
+                      .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
+                      .orElseThrow());
+      assertThat(operation.status()).isEqualTo("COMMITTED");
+      assertThat(operation.outcome()).isEqualTo("JOINED");
+      assertThat(operation.terminalProof()).isEqualTo(committed);
+      assertThat(fixture.count("account_tenant_membership", "tenant_uuid", fixture.tenantUuid))
+          .isEqualTo(1L);
+      assertThat(
+              fixture.count(
+                  "account_tenant_membership_role_snapshots",
+                  "membership_id",
+                  committed.membershipId()))
+          .isEqualTo(1L);
+      assertThat(
+              fixture.count(
+                  "account_authority_outbox_events",
+                  "outbox_stream_key",
+                  fixture.membershipStream()))
+          .isEqualTo(1L);
+      assertThat(fixture.count("account_audit_outbox", "audit_event_id", committed.auditEventId()))
+          .isEqualTo(1L);
+    } finally {
+      release.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
   void changedEntitlementPreventsAStalePendingJoinFromCommittingMembership() {
     Fixture fixture = newFixture();
     DemoTenantEntitlementSnapshot entitlement = fixture.provisionCurrentTenantEntitlement();
