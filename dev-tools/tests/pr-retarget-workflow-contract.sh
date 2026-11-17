@@ -1630,7 +1630,7 @@ if grep -Eq '^concurrency:' "$preview_path"; then
   echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
 fi
-assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}"
+assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}"
 assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
 assert_job_excludes preview.yml preview-plan 'Publish preview lifecycle state'
 assert_job_excludes preview.yml preview-plan 'firemud-preview-summary'
@@ -1658,7 +1658,7 @@ require_contains "$preview_path" 'run-name: ${{ github.event_name == '
 require_contains "$preview_path" "format('Preview dispatch pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha || 'unknown', github.event.client_payload.head_sha, github.event.client_payload.merge_sha || 'unknown')"
 require_contains "$preview_path" 'contents: read'
 require_contains "$preview_path" 'pull-requests: read'
-require_contains "$preview_path" 'pull_request_target:'
+require_contains "$preview_path" 'pull_request:'
 require_contains "$preview_path" 'types: [preview-deploy, preview-destroy]'
 require_contains "$preview_path" '      - opened'
 require_contains "$preview_path" '      - synchronize'
@@ -1682,7 +1682,7 @@ if grep -Eq '^      - closed$' "$preview_path"; then
 fi
 require_contains "$preview_path" 'Check out trusted default branch for preview plan'
 require_contains "$preview_path" 'ref: ${{ github.event.repository.default_branch }}'
-require_contains "$preview_path" "github.event_name == 'pull_request_target'"
+require_contains "$preview_path" "github.event_name == 'pull_request'"
 require_contains "$preview_path" "github.event_name == 'repository_dispatch'"
 require_contains "$preview_path" 'github.event.pull_request.head.repo.full_name == github.repository'
 require_contains "$preview_path" 'github.event.pull_request.base.repo.full_name == github.repository'
@@ -1712,7 +1712,7 @@ from pathlib import Path
 workflow_path = Path(sys.argv[1])
 workflow = workflow_path.read_text(encoding="utf-8")
 predicate_start = workflow.index(
-    '            if [[ "$EVENT_NAME" == pull_request_target && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||'
+    '            if [[ "$EVENT_NAME" == pull_request && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||'
 )
 predicate_end = workflow.index(
     '\n            if [[ "$ACTION" != deploy ]]; then',
@@ -1792,7 +1792,7 @@ assert_job_excludes preview.yml preview-destroy-intent "github.event_name == 'pu
 
 # The trusted default-branch workflow owns all runtime and identity mutations.
 require_contains "$trusted_preview_path" "github.event.workflow_run.head_repository.full_name == github.repository"
-require_contains "$trusted_preview_path" "github.event.workflow_run.event == 'pull_request_target' || github.event.workflow_run.event == 'repository_dispatch'"
+require_contains "$trusted_preview_path" "github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch'"
 require_contains "$trusted_preview_path" "github.event_name == 'pull_request_target' && github.event.action == 'closed'"
 require_contains "$trusted_preview_path" 'require_source_field head-branch "$DEFAULT_BRANCH"'
 require_contains "$trusted_preview_path" 'preview-(render|intent)-pr-'

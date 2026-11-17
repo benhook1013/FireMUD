@@ -1172,7 +1172,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
     def _metadata_fixture(manifest_path):
         return {
             "schemaVersion": 1,
-            "event": "pull_request_target",
+            "event": "pull_request",
             "repository": "example/FireMUD",
             "sourceWorkflow": ".github/workflows/preview.yml",
             "sourceRunId": 42,

@@ -412,11 +412,13 @@ fake_labels_json() {
   fi
   printf '%s' "$labels_json"
 }
-if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == */actions/runs\?event=pull_request_target\&status=* || "$resource" == */actions/runs\?event=workflow_run\&status=*) ]]; then
+if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == */actions/runs\?event=pull_request\&status=* || "$resource" == */actions/runs\?event=pull_request_target\&status=* || "$resource" == */actions/runs\?event=workflow_run\&status=*) ]]; then
   active_query_status="${resource##*&status=}"
   active_query_status="${active_query_status%%&*}"
   if [[ "$resource" == */actions/runs\?branch=* ]]; then
     active_query_scope=branch
+  elif [[ "$resource" == */actions/runs\?event=pull_request\&status=* ]]; then
+    active_query_scope=pull_request
   elif [[ "$resource" == */actions/runs\?event=pull_request_target\&status=* ]]; then
     active_query_scope=pull_request_target
   else
@@ -488,7 +490,7 @@ case "$resource" in
     ;;
   */actions/runs/42)
     if [[ "$has_jq" != true ]]; then
-      printf '%s' '{"conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+      printf '%s' '{"conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]}'
     elif [[ "$*" == *".path"* ]]; then
       printf '%s' '.github/workflows/preview.yml'
     else
@@ -2424,8 +2426,10 @@ grep -Fq 'case "$repair_status" in' "$RECONCILER_RUN"
 grep -Fq -- 'gh api --paginate --slurp' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert literal workflow source expressions.
 grep -Fq -- 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100' "$RECONCILER_RUN"
-# shellcheck disable=SC2016 # Assert the additional pull_request_target lookup without a branch filter.
-grep -Fq -- 'actions/runs?event=pull_request_target&status=${active_status}&per_page=100' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Event scopes include automatic renders and direct closed cleanup.
+grep -Fq -- 'for active_run_scope in branch pull_request pull_request_target workflow_run' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert literal workflow query variables.
+grep -Fq -- 'actions/runs?event=${active_run_scope}&status=${active_status}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert workflow_run consumers are included without a branch filter.
 grep -Fq -- 'actions/runs?event=workflow_run&status=${active_status}&per_page=100' "$RECONCILER_RUN"
 # shellcheck disable=SC2016 # Assert each supported active status is queried independently.

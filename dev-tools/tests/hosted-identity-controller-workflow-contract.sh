@@ -1035,7 +1035,7 @@ assert validate_job["if"] == (
     "github.event.workflow_run.conclusion == 'success' && "
     "github.event.workflow_run.head_repository.full_name == github.repository && "
     "github.event.workflow_run.name == 'PR Preview Environment' && "
-    "(github.event.workflow_run.event == 'pull_request_target' || "
+    "(github.event.workflow_run.event == 'pull_request' || "
     "github.event.workflow_run.event == 'repository_dispatch')) || "
     "(github.event_name == 'pull_request_target' && "
     "github.event.action == 'closed' && "
@@ -2776,6 +2776,7 @@ assert set(preview_workflow["jobs"]) == {
 }
 refresh_job = preview_workflow["jobs"]["preview-runtime-base-refresh"]
 assert refresh_job["needs"] == "preview-plan"
+assert "github.event_name == 'repository_dispatch'" in refresh_job["if"]
 assert "base_refresh_required == 'true'" in refresh_job["if"]
 assert "image_tag != needs.preview-plan.outputs.base_sha" in refresh_job["if"]
 assert refresh_job["permissions"] == {"contents": "write", "pull-requests": "read"}
@@ -4063,7 +4064,7 @@ run_preview_derive_target() {
   local error_path="$4"
   env \
     PATH="$preview_derive_stub_dir:$PATH" \
-    EVENT_NAME=pull_request_target \
+    EVENT_NAME=pull_request \
     GITHUB_REF=refs/heads/develop \
     DEFAULT_BRANCH=develop \
     EVENT_ACTION=synchronize \
@@ -4097,7 +4098,7 @@ if run_preview_derive_target \
   "$preview_derive_base_lower" \
   "$preview_derive_stale_head_output" \
   "$TEMP_DIR/preview-derive-stale-head.error"; then
-  echo "preview plan accepted a stale pull_request_target head SHA" >&2
+  echo "preview plan accepted a stale pull_request head SHA" >&2
   exit 1
 fi
 grep -Fxq \
@@ -6566,7 +6567,7 @@ if [[ "$1" == run && "$2" == download ]]; then
   if [[ "${FAKE_ARTIFACT_FILES:-valid}" == valid || "${FAKE_ARTIFACT_FILES:-valid}" == extra ]]; then
     manifest_sha="$(sha256sum "${VALID_RENDER_MANIFEST:?}" | awk '{print $1}')"
     jq -nc \
-      --arg event "${FAKE_METADATA_EVENT:-pull_request_target}" \
+      --arg event "${FAKE_METADATA_EVENT:-pull_request}" \
       --arg action "${FAKE_METADATA_ACTION:-}" \
       --argjson pr_number "${FAKE_METADATA_PR_NUMBER:-900}" \
       --arg base_sha "${FAKE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
@@ -6590,7 +6591,7 @@ case "$resource" in
       if [[ -n "${FAKE_WORKFLOW_RUN_JSON:-}" ]]; then
         printf '%s' "$FAKE_WORKFLOW_RUN_JSON"
       else
-        printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+        printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
       fi
     elif [[ "$jq_expression" == .path ]]; then
       printf '%s' '.github/workflows/preview.yml'
@@ -6688,6 +6689,7 @@ target_gh_log="$TEMP_DIR/target-gh.log"
     INPUT_PR_NUMBER='' \
     INPUT_HEAD_SHA='' \
     INPUT_ACTION='' \
+    FAKE_WORKFLOW_RUN_JSON='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[]}' \
     SOURCE_GH_LOG="$target_gh_log" \
     GITHUB_OUTPUT="$TEMP_DIR/output" \
     bash "$TEMP_DIR/target.sh"
@@ -6720,9 +6722,9 @@ chmod +x "$target_fixture_bin/python3"
 target_real_python3="$(command -v python3)"
 
 canonical_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
-valid_workflow_run_json='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+valid_workflow_run_json='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
 distinct_source_sha=dddddddddddddddddddddddddddddddddddddddd
-distinct_source_workflow_run_json='{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+distinct_source_workflow_run_json='{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
 valid_artifacts_json='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
 
 run_deploy_target_fixture() {
@@ -6830,12 +6832,11 @@ FAKE_FIXTURE_EXPOSURE_MODE=public \
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone FAKE_FIXTURE_EXPOSURE_MODE=public \
   run_deploy_target_fixture standalone-public 0 'action=deploy'
 
-# workflow_run.head_sha identifies the source/default-branch workflow run here,
-# while the PR head remains bound by the current PR and artifact metadata.
+# A PR source run must bind both its run head and sole PR association to the artifact head.
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$distinct_source_workflow_run_json" \
 FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
-  run_deploy_target_fixture distinct-source-head 0 'action=deploy'
-grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-distinct-source-head.output"
+  run_deploy_target_fixture distinct-source-head 0 'Ignoring artifact not bound to the source run pull request and head.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-distinct-source-head.output"
 
 FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
   run_deploy_target_fixture missing-canonical 0 \
@@ -6957,19 +6958,19 @@ run_invalid_source_field() {
 
 run_invalid_source_field \
   conclusion \
-  '{"conclusion":"failure","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"}}' \
+  '{"conclusion":"failure","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run conclusion::Expected success; actual failure.'
 run_invalid_source_field \
   head \
-  '{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"}}' \
+  '{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run head::Expected cccccccccccccccccccccccccccccccccccccccc; actual dddddddddddddddddddddddddddddddddddddddd.'
 run_invalid_source_field \
   path \
-  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/other.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"}}' \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/other.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run path::Expected .github/workflows/preview.yml; actual .github/workflows/other.yml.'
 run_invalid_source_field \
   repository \
-  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"fork/FireMUD"}}' \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"fork/FireMUD"}}' \
   '::error title=Unexpected source run repository::Expected example/FireMUD; actual fork/FireMUD.'
 
 target_python_log="$TEMP_DIR/closed-target-python.log"
