@@ -57,7 +57,7 @@ def verify_partition(reports: Path, selected_classes: set[str]) -> set[str]:
             case_name = case.get('name', '')
             if case.get('classname') != name or not case_name or case_name in seen[name]:
                 raise ValueError('duplicate or mismatched Account case identity')
-            if any(case.find(tag) is not None for tag in ('skipped', 'failure', 'error')):
+            if any(node.tag in ('skipped', 'failure', 'error') for node in case.iter()):
                 raise ValueError('required Account case did not pass')
             seen[name].add(case_name)
         if not required[name] <= seen[name]:

@@ -57,6 +57,15 @@ class AccountRequiredCasesTest(unittest.TestCase):
                     self.verify()
                 self.suite[0].remove(child)
 
+    def test_nested_outcomes_cannot_hide_failure(self):
+        for tag in ('failure', 'error', 'skipped'):
+            with self.subTest(tag=tag):
+                wrapper = ET.SubElement(self.suite[0], 'unsupported-wrapper')
+                ET.SubElement(wrapper, tag)
+                with self.assertRaises(ValueError):
+                    self.verify()
+                self.suite[0].remove(wrapper)
+
     def test_namespaced_structural_elements_refused(self):
         for target in (self.suite, self.suite[0]):
             original = target.tag
