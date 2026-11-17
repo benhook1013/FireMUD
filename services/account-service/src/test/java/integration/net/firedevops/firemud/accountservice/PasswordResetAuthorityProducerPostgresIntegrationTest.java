@@ -423,6 +423,93 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
   }
 
   @Test
+  void mixedCommitOrderRetainsExactWaitingResetAndAllSourceBytesOnRetry() {
+    for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
+      Fixture fixture = newFixture();
+      Seed seed = seedAccountAndToken(fixture, "initial-password");
+      DraftAuthorizationFenceBinding binding = draftBinding(seed);
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fixture.fences().reserve(binding);
+            fixture.fences().claimCommitOrder(binding);
+            return null;
+          });
+      assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "held-password"))
+          .isInstanceOf(
+              net.firedevops.firemud.accountservice.repository
+                  .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException
+                  .class);
+      var sourceBefore = snapshot(fixture, seed);
+      var intentBefore =
+          fixture
+              .setupDsl()
+              .fetch(
+                  "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                  HexFormat.of().parseHex(tokenHash(seed.rawToken())));
+      var changeBefore =
+          fixture.setupDsl().fetch("SELECT * FROM account_draft_authorization_source_changes");
+      assertThat(intentBefore).hasSize(1);
+      assertThat(intentBefore.getFirst().get("status", String.class)).isEqualTo("WAITING");
+      assertThat(changeBefore).hasSize(1);
+      Outcome designOutcome =
+          worldOutcome == Outcome.COMMITTED ? Outcome.DEFINITIVELY_ABORTED : Outcome.COMMITTED;
+      var world = ownerOutcome(binding, Owner.WORLD, worldOutcome);
+      var design = ownerOutcome(binding, Owner.GAME_DESIGN, designOutcome);
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fixture.fences().recordOwnerReadback(binding, world);
+            fixture.fences().recordOwnerReadback(binding, design);
+            return null;
+          });
+      for (int retry = 0; retry < 2; retry++) {
+        assertThat(
+                transaction(fixture.transaction(), () -> fixture.fences().readSettlement(binding)))
+            .isEqualTo(DraftAuthorizationFenceRepository.Settlement.PENDING);
+        assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "held-password"))
+            .isInstanceOf(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException
+                    .class);
+        assertThat(snapshot(fixture, seed)).isEqualTo(sourceBefore);
+        assertThat(
+                fixture
+                    .setupDsl()
+                    .fetch(
+                        "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                        HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
+            .isEqualTo(intentBefore);
+        assertThat(
+                fixture
+                    .setupDsl()
+                    .fetch("SELECT * FROM account_draft_authorization_source_changes"))
+            .isEqualTo(changeBefore);
+        assertThat(
+                transaction(
+                    fixture.transaction(),
+                    () ->
+                        fixture
+                            .fences()
+                            .readOwnerResult(binding, Owner.WORLD)
+                            .orElseThrow()
+                            .readback()))
+            .containsExactly(world.canonicalBytes());
+        assertThat(
+                transaction(
+                    fixture.transaction(),
+                    () ->
+                        fixture
+                            .fences()
+                            .readOwnerResult(binding, Owner.GAME_DESIGN)
+                            .orElseThrow()
+                            .readback()))
+            .containsExactly(design.canonicalBytes());
+      }
+    }
+  }
+
+  @Test
   void overlappingWaitingSourceChangeMakesPasswordResetRetryableAndRollsBack() {
     Fixture fixture = newFixture();
     Seed seed = seedAccountAndToken(fixture, "initial-password");
