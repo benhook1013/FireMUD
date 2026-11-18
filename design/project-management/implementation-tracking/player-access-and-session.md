@@ -22,6 +22,8 @@ Under ADR 0185 (no data carry-over before v1, proposed in #3459), Compose smoke 
 | --- | --- |
 | Gateway `gameplayRouteReadiness` reports ready | Canonical Account connect-context production, shared replay fencing and dedicated Gateway signing keys |
 | Account runtime entitlement grants a tenant UUID that has no Account tenant source (script-seeded preview tenants) | Seeded tenants created through the real Game Design to Account tenant-creation flow, giving each an Account demo or paid source |
+| Game Session and Account LOGIN Coordination Redis accept plaintext `redis://` | TLS (`rediss://`) Coordination with peer verification |
+| Game Session initial LOGIN uses a process-local qualification lease | External Coordination qualification authority excluding reset, restore and promotion |
 | Direct-text PLAY runs on the existing direct LOGIN until the authenticated LOGIN, WORLDS, REALMS and JOIN receiver lands (stacked straight after UUID PLAY is green) | Deployed Account JWT signer materializer and public-JWKS API binding, protected Coordination Redis (TLS, ACL, AOF acknowledgement) and the external Coordination qualification authority, then PLAY moved onto the authenticated receiver |
 
 ### Direct-text scope and JOIN identifier cutover
