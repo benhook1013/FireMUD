@@ -6837,6 +6837,17 @@ FAKE_FIXTURE_WORKFLOW_RUN_JSON="$distinct_source_workflow_run_json" \
 FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
   run_deploy_target_fixture distinct-source-head 0 'Ignoring artifact not bound to the source run pull request and head.'
 grep -Fxq "action=none" "$TEMP_DIR/deploy-target-distinct-source-head.output"
+# Independently prove neither the API run head nor association can substitute for the other.
+run_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.head_sha=$sha' <<<"$valid_workflow_run_json")"
+association_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.pull_requests[0].head.sha=$sha' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$run_head_only_json" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture run-head-only 0 'Ignoring source run without a unique bound pull request association.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-run-head-only.output"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$association_head_only_json" \
+  run_deploy_target_fixture association-head-only 0 'Ignoring source run without a unique bound pull request association.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-association-head-only.output"
+
 
 FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
   run_deploy_target_fixture missing-canonical 0 \

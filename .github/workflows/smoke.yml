@@ -608,7 +608,11 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e";
+            const canonicalRuntimeWorkflowSha256 = "0315e611fadc96bc30c8054ead8b9b8d72996785dd89239bec592e16392877ab";
+            const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
+              "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
+              "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
+            ]);
             // Trusted refreshes can still execute the previous successful default-branch definition.
             const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112";
             // Retain the exact fail-red producer still executed by trusted base refreshes.
@@ -729,7 +733,8 @@ jobs:
             function isSuccessfulRuntimeWorkflowDefinition(definitionHash, sourceEvent) {
               return definitionHash === canonicalRuntimeWorkflowSha256 ||
                 (sourceEvent === "repository_dispatch" &&
-                  definitionHash === canonicalPreviousTrustedRefreshRuntimeWorkflowSha256);
+                  (definitionHash === canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 ||
+                   outgoingTrustedRefreshRuntimeWorkflowSha256.has(definitionHash)));
             }
 
             async function verifyCanonicalSmokeProducer(run, candidate, identity) {

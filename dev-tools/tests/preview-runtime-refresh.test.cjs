@@ -23,17 +23,37 @@ function fixture() {
 async function execute(f) {
   const sent = [];
   const github = {rest: {
-    actions: {getWorkflowRun: async () => ({data: f.run})},
+    actions: {
+      getWorkflowRun: async () => ({data: f.run}),
+      getWorkflow: async () => ({data: {id: 42, path: '.github/workflows/runtime-images.yml'}}),
+      listWorkflowRuns: async args => {
+        assert.equal(args.workflow_id, 42);
+        assert.equal(args.per_page, 100);
+        f.lookups = (f.lookups ?? 0) + 1;
+        return {data: {workflow_runs: f.fullInventory ??
+          (f.producers ?? []).filter(run => run.status === args.status)}};
+      },
+    },
     pulls: {get: async () => ({data: f.pr})},
-    git: {getRef: async () => ({data: f.base})},
+    git: {getRef: async ({ref}) => {
+      assert.equal(ref, 'heads/' + f.pr.base.ref);
+      return {data: f.base};
+    }},
     repos: {getCommit: async () => ({data: f.merge}), createDispatchEvent: async p => sent.push(p)},
   }};
   await new AsyncFunction('github', 'context', 'core', 'require', script)(github,
-    {repo: {owner: 'example', repo: 'FireMUD'}, payload: {workflow_run: {id: 99}}}, {info() {}}, name => {
+    {repo: {owner: 'example', repo: 'FireMUD'}, payload: {workflow_run: {id: 99}, repository: {default_branch: 'develop'}}}, {info() {}}, name => {
       assert.equal(name, 'node:child_process');
-      return {execFileSync(command, args) {
+      return {execFileSync(command, args, options) {
+        if (command === 'python3') {
+          assert.deepEqual(args, ['./dev-tools/hosted/preview/preview-eligibility.py',
+            '--revalidate-deploy', '--expected-repository', 'example/FireMUD',
+            '--expected-head-sha', f.run.head_sha]);
+          assert.deepEqual(JSON.parse(options.input), f.pr);
+          return execFileSync(command, args, {...options, cwd: root});
+        }
         assert.equal(command, 'bash');
-        assert.deepEqual(args, ['./dev-tools/hosted/preview/resolve-preview-image-tag.sh', A, '7', B]);
+        assert.deepEqual(args, ['./dev-tools/hosted/preview/resolve-preview-image-tag.sh', A, '7', f.base.object.sha]);
         return f.imageTag ?? `pr-merge-${A}`;
       }};
     });
@@ -85,7 +105,8 @@ test('observer checks out only trusted policy and has no artifact or candidate e
 
 test('priority stacked base refreshes even when source base is current', async () => {
   const f = fixture(); f.pr.base.ref = 'feature/stack';
-  f.pr.labels = [{name: 'preview:priority'}]; f.run.pull_requests[0].base.sha = B;
+  f.pr.labels = [{name: 'preview:priority'}]; f.run.pull_requests[0].base.sha = D;
+  f.base.object.sha = D; f.merge.parents[0].sha = D;
   const sent = await execute(f);
   assert.equal(sent.length, 1); assert.equal(sent[0].client_payload.base_ref, 'feature/stack');
 });
@@ -95,4 +116,113 @@ test('canonical non-runtime base image selection does not dispatch', async () =>
 });
 test('unexpected canonical image selection fails closed', async () => {
   const f = fixture(); f.imageTag = 'untrusted'; await assert.rejects(execute(f), /Unexpected image/);
+});
+
+test('qualified canonical workflow path remains eligible', async () => {
+  const f = fixture(); f.run.path += '@refs/pull/7/merge';
+  assert.equal((await execute(f)).length, 1);
+  f.run.path = '.github/workflows/preview.yml@';
+  assert.deepEqual(await execute(f), []);
+});
+test('observer callbacks cannot replace a different source run or attempt', () => {
+  const group = workflow.jobs.refresh.concurrency.group;
+  assert.match(group, /workflow_run.id/);
+  assert.match(group, /workflow_run.run_attempt/);
+  assert.equal(workflow.jobs.refresh.concurrency['cancel-in-progress'], false);
+});
+
+test('older base classifiers cannot omit newly introduced validation modules', async () => {
+  const ci = JSON.parse(execFileSync('python3', ['-c',
+    'import yaml,json,sys; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))',
+    path.join(root, '.github/workflows/ci.yml')], {encoding: 'utf8'}));
+  const compute = ci.jobs.changes.steps.find(step => step.id === 'compute').with.script;
+  const complete = JSON.parse(compute.match(/const completeModules = (\[[\s\S]*?\]);/)[1].replace(/,\s*\]/, "]"));
+  for (const modules of [undefined, complete.filter(name => name !== 'recovery-controller-service'), complete]) {
+    const outputs = {};
+    await new AsyncFunction('require', 'github', 'context', 'core', compute)(
+      name => name === 'node:fs' ? {existsSync: () => true} : {
+        ALL_MODULES: modules,
+        classifyGithubChangeScope: async () => ({
+          runAll: false, affectedModules: ['account-service'], bootableModules: ['account-service'],
+          affectedServices: ['account-service'], lightweightOnly: true,
+        }),
+      }, {}, {}, {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    if (modules === complete) {
+      assert.equal(outputs.run_all, 'false');
+      assert.deepEqual(JSON.parse(outputs.affected_modules), ['account-service']);
+    } else {
+      assert.equal(outputs.run_all, 'true');
+      assert.equal(outputs.lightweight_only, 'false');
+      assert.ok(JSON.parse(outputs.affected_modules).includes('recovery-controller-service'));
+      assert.ok(JSON.parse(outputs.bootable_modules).includes('recovery-controller-service'));
+    }
+  }
+});
+
+function producer(f, event = 'repository_dispatch') {
+  return {id: 100, workflow_id: 42, path: '.github/workflows/runtime-images.yml',
+    event, head_branch: 'develop', head_sha: event === 'pull_request' ? C : D,
+    repository: {full_name: 'example/FireMUD'}, head_repository: {full_name: 'example/FireMUD'},
+    status: 'in_progress', conclusion: null,
+    display_title: `Build Runtime Images secure-pr-artifact pr-7 base-${B} head-${C} merge-${A} mode-required`,
+    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}]};
+}
+for (const event of ['repository_dispatch', 'pull_request']) {
+  for (const status of ['queued', 'waiting', 'requested', 'pending', 'in_progress']) {
+    test(`active exact ${event} ${status} producer suppresses dispatch`, async () => {
+      const f = fixture(); const run = producer(f, event); run.status = status; f.producers = [run];
+      assert.deepEqual(await execute(f), []);
+    });
+  }
+}
+for (const [name, mutate] of Object.entries({
+  otherPR: r => r.display_title = r.display_title.replace('pr-7 ', 'pr-8 '),
+  otherBase: r => r.display_title = r.display_title.replace(B, D),
+  otherHead: r => r.display_title = r.display_title.replace(C, D),
+  otherMerge: r => r.display_title = r.display_title.replace(A, D),
+  wrongWorkflow: r => r.workflow_id = 9,
+  wrongPath: r => r.path = '.github/workflows/attacker.yml',
+  wrongRepo: r => r.repository.full_name = 'fork/FireMUD',
+  fork: r => r.head_repository.full_name = 'fork/FireMUD',
+  wrongEvent: r => r.event = 'workflow_dispatch',
+  wrongDispatchBranch: r => r.head_branch = 'attacker',
+  completed: r => {r.status = 'completed'; r.conclusion = 'success';},
+  inconsistentConclusion: r => r.conclusion = 'failure',
+})) test(`unrelated/untrusted producer cannot suppress recovery: ${name}`, async () => {
+  const f = fixture(); const r = producer(f); mutate(r); f.producers = [r];
+  assert.equal((await execute(f)).length, 1);
+});
+for (const [name, mutate] of Object.entries({
+  head: r => r.head_sha = D,
+  associationMissing: r => r.pull_requests = [],
+  associationPR: r => r.pull_requests[0].number = 8,
+  associationBase: r => r.pull_requests[0].base.sha = D,
+  associationHead: r => r.pull_requests[0].head.sha = D,
+})) test(`PR title alone cannot suppress: ${name}`, async () => {
+  const f = fixture(); const r = producer(f, 'pull_request'); mutate(r); f.producers = [r];
+  assert.equal((await execute(f)).length, 1);
+});
+test('bounded inventory saturation fails without dispatch or polling', async () => {
+  const f = fixture(); f.fullInventory = Array.from({length: 100}, () => ({}));
+  await assert.rejects(execute(f), /exceeds bounded lookup/);
+  assert.equal(f.lookups, 3);
+});
+test('qualified trusted default workflow path suppresses exact dispatch', async () => {
+  const f = fixture(); const r = producer(f);
+  r.path += '@refs/heads/develop'; f.producers = [r];
+  assert.deepEqual(await execute(f), []);
+});
+test('canonical eligibility refuses absent author metadata', async () => {
+  const f = fixture(); delete f.pr.user; assert.deepEqual(await execute(f), []);
+});
+
+test('qualified exact PR merge workflow path suppresses native producer', async () => {
+  const f = fixture(); const r = producer(f, 'pull_request');
+  r.path += '@refs/pull/7/merge'; f.producers = [r];
+  assert.deepEqual(await execute(f), []);
+});
+test('qualified other PR workflow path cannot suppress native producer', async () => {
+  const f = fixture(); const r = producer(f, 'pull_request');
+  r.path += '@refs/pull/8/merge'; f.producers = [r];
+  assert.equal((await execute(f)).length, 1);
 });

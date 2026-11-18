@@ -252,21 +252,10 @@ jobs:
               "",
               "CodeQL breakdown",
               "",
+              `Source: base ${baseSha}, head ${headSha}`,
+              "",
               ...detailResults.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
             ].join("\n");
-
-            const { data: finalPullRequest } = await github.rest.pulls.get({
-              ...context.repo,
-              pull_number: issueNumber,
-            });
-            if (
-              finalPullRequest.state !== "open" ||
-              finalPullRequest.head?.sha !== headSha ||
-              finalPullRequest.base?.sha !== baseSha
-            ) {
-              core.info("The pull-request base or head changed while static analysis was being summarized.");
-              return;
-            }
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               ...context.repo,
@@ -291,6 +280,19 @@ jobs:
               }
               return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
+
+            const { data: finalPullRequest } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: issueNumber,
+            });
+            if (
+              finalPullRequest.state !== "open" ||
+              finalPullRequest.head?.sha !== headSha ||
+              finalPullRequest.base?.sha !== baseSha
+            ) {
+              core.info("The pull-request base or head changed while static analysis was being summarized.");
+              return;
+            }
 
             if (existing && existing.body !== body) {
               await github.rest.issues.updateComment({

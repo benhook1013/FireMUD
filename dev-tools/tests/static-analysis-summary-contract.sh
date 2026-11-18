@@ -88,6 +88,7 @@ let currentBaseRef = "develop";
 let pullRequestReads = 0;
 let changeBaseDuringRun = false;
 let changeHeadDuringRun = false;
+let changeHeadDuringComments = false;
 let deleteStatus = null;
 let existingBody = "### Static Analysis Summary\nold";
 const calls = { paginate: [], deleted: [], updated: [], created: [] };
@@ -224,6 +225,7 @@ const github = {
       ];
     }
     if (method === commentsList) {
+      if (changeHeadDuringComments) currentHeadSha = "9".repeat(40);
       return [
         ...Array.from({ length: 35 }, (_, index) => ({
           id: 10000 + index,
@@ -376,7 +378,12 @@ async function assertCompletionOrders() {
         // Both producer orders must recover current-head proof even if the
         // final wake is an obsolete head and all current-head wakes coalesced.
         currentHeadSha = "f".repeat(40);
+        const writesBeforeHeadAdvance = updates;
         await callback(first);
+        if (updates !== writesBeforeHeadAdvance + 1 ||
+            !comments[0].body.includes(currentHeadSha)) {
+          throw new Error("older-head wake must publish new head identity in the existing comment");
+        }
         if (!comments[0].body.includes("CodeQL gate: `failure`")) {
           throw new Error("stale-head wake must reconcile live-head failure");
         }
@@ -415,6 +422,13 @@ async function assertInterruptedRecovery() {
     throw new Error("head movement during reconciliation must not write stale proof");
   }
   changeHeadDuringRun = false;
+  reset();
+  changeHeadDuringComments = true;
+  await run(github, context, core);
+  changeHeadDuringComments = false;
+  if (calls.updated.length || calls.created.length || calls.deleted.length) {
+    throw new Error("head movement while listing comments must not write stale proof");
+  }
   reset();
   github.paginate = async () => { throw new Error("provider interrupted"); };
   let failed = false;
@@ -471,8 +485,8 @@ run(github, context, core).then(async () => {
         pullRequestReads = 0;
         changeBaseDuringRun = true;
         return run(github, context, core).then(() => {
-          if (calls.paginate.length !== 7 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
-            throw new Error("base changes during summarization must not query or alter comments");
+          if (calls.paginate.length !== 8 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+            throw new Error("base changes during summarization must not alter comments");
           }
           currentHeadSha = headSha;
           currentBaseSha = baseSha;

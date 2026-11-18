@@ -4,12 +4,6 @@ on:
   pull_request:
     paths:
       - .github/workflows/protected-pod-admission-proof.yml
-      - .github/actions/load-workflow-tool-versions/**
-      - .github/actions/setup-kubectl/**
-      - .github/actions/setup-python/**
-      - config/workflow-tool-versions.env
-      - dev-tools/hosted/trust-bootstrap/**
-      - k8s/trust-bootstrap/deployment-admission.yaml
   workflow_dispatch:
 
 permissions:
@@ -128,7 +122,10 @@ jobs:
             elif ! actual_claim="$(cat "$claim")" || [[ "$actual_claim" != "$expected_claim" ]]; then
               printf 'cleanup=refused_invalid_ownership_claim\n'
               status=1
-            elif docker inspect "$node" >/dev/null 2>&1; then
+            elif ! node_names="$(docker ps -a --format '{{.Names}}')"; then
+              printf 'cleanup=failed_node_lookup\n'
+              status=1
+            elif grep -Fxq "$node" <<<"$node_names"; then
               local owner_label
               owner_label="$(docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' "$node" 2>/dev/null || true)"
               if [[ "$owner_label" == "$KIND_CLUSTER_NAME" ]]; then
@@ -263,7 +260,10 @@ jobs:
             printf 'cleanup=refused_invalid_ownership_claim\n' | tee -a "$evidence"
             exit 1
           fi
-          if docker inspect "$node" >/dev/null 2>&1; then
+          if ! node_names="$(docker ps -a --format '{{.Names}}')"; then
+            printf 'cleanup=failed_node_lookup\n' | tee -a "$evidence"
+            exit 1
+          elif grep -Fxq "$node" <<<"$node_names"; then
             owner_label="$(docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' "$node" 2>/dev/null || true)"
             if [[ "$owner_label" != "$KIND_CLUSTER_NAME" ]]; then
               printf 'cleanup=refused_unverified_node_identity node=%s label=%s\n' "$node" "$owner_label" \

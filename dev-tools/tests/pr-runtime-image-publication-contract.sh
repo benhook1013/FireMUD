@@ -16,20 +16,31 @@ from pathlib import Path
 
 source = Path(sys.argv[1]).read_text()
 group = re.search(r"^  group: (runtime-images-.*)$", source, re.MULTILINE).group(1)
-assert re.search(r"^  cancel-in-progress: true$", source, re.MULTILINE)
+assert re.search(r"^  cancel-in-progress: false$", source, re.MULTILINE)
 
 class Context:
     def __init__(self, value=None):
         self.value = value
     def __getattr__(self, key):
         value = self.value.get(key) if isinstance(self.value, dict) else None
-        return Context(value) if isinstance(value, dict) or value is None else value
+        return Context(value)
     def __bool__(self):
         return bool(self.value)
     def __eq__(self, other):
-        return (self.value or "") == (other or "")
+        other = other.value if isinstance(other, Context) else other
+        left = self.value
+        if type(left) is type(other):
+            return left.lower() == other.lower() if isinstance(left, str) else left == other
+        def number(value):
+            if value is None or value == "": return 0
+            if isinstance(value, bool): return int(value)
+            try: return float(value)
+            except (ValueError, TypeError): return float("nan")
+        return number(left) == number(other)
     def __str__(self):
-        return "" if self.value is None else str(self.value)
+        return "" if self.value is None else str(self.value).lower() if isinstance(self.value, bool) else str(self.value)
+    def __format__(self, spec):
+        return format(str(self), spec)
 
 base = {
     "event_name": "pull_request", "workflow": "Build Runtime Images",
@@ -52,23 +63,23 @@ def check(event, suffix):
     expected = "runtime-images-Build Runtime Images-" + suffix
     assert evaluate(event) == expected, (evaluate(event), expected)
 
-check(base, "pr-7-required")
+check(base, "pr-7-base-base1-head-head1-merge-merge1-required")
 new = copy.deepcopy(base)
 new["event"]["pull_request"]["head"]["sha"] = "head2"
 new["event"]["pull_request"]["base"]["sha"] = "base2"
 new["sha"] = "merge2"
-check(new, "pr-7-required")
+check(new, "pr-7-base-base2-head-head2-merge-merge2-required")
 new["event"]["pull_request"]["number"] = 8
-check(new, "pr-8-required")
+check(new, "pr-8-base-base2-head-head2-merge-merge2-required")
 for action in ["opened", "reopened", "ready_for_review", "synchronize"]:
     event = copy.deepcopy(base)
     event["event"]["action"] = action
-    check(event, "pr-7-required")
+    check(event, "pr-7-base-base1-head-head1-merge-merge1-required")
 metadata = copy.deepcopy(base)
 metadata["event"]["action"] = "edited"
-check(metadata, "pr-7-metadata")
+check(metadata, "pr-7-base-base1-head-head1-merge-merge1-metadata")
 metadata["event"]["changes"] = {"base": {"ref": {"from": "old-base"}}}
-check(metadata, "pr-7-required")
+check(metadata, "pr-7-base-base1-head-head1-merge-merge1-required")
 for repository in ["fork/repo", None]:
     fork = copy.deepcopy(base)
     fork["event"]["pull_request"]["head"]["repo"] = {"full_name": repository}
@@ -79,6 +90,13 @@ dispatch = {**base, "event_name": "repository_dispatch", "event": {
     "action": "pr-runtime-base-refresh", "client_payload": {
         "pr_number": 7, "base_sha": "base1", "head_sha": "head1", "merge_sha": "merge1"}}}
 check(dispatch, "pr-7-base-base1-head-head1-merge-merge1-required")
+for value in [0, False, "", None]:
+    invalid = copy.deepcopy(dispatch)
+    invalid["event"]["client_payload"]["pr_number"] = value
+    check(invalid, "repository-dispatch-run-100-required")
+assert Context(1) != ""
+assert Context(0) == ""
+assert Context(False) == ""
 for missing in ["pr_number", "base_sha", "head_sha", "merge_sha"]:
     invalid = copy.deepcopy(dispatch)
     del invalid["event"]["client_payload"][missing]
@@ -92,7 +110,7 @@ callback["event"]["workflow_run"] = {"event": "push", "head_branch": "develop"}
 check(callback, "branch-develop-required")
 check({**base, "event_name": "push", "event": {}, "ref": "refs/heads/develop"},
       "refs/heads/develop-required")
-print("Runtime concurrency: same-repository PR supersession; fork/dispatch/branch isolation passed")
+print("Runtime concurrency: nonpreemptive exact PR/dispatch tuple and branch isolation passed")
 PY_CONCURRENCY
 
 require_contains() {

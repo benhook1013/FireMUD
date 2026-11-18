@@ -523,6 +523,8 @@ jobs:
                 --arg trusted_workflow_name "Trusted Hosted Identity Request" \
                 --arg default_branch "${DEFAULT_BRANCH}" \
                 --arg pr_title "PR preview ${pr_number}" \
+                --argjson pr_number "$pr_number" \
+                --arg head_sha "$head_sha" \
                 --arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" '
                     if type != "array" then
                       error("workflow runs are not an array")
@@ -540,12 +542,21 @@ jobs:
                       else
                         .[]
                         | select(
-                            ((.name == $workflow_name) or (.name == $trusted_workflow_name))
+                            (
+                              (.name == $workflow_name
+                                and ((.path // "" | split("@")[0]) == ".github/workflows/preview.yml"))
+                              or (.name == $trusted_workflow_name
+                                and ((.path // "" | split("@")[0]) == ".github/workflows/hosted-identity-request.yml"))
+                            )
                             and (
                               (.firemud_reconciler_branch_filtered == false)
                               or (.firemud_reconciler_branch_filtered == true and .head_branch == $default_branch)
                             )
-                            and (.display_title == $run_name or .display_title == $pr_title)
+                            and (
+                              .display_title == $run_name
+                              or (.display_title == $pr_title and .head_sha == $head_sha
+                                  and any(.pull_requests[]?; .number == $pr_number))
+                            )
                             and (
                               .status == "requested"
                               or .status == "queued"

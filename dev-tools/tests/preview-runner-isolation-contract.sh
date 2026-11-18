@@ -96,6 +96,38 @@ else:
     raise AssertionError("scalar write-all permissions escaped source checking")
 
 
+
+# Exercise the reconciler's actual active-run filter, not a duplicate predicate.
+reconciler_source = reconciler_path.read_text()
+active_filter = re.search(
+    r'--arg run_name [^\n]+ \'\n(.*?)\' <<<"\$\{active_preview_runs_json\}"',
+    reconciler_source, re.S,
+).group(1)
+def active_ids(row: dict[str, Any]) -> str:
+    return subprocess.check_output([
+        "jq", "-r", "--arg", "workflow_name", "PR Preview Environment",
+        "--arg", "trusted_workflow_name", "Trusted Hosted Identity Request",
+        "--arg", "default_branch", "develop", "--arg", "pr_title", "PR preview 7",
+        "--argjson", "pr_number", "7", "--arg", "head_sha", "a" * 40,
+        "--arg", "run_name", "Preview dispatch pr-7-base-b-head-a-merge-c",
+        active_filter,
+    ], input=json.dumps([row]), text=True).strip()
+active_run = {
+    "id": 1, "name": "PR Preview Environment", "path": ".github/workflows/preview.yml",
+    "head_branch": "feature", "head_sha": "a" * 40, "pull_requests": [{"number": 7}],
+    "display_title": "PR preview 7", "status": "in_progress",
+    "firemud_reconciler_branch_filtered": False,
+}
+assert active_ids(active_run) == "1"
+for fields in (
+    {"path": ".github/workflows/unrelated.yml"},
+    {"head_sha": "b" * 40},
+    {"pull_requests": [{"number": 8}]},
+):
+    assert active_ids({**active_run, **fields}) == ""
+assert active_ids({**active_run, "display_title": "Preview dispatch pr-7-base-b-head-a-merge-c",
+                   "pull_requests": [], "head_branch": "develop"}) == "1"
+
 preview = load(preview_path)
 trusted = load(trusted_path)
 recovery = load(recovery_path)
@@ -295,7 +327,9 @@ def check_preview_source_permissions(job_name: str, job: dict[str, Any]) -> None
             raise AssertionError(
                 "preview-runtime-base-refresh must have exactly contents:write and pull-requests:read"
             )
-        if "github.event_name == 'repository_dispatch'" not in str(job.get("if", "")):
+        condition = str(job.get("if", "")).strip()
+        # Accept only the current conjunction grammar; OR is not a mandatory gate.
+        if not condition.startswith("$"+"{{ github.event_name == 'repository_dispatch' && ") or "||" in condition:
             raise AssertionError("preview runtime refresh write permissions require dispatch-only gating")
         return
     job_permissions_list = permissions(job_permissions)
@@ -407,6 +441,15 @@ except AssertionError:
 else:
     raise AssertionError("preview runtime refresh PR write mutation escaped source checking")
 
+refresh_with_or_gate = dict(refresh_job)
+refresh_with_or_gate["if"] = "$"+"{{ github.event_name == 'repository_dispatch' || github.event_name == 'pull_request' }}"
+try:
+    check_preview_source_permissions("preview-runtime-base-refresh", refresh_with_or_gate)
+except AssertionError:
+    pass
+else:
+    raise AssertionError("OR dispatch gate escaped source checking")
+
 # The plan's local actions and scripts must come from the default branch; the
 # render's PR checkout is exact, unprivileged, and bound to the planned merge.
 plan_checkouts = checkouts(preview_jobs["preview-plan"])
@@ -419,6 +462,36 @@ if render_checkouts[0].get("with", {}).get("ref") != "${{ github.event.repositor
     raise AssertionError("preview render tools must remain rooted at the trusted default branch")
 if render_checkouts[1].get("with", {}).get("ref") != "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge" or render_checkouts[1].get("with", {}).get("path") != "candidate":
     raise AssertionError("preview render must isolate the exact PR merge ref under candidate/")
+def check_trusted_working_directories(workflow: dict[str, Any], job: dict[str, Any]) -> None:
+    inherited = workflow.get("defaults", {}).get("run", {}).get("working-directory", ".")
+    inherited = job.get("defaults", {}).get("run", {}).get("working-directory", inherited)
+    for step in job.get("steps", []):
+        if "run" not in step:
+            continue
+        effective = step.get("working-directory", inherited)
+        if effective not in (".", "./", "$"+"{{ github.workspace }}"):
+            raise AssertionError("preview executable step must remain rooted in trusted tools")
+
+for name in ("preview-plan", "preview-render"):
+    check_trusted_working_directories(preview, preview_jobs[name])
+for mutation in (
+    {"defaults": {"run": {"working-directory": "candidate"}}, "steps": [{"run": "true"}]},
+    {"steps": [{"run": "true", "working-directory": "candidate"}]},
+):
+    try:
+        check_trusted_working_directories(preview, mutation)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("candidate working-directory mutation escaped source checking")
+try:
+    check_trusted_working_directories(
+        {"defaults": {"run": {"working-directory": "candidate"}}}, {"steps": [{"run": "true"}]}
+    )
+except AssertionError:
+    pass
+else:
+    raise AssertionError("workflow default working-directory escaped source checking")
 render_text = text(preview_jobs["preview-render"])
 for required in ("git -C candidate", "candidate/k8s/helm/firemud", "python3 ./dev-tools/hosted/preview/"):
     if required not in render_text:
