@@ -20,6 +20,6 @@
 
 ## LOC Impact
 
-<!-- Generated LOC section: filled automatically after CI by the PR LOC Report workflow. Do not edit between the markers. -->
+<!-- Generated LOC section: filled on a best-effort basis after eligible CI runs (same-repository, non-Renovate, no CodeRabbit review in progress) by the PR LOC Report workflow. Do not edit between the markers. -->
 <!-- firemud:cloc-report:start -->
 <!-- firemud:cloc-report:end -->

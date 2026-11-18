@@ -46,7 +46,7 @@ Rules for triage:
 A PR is ready for the human's merge decision when:
 
 - every thread, current and outdated, is resolved under the triage rules, and every Fix-now finding is verified fixed at the current head;
-- every required review channel has completed its configured policy with attributable results;
+- every required review channel has completed its configured policy with attributable results, or the human waived Hosted review under Change And Merge Policy (a waived request still earns no review credit);
 - required CI is green on the exact head; on a stacked base with no required checks, the applicable substantive workflows must actually have run, and the candidate must contain any workflow changes it relies on;
 - proportionate validation and runtime proof from [validation and runtime proof](./validation-and-runtime-proof.md) is complete, including focused tests for important changed behavior that patch coverage shows is untested;
 - the title and body are current.
@@ -65,7 +65,7 @@ Merge authority:
 - Prefer the fewest PRs that stay reviewable. Group related or small changes, even across domains, because every extra PR costs a review and reconciliation. Split only when a combined PR would be hard to review or would mix unrelated risk, such as a risky runtime change with unrelated routine docs. State the grouped scope in the PR Summary; that stated purpose covers everything grouped, and Finding Triage judges Fix now against it.
 - Hosted CodeRabbit has a hard 100 changed-file limit. Plan feature PRs at around 80 files to leave room for fixes. A skip caused by the limit is not review coverage: restructure into coherent PRs or report the blocker. Only the human can waive Hosted review for a specific oversized PR, and only when verified substantial CodeRabbit coverage of its feature-bearing work already exists; record the waived request as unrun, and it earns no completed-review credit.
 - A file limit changes how work is split, never what is correct. Do not drop needed changes, move code to the wrong owner, or mix unrelated risk to fit under it.
-- Every feature-bearing PR needs a completed Hosted review. CLI or model review does not substitute.
+- Every feature-bearing PR needs a completed Hosted review, unless the human waived it under the oversized-PR rule above. CLI or model review does not substitute.
 - The orchestrator may split, add a prerequisite or successor PR, or retarget its own PRs within its approved workstream without fresh approval, outside an active Hosted review. When a finding or proof moves to another PR, note the successor in both PR bodies and in the finding's disposition, and check whether the successor already fixes it. If a child PR supplies behavior the parent requires, the parent stays not ready until the child lands. Bring a markedly more fragmented topology, or an unclear owner, to the Overseer.
 - Failing Renovate PRs are maintenance: push the smallest compatible fix to the Renovate branch, or use a replacement branch when needed. Kubectl, Helm, and Velero CLI updates change exact versions with publisher checksums; Velero runtime image and Terraform Helm updates stay digest-pinned and grouped with the CLI release.
 

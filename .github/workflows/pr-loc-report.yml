@@ -16,8 +16,10 @@ on:
 permissions:
   contents: read
 
-# One group per source CI run, so no run (including a metadata-only one) can
-# cancel or replace another's update. The script's final recheck orders edits.
+# One group per source CI run, so callbacks for different runs (including
+# metadata-only ones) never cancel each other. A rerun attempt of the same run
+# shares its group and may replace a still-pending callback for that run.
+# The script's final recheck orders edits.
 concurrency:
   group: pr-loc-report-${{ github.event.workflow_run.id }}
   cancel-in-progress: false
@@ -91,10 +93,12 @@ jobs:
           [[ "$(jq -r '.author' <<<"$pr")" != "renovate[bot]" ]] || skip "Renovate PR #${number}"
           # Skip when a complete marked section already counts this exact head and base.
           body="$(jq -r '.body' <<<"$pr" | tr -d '\r')"
-          recorded="$(sed -n 's/^<!-- firemud:cloc-report:metadata \(.*\) -->$/\1/p' <<<"$body" | head -n 1)"
+          # Read metadata only from inside the first complete start/end marker pair.
+          recorded="$(awk '$0 == "<!-- firemud:cloc-report:start -->" && !done { inside = 1; next }
+            inside && $0 == "<!-- firemud:cloc-report:end -->" { done = 1; inside = 0; next }
+            inside && sub(/^<!-- firemud:cloc-report:metadata /, "") && sub(/ -->$/, "") && !found { found = 1; meta = $0 }
+            END { if (done && found) print meta }' <<<"$body")"
           if [[ -n "$recorded" ]] \
-            && grep -qxF '<!-- firemud:cloc-report:start -->' <<<"$body" \
-            && grep -qxF '<!-- firemud:cloc-report:end -->' <<<"$body" \
             && [[ "$(jq -r '.head_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$head" ]] \
             && [[ "$(jq -r '.base_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$base" ]]; then
             skip "PR #${number} LOC section already matches this head and base"

@@ -38,13 +38,13 @@ Making HP itself volatile was considered and rejected for now. It voids fights o
 1. Combat AI bookkeeping is a declared volatile class: aggro and threat, target choice, round and turn order, swing timers, a bounded per-spawn damage-share log, and cooldowns that gate no durable outcome. Each feature declares which of its state is volatile. The state is held by the region executor and bound to `(tenantId, gameInstanceId, regionId, regionEpoch, executorFence)`; a new fence starts empty. Loss is allowed: NPCs pick targets again, rounds restart, and damage shares logged before the loss no longer count toward that NPC's death reward credit.
 2. No durable effect may be triggered by, keyed on, or targeted at volatile state, and authoritative script handlers may not read it. Volatile data reaches durable state only when frozen into the request digest of an outcome whose identity is already durable, such as damage shares in an NPC death effect. The frozen payload and digest are recorded with that outcome before submission, and a retry resubmits the recorded payload rather than rebuilding it from volatile state.
 3. HP, mana, combat buffs, spawn lifecycle, death, loot, XP, gold, boss phases, quest flags and any timer that gates a durable outcome stay durable under the existing effect path. Mid-fight durable outcomes are one-shots keyed by spawn, trigger and ordinal.
-4. The region executor combines each entity's damage and healing in a tick into one net HP effect owned by Entity Management. That effect keeps its mutation `EffectId` ledger entry and one `tick_effect_guard` row, written in the same transaction as the HP update; the disposable `entity_tick_state` watermark alone does not give replay safety across runtime replacement.
+4. The region executor combines each entity's damage and healing in a tick into one net HP effect owned by Entity Management. That effect keeps its mutation `EffectId` ledger entry and one `tick_effect_guard` row, written in the same transaction as the HP update; the disposable `entity_tick_state` watermark alone does not give replay safety across runtime replacement. Like the death payload, the net HP request and digest are recorded before submission and a retry resubmits them. HP thresholds such as boss phases are evaluated on the net end-of-tick HP, so a threshold crossed and healed back within one tick does not fire.
 
 ## Consequences
 
 - Combat writes drop from an effect ledger row, guard row and HP update per hit to the same three rows per fighter per tick. A load probe must measure the saving.
 - Crash and failover behavior for HP and outcomes is unchanged; after a failover an NPC may switch target.
-- On acceptance, the tick design goal against in-service volatile state and the Entity Management damage example are amended to match.
+- The tick design goal against in-service volatile state and the Entity Management damage example are amended to match.
 
 ## Alternatives Considered
 

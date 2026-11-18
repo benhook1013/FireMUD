@@ -122,7 +122,7 @@ Complex multi-entity operations (for example trades that touch two inventories) 
 
 Examples:
 
-- **Damage application** – when a tick instructs Entity Management to apply damage to `entityId`, the handler:
+- **Damage application** – combat sends at most one net HP effect per entity per tick under [ADR 0186](../../decisions/adr-0186-volatile-combat-bookkeeping-and-per-tick-hp.md); other damage sources follow the same path. When a tick instructs Entity Management to apply damage to `entityId`, the handler:
   - uses the mutation's persisted `EffectId` (the root identity for a root damage mutation or a persisted child identity for a generated/derived damage mutation), derives the typed damage operation/target guard identity, and inserts/verifies the corresponding `tick_effect_guard` row in the same transaction as the HP mutation; the stable `effectKey` remains in the explicit guard/ledger projection;
   - treats a guard conflict as a replay only after verifying the complete effect and target state, and otherwise reconciles or fails closed with the original mutation identity and its enclosing root `EffectId` lineage. Damage does not assume an at-most-one-damage-per-aggregate-per-tick invariant, so the per-aggregate `entity_tick_state` watermark is not sufficient for this path.
 

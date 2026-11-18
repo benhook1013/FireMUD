@@ -11,7 +11,7 @@ FireMUD runs on two providers: Codex (Sol and Luna) and Claude (Opus). Either ca
 - An explicit human model choice always wins. Keep the model and reasoning settings the human chose for a task.
 - The human starts Codex tasks with Sol. Luna is only ever a subagent, and the orchestrator verifies its work.
 - Prefer a reviewer or arbiter from the other provider (Codex versus Claude) when the mode allows, because different providers miss different things. That reviewer runs as a separate task, since a host cannot spawn the other provider's models. Otherwise use a different, stronger model from the same provider in a fresh context, or the author's own model in a fresh context when nothing stronger is eligible.
-- Within one host, subagents use that host's models: a Codex orchestrator delegates to Codex models, a Claude orchestrator to Claude models. Work for the other provider goes through a separate task (a t3code thread or a FireController job), not a subagent.
+- Within one host, subagents use that host's models: a Codex orchestrator delegates to Codex models, a Claude orchestrator to Claude models. Work for the other provider goes through a separate task (a t3code thread or a FireController job), not a subagent. That includes table entries naming the other provider's model, such as Opus work under a Sol orchestrator in `codex_low`.
 
 ## Provider Mode
 

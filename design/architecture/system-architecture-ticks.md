@@ -530,7 +530,7 @@ The tick model is designed to provide:
 - Deterministic recovery via idempotent replays.
 - Fair scheduling across entities.
 - Clear boundaries between coordination state (Redis) and authoritative state (PostgreSQL).
-- No long-lived, in-service volatile tick state: tick coordination and session/timer state can be rebuilt from Redis and authoritative domain stores after failures.
+- No long-lived, in-service volatile tick state: tick coordination and session/timer state can be rebuilt from Redis and authoritative domain stores after failures. The one exception is declared volatile combat bookkeeping under [ADR 0186](./decisions/adr-0186-volatile-combat-bookkeeping-and-per-tick-hp.md), with the loss consequences that ADR states.
 
 See the introduction of `system-architecture-tick-concepts-and-invariants.md` for a more narrative discussion of these benefits.
 

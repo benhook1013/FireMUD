@@ -1677,6 +1677,8 @@ fi
 loc_meta="<!-- firemud:cloc-report:metadata {\\\"base_oid\\\":\\\"${loc_base}\\\",\\\"head_oid\\\":\\\"${loc_head}\\\"} -->"
 FAKE_BODY="\"${loc_meta}\"" run_decide
 grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "a metadata line without a complete marked block must not count as current" >&2; exit 1; }
+FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n<!-- firemud:cloc-report:end -->\\n${loc_meta}\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "metadata outside an empty marked block must not count as current" >&2; exit 1; }
 FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n<!-- firemud:cloc-report:end -->\"" run_decide
 expect_skip "LOC section already matches this head and base"
 echo "PR LOC Report callback contract checks passed"
