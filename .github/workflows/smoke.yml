@@ -1301,6 +1301,10 @@ jobs:
                             await new Promise((resolve) => setTimeout(resolve, sleepMs));
                             continue smokeGatePolling;
                           }
+                          if (!liveIdentity.canonicalPlayEligible) {
+                            core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                            return;
+                          }
                           if (identityKey({...liveIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
                               identityKey(currentIdentity)) {
                             requireCurrentIdentity = true;
@@ -1313,6 +1317,24 @@ jobs:
                           core.info("Exact canonical refresh is pending; continuing within the existing smoke-gate deadline.");
                           await new Promise((resolve) => setTimeout(resolve, sleepMs));
                           continue smokeGatePolling;
+                        }
+                        if (refreshProof === false && matching.event === "pull_request" &&
+                            context.payload.pull_request.head.repo?.full_name === repositoryName) {
+                          // A rejected proof may have observed base movement during its
+                          // live reads. Follow that new tuple, never accept the old proof.
+                          const liveIdentity = await resolveCurrentIdentity(
+                            "Rechecking rejected canonical refresh identity", true);
+                          if (liveIdentity?.obsolete) return;
+                          if (!liveIdentity) {
+                            await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                            continue smokeGatePolling;
+                          }
+                          if (identityKey({...liveIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
+                              identityKey(currentIdentity)) {
+                            requireCurrentIdentity = true;
+                            currentIdentity = liveIdentity;
+                            continue smokeGatePolling;
+                          }
                         }
                         knownPlayVerified = refreshProof === true;
                         refreshVerified = knownPlayVerified;

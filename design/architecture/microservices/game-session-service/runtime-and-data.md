@@ -10,7 +10,7 @@ The service runtime model assumes replaceable workers, not authoritative in-proc
 
 This is a target-only contract, not an enabled or runtime-qualified retirement path.
 
-The exact current Game Session owner establishes irreversible closure of serving and resume for the admitted binding and retains settlement of applicable effects and indexes. Game Session supplies an authenticated terminal receipt linked to the original admission, FINAL evidence, binding lineage and Account reservation. [Account owns retirement of the corresponding used capacity](../account-service/runtime-and-data.md#finalized-capacity-usage-retirement).
+The exact current Game Session owner establishes irreversible closure of serving and resume for the admitted binding and retains settlement of applicable effects and indexes. Game Session supplies an authenticated terminal receipt linked to the original admission, FINAL evidence, binding lineage and Account reservation. [Account owns retirement of the corresponding used capacity](../account-service/runtime-and-data.md#finalized-capacity-usage-retirement). The terminal receipt remains durable and exactly readable after binding closure and worker replacement. A replacement owner recovers and redelivers that same receipt until Account's exact retirement acknowledgement is known; this recovery never reopens serving or resume.
 
 ## Implementation Status
 

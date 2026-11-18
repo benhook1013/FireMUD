@@ -60,7 +60,8 @@ public final class AccountTenantCapacityClient
    * The caller must obtain its typed context from current owned player state, not text/metadata.
    * Retries retain this exact request. The Account call consumes the remaining absolute admission
    * budget, capped at five seconds and the incoming deadline. A timeout or an inexact response
-   * leaves the commitment indeterminate. Retry with the original identity.
+   * leaves the commitment indeterminate. Collect read-only evidence for the original attempt first;
+   * only replay this mutation with the exact original request when reconciliation permits it.
    */
   public Result commit(Request request, long absoluteDeadlineMillis) {
     long maximumMillis =
@@ -119,9 +120,15 @@ public final class AccountTenantCapacityClient
       Deadline incoming,
       long absoluteDeadlineMillis,
       long sampledMillis) {
-    long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, sampledMillis);
     long maximumMillis =
         TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
+    long remainingMillis = 0;
+    if (absoluteDeadlineMillis > sampledMillis) {
+      // A positive difference can overflow only across the signed long boundary.
+      // Such a future deadline is beyond the invocation cap, not an expired budget.
+      long difference = absoluteDeadlineMillis - sampledMillis;
+      remainingMillis = difference < 0 ? maximumMillis : Math.min(maximumMillis, difference);
+    }
     Deadline absoluteDeadline =
         sampledAt.offset(
             Math.max(0L, Math.min(maximumMillis, remainingMillis)), TimeUnit.MILLISECONDS);

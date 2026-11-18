@@ -97,9 +97,19 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                       .defaultSchema(schema)
                       .placeholders(java.util.Map.of("serviceSchema", schema))
                       .locations("classpath:db/migration")
+                      .target("1040.4")
                       .load()
                       .migrate())
-          .isInstanceOf(org.flywaydb.core.api.FlywayException.class);
+          .isInstanceOf(org.flywaydb.core.api.FlywayException.class)
+          .hasStackTraceContaining("account_capacity_origin_attempt_unique")
+          .satisfies(
+              failure -> {
+                Throwable cause = failure;
+                while (cause != null && !(cause instanceof java.sql.SQLException))
+                  cause = cause.getCause();
+                assertThat(cause).isInstanceOf(java.sql.SQLException.class);
+                assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("23505");
+              });
       assertThat(
               dsl.fetch(
                       "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")

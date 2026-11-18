@@ -196,7 +196,13 @@ class AccountTenantCapacityClientMtlsTest {
       client.init();
       assertThatThrownBy(
               () -> client.commit(CapacityAdmissionTestFixture.playerRequest(), deadline()))
-          .isInstanceOf(StatusRuntimeException.class);
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure -> {
+                assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+                assertThat(failure.getStatus().getDescription())
+                    .isEqualTo("Request requires the exact authenticated server workload identity");
+              });
       assertThat(calls).hasValue(0);
     } finally {
       stop(server);
@@ -277,6 +283,26 @@ class AccountTenantCapacityClientMtlsTest {
     var selected =
         AccountTenantCapacityClient.selectDeadline(maximum, sample, incoming, explicitMillis, 0);
     assertThat(selected.timeRemaining(TimeUnit.MILLISECONDS)).isEqualTo(expectedMillis);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"-9223372036854775808, 1, 0", "9223372036854775807, -1, 5000", "0, 0, 0"})
+  void extremeWallClockDeadlinesRemainExpiredOrCapped(
+      long absoluteMillis, long sampledMillis, long expectedMillis) {
+    var ticker =
+        new Deadline.Ticker() {
+          @Override
+          public long nanoTime() {
+            return 0;
+          }
+        };
+    var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
+    var maximum = Deadline.after(5, TimeUnit.SECONDS, ticker);
+    assertThat(
+            AccountTenantCapacityClient.selectDeadline(
+                    maximum, sample, null, absoluteMillis, sampledMillis)
+                .timeRemaining(TimeUnit.MILLISECONDS))
+        .isEqualTo(expectedMillis);
   }
 
   @Test

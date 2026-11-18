@@ -193,7 +193,7 @@ class AccountTenantCapacityOwnerTest {
               assertThat(arguments[7]).isEqualTo("NO_ACCEPT");
               assertThat(arguments[9]).isEqualTo("CAPACITY_QUOTA_EXCEEDED");
               when(genericRefusal.get("decision_id", UUID.class)).thenReturn((UUID) arguments[8]);
-              f.originDecision = genericRefusal;
+              f.pendingOriginDecision = genericRefusal;
               return 1;
             });
     f.retained = true;
@@ -207,6 +207,8 @@ class AccountTenantCapacityOwnerTest {
               assertThat(failure.durableDenialId())
                   .isEqualTo(genericRefusal.get("decision_id", UUID.class));
             });
+    assertThat(f.originDecision).isSameAs(genericRefusal);
+    assertThat(f.pendingOriginDecision).isNull();
     UUID committedId = genericRefusal.get("decision_id", UUID.class);
     when(usage.get("held_units", Long.class)).thenReturn(0L);
     org.mockito.Mockito.clearInvocations(f.dsl, f.accounts, f.memberships, f.issuances, f.scopes);
@@ -689,6 +691,7 @@ class AccountTenantCapacityOwnerTest {
     private boolean existing = true;
     private boolean retained;
     private Record originDecision;
+    private Record pendingOriginDecision;
 
     private Fixture(boolean expired) throws Exception {
       this(expired, CapacityAdmissionTestFixture.playerRequest());
@@ -752,7 +755,7 @@ class AccountTenantCapacityOwnerTest {
                   return existing ? row : null;
                 if (sql.startsWith("SELECT 1 FROM (SELECT tenant_uuid")) return null;
                 if (sql.startsWith("SELECT * FROM account_capacity_origin_decisions "))
-                  return originDecision;
+                  return pendingOriginDecision != null ? pendingOriginDecision : originDecision;
                 if (sql.startsWith(
                     "SELECT snapshot_identity FROM account_tenant_capacity_evaluations "))
                   return evaluation;
@@ -767,13 +770,19 @@ class AccountTenantCapacityOwnerTest {
               memberships,
               issuances,
               scopes,
-              new ControlledTransactions(),
+              new ControlledTransactions(this),
               clock,
               namespace);
     }
   }
 
   private static final class ControlledTransactions implements PlatformTransactionManager {
+    private final Fixture fixture;
+
+    private ControlledTransactions(Fixture fixture) {
+      this.fixture = fixture;
+    }
+
     @Override
     public TransactionStatus getTransaction(
         @org.jspecify.annotations.Nullable TransactionDefinition definition) {
@@ -784,17 +793,22 @@ class AccountTenantCapacityOwnerTest {
           .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
       assertThat(definition.getTimeout()).isEqualTo(5);
       assertThat(definition.isReadOnly()).isFalse();
+      fixture.pendingOriginDecision = null;
       TransactionSynchronizationManager.setActualTransactionActive(true);
       return new SimpleTransactionStatus();
     }
 
     @Override
     public void commit(TransactionStatus status) {
+      if (fixture.pendingOriginDecision != null)
+        fixture.originDecision = fixture.pendingOriginDecision;
+      fixture.pendingOriginDecision = null;
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
 
     @Override
     public void rollback(TransactionStatus status) {
+      fixture.pendingOriginDecision = null;
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
   }

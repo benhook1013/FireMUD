@@ -3556,7 +3556,7 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
       git: {getRef: async ({ref}) => {assert.equal(ref, `heads/${data.identity.baseRef}`); return {data: data.currentBase};}},
       repos: {getContent: async ({owner, repo, path, ref}) => {
         assert.equal(`${owner}/${repo}`, repositoryName);
-        assert.equal(ref, path === workflowPath && event === "repository_dispatch" ? workflowSha : mergeSha,
+        assert.equal(ref, path === workflowPath && event === "repository_dispatch" ? workflowSha : data.identity.mergeSha,
           "workflow attestation must use its executed revision; classifier attestation must use the verified merge");
         contentRequests.push(path);
         if (!data.definitions[path]) throw Object.assign(new Error("definition unavailable"), {status: 404});
@@ -3645,7 +3645,7 @@ async function failedLegacyProof(stage, error, event = "pull_request") {
     identity, (_label, call) => call(), async () => {throw error;}, async () => false,
     TerminalGitHubRequestError, core, async () => false,
     {payload: {pull_request: {head: {repo: {full_name: repositoryName}}}}},
-    async () => identity, selected => JSON.stringify(selected));
+    async () => ({...identity, canonicalPlayEligible: true}), selected => { const {canonicalPlayEligible, ...tuple} = selected; return JSON.stringify(tuple); });
   assert.deepEqual(failures, ["Runtime images run 99 did not complete successfully: run=failure"]);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /^Canonical PLAY transition exception proof is unavailable:/);
@@ -3657,6 +3657,7 @@ const actualPollingLoop = script.slice(loopStart);
 async function pendingRefreshCaller(statuses, expires = false, options = {}) {
   const failures = [], outputs = [];
   let sleeps = 0, polls = 0, writes = 0, now = 0, currentChecks = 0;
+  const proofLive = {baseSha: identity.baseSha, mergeSha: identity.mergeSha};
   const core = {info: () => {}, warning: () => {},
     setFailed: value => failures.push(value), setOutput: (...value) => outputs.push(value)};
   core.summary = {addHeading() {return this;}, addRaw() {return this;},
@@ -3672,9 +3673,29 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
   await execute(repositoryName, {rest: {actions: {listJobsForWorkflowRun: "jobs"}}, paginate: async () => {
     if (options.originalError) throw options.originalError;
     return [candidate];
-  }}, "benhook1013", "FireMUD", canonicalSmokeJobName, (_label, call) => call(), async run => Boolean(options.directProof || (options.recoverDrift && run.event === "repository_dispatch")),
+  }}, "benhook1013", "FireMUD", canonicalSmokeJobName, (_label, call) => call(), async run => {
+    if (options.proofDrift && run.event === "repository_dispatch") {
+      return verify(data => {
+        Object.assign(data.identity, proofLive);
+        data.currentBase.object.sha = proofLive.baseSha;
+        data.currentPullRequest.merge_commit_sha = proofLive.mergeSha;
+        data.source.display_title = data.latest.display_title =
+          `Build Runtime Images secure-pr-artifact pr-3390 base-${proofLive.baseSha} head-${headSha} merge-${proofLive.mergeSha} mode-required`;
+      }, "repository_dispatch");
+    }
+    return Boolean(options.directProof || (options.recoverDrift && run.event === "repository_dispatch"));
+  },
     async () => {
       const status = statuses[Math.min(polls++, statuses.length - 1)];
+      if (options.proofDrift) {
+        const result = await recoveredFailure({mutateProof(data) {
+          Object.assign(proofLive, options.finalIdentity);
+          data.currentBase.object.sha = proofLive.baseSha;
+          data.currentPullRequest.merge_commit_sha = proofLive.mergeSha;
+        }});
+        assert.equal(result.accepted, false, "the old refresh must fail its live tuple proof");
+        return false;
+      }
       return (await recoveredFailure(options.headRepository ? {headRepository: options.headRepository}
         : status === "absent" ? {absent: true}
         : status === "missing-job" ? {noProducer: true}
@@ -3685,7 +3706,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
         currentChecks++;
         if (options.finalIdentity && polls > 0 && !options.recoverDrift) now += 30;
         return {...identity, canonicalPlayEligible: !options.labelRemoved,
-          sourceEvent: "repository_dispatch", ...(polls > 0 ? options.finalIdentity : {})};
+          sourceEvent: "repository_dispatch", ...(options.proofDrift ? proofLive : polls > 0 ? options.finalIdentity : {})};
       }
       return {...identity, canonicalPlayEligible: !options.labelRemoved};
     }, selected => { const {canonicalPlayEligible, ...tuple} = selected; return JSON.stringify(tuple); }, resolve => {sleeps++; now += 30; resolve();}, 30,
@@ -3718,8 +3739,8 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     assert.equal(writes, 1);
     assert.ok(options.directProof || currentChecks >= 1);
   }
-  assert.equal(polls, options.directProof ? 0 : options.recoverDrift ? 1 : statuses.length);
-  assert.equal(sleeps, options.finalIdentity ? (statuses[0] === "absent" ? 1 : 0)
+  assert.equal(polls, options.directProof || options.labelRemoved ? 0 : options.recoverDrift ? 1 : statuses.length);
+  assert.equal(sleeps, options.labelRemoved ? 0 : options.finalIdentity ? (statuses[0] === "absent" ? 1 : 0)
     : expires ? statuses.length : statuses.length - 1);
 }
 // Exercise the real resolver, not merely a stub that honors requireCurrent.
@@ -3797,6 +3818,11 @@ function markerAccepted(overrides = {}) {
   await pendingRefreshCaller(["completed"], false, {directProof: true, labelRemoved: true});
   await pendingRefreshCaller(["completed", "completed"], false, {
     recoverDrift: true, labelRemoved: true,
+    finalIdentity: {baseSha: "d".repeat(40), mergeSha: "e".repeat(40)},
+  });
+  await pendingRefreshCaller(["absent"], false, {labelRemoved: true});
+  await pendingRefreshCaller(["completed", "completed"], false, {
+    recoverDrift: true, proofDrift: true,
     finalIdentity: {baseSha: "d".repeat(40), mergeSha: "e".repeat(40)},
   });
   await pendingRefreshCaller(["queued", "in_progress", "completed"]);

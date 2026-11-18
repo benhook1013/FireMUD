@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.never;
@@ -111,10 +112,11 @@ class AccountTenantCapacityGrpcServiceTest {
           .commitTenantCapacityAdmission(
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
       var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
-      verify(observer).onNext(response.capture());
+      var ordered = inOrder(observer);
+      ordered.verify(observer).onNext(response.capture());
       assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response.getValue()))
           .contains(new Refusal(code, null));
-      verify(observer).onCompleted();
+      ordered.verify(observer).onCompleted();
       verify(observer, never()).onError(any());
     }
   }
@@ -132,10 +134,11 @@ class AccountTenantCapacityGrpcServiceTest {
           .commitTenantCapacityAdmission(
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
       var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
-      verify(observer).onNext(response.capture());
+      var ordered = inOrder(observer);
+      ordered.verify(observer).onNext(response.capture());
       assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response.getValue()))
           .contains(new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
-      verify(observer).onCompleted();
+      ordered.verify(observer).onCompleted();
       verify(observer, never()).onError(any());
     }
   }
