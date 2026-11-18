@@ -2711,24 +2711,29 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
     private final Network network = Network.newNetwork();
     private final GenericContainer<?> primary =
-        new GenericContainer<>(TestContainerImages.redis())
-            // Bound startup recreation before any fixture data or application actions exist.
-            .withStartupAttempts(STARTUP_ATTEMPTS)
+        configurePrimaryStartup(new GenericContainer<>(TestContainerImages.redis()))
             .withNetwork(network)
-            .withNetworkAliases(PRIMARY_ALIAS)
-            .withExposedPorts(REDIS_PORT)
-            .withCommand(
-                "redis-server",
-                "--bind",
-                "0.0.0.0",
-                "--protected-mode",
-                "no",
-                "--appendonly",
-                "yes",
-                "--appendfsync",
-                "always",
-                "--repl-diskless-sync-delay",
-                "0");
+            .withNetworkAliases(PRIMARY_ALIAS);
+
+    static GenericContainer<?> configurePrimaryStartup(GenericContainer<?> container) {
+      // The physical fixture and failure-injection proof share this entire startup policy.
+      return container
+          .withStartupAttempts(STARTUP_ATTEMPTS)
+          .withExposedPorts(REDIS_PORT)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always",
+              "--repl-diskless-sync-delay",
+              "0");
+    }
+
     private final GenericContainer<?> replica =
         new GenericContainer<>(TestContainerImages.redis())
             .withNetwork(network)

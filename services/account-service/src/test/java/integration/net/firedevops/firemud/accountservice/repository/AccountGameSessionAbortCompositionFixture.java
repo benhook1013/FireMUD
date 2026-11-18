@@ -89,6 +89,7 @@ abstract class AccountGameSessionAbortCompositionFixture {
 
   final class Session implements AutoCloseable {
     private long phaseStartedAt = System.nanoTime();
+    private boolean setupComplete;
     private final PhysicalRedisFixture redis = PhysicalRedisFixture.start();
     final AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.Fixture accountFixture;
     final CanonicalGameplayAdmissionAbortCompositionFixture gs;
@@ -233,6 +234,7 @@ abstract class AccountGameSessionAbortCompositionFixture {
         if (claimedNeverAdmitted) gs.claimOriginalNewCandidateWithoutDispatch(lease);
         else gs.publish(lease);
         markPhase("initial_acquire_claim");
+        setupComplete = true;
       } catch (Exception | Error setupFailure) {
         try {
           close();
@@ -431,7 +433,7 @@ abstract class AccountGameSessionAbortCompositionFixture {
 
     @Override
     public void close() throws Exception {
-      markPhase("case_actions");
+      markPhase(setupComplete ? "case_actions" : "setup_failed");
       try {
         if (client != null) client.close();
         if (reverse != null) reverse.close();

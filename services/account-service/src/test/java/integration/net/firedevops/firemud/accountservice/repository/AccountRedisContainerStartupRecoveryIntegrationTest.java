@@ -57,10 +57,8 @@ class AccountRedisContainerStartupRecoveryIntegrationTest {
     private FailingStartupContainer(int failures) {
       super(TestContainerImages.redis());
       this.failures = failures;
-      withExposedPorts(6379);
-      withStartupAttempts(
-          AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.PhysicalRedisFixture
-              .STARTUP_ATTEMPTS);
+      AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.PhysicalRedisFixture
+          .configurePrimaryStartup(this);
     }
 
     // A test-owned running container is an identity, not a value of its mutable attempt history.
