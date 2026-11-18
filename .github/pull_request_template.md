@@ -12,21 +12,14 @@
 
 ## Validation
 
-- list the commands you actually ran
-- include `./gradlew spotlessApply` for code changes
-- include `./gradlew check` before hand-off
-- include `./gradlew linkCheck lintMarkdown` when markdown or design docs changed
-- include targeted service checks or other relevant verification as needed
+- list the checks you actually ran, and any you skipped or ran only in part (see `design/developer-workflows/validation-and-runtime-proof.md`)
 
 ## Notes
 
 - optional follow-ups, risks, or reviewer context
 
-## Checklist
+## LOC Impact
 
-- [ ] I have read the contribution guidelines
-- [ ] I have listed the validation I actually ran
-- [ ] I have referenced related issues, domain implementation trackers, and canonical design docs where relevant
-- [ ] An accepted [Contributor Licence Agreement](../CONTRIBUTOR_LICENSE_AGREEMENT.md) is on file for every external contribution, with each individual contributor or human signer for a legal entity at least 18 and legally capable, and each human signer for a legal entity authorized to bind that entity, or the documented owner/automation exception applies; a bot cannot sign, and checking this box alone does not execute the CLA
-- [ ] For architecture or capability/tracker completion changes, I checked the relevant domain implementation tracker, canonical design, proto/API contracts, service implementation, and focused tests before marking work complete or filing blockers
-- [ ] For auth/session, scripting, or observability contract changes, I applied the relevant checklist in `design/project-management/review-checklists.md`
+<!-- Generated LOC section: filled automatically after CI by the PR LOC Report workflow. Do not edit between the markers. -->
+<!-- firemud:cloc-report:start -->
+<!-- firemud:cloc-report:end -->

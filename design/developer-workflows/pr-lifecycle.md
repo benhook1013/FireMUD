@@ -48,7 +48,7 @@ A PR is ready for the human's merge decision when:
 - every required review channel has completed its configured policy with attributable results;
 - required CI is green on the exact head; on a stacked base with no required checks, the applicable substantive workflows must actually have run, and the candidate must contain any workflow changes it relies on;
 - proportionate validation and runtime proof from [validation and runtime proof](./validation-and-runtime-proof.md) is complete, including focused tests for important changed behavior that patch coverage shows is untested;
-- the title is current, and the body is refreshed with `python3 dev-tools/maintenance/cloc-report.py pr <number> --update-pr` (add `--body-file <draft.md>` to publish a new body and the LOC section in one edit). If the tool is unavailable, say so rather than inventing counts.
+- the title is current, the body is current, and its generated LOC section matches the current head.
 
 GitHub `CLEAN`, zero threads, or green CI alone is not readiness. Do not describe a head as reviewed if it was not.
 
@@ -61,9 +61,9 @@ Merge authority:
 
 ## Change And Merge Policy
 
-- One purpose per PR. Keep batching where it saves CodeRabbit quota, but split independent or hard-to-review work. Prefer the fewest coherent PRs; extra PRs cost extra review and reconciliation.
+- Prefer the fewest PRs that stay reviewable. Group related or small changes, even across domains, because every extra PR costs a review and reconciliation. Split only when a combined PR would be hard to review or would mix unrelated risk, such as a risky runtime change with unrelated routine docs. State the grouped scope in the PR Summary; that stated purpose covers everything grouped, and Finding Triage judges Fix now against it.
 - Hosted CodeRabbit has a hard 100 changed-file limit. Plan feature PRs at around 80 files to leave room for fixes. A skip caused by the limit is not review coverage: restructure into coherent PRs or report the blocker. Only the human can waive Hosted review for a specific oversized PR, and a waived review earns no completed-review credit.
-- A file limit changes how work is split, never what is correct. Do not drop needed changes, move code to the wrong owner, or pack unrelated changes together to fit under it.
+- A file limit changes how work is split, never what is correct. Do not drop needed changes, move code to the wrong owner, or mix unrelated risk to fit under it.
 - Every feature-bearing PR needs a completed Hosted review. CLI or model review does not substitute.
 - The orchestrator may split, add a prerequisite or successor PR, or retarget its own PRs without fresh approval. When a finding or proof moves to another PR, note the successor in both PR bodies and in the finding's disposition, and check whether the successor already fixes it. If a child PR supplies behavior the parent requires, the parent stays not ready until the child lands. Bring a markedly more fragmented topology, or an unclear owner, to the Overseer.
 - Failing Renovate PRs are maintenance: push the smallest compatible fix to the Renovate branch, or use a replacement branch when needed. Kubectl, Helm, and Velero CLI updates change exact versions with publisher checksums; Velero runtime image and Terraform Helm updates stay digest-pinned and grouped with the CLI release.
@@ -71,7 +71,7 @@ Merge authority:
 ## Branch And PR Hygiene
 
 - Open or update a PR when a branch reaches a coherent checkpoint so CI can run. Draft PRs may expose work in progress. Do not open placeholder PRs.
-- Every PR body, draft included, follows the [PR template](../../.github/pull_request_template.md) headings and checklist and carries the generated LOC section from `python3 dev-tools/maintenance/cloc-report.py pr <number> --update-pr`. Refresh the LOC section when the head changes materially and before readiness. The tool needs `gh` and the pinned `cloc`; if either is unavailable, say so in the body rather than inventing counts.
+- Every PR body, draft included, follows the [PR template](../../.github/pull_request_template.md) headings. The [PR LOC Report](../../.github/workflows/pr-loc-report.yml) workflow fills the generated LOC section after each `CI — Validation` run on a same-repository PR, skipping Renovate PRs and heads with a CodeRabbit review in progress. Do not run the LOC tool by hand for that. When you edit a PR body, keep the `firemud:cloc-report` marker block intact, and avoid needless body or title edits, since each human or agent edit starts metadata-only gate runs (the workflow's own edits do not). If the section is missing or stale at readiness, check that workflow's latest run for the current head; if it skipped or failed, re-run it once no Hosted review is active rather than writing counts yourself.
 - Stacked PRs are fine when the base dependency is explicit. After a parent merges, retarget the child to `develop` before rebasing or pushing it.
 - When active work moves to another worktree, report its absolute path and branch.
 - CI coverage for stacked bases, required gate names, and preview restrictions are owned by [CI/CD](../architecture/system-architecture-cicd.md#pull-request-runtime-and-preview-chain).

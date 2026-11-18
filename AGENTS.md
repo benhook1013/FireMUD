@@ -6,7 +6,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 
 - Architecture and design documents own target behavior. The [domain implementation trackers](design/project-management/implementation-tracking/README.md) own capability status. Code and tests show what is actually implemented. Workflow guides choose process and proof. This file owns none of the technical rules.
 - Before changing something, read its owner: [repository structure](design/architecture/repository-structure.md) to find a concern, [system architecture](design/architecture/system-architecture-overview.md) before changing shared contracts or runtime behavior, [infrastructure](design/architecture/infrastructure/README.md) for deployment, gateway, protocol, environment, or preview work, and `design/architecture/microservices/<service>/` for service work.
-- Before calling a slice complete, check it across its public contract, implementation, and focused proof.
+- Before calling a slice complete, check it across its public contract, implementation, and focused proof, applying the [review checklists](design/project-management/review-checklists.md) for architecture, tracker-completion, auth/session, scripting, or observability contract changes.
 
 ## Communication
 
@@ -26,7 +26,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 ## How Work Flows
 
 - FireMUD is pre-v1. Converge on one canonical state: when a contract changes, update its call sites, tests, and docs together and remove the old path. Keep compatibility only where the owning architecture requires it for live data, security, or protocol reasons.
-- **One purpose per PR.** Keep existing batching where it saves CodeRabbit quota, but do not mix unrelated work.
+- **Group work into as few PRs as stay reviewable.** Fewer PRs mean less review overhead, and touching several domains is not by itself a reason to split. Split only when a combined PR would be hard to review or would mix unrelated risk.
 - **Design first.** A PR that changes behavior updates the design doc that owns that behavior in the same PR.
 - Update an implementation tracker when capability status actually changes, not on every PR. Read the owning tracker before interpreting branch names, commits, or raw diffs during implementation or branch reconciliation.
 - Do not ask for approval just because work is cross-service, breaking, or large when the design is clear. Stop for genuine design ambiguity, competing target states, or a change to a consequential accepted decision.

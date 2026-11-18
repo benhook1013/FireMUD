@@ -72,6 +72,8 @@ The optional Validation Summary publishes from a trusted default-branch completi
 
 The optional [Static Analysis Summary](../../.github/workflows/static-analysis-summary.yml) takes one bounded snapshot on each CodeQL or License completion, showing a pending counterpart honestly and updating the same bot comment when its completion arrives. Serialization uses branch and immutable head SHA so superseded heads cannot evict current-head pending callbacks. An older-base callback for the same head is only a wake signal: it validates its source identity and selects exact current-base/head workflow and check proof before publishing. Current-PR fences and duplicate cleanup remain mandatory; callback cancellation, unavailable API evidence, and the non-atomic final read/write do not establish guaranteed delivery. Required gates are independent of this optional comment.
 
+The optional [PR LOC Report](../../.github/workflows/pr-loc-report.yml) is also a trusted default-branch callback after `CI — Validation` completes. For a same-repository, non-Renovate PR whose head still matches the completed run, it rewrites only the marked LOC section of the PR body with `dev-tools/maintenance/cloc-report.py`. It skips when the section already matches the head and base, or while a CodeRabbit review is pending on the head. Its `GITHUB_TOKEN` edit starts no workflow runs, so it never creates metadata-only gate runs. It is not a gate and adds no check to the PR head.
+
 ### Pull Request Runtime And Preview Chain
 
 | Workflow | Execution context | Responsibility | What its GitHub run means |

@@ -1,0 +1,126 @@
+name: PR LOC Report
+
+# Refreshes the generated LOC section in a same-repository PR body after
+# "CI — Validation" finishes, so it never runs alongside that PR's CI and never
+# appears as a check on the PR head. It runs the trusted default-branch copy of
+# the script. Body edits made with GITHUB_TOKEN start no other workflow runs, so
+# they do not trigger metadata-only gate runs. The edit is skipped while a
+# CodeRabbit review is in progress on the head.
+on:
+  workflow_run:
+    workflows: ['CI — Validation']
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-loc-report-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  update-loc-report:
+    name: Update PR LOC Report
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion != 'cancelled' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      statuses: read
+      checks: read
+      pull-requests: write # Rewrites only the marked LOC section of the PR body.
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      CI_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      CI_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - name: ⬇️ Checkout trusted default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Load workflow tool versions
+        id: workflow-tool-versions
+        uses: ./.github/actions/load-workflow-tool-versions
+
+      - name: Set up canonical GitHub CLI
+        uses: ./.github/actions/setup-gh
+
+      - name: Decide whether to update
+        id: target
+        run: |
+          set -euo pipefail
+          skip() { echo "Skipping: $1"; echo "update=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          owner="${REPOSITORY%%/*}"
+          pulls="$(gh api -X GET "repos/${REPOSITORY}/pulls" -f state=open -f head="${owner}:${CI_HEAD_BRANCH}" \
+            --jq '[.[] | {number, head: .head.sha, base: .base.sha, author: .user.login, body: (.body // "")}]')"
+          [[ "$(jq 'length' <<<"$pulls")" == 1 ]] || skip "no single open PR for ${CI_HEAD_BRANCH}"
+          number="$(jq -r '.[0].number' <<<"$pulls")"
+          [[ "$(jq -r '.[0].head' <<<"$pulls")" == "$CI_HEAD_SHA" ]] || skip "PR #${number} head moved past the CI run; the next CI run refreshes it"
+          [[ "$(jq -r '.[0].author' <<<"$pulls")" != "renovate[bot]" ]] || skip "Renovate PR #${number}"
+          # Skip when the existing section already counts this exact head and base.
+          recorded="$(jq -r '.[0].body' <<<"$pulls" | tr -d '\r' \
+            | sed -n 's/^<!-- firemud:cloc-report:metadata \(.*\) -->$/\1/p' | head -n 1)"
+          if [[ -n "$recorded" ]] \
+            && [[ "$(jq -r '.head_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$CI_HEAD_SHA" ]] \
+            && [[ "$(jq -r '.base_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$(jq -r '.[0].base' <<<"$pulls")" ]]; then
+            skip "PR #${number} LOC section already matches this head and base"
+          fi
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
+          echo "update=true" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch full history
+        if: ${{ steps.target.outputs.update == 'true' }}
+        run: git -c core.hooksPath=/dev/null fetch --no-tags --unshallow origin
+
+      - name: 🐍 Set Up Python
+        if: ${{ steps.target.outputs.update == 'true' }}
+        uses: ./.github/actions/setup-python
+
+      - name: 📦 Install cloc
+        if: ${{ steps.target.outputs.update == 'true' }}
+        env:
+          CLOC_VERSION: ${{ steps.workflow-tool-versions.outputs.cloc-version }}
+          CLOC_SHA256: ${{ steps.workflow-tool-versions.outputs.cloc-source-sha256 }}
+        run: |
+          set -euo pipefail
+          archive="cloc-${CLOC_VERSION}.pl"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 60 \
+            "https://github.com/AlDanial/cloc/releases/download/v${CLOC_VERSION}/${archive}" \
+            -o "/tmp/${archive}"
+          echo "${CLOC_SHA256}  /tmp/${archive}" | sha256sum --check --status
+          sudo install -m 0755 "/tmp/${archive}" /usr/local/bin/cloc
+          cloc --version
+
+      - name: Update LOC section in PR body
+        if: ${{ steps.target.outputs.update == 'true' }}
+        env:
+          PR_NUMBER: ${{ steps.target.outputs.number }}
+        run: |
+          set -euo pipefail
+          # Checked last, just before the edit, to keep the race window small.
+          coderabbit_state="$(gh api -X GET "repos/${REPOSITORY}/commits/${CI_HEAD_SHA}/statuses" -f per_page=100 \
+            --jq '[.[] | select(.context == "CodeRabbit")][0].state // "none"')"
+          coderabbit_running="$(gh api -X GET "repos/${REPOSITORY}/commits/${CI_HEAD_SHA}/check-runs" -f check_name=CodeRabbit -f per_page=100 \
+            --jq '[.check_runs[] | select(.status != "completed")] | length')"
+          if [[ "$coderabbit_state" == "pending" || "$coderabbit_running" != 0 ]]; then
+            echo "Skipping: CodeRabbit review in progress on PR #${PR_NUMBER}; re-run this run once it finishes."
+            exit 0
+          fi
+          if python3 dev-tools/maintenance/cloc-report.py pr "${PR_NUMBER}" --update-pr; then
+            exit 0
+          fi
+          # The script refuses to write when the PR moved underneath it; treat a moved head as a skip.
+          current_head="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          if [[ "$current_head" != "$CI_HEAD_SHA" ]]; then
+            echo "Skipping: PR #${PR_NUMBER} head moved during the update; the next CI run refreshes it."
+            exit 0
+          fi
+          exit 1
