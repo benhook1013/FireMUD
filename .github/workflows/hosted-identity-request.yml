@@ -141,9 +141,9 @@ jobs:
             [[ "$SOURCE_EVENT" == pull_request || "$SOURCE_EVENT" == repository_dispatch ]] ||
               emit_no_action "Ignoring source run with unsupported event ${SOURCE_EVENT}."
             if [[ "$SOURCE_EVENT" == pull_request ]]; then
-              jq -e '(.pull_requests | type) == "array" and (.pull_requests | length) == 1 and (.pull_requests[0].number | type) == "number" and .pull_requests[0].head.sha == .head_sha' \
+              jq -e '.head_sha as $head | (.pull_requests | type) == "array" and any(.pull_requests[]?; (.number | type) == "number" and .number > 0 and (.number | floor) == .number and .head.sha == $head)' \
                 <<<"$workflow_run_json" >/dev/null ||
-                emit_no_action "Ignoring source run without a unique bound pull request association."
+                emit_no_action "Ignoring source run without a bound pull request association."
             fi
             if [[ "$SOURCE_EVENT" == repository_dispatch ]]; then
               require_source_field head-branch "$DEFAULT_BRANCH" \
@@ -184,7 +184,7 @@ jobs:
               EXPECTED_HEAD_SHA="$(jq -er '.headSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
               if [[ "$SOURCE_EVENT" == pull_request ]]; then
                 jq -e --argjson pr "$PR_NUMBER" --arg head "$EXPECTED_HEAD_SHA" \
-                  '.head_sha == $head and (.pull_requests | length) == 1 and .pull_requests[0].number == $pr and .pull_requests[0].head.sha == $head' \
+                  '.head_sha == $head and ([.pull_requests[] | select(.number == $pr)] | length) == 1 and ([.pull_requests[] | select(.number == $pr)][0].head.sha == $head)' \
                   <<<"$workflow_run_json" >/dev/null ||
                   emit_no_action "Ignoring artifact not bound to the source run pull request and head."
               fi

@@ -47,6 +47,10 @@ jobs:
       eligible: ${{ steps.eligibility.outputs.eligible }}
       eligibility_reason: ${{ steps.eligibility.outputs.reason }}
     steps:
+      - name: Preview event tuple pr-${{ github.event.pull_request.number }} base-${{ github.event.pull_request.base.sha }} head-${{ github.event.pull_request.head.sha }} merge-${{ github.sha }}
+        if: ${{ github.event_name == 'pull_request' }}
+        run: ':'
+
       - name: Harden runner
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:

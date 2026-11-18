@@ -8,21 +8,29 @@ const workflow = JSON.parse(execFileSync('python3', ['-c',
   path.join(root, '.github/workflows/preview-runtime-refresh.yml')], {encoding: 'utf8'}));
 const script = workflow.jobs.refresh.steps[1].with.script;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const E = 'e'.repeat(40);
 const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40), D = 'd'.repeat(40);
 function fixture() {
   return {
-    run: {path: '.github/workflows/preview.yml', event: 'pull_request', conclusion: 'success',
+    run: {id: 99, run_attempt: 2, display_title: `PR preview 7 base-${D} head-${C} merge-${E}`, path: '.github/workflows/preview.yml', event: 'pull_request', conclusion: 'success',
       repository: {full_name: 'example/FireMUD'}, head_repository: {full_name: 'example/FireMUD'},
       head_sha: C, pull_requests: [{number: 7, head: {sha: C}, base: {sha: D}}]},
     pr: {number: 7, state: 'open', head: {sha: C, repo: {full_name: 'example/FireMUD'}},
       base: {ref: 'develop', repo: {full_name: 'example/FireMUD'}},
       merge_commit_sha: A, labels: [], user: {login: 'developer'}},
+    jobs: [{name: 'Preview Plan', run_id: 99, run_attempt: 2, head_sha: C, workflow_name: 'PR Preview Environment', status: 'completed', conclusion: 'success', steps: [{name: `Preview event tuple pr-7 base-${D} head-${C} merge-${E}`, status: 'completed', conclusion: 'success'}]}],
+    recordedMerge: {sha: E, parents: [{sha: D}, {sha: C}]},
     base: {object: {sha: B}}, merge: {sha: A, parents: [{sha: B}, {sha: C}]},
   };
 }
 async function execute(f) {
   const sent = [];
-  const github = {rest: {
+  const github = {request: async (route, args) => {
+    assert.equal(route, 'GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs');
+    assert.equal(args.run_id, 99); assert.equal(args.attempt_number, 2);
+    assert.equal(args.per_page, 100); assert.ok(args.page <= 3);
+    return {data: f.inventory ?? {total_count: f.jobs.length, jobs: f.jobs}};
+  }, rest: {
     actions: {
       getWorkflowRun: async () => ({data: f.run}),
       getWorkflow: async () => ({data: {id: 42, path: '.github/workflows/runtime-images.yml'}}),
@@ -39,10 +47,10 @@ async function execute(f) {
       assert.equal(ref, 'heads/' + f.pr.base.ref);
       return {data: f.base};
     }},
-    repos: {getCommit: async () => ({data: f.merge}), createDispatchEvent: async p => sent.push(p)},
+    repos: {getCommit: async ({ref}) => ({data: ref === E ? f.recordedMerge : f.merge}), createDispatchEvent: async p => sent.push(p)},
   }};
   await new AsyncFunction('github', 'context', 'core', 'require', script)(github,
-    {repo: {owner: 'example', repo: 'FireMUD'}, payload: {workflow_run: {id: 99}, repository: {default_branch: 'develop'}}}, {info() {}}, name => {
+    {repo: {owner: 'example', repo: 'FireMUD'}, payload: {workflow_run: {id: 99, run_attempt: 2}, repository: {default_branch: 'develop'}}}, {info() {}}, name => {
       assert.equal(name, 'node:child_process');
       return {execFileSync(command, args, options) {
         if (command === 'python3') {
@@ -82,7 +90,19 @@ for (const [name, mutate] of Object.entries({
   malformedLabels: f => f.pr.labels = [{name: 3}],
   appBot: f => f.pr.user.login = 'app/renovate',
   bot: f => f.pr.user.login = 'renovate[bot]',
-  currentBase: f => f.run.pull_requests[0].base.sha = B,
+  currentBase: f => { f.jobs[0].steps[0].name = `Preview event tuple pr-7 base-${B} head-${C} merge-${E}`; f.recordedMerge.parents[0].sha = B; },
+  legacyTitle: f => f.jobs[0].steps = [],
+  missingTitle: f => f.jobs = [],
+  spoofTitleHead: f => f.jobs[0].steps[0].name = `Preview event tuple pr-7 base-${D} head-${B} merge-${E}`,
+  badRecordedParent: f => f.recordedMerge.parents[0].sha = B,
+  missingRecordedParent: f => f.recordedMerge.parents.pop(),
+  wrongRun: f => f.run.id = 100,
+  wrongAttempt: f => f.run.run_attempt = 3,
+  wrongJobAttempt: f => f.jobs[0].run_attempt = 3,
+  duplicatePlan: f => f.jobs.push(f.jobs[0]),
+  duplicateTuple: f => f.jobs[0].steps.push(f.jobs[0].steps[0]),
+  failedTuple: f => f.jobs[0].steps[0].conclusion = "failure",
+  malformedTuple: f => f.jobs[0].steps[0].name = "Preview event tuple invalid",
   invalidBase: f => f.base.object.sha = 'invalid',
   invalidMerge: f => f.pr.merge_commit_sha = 'invalid',
   wrongMerge: f => f.merge.sha = D,
@@ -225,4 +245,18 @@ test('qualified other PR workflow path cannot suppress native producer', async (
   const f = fixture(); const r = producer(f, 'pull_request');
   r.path += '@refs/pull/8/merge'; f.producers = [r];
   assert.equal((await execute(f)).length, 1);
+});
+
+test('immutable title repairs base despite current mutable association', async () => {
+  const f = fixture();
+  f.run.pull_requests[0].base.sha = B;
+  f.run.pull_requests.unshift({number: 99, head: {sha: C}, base: {sha: B}});
+  assert.equal((await execute(f)).length, 1);
+});
+
+test('truncated or oversized attempt inventory is refused', async () => {
+  for (const inventory of [{total_count: 301, jobs: []}, {total_count: 2, jobs: []}]) {
+    const f = fixture(); f.inventory = inventory;
+    await assert.rejects(execute(f), /inventory/);
+  }
 });

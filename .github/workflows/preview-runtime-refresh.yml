@@ -47,11 +47,73 @@ jobs:
                 run.event !== 'pull_request' || run.conclusion !== 'success' ||
                 run.repository?.full_name !== repository ||
                 run.head_repository?.full_name !== repository ||
-                run.pull_requests?.length !== 1 || !sha.test(run.head_sha)) {
+                run.id !== context.payload.workflow_run.id || !sha.test(run.head_sha)) {
               core.info('No trusted current PR source association; no dispatch.');
               return;
             }
-            const source = run.pull_requests[0];
+            const attempt = context.payload.workflow_run.run_attempt;
+            if (!Number.isSafeInteger(attempt) || attempt <= 0 || run.run_attempt !== attempt) {
+              core.info('Source attempt changed or is unavailable; no dispatch.');
+              return;
+            }
+            const jobs = [];
+            let total;
+            for (let page = 1; page <= 3; page++) {
+              const {data} = await github.request(
+                'GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs',
+                {...context.repo, run_id: run.id, attempt_number: attempt, per_page: 100, page});
+              if (!Number.isSafeInteger(data.total_count) || data.total_count < 0 ||
+                  data.total_count > 300 || !Array.isArray(data.jobs) || data.jobs.length > 100 ||
+                  (total !== undefined && total !== data.total_count)) {
+                throw new Error('Invalid or truncated source-attempt jobs inventory');
+              }
+              total = data.total_count;
+              jobs.push(...data.jobs);
+              if (jobs.length === total) break;
+              if (jobs.length > total || data.jobs.length < 100 || page === 3) {
+                throw new Error('Incomplete source-attempt jobs inventory');
+              }
+            }
+            const plans = jobs.filter(job => job.name === 'Preview Plan');
+            if (plans.length !== 1) {
+              core.info('Missing or ambiguous Preview Plan metadata; await a fresh preview render.');
+              return;
+            }
+            const plan = plans[0];
+            if (plan.run_id !== run.id || plan.run_attempt !== attempt ||
+                plan.head_sha !== run.head_sha ||
+                plan.status !== 'completed' || plan.conclusion !== 'success' || !Array.isArray(plan.steps)) {
+              core.info('Preview Plan does not belong to the successful source attempt; no dispatch.');
+              return;
+            }
+            const tupleSteps = plan.steps.filter(step => String(step.name || '').startsWith('Preview event tuple'));
+            const step = tupleSteps.length === 1 ? tupleSteps[0] : null;
+            // Native attempt metadata records the event tuple, not authority by itself.
+            // Bind it to run/head/association and Git merge parents before use.
+            const recorded = step?.status === 'completed' && step?.conclusion === 'success'
+              ? String(step.name).match(/^Preview event tuple pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40})$/)
+              : null;
+            const sourceNumber = Number(recorded?.[1]);
+            if (!recorded || !Number.isSafeInteger(sourceNumber) ||
+                recorded[3] !== run.head_sha || !Array.isArray(run.pull_requests)) {
+              core.info('Missing or invalid immutable preview tuple metadata; await a fresh preview render.');
+              return;
+            }
+            const associations = run.pull_requests.filter(item => item?.number === sourceNumber);
+            if (associations.length !== 1) {
+              core.info('Preview tuple has no unique matching PR association; no dispatch.');
+              return;
+            }
+            const source = associations[0];
+            const {data: recordedMerge} = await github.rest.repos.getCommit({
+              ...context.repo, ref: recorded[4],
+            });
+            if (recordedMerge.sha !== recorded[4] || recordedMerge.parents?.length !== 2 ||
+                recordedMerge.parents[0].sha !== recorded[2] ||
+                recordedMerge.parents[1].sha !== recorded[3]) {
+              core.info('Recorded preview merge does not prove its base/head tuple; no dispatch.');
+              return;
+            }
             const {data: pr} = await github.rest.pulls.get({
               ...context.repo, pull_number: source.number,
             });
@@ -78,7 +140,7 @@ jobs:
             const {data: base} = await github.rest.git.getRef({
               ...context.repo, ref: `heads/${pr.base.ref}`,
             });
-            if (!sha.test(base.object?.sha) || (isIntegrationBase && source.base?.sha === base.object.sha)) {
+            if (!sha.test(base.object?.sha) || (isIntegrationBase && recorded[2] === base.object.sha)) {
               core.info('No stale source base to repair; no dispatch.');
               return;
             }

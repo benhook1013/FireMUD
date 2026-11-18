@@ -6832,7 +6832,7 @@ FAKE_FIXTURE_EXPOSURE_MODE=public \
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone FAKE_FIXTURE_EXPOSURE_MODE=public \
   run_deploy_target_fixture standalone-public 0 'action=deploy'
 
-# A PR source run must bind both its run head and sole PR association to the artifact head.
+# A PR source run must bind both its run head and uniquely selected PR association to the artifact head.
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$distinct_source_workflow_run_json" \
 FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
   run_deploy_target_fixture distinct-source-head 0 'Ignoring artifact not bound to the source run pull request and head.'
@@ -6842,12 +6842,25 @@ run_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.head_sha=$sha' <<
 association_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.pull_requests[0].head.sha=$sha' <<<"$valid_workflow_run_json")"
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$run_head_only_json" \
 FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
-  run_deploy_target_fixture run-head-only 0 'Ignoring source run without a unique bound pull request association.'
+  run_deploy_target_fixture run-head-only 0 'Ignoring source run without a bound pull request association.'
 grep -Fxq "action=none" "$TEMP_DIR/deploy-target-run-head-only.output"
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$association_head_only_json" \
-  run_deploy_target_fixture association-head-only 0 'Ignoring source run without a unique bound pull request association.'
+  run_deploy_target_fixture association-head-only 0 'Ignoring source run without a bound pull request association.'
 grep -Fxq "action=none" "$TEMP_DIR/deploy-target-association-head-only.output"
 
+
+# Unrelated native associations do not erase the uniquely selected artifact target.
+for association_order in before after; do
+  multiple_association_json="$(jq -c --arg order "$association_order" '
+    .pull_requests = (if $order == "before" then [{number:901,head:{sha:.head_sha}}] + .pull_requests
+      else .pull_requests + [{number:901,head:{sha:.head_sha}}] end)' <<<"$valid_workflow_run_json")"
+  FAKE_FIXTURE_WORKFLOW_RUN_JSON="$multiple_association_json" \
+    run_deploy_target_fixture "multiple-associations-${association_order}" 0 'action=deploy'
+done
+duplicate_target_json="$(jq -c '.pull_requests += .pull_requests' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$duplicate_target_json" \
+  run_deploy_target_fixture duplicate-target-association 0 'Ignoring artifact not bound to the source run pull request and head.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-duplicate-target-association.output"
 
 FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
   run_deploy_target_fixture missing-canonical 0 \

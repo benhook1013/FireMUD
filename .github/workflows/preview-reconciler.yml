@@ -554,8 +554,9 @@ jobs:
                             )
                             and (
                               .display_title == $run_name
-                              or (.display_title == $pr_title and .head_sha == $head_sha
-                                  and any(.pull_requests[]?; .number == $pr_number))
+                              or (.display_title == $pr_title
+                                  and .head_sha == $head_sha
+                                  and ([.pull_requests[]? | select(.number == $pr_number)] | length) == 1)
                             )
                             and (
                               .status == "requested"

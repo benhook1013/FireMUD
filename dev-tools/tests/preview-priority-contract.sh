@@ -439,7 +439,7 @@ if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == 
     jq -cn \
       --argjson runs "${FAKE_ACTIVE_PREVIEW_RUNS_JSON:-[]}" \
       --arg requested_status "$active_query_status" \
-      '[{workflow_runs:[$runs[] | select(.status == $requested_status) | {id:.databaseId,name:"PR Preview Environment",head_branch:"develop",display_title:.displayTitle,status:.status}]}]'
+      '[{workflow_runs:[$runs[] | select(.status == $requested_status) | {id:.databaseId,path:".github/workflows/preview.yml",name:"PR Preview Environment",head_branch:"develop",display_title:.displayTitle,status:.status}]}]'
   fi
   exit 0
 fi
@@ -2504,7 +2504,7 @@ reconciler_trusted_consumer_output="$TEMP_DIR/reconciler-trusted-consumer.out"
     FAKE_PR_901_PROOF_COMPLETE=false \
     FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn \
       --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" \
-      '[{workflow_runs:[{id:5252,name:"Trusted Hosted Identity Request",head_branch:"develop",display_title:$title,status:"in_progress"}]}]')" \
+      '[{workflow_runs:[{id:5252,path:".github/workflows/hosted-identity-request.yml",name:"Trusted Hosted Identity Request",head_branch:"develop",display_title:$title,status:"in_progress"}]}]')" \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_trusted_consumer_output"
@@ -2522,7 +2522,7 @@ reconciler_source_title_consumer_output="$TEMP_DIR/reconciler-source-title-consu
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5253,"name":"Trusted Hosted Identity Request","head_branch":"develop","display_title":"PR preview 901","status":"queued"}]}]' \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5253,"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"name":"Trusted Hosted Identity Request","head_branch":"develop","display_title":"PR preview 901","status":"queued"}]}]' \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_source_title_consumer_output"
@@ -2540,7 +2540,7 @@ reconciler_pull_request_target_output="$TEMP_DIR/reconciler-pull-request-target.
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5254,"name":"PR Preview Environment","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5254,"path":".github/workflows/preview.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"name":"PR Preview Environment","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_pull_request_target_output"
@@ -2558,7 +2558,7 @@ reconciler_workflow_run_output="$TEMP_DIR/reconciler-workflow-run.out"
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5255,"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5255,"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_workflow_run_output"
@@ -2576,7 +2576,7 @@ reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-adva
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5256,"event":"branch","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"},{"id":5256,"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"in_progress"}]}]' \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5256,"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"event":"branch","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"},{"id":5256,"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"in_progress"}]}]' \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_active_status_advance_output"
@@ -2712,7 +2712,7 @@ reconciler_paginated_active_output="$TEMP_DIR/reconciler-paginated-active.out"
       --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" \
       '[
         {workflow_runs: []},
-        {workflow_runs: [{id: 4242, name: "PR Preview Environment", head_branch: "develop", display_title: $title, status: "queued"}]}
+        {workflow_runs: [{id: 4242, path: ".github/workflows/preview.yml", name: "PR Preview Environment", head_branch: "develop", display_title: $title, status: "queued"}]}
       ]')" \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"

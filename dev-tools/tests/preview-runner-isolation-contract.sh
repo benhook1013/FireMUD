@@ -119,6 +119,8 @@ active_run = {
     "firemud_reconciler_branch_filtered": False,
 }
 assert active_ids(active_run) == "1"
+assert active_ids({**active_run, "pull_requests": [{"number": 8}, {"number": 7}]}) == "1"
+assert active_ids({**active_run, "pull_requests": [{"number": 7}, {"number": 7}]}) == ""
 for fields in (
     {"path": ".github/workflows/unrelated.yml"},
     {"head_sha": "b" * 40},
