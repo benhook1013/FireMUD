@@ -14,7 +14,10 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: static-analysis-summary-pr-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  group: static-analysis-summary-source-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
+  # Serialize by native source repository and branch, independent of association
+  # ordering or the producer workflow. Shared-branch PRs conservatively serialize.
+  # Publication below requires this identity still matches the live PR.
   # Serialize the CodeQL and license completion events so a pending summary
   # cannot race a terminal summary into creating two comments. Every validated
   # callback snapshots the live tuple, so an older-head wake can replace pending
@@ -37,16 +40,24 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const pullRequests = context.payload.workflow_run.pull_requests || [];
-            if (pullRequests.length !== 1) {
-              core.info("Exactly one pull request must be attached to this workflow run.");
+            const sourceRun = context.payload.workflow_run;
+            const sourceRepositoryId = sourceRun.head_repository?.id;
+            const sourceBranch = sourceRun.head_branch;
+            if (!Number.isSafeInteger(sourceRepositoryId) || sourceRepositoryId <= 0 ||
+                typeof sourceBranch !== "string" || !sourceBranch.trim()) return;
+            const sourceTitle = String(sourceRun.display_title || "").match(
+              /^(CodeQL Analysis|License Gate) pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40})$/
+            );
+            if (!sourceTitle) return;
+            const issueNumber = Number(sourceTitle[2]);
+            if (!Number.isSafeInteger(issueNumber)) return;
+            const pullRequests = sourceRun.pull_requests;
+            if (!Array.isArray(pullRequests) ||
+                pullRequests.filter((pr) => pr?.number === issueNumber).length !== 1) {
+              core.info("Exactly one association must match the canonical title's pull request.");
               return;
             }
-
-            const pullRequest = pullRequests[0];
-            const issueNumber = pullRequest.number;
-            if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) return;
-            const sourceHeadSha = context.payload.workflow_run.head_sha;
+            const sourceHeadSha = sourceRun.head_sha;
             if (!/^[0-9a-f]{40}$/.test(sourceHeadSha || "")) return;
             const { data: currentPullRequest } = await github.rest.pulls.get({
               ...context.repo,
@@ -71,6 +82,8 @@ jobs:
             const expectedSourceTitle = `${sourceWorkflowName} pr-${issueNumber} base-${sourceBaseSha} head-${sourceHeadSha}`;
             if (
               currentPullRequest.state !== "open" ||
+              currentPullRequest.head?.repo?.id !== sourceRepositoryId ||
+              currentPullRequest.head?.ref !== sourceBranch ||
               !sourceWorkflowName ||
               !sourceBaseSha ||
               (context.payload.workflow_run.name !== sourceWorkflowName &&
@@ -287,6 +300,8 @@ jobs:
             });
             if (
               finalPullRequest.state !== "open" ||
+              finalPullRequest.head?.repo?.id !== sourceRepositoryId ||
+              finalPullRequest.head?.ref !== sourceBranch ||
               finalPullRequest.head?.sha !== headSha ||
               finalPullRequest.base?.sha !== baseSha
             ) {

@@ -27,7 +27,7 @@ grep -Fq 'per_page: 100' "$workflow"
 grep -Fq 'cancel-in-progress: false' "$workflow"
 # GitHub expressions are literal workflow text, not shell expansions.
 # shellcheck disable=SC2016
-grep -Fq 'group: static-analysis-summary-pr-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}' "$workflow"
+grep -Fq 'group: static-analysis-summary-source-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}' "$workflow"
 grep -Fq 'const headSha = currentPullRequest.head?.sha;' "$workflow"
 grep -Fq 'context.payload.workflow_run.display_title !== expectedSourceTitle' "$workflow"
 grep -Fq 'finalPullRequest.base?.sha !== baseSha' "$workflow"
@@ -101,7 +101,7 @@ const github = {
       pullRequestReads += 1;
       if (changeHeadDuringRun && pullRequestReads === 2) currentHeadSha = "e".repeat(40);
       if (changeBaseDuringRun && pullRequestReads === 2) currentBaseSha = "c".repeat(40);
-      return { data: { state: "open", head: { sha: currentHeadSha }, base: { sha: currentBaseSha, ref: currentBaseRef } } };
+      return { data: { state: "open", head: { sha: currentHeadSha, repo: { id: 123 }, ref: "feature" }, base: { sha: currentBaseSha, ref: currentBaseRef } } };
     } },
     actions: { listWorkflowRuns: codeqlListWorkflowRuns },
     checks: { listForRef: checksListForRef },
@@ -275,6 +275,7 @@ const context = {
       path: ".github/workflows/codeql.yml",
       head_sha: headSha,
       head_branch: "feature",
+      head_repository: { id: 123 },
       display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
       pull_requests: [{ number: 42 }],
     },
@@ -405,6 +406,38 @@ async function assertCompletionOrders() {
     global.setTimeout = originalTimeout;
   }
 }
+async function assertAssociationSelection() {
+  const source = context.payload.workflow_run;
+  Object.assign(source, { name: "CodeQL Analysis", path: ".github/workflows/codeql.yml",
+    display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}` });
+  const reset = () => {
+    pullRequestReads = 0;
+    for (const values of Object.values(calls)) values.length = 0;
+  };
+  for (const associations of [[{number: 99}, {number: 42}], [{number: 42}, {number: 99}]]) {
+    reset(); source.pull_requests = associations;
+    await run(github, context, core);
+    if (calls.updated.length !== 1 || calls.paginate.some(({input}) => input.issue_number && input.issue_number !== 42)) {
+      throw new Error("unrelated associations must not hide or redirect canonical PR publication");
+    }
+  }
+  for (const associations of [[{number: 42}, {number: 42}], [{number: 99}], null]) {
+    reset(); source.pull_requests = associations;
+    await run(github, context, core);
+    if (pullRequestReads || calls.paginate.length || calls.updated.length || calls.deleted.length) {
+      throw new Error("missing or duplicate matching association must fail before provider reads");
+    }
+  }
+  source.pull_requests = [{number: 42}];
+  for (const [repository, branch] of [[null, "feature"], [{id: 0}, "feature"], [{id: 123}, ""], [{id: 456}, "feature"], [{id: 123}, "different"]]) {
+    reset(); source.head_repository = repository; source.head_branch = branch;
+    await run(github, context, core);
+    if (calls.paginate.length || calls.updated.length || calls.deleted.length) {
+      throw new Error("invalid or mismatched concurrency identity must not publish");
+    }
+  }
+  source.head_repository = {id: 123}; source.head_branch = "feature";
+}
 async function assertInterruptedRecovery() {
   const originalPaginate = github.paginate;
   const reset = () => {
@@ -523,6 +556,7 @@ run(github, context, core).then(async () => {
                 deleteStatus = null;
                 await assertCompletionOrders();
                 await assertInterruptedRecovery();
+                await assertAssociationSelection();
                 console.log("static analysis summary behavioral contract passed");
               },
             );
