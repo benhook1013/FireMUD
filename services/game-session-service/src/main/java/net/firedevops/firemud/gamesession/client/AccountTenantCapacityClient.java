@@ -67,18 +67,21 @@ public final class AccountTenantCapacityClient
         TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
     Deadline maximum = Deadline.after(maximumMillis, TimeUnit.MILLISECONDS);
     requireNoAmbientSql("Capacity commitment requires no ambient SQL");
-    long startedMillis = clock.millis();
+    // Anchor conversion near the wall-clock sample, not at invocation entry. A pause
+    // during sampling can only shorten the bound; it must never extend the caller budget.
+    Deadline sampledAt = Deadline.after(0, TimeUnit.NANOSECONDS);
+    long sampledMillis = clock.millis();
     request.requireStructurallyValid();
     if (request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
         || !namespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Exact Game Session context required");
-    long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, startedMillis);
-    Deadline absoluteDeadline =
-        maximum.offset(
-            Math.max(0L, Math.min(maximumMillis, remainingMillis)) - maximumMillis,
-            TimeUnit.MILLISECONDS);
-    Deadline incoming = Context.current().getDeadline();
-    Deadline deadline = incoming == null ? absoluteDeadline : absoluteDeadline.minimum(incoming);
+    Deadline deadline =
+        selectDeadline(
+            maximum,
+            sampledAt,
+            Context.current().getDeadline(),
+            absoluteDeadlineMillis,
+            sampledMillis);
     var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
     CommitTenantCapacityAdmissionResponse response;
     try {
@@ -107,6 +110,23 @@ public final class AccountTenantCapacityClient
           .withDescription("Account capacity commitment response was inexact")
           .asRuntimeException();
     }
+  }
+
+  /** Converts paired clock samples without resetting the invocation or incoming cap. */
+  static Deadline selectDeadline(
+      Deadline maximum,
+      Deadline sampledAt,
+      Deadline incoming,
+      long absoluteDeadlineMillis,
+      long sampledMillis) {
+    long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, sampledMillis);
+    long maximumMillis =
+        TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
+    Deadline absoluteDeadline =
+        sampledAt.offset(
+            Math.max(0L, Math.min(maximumMillis, remainingMillis)), TimeUnit.MILLISECONDS);
+    Deadline selected = maximum.minimum(absoluteDeadline);
+    return incoming == null ? selected : selected.minimum(incoming);
   }
 
   /** Exact Account domain refusal without a capacity commitment. */

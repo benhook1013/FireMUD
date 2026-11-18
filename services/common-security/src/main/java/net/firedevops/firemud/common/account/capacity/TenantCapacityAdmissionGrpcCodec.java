@@ -236,6 +236,7 @@ public final class TenantCapacityAdmissionGrpcCodec {
       Request request, Failure failure, UUID durableDenialId) {
     request.requireStructurallyValid();
     var refusal = new Refusal(failure, durableDenialId);
+    requireRefusalAuthority(request, refusal);
     var exact =
         TenantCapacityAdmissionRefusal.newBuilder()
             .addTenantId(request.identity().tenantId().toString())
@@ -291,7 +292,15 @@ public final class TenantCapacityAdmissionGrpcCodec {
         };
     UUID durableDenialId =
         refusal.getDurableDenialIdCount() == 0 ? null : uuid(one(refusal.getDurableDenialIdList()));
-    return Optional.of(new Refusal(code, durableDenialId));
+    var result = new Refusal(code, durableDenialId);
+    requireRefusalAuthority(request, result);
+    return Optional.of(result);
+  }
+
+  private static void requireRefusalAuthority(Request request, Refusal refusal) {
+    if (refusal.code() == Failure.CAPACITY_QUOTA_EXCEEDED && !request.evidence().permitsCreation())
+      throw invalid();
+    if (refusal.durableDenialId() != null && request.capacityRearmFence() != 1) throw invalid();
   }
 
   private static TenantCapacityShape shape(Shape value) {

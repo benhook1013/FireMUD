@@ -161,6 +161,82 @@ class AccountTenantCapacityOwnerTest {
   }
 
   @Test
+  void durableQuotaDenialReplaysWithoutConsultingMutableCapacity() throws Exception {
+    var f = new Fixture(false);
+    f.existing = false;
+    Record genericRefusal = mock(Record.class);
+    UUID decisionId = UUID.randomUUID();
+    when(genericRefusal.get("tenant_uuid", UUID.class)).thenReturn(f.request.identity().tenantId());
+    when(genericRefusal.get("request_id", UUID.class)).thenReturn(f.request.identity().requestId());
+    when(genericRefusal.get("admission_id", UUID.class))
+        .thenReturn(f.request.identity().admissionId());
+    when(genericRefusal.get("admission_attempt_id", UUID.class))
+        .thenReturn(f.request.admissionAttemptId());
+    when(genericRefusal.get("mutation_digest", String.class))
+        .thenReturn(f.request.mutationDigest());
+    when(genericRefusal.get("canonical_payload", byte[].class))
+        .thenReturn(CapacityAdmissionDigest.preimage(f.request));
+    when(genericRefusal.get("decision", String.class)).thenReturn("NO_ACCEPT");
+    when(genericRefusal.get("decision_id", UUID.class)).thenReturn(decisionId);
+    when(genericRefusal.get("refusal_code", String.class)).thenReturn("CAPACITY_QUOTA_EXCEEDED");
+    Record usage = mock(Record.class);
+    when(usage.get("held_units", Long.class)).thenReturn(f.request.evidence().quota());
+    when(usage.get("used_units", Long.class)).thenReturn(0L);
+    org.mockito.Mockito.doReturn(usage)
+        .when(f.dsl)
+        .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+    when(f.dsl.execute(
+            startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class)))
+        .thenAnswer(
+            invocation -> {
+              Object[] arguments = (Object[]) invocation.getRawArguments()[1];
+              assertThat(arguments[7]).isEqualTo("NO_ACCEPT");
+              assertThat(arguments[9]).isEqualTo("CAPACITY_QUOTA_EXCEEDED");
+              when(genericRefusal.get("decision_id", UUID.class)).thenReturn((UUID) arguments[8]);
+              f.originDecision = genericRefusal;
+              return 1;
+            });
+    var transaction =
+        new org.springframework.transaction.support.TransactionTemplate(
+            new ControlledTransactions());
+    transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+    transaction.setTimeout(5);
+    UUID committedId =
+        transaction.execute(
+            status -> {
+              assertThat(
+                      new AccountTenantCapacityRepository(f.dsl)
+                          .createIfQuotaAvailable(
+                              f.request,
+                              f.request.evidence().expiresAt(),
+                              Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC)))
+                  .isEmpty();
+              return new net.firedevops.firemud.accountservice.repository
+                      .AccountCapacityOriginDecisionRepository(f.dsl)
+                  .refuseQuota(f.request);
+            });
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    when(usage.get("held_units", Long.class)).thenReturn(0L);
+    org.mockito.Mockito.clearInvocations(f.dsl);
+
+    // Capacity is now available, but the owner must replay the committed denial.
+    for (int retry = 0; retry < 2; retry++) {
+      assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityRepository.CapacityException.class,
+              failure -> {
+                assertThat(failure.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+                assertThat(failure.durableDenialId()).isEqualTo(committedId);
+              });
+    }
+    verifyNoInteractions(f.accounts, f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+    verify(f.dsl, never())
+        .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+  }
+
+  @Test
   void repeatedSerializationFailuresRetryAndReplayInAFreshTransaction() throws Exception {
     var f = new Fixture(true);
     f.existing = false;

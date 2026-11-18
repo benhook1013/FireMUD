@@ -169,7 +169,13 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
         shutdown = selected.retired && selected.activeCalls == 0;
       }
       if (shutdown) {
-        selected.channel.shutdown();
+        try {
+          selected.channel.shutdown();
+        } catch (RuntimeException shutdownFailure) {
+          // Retirement must not replace a completed RPC response or its original failure.
+          logger.warn(
+              "Failed to shut down retired gRPC channel after call completion", shutdownFailure);
+        }
       }
     }
   }

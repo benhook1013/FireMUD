@@ -59,7 +59,7 @@ class TenantCapacityAdmissionGrpcCodecTest {
 
   @Test
   void domainRefusalsRequireTheExactOriginalAndExclusiveResponseAlternative() {
-    Request request = CapacityAdmissionTestFixture.playerRequest(false);
+    Request request = CapacityAdmissionTestFixture.playerRequest();
     var commitment = TenantCapacityAdmissionGrpcCodec.toResponse(request, result(request));
     assertThat(TenantCapacityAdmissionGrpcCodec.readRefusal(request, commitment)).isEmpty();
     for (var code : List.of(Failure.TENANT_BILLING_BLOCKED, Failure.CAPACITY_QUOTA_EXCEEDED)) {
@@ -100,6 +100,64 @@ class TenantCapacityAdmissionGrpcCodecTest {
             .isInstanceOf(IllegalArgumentException.class);
       }
     }
+  }
+
+  @Test
+  void nonCreatingEvidenceCannotCarryQuotaRefusal() {
+    var request = CapacityAdmissionTestFixture.playerRequest(false);
+    var billing =
+        TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED);
+    assertThat(TenantCapacityAdmissionGrpcCodec.readRefusal(request, billing))
+        .contains(Failure.TENANT_BILLING_BLOCKED);
+    assertThatThrownBy(
+            () ->
+                TenantCapacityAdmissionGrpcCodec.toRefusal(
+                    request, Failure.CAPACITY_QUOTA_EXCEEDED))
+        .isInstanceOf(IllegalArgumentException.class);
+    var quota =
+        billing.toBuilder()
+            .setRefusal(
+                0,
+                billing.getRefusal(0).toBuilder()
+                    .setCode(
+                        0,
+                        net.firedevops.firemud.account.v1.TenantCapacityAdmissionRefusal.Code
+                            .CAPACITY_QUOTA_EXCEEDED))
+            .build();
+    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusal(request, quota))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void matchedRearmCannotCarryDurableOriginalDenial() {
+    var original = CapacityAdmissionTestFixture.playerRequest();
+    var request =
+        new Request(
+                original.identity(),
+                UUID.randomUUID(),
+                2,
+                original.targetNamespace(),
+                original.context(),
+                original.operation(),
+                original.priorShape(),
+                original.requestedShape(),
+                original.evidence(),
+                original.capacityDelta(),
+                null)
+            .withDigest();
+    var id = UUID.randomUUID();
+    assertThatThrownBy(
+            () ->
+                TenantCapacityAdmissionGrpcCodec.toRefusal(
+                    request, Failure.CAPACITY_QUOTA_EXCEEDED, id))
+        .isInstanceOf(IllegalArgumentException.class);
+    var wire = TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.CAPACITY_QUOTA_EXCEEDED);
+    var forged =
+        wire.toBuilder()
+            .setRefusal(0, wire.getRefusal(0).toBuilder().addDurableDenialId(id.toString()))
+            .build();
+    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, forged))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

@@ -940,7 +940,8 @@ jobs:
               const title = `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
                 `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
               const replacement = await findMatchingRuntimeImagesRun("repository_dispatch", title, identity);
-              if (!replacement || !positiveInteger(replacement.id) || !positiveInteger(replacement.run_attempt) || replacement.id <= run.id ||
+              if (!replacement) return "pending";
+              if (!positiveInteger(replacement.id) || !positiveInteger(replacement.run_attempt) || replacement.id <= run.id ||
                   replacement.event !== "repository_dispatch") return false;
               // Pending exact refreshes are not proof, but must not fail the caller
               // before the asynchronous producer can finish within its existing deadline.
@@ -954,7 +955,8 @@ jobs:
                 })
               );
               const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
-              return Boolean(candidate) && await verifyKnownPlayFailure(replacement, candidate, identity);
+              if (!candidate || candidate.status !== "completed") return "pending";
+              return await verifyKnownPlayFailure(replacement, candidate, identity);
             }
 
             // Commit objects are immutable; mutable PR/base reads stay fresh.
@@ -1061,7 +1063,7 @@ jobs:
               return newestPreExecutionCancellation;
             }
 
-            async function resolveCurrentIdentity(label) {
+            async function resolveCurrentIdentity(label, requireCurrent = false) {
               let currentPullRequest;
               try {
                 ({ data: currentPullRequest } = await withTransientGitHubRetry(
@@ -1094,6 +1096,7 @@ jobs:
                   : null;
                 const parents = mergeCommit?.parents ?? [];
                 if (
+                  !requireCurrent &&
                   mergeCommit?.sha === eventMergeSha &&
                   parents.length === 2 &&
                   parents[0]?.sha === eventBaseSha &&
@@ -1174,12 +1177,13 @@ jobs:
             }
 
             let currentIdentity = null;
+            let requireCurrentIdentity = false;
             let cancelledRunId = null;
             let cancelledRunObservedAt = null;
             smokeGatePolling: while (Date.now() - started < timeoutMs) {
               if (pollIteration % pullRequestCheckInterval === 0 || !currentIdentity) {
                 const resolvedIdentity = await resolveCurrentIdentity(
-                  "Stopping obsolete smoke gate for"
+                  "Stopping obsolete smoke gate for", requireCurrentIdentity
                 );
                 if (resolvedIdentity?.obsolete) {
                   return;
@@ -1261,6 +1265,7 @@ jobs:
                   if (matching.conclusion === "failure" && repositoryName === "benhook1013/FireMUD" &&
                       ["pull_request", "repository_dispatch"].includes(matching.event)) {
                     let knownPlayVerified = false;
+                    let refreshVerified = false;
                     try {
                       const jobs = await withTransientGitHubRetry("canonical transition PLAY failure jobs lookup", () =>
                         github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
@@ -1270,6 +1275,11 @@ jobs:
                       const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
                       knownPlayVerified = Boolean(candidate) &&
                         await verifyKnownPlayFailure(matching, candidate, currentIdentity);
+                    } catch (error) {
+                      if (error instanceof TerminalGitHubRequestError) throw error;
+                      core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
+                    }
+                    try {
                       if (!knownPlayVerified) {
                         const refreshProof = await verifyFailedPullCanonicalRefresh(matching, currentIdentity);
                         if (refreshProof === "pending") {
@@ -1278,15 +1288,23 @@ jobs:
                           continue smokeGatePolling;
                         }
                         knownPlayVerified = refreshProof === true;
+                        refreshVerified = knownPlayVerified;
                       }
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;
                       core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
                     }
                     if (knownPlayVerified) {
-                      const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception");
+                      requireCurrentIdentity ||= refreshVerified;
+                      const freshIdentity = await resolveCurrentIdentity(
+                        "Stopping stale canonical transition PLAY exception", requireCurrentIdentity);
+                      // Original event proof keeps its immutable tuple semantics. Refreshed
+                      // proof additionally requires the live base and test merge right now.
+                      const comparableFreshIdentity = refreshVerified && freshIdentity
+                        ? {...freshIdentity, sourceEvent: currentIdentity.sourceEvent}
+                        : freshIdentity;
                       if (freshIdentity?.obsolete) return;
-                      if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
+                      if (!freshIdentity || identityKey(comparableFreshIdentity) !== identityKey(currentIdentity)) {
                         currentIdentity = freshIdentity;
                         continue smokeGatePolling;
                       }
@@ -1305,7 +1323,7 @@ jobs:
                 }
 
                 const latestIdentity = await resolveCurrentIdentity(
-                  "Stopping stale completed smoke gate for"
+                  "Stopping stale completed smoke gate for", requireCurrentIdentity
                 );
                 if (latestIdentity?.obsolete) {
                   return;
@@ -1431,7 +1449,7 @@ jobs:
                       core.setFailed("Canonical PLAY transition exception could not be verified; runtime qualification remains blocked.");
                       return;
                     }
-                    const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception");
+                    const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception", requireCurrentIdentity);
                     if (freshIdentity?.obsolete) return;
                     if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
                       currentIdentity = freshIdentity;
@@ -1472,7 +1490,7 @@ jobs:
                   return;
                 }
                 const finalIdentity = await resolveCurrentIdentity(
-                  "Stopping stale smoke gate before accepting full-stack proof"
+                  "Stopping stale smoke gate before accepting full-stack proof", requireCurrentIdentity
                 );
                 if (finalIdentity?.obsolete) {
                   return;

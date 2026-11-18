@@ -49,6 +49,81 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   }
 
   @Test
+  void budgetConflictDoesNotMaskRetainedHistoryAndFirstInstallStillChecksIt() {
+    String schema = "capacity_budget_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      Flyway.configure()
+          .dataSource(data)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(java.util.Map.of("serviceSchema", schema))
+          .locations("classpath:db/migration")
+          .target("1040.1")
+          .load()
+          .migrate();
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
+      var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
+      var tenant = source();
+      transaction.executeWithoutResult(
+          status ->
+              new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant));
+      for (int index = 0; index < 3; index++) {
+        dsl.execute(
+            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
+            tenant.canonicalTenantId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "a".repeat(64),
+            new byte[] {1},
+            UUID.randomUUID());
+      }
+      Flyway.configure()
+          .dataSource(data)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(java.util.Map.of("serviceSchema", schema))
+          .locations("classpath:db/migration")
+          .load()
+          .migrate();
+      var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
+      assertThatThrownBy(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> budgets.provision(tenant.canonicalTenantId(), 2)))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
+      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
+      var original =
+          dsl.fetchOne(
+                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget")
+              .intoMap();
+      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
+      assertThatThrownBy(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> budgets.provision(tenant.canonicalTenantId(), 2)))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityRepository.CapacityException.class,
+              failure ->
+                  assertThat(failure.code())
+                      .isEqualTo(
+                          net.firedevops.firemud.common.account.capacity
+                              .TenantCapacityAdmissionGrpcCodec.Failure.IDEMPOTENCY_CONFLICT));
+      assertThat(
+              dsl.fetchOne(
+                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget")
+                  .intoMap())
+          .isEqualTo(original);
+      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(3);
+    } finally {
+      new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
+  @Test
   void historicalBootstrapCompletionAndPlainNewImportCannotInitializeCapacity() {
     String schema = "capacity_migration_" + UUID.randomUUID().toString().replace("-", "");
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);

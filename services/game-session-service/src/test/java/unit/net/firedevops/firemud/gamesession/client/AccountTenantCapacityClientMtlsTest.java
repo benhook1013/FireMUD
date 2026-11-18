@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.Context;
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
@@ -250,6 +251,54 @@ class AccountTenantCapacityClientMtlsTest {
     }
   }
 
+  @ParameterizedTest
+  @CsvSource({"3000, 60000, 3000", "60000, 3000, 3000", "60000, 60000, 5000"})
+  void deadlineSelectionKeepsTheWholeChosenBudget(
+      long explicitMillis, long incomingMillis, long expectedMillis) {
+    var nanos = new AtomicLong();
+    var ticker =
+        new Deadline.Ticker() {
+          @Override
+          public long nanoTime() {
+            return nanos.get();
+          }
+        };
+    var maximum = Deadline.after(5, TimeUnit.SECONDS, ticker);
+    var incoming = Deadline.after(incomingMillis, TimeUnit.MILLISECONDS, ticker);
+    var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
+    var selected =
+        AccountTenantCapacityClient.selectDeadline(maximum, sample, incoming, explicitMillis, 0);
+    assertThat(selected.timeRemaining(TimeUnit.MILLISECONDS)).isEqualTo(expectedMillis);
+  }
+
+  @Test
+  void setupDelayIsNotDeductedTwiceAndOriginalInvocationCapStillApplies() {
+    var nanos = new AtomicLong();
+    var ticker =
+        new Deadline.Ticker() {
+          @Override
+          public long nanoTime() {
+            return nanos.get();
+          }
+        };
+    var maximum = Deadline.after(5, TimeUnit.SECONDS, ticker);
+    nanos.set(TimeUnit.SECONDS.toNanos(1)); // Pause before the paired conversion samples.
+    var sample = Deadline.after(0, TimeUnit.NANOSECONDS, ticker);
+    assertThat(
+            AccountTenantCapacityClient.selectDeadline(maximum, sample, null, 3000, 1000)
+                .timeRemaining(TimeUnit.MILLISECONDS))
+        .isEqualTo(2000);
+    assertThat(
+            AccountTenantCapacityClient.selectDeadline(maximum, sample, null, 60000, 1000)
+                .timeRemaining(TimeUnit.MILLISECONDS))
+        .isEqualTo(4000);
+    nanos.addAndGet(TimeUnit.MILLISECONDS.toNanos(200)); // Delay after sampling consumes budget.
+    assertThat(
+            AccountTenantCapacityClient.selectDeadline(maximum, sample, null, 3000, 1000)
+                .timeRemaining(TimeUnit.MILLISECONDS))
+        .isEqualTo(1800);
+  }
+
   @Test
   void explicitRemainingBudgetBoundsAStalledAccountCallAndExactRetryStillReplays()
       throws Exception {
@@ -269,6 +318,7 @@ class AccountTenantCapacityClientMtlsTest {
               failure ->
                   assertThat(Status.fromThrowable(failure).getCode())
                       .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(calls).hasValue(2); // The timed-out invocation reached the nonresponding handler.
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2_000L);
       respond.set(true);
       assertThat(client.commit(request, deadline())).isEqualTo(first);
@@ -349,6 +399,7 @@ class AccountTenantCapacityClientMtlsTest {
               failure ->
                   assertThat(Status.fromThrowable(failure).getCode())
                       .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(calls).hasValue(2); // The incoming deadline bounded an actual in-flight call.
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2_000L);
     } finally {
       scheduler.shutdownNow();

@@ -188,6 +188,83 @@ class AbstractReloadingBlockingGrpcClientTest {
   }
 
   @Test
+  void retiredChannelShutdownFailureDoesNotReplaceCallOutcome() throws Exception {
+    var grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    for (boolean failCall : new boolean[] {false, true}) {
+      var previous = mock(ManagedChannel.class);
+      var replacement = mock(ManagedChannel.class);
+      var factory = mock(GrpcChannelFactory.class);
+      when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+          .thenReturn(previous, replacement);
+      when(previous.shutdown()).thenThrow(new IllegalStateException("shutdown failure"));
+      var originalFailure = new IllegalArgumentException("original call failure");
+      try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory)) {
+        client.initExplicit();
+        java.util.function.Supplier<String> invoke =
+            () ->
+                client.withPublishedInitializedStub(
+                    "missing",
+                    stub -> {
+                      try {
+                        client.reloadChannel();
+                      } catch (SSLException failure) {
+                        throw new AssertionError(failure);
+                      }
+                      if (failCall) throw originalFailure;
+                      return "response";
+                    });
+        if (failCall) {
+          assertThatThrownBy(invoke::get).isSameAs(originalFailure);
+        } else {
+          assertThat(invoke.get()).isEqualTo("response");
+        }
+        verify(previous).shutdown();
+      }
+    }
+  }
+
+  @Test
+  void callSelectionDoesNotWaitForReplacementChannelConstruction() throws Exception {
+    var grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    var previous = mock(ManagedChannel.class);
+    var replacement = mock(ManagedChannel.class);
+    var factory = mock(GrpcChannelFactory.class);
+    var building = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(previous)
+        .thenAnswer(
+            invocation -> {
+              building.countDown();
+              assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+              return replacement;
+            });
+    try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
+        var executor = Executors.newFixedThreadPool(2)) {
+      client.initExplicit();
+      var reload =
+          executor.submit(
+              () -> {
+                client.reloadChannel();
+                return null;
+              });
+      try {
+        assertThat(building.await(5, TimeUnit.SECONDS)).isTrue();
+        var call =
+            executor.submit(
+                () -> client.withPublishedInitializedStub("missing", stub -> stub.getChannel()));
+        assertThat(call.get(1, TimeUnit.SECONDS)).isSameAs(previous);
+        assertThat(release.getCount()).isEqualTo(1);
+      } finally {
+        release.countDown();
+      }
+      reload.get(5, TimeUnit.SECONDS);
+    }
+  }
+
+  @Test
   void initialisationFailurePreventsLateReloadFromCreatingAnotherChannel(@TempDir Path directory)
       throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");

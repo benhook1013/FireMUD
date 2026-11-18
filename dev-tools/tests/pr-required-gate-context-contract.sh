@@ -3598,10 +3598,10 @@ async function recoveredFailure(options = {}) {
     }, (_label, call) => call(), {paginate: async (route, input) => {
       assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
       assert.equal(input.run_id, 99); assert.equal(input.attempt_number, 2);
-      return options.noProducer ? [] : [candidate];
+      return options.noProducer ? [] : [{...candidate, ...options.candidate}];
     }}, "benhook1013", "FireMUD", canonicalSmokeJobName, async (selected, job, selectedIdentity) => {
       verified++;
-      assert.equal(selected, replacement); assert.equal(job, candidate); assert.deepEqual(selectedIdentity, identity);
+      assert.equal(selected, replacement); assert.deepEqual(job, {...candidate, ...options.candidate}); assert.deepEqual(selectedIdentity, identity);
       return verify(options.mutateProof, "repository_dispatch");
     });
   return {accepted: await recover(original, identity), verified, queries};
@@ -3639,48 +3639,96 @@ async function failedLegacyProof(stage, error, event = "pull_request") {
     setOutput: (...value) => outputs.push(value)};
   const execute = new Function("matching", "repositoryName", "github", "owner", "repo",
     "canonicalSmokeJobName", "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure",
-    "isCurrentPullRequestObsolete", "TerminalGitHubRequestError", "core",
+    "isCurrentPullRequestObsolete", "TerminalGitHubRequestError", "core", "verifyFailedPullCanonicalRefresh",
     `return (async () => { smokeGatePolling: while (true) { ${legacyFailedBranch} break; } })();`);
   await execute({...source, conclusion: "failure", event}, repositoryName, github, "benhook1013", "FireMUD", canonicalSmokeJobName,
     identity, (_label, call) => call(), async () => {throw error;}, async () => false,
-    TerminalGitHubRequestError, core);
+    TerminalGitHubRequestError, core, async () => false);
   assert.deepEqual(failures, ["Runtime images run 99 did not complete successfully: run=failure"]);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /^Canonical PLAY transition exception proof is unavailable:/);
   assert.deepEqual(outputs, []);
 }
-// Execute the actual failed-run caller, including its labelled continue, with
-// the actual refresh helper. Pending must neither grant proof nor fail early.
-async function pendingRefreshCaller(statuses, expires = false) {
-  const failures = [], outputs = [], warnings = [];
-  let sleeps = 0, polls = 0, writes = 0;
-  const core = {info: () => {}, warning: value => warnings.push(value),
+// Run the production polling loop and timeout handler with a fake clock.
+const loopStart = script.indexOf("let currentIdentity = null;");
+const actualPollingLoop = script.slice(loopStart);
+async function pendingRefreshCaller(statuses, expires = false, options = {}) {
+  const failures = [], outputs = [];
+  let sleeps = 0, polls = 0, writes = 0, now = 0, currentChecks = 0;
+  const core = {info: () => {}, warning: () => {},
     setFailed: value => failures.push(value), setOutput: (...value) => outputs.push(value)};
   core.summary = {addHeading() {return this;}, addRaw() {return this;},
     async write() {writes++;}};
-  const original = {...source, id: 98, event: "pull_request", conclusion: "failure"};
-  const execute = new Function("matching", "repositoryName", "github", "owner", "repo",
-    "canonicalSmokeJobName", "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure",
+  const original = {...source, id: 98, event: "pull_request", status: "completed", conclusion: "failure"};
+  const execute = new Function("repositoryName", "github", "owner", "repo",
+    "canonicalSmokeJobName", "withTransientGitHubRetry", "verifyKnownPlayFailure",
     "verifyFailedPullCanonicalRefresh", "isCurrentPullRequestObsolete", "TerminalGitHubRequestError",
-    "core", "resolveCurrentIdentity", "identityKey", "setTimeout", "sleepMs", "withinDeadline",
-    `return (async () => {
-      smokeGatePolling: while (withinDeadline()) { ${legacyFailedBranch} break; }
-      core.setFailed("existing deadline expired");
-    })();`);
-  await execute(original, repositoryName, {paginate: async () => [candidate]}, "benhook1013", "FireMUD",
-    canonicalSmokeJobName, identity, (_label, call) => call(), async () => false,
+    "core", "resolveCurrentIdentity", "identityKey", "setTimeout", "sleepMs",
+    "Date", "started", "timeoutMs", "pullRequestCheckInterval", "findMatchingRuntimeImagesRun",
+    "prNumber", "identityDiagnostic", "cancelledReplacementTimeoutMs",
+    `return (async () => { let pollIteration = 0; ${actualPollingLoop} })();`);
+  await execute(repositoryName, {rest: {actions: {listJobsForWorkflowRun: "jobs"}}, paginate: async () => {
+    if (options.originalError) throw options.originalError;
+    return [candidate];
+  }}, "benhook1013", "FireMUD", canonicalSmokeJobName, (_label, call) => call(), async run => Boolean(options.recoverDrift && run.event === "repository_dispatch"),
     async () => {
-      const status = statuses[polls++];
-      return (await recoveredFailure({replacement: {status,
-        conclusion: status === "completed" ? "success" : null}})).accepted;
-    }, async () => false, TerminalGitHubRequestError, core, async () => identity,
-    selected => JSON.stringify(selected), resolve => {sleeps++; resolve();}, 0,
-    () => polls < statuses.length);
-  assert.equal(polls, statuses.length);
-  assert.equal(sleeps, expires ? statuses.length : statuses.length - 1);
-  assert.deepEqual(failures, expires ? ["existing deadline expired"] : []);
-  assert.deepEqual(outputs, expires ? [] : [["known_play_exception", "true"]]);
-  assert.equal(writes, expires ? 0 : 1);
+      const status = statuses[Math.min(polls++, statuses.length - 1)];
+      return (await recoveredFailure(status === "absent" ? {absent: true}
+        : status === "missing-job" ? {noProducer: true}
+        : status === "pending-job" ? {candidate: {status: "in_progress"}}
+        : {replacement: {status, conclusion: status === "completed" ? "success" : null}})).accepted;
+    }, async () => false, TerminalGitHubRequestError, core, async (_label, requireCurrent) => {
+      if (requireCurrent) {
+        currentChecks++;
+        if (options.finalIdentity && (!options.recoverDrift || currentChecks === 1)) now += 30;
+        return {...identity, sourceEvent: "repository_dispatch", ...options.finalIdentity};
+      }
+      return identity;
+    }, selected => JSON.stringify(selected), resolve => {sleeps++; now += 30; resolve();}, 30,
+    {now: () => now}, 0, statuses.length * 30, 1, async (event, _title, selected) => {
+      if (options.recoverDrift && polls > 0) {
+        assert.equal(event, "repository_dispatch");
+        assert.equal(selected.baseSha, options.finalIdentity.baseSha);
+        assert.equal(selected.mergeSha, options.finalIdentity.mergeSha);
+        return {...source, event: "repository_dispatch", status: "completed", conclusion: "success"};
+      }
+      return original;
+    }, "3390", "test identity", 60);
+  if (expires) {
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /^Timed out waiting for the exact runtime-images\/full-smoke run/);
+    assert.deepEqual(outputs, []);
+    assert.equal(writes, 0);
+  } else {
+    assert.deepEqual(failures, []);
+    assert.deepEqual(outputs, [["known_play_exception", "true"]]);
+    assert.equal(writes, 1);
+    assert.equal(currentChecks, options.recoverDrift ? 4 : 1);
+  }
+  assert.equal(polls, options.recoverDrift ? 1 : statuses.length);
+  assert.equal(sleeps, options.finalIdentity ? 0 : expires ? statuses.length : statuses.length - 1);
+}
+// Exercise the real resolver, not merely a stub that honors requireCurrent.
+async function refreshFinalIdentity() {
+  const start = script.indexOf("async function resolveCurrentIdentity(");
+  const end = script.indexOf("async function isCurrentPullRequestObsolete", start);
+  const resolver = script.slice(start, end);
+  const movedBase = "d".repeat(40), movedMerge = "e".repeat(40);
+  const execute = new Function("withTransientGitHubRetry", "github", "owner", "repo", "prNumber",
+    "isObsoletePullRequest", "logObsoletePullRequest", "TerminalGitHubRequestError", "core",
+    "eventBaseSha", "eventMergeSha", "headSha", "baseRef", "immutableCommit",
+    `let identityDiagnostic = ""; ${resolver}; return resolveCurrentIdentity;`);
+  const resolve = execute((_label, call) => call(), {rest: {
+    pulls: {get: async () => ({data: {merge_commit_sha: movedMerge}})},
+    git: {getRef: async () => ({data: {object: {sha: movedBase}}})},
+  }}, "benhook1013", "FireMUD", "3390", () => false, () => {}, TerminalGitHubRequestError,
+    {info: () => {}, warning: () => {}}, identity.baseSha, identity.mergeSha, identity.headSha,
+    identity.baseRef, async sha => ({sha, parents: [{sha: sha === movedMerge ? movedBase : identity.baseSha},
+      {sha: identity.headSha}]}));
+  assert.equal((await resolve("original")).mergeSha, identity.mergeSha);
+  const fresh = await resolve("refresh", true);
+  assert.equal(fresh.baseSha, movedBase);
+  assert.equal(fresh.mergeSha, movedMerge);
 }
 const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
 const markerValues = {
@@ -3723,14 +3771,29 @@ function markerAccepted(overrides = {}) {
   }
   await pendingRefreshCaller(["queued", "in_progress", "completed"]);
   await pendingRefreshCaller(["queued", "in_progress"], true);
+  assert.equal((await recoveredFailure({absent: true})).accepted, "pending");
+  assert.equal((await recoveredFailure({noProducer: true})).accepted, "pending");
+  assert.equal((await recoveredFailure({candidate: {status: "in_progress"}})).accepted, "pending");
+  await pendingRefreshCaller(["absent", "queued", "completed"]);
+  await pendingRefreshCaller(["missing-job", "pending-job", "completed"]);
+  await pendingRefreshCaller(["absent", "absent"], true);
+  await pendingRefreshCaller(["completed"], false, {originalError: Object.assign(new Error("missing"), {status: 404})});
+  await refreshFinalIdentity();
+  await pendingRefreshCaller(["completed"], true, {finalIdentity: {baseSha: "d".repeat(40)}});
+  await pendingRefreshCaller(["completed"], true, {finalIdentity: {mergeSha: "e".repeat(40)}});
+  await pendingRefreshCaller(["completed", "completed"], false, {
+    recoverDrift: true, finalIdentity: {baseSha: "d".repeat(40), mergeSha: "e".repeat(40)},
+  });
+
+
 
   for (const options of [
     {repository: "attacker/FireMUD"}, {original: {event: "repository_dispatch"}},
     {original: {status: "in_progress"}}, {original: {conclusion: "success"}},
-    {original: {id: 0}}, {absent: true}, {replacement: {id: 98}}, {replacement: {id: 97}},
+    {original: {id: 0}}, {replacement: {id: 98}}, {replacement: {id: 97}},
     {replacement: {run_attempt: 0}}, {replacement: {event: "pull_request"}},
     {replacement: {status: "unknown"}}, {replacement: {conclusion: "failure"}},
-    {replacement: {conclusion: "cancelled"}}, {noProducer: true},
+    {replacement: {conclusion: "cancelled"}},
   ]) {
     const result = await recoveredFailure(options);
     assert.equal(result.accepted, false, JSON.stringify(options));

@@ -8,6 +8,8 @@ The service runtime model assumes replaceable workers, not authoritative in-proc
 
 ### Finalized capacity usage retirement
 
+This is a target-only contract, not an enabled or runtime-qualified retirement path.
+
 The exact current Game Session owner establishes irreversible closure of serving and resume for the admitted binding and retains settlement of applicable effects and indexes. Game Session supplies an authenticated terminal receipt linked to the original admission, FINAL evidence, binding lineage and Account reservation. [Account owns retirement of the corresponding used capacity](../account-service/runtime-and-data.md#finalized-capacity-usage-retirement).
 
 ## Implementation Status
