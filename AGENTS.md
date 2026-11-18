@@ -27,7 +27,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 
 - FireMUD is pre-v1. Converge on one canonical state: when a contract changes, update its call sites, tests, and docs together and remove the old path. Keep compatibility only where the owning architecture requires it for live data (none before v1 once [ADR 0185](design/architecture/decisions/adr-0185-no-data-carry-over-before-v1.md) is accepted), security, or protocol reasons.
 - **Group work into as few PRs as stay reviewable.** Fewer PRs mean less review overhead, and touching several domains is not by itself a reason to split. Split only when a combined PR would be hard to review or would mix unrelated risk.
-- **Design first.** A PR that changes behavior updates the design doc that owns that behavior in the same PR.
+- **Design first.** A PR that changes an intended contract updates its owning design doc in the same PR. Implementing an agreed design changes no design doc; record progress and proof in the tracker when capability status changes.
 - Update an implementation tracker when capability status actually changes, not on every PR. Read the owning tracker before interpreting branch names, commits, or raw diffs during implementation or branch reconciliation.
 - Do not ask for approval just because work is cross-service, breaking, or large when the design is clear. Stop for genuine design ambiguity, competing target states, or a change to a consequential accepted decision.
 - Once the human picks a workstream, keep going through its clear next steps (implementation, validation, PR publication, review fixes) without checking in at each step. An explicit pause or stop wins: finish only the in-progress step and start nothing new until resumed; an immediate stop finishes nothing more.
@@ -37,7 +37,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 ## Documentation
 
 - Keep each normative rule at one owner and link to it elsewhere. When you touch a doc, fix stale or conflicting statements in the affected scope.
-- Design docs describe the target state. Capability status belongs in trackers; a design doc may carry only a short linked limitation.
+- Design docs and ADRs describe the target state. Capability status belongs in trackers; a design doc or ADR may carry only a short linked limitation, not progress updated by each PR.
 - An AI-authored ADR is marked `Proposed - Pending Human Review`. Record a human review only when a checked entry in the [consequential-decision inventory](design/project-management/design-alignment/consequential-decision-inventory.md) links the exact `[ADR NNNN]` outcome and the ADR metadata matches it. Reversible work may continue on a proposed ADR only where existing accepted design already supports it.
 - Do not hard-wrap prose. Use relative GitHub links without line suffixes. No emojis in headings.
 
