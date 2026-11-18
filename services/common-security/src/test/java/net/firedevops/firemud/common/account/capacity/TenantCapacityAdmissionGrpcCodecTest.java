@@ -173,7 +173,7 @@ class TenantCapacityAdmissionGrpcCodecTest {
   }
 
   @Test
-  void matchedRearmCannotCarryDurableOriginalDenial() {
+  void matchedRearmCannotCarryOriginalQuotaDenial() {
     var original = CapacityAdmissionTestFixture.playerRequest();
     var request =
         new Request(
@@ -195,7 +195,25 @@ class TenantCapacityAdmissionGrpcCodecTest {
                 TenantCapacityAdmissionGrpcCodec.toRefusal(
                     request, Failure.CAPACITY_QUOTA_EXCEEDED, id))
         .isInstanceOf(IllegalArgumentException.class);
-    var wire = TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.CAPACITY_QUOTA_EXCEEDED);
+    assertThatThrownBy(
+            () ->
+                TenantCapacityAdmissionGrpcCodec.toRefusal(
+                    request, Failure.CAPACITY_QUOTA_EXCEEDED))
+        .isInstanceOf(IllegalArgumentException.class);
+    var billing =
+        TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED);
+    var wire =
+        billing.toBuilder()
+            .setRefusal(
+                0,
+                billing.getRefusal(0).toBuilder()
+                    .setCode(
+                        0,
+                        net.firedevops.firemud.account.v1.TenantCapacityAdmissionRefusal.Code
+                            .CAPACITY_QUOTA_EXCEEDED))
+            .build();
+    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, wire))
+        .isInstanceOf(IllegalArgumentException.class);
     var forged =
         wire.toBuilder()
             .setRefusal(0, wire.getRefusal(0).toBuilder().addDurableDenialId(id.toString()))

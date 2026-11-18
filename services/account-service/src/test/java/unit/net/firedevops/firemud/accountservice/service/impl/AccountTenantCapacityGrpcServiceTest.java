@@ -111,6 +111,7 @@ class AccountTenantCapacityGrpcServiceTest {
       assertThat(status.getCause()).isNull();
       verify(observer, never()).onNext(any());
       verify(observer, never()).onCompleted();
+      verify(owner).commit(request, CapacityAdmissionTestFixture.PEER);
     }
   }
 

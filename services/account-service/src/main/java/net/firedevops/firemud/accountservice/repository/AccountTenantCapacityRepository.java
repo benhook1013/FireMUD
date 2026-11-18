@@ -149,6 +149,7 @@ public final class AccountTenantCapacityRepository {
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
     if (delta > request.evidence().quota() - occupied) return Optional.empty();
     new AccountCapacityOriginDecisionRepository(dsl).accept(request);
+    requireCurrentLifetime(request.evidence(), clock.instant());
     long held = Math.addExact(number(usage, "held_units"), delta);
     updateUsage(request, usage, held, number(usage, "used_units"));
     int created =

@@ -357,6 +357,164 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void refusalBudgetRunsAfterIdentityArbitrationAndCountsTheInsertedLastSlot() throws Exception {
+    String schema = "capacity_arbitration_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      Flyway.configure()
+          .dataSource(data)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(java.util.Map.of("serviceSchema", schema))
+          .locations("classpath:db/migration")
+          .load()
+          .migrate();
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
+      var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
+      var tenant = source();
+      transaction.executeWithoutResult(
+          status -> {
+            new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
+            new AccountCapacityRefusalBudgetRepository(dsl)
+                .provision(tenant.canonicalTenantId(), 1);
+          });
+      UUID request = UUID.randomUUID(),
+          admission = UUID.randomUUID(),
+          attempt = UUID.randomUUID(),
+          decision = UUID.randomUUID();
+      String insert =
+          """
+          INSERT INTO account_capacity_origin_decisions
+          (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id,
+           mutation_digest, canonical_payload, decision, decision_id, refusal_code)
+          VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?, 'CAPACITY_QUOTA_EXCEEDED')
+          ON CONFLICT DO NOTHING
+          """;
+      Object[] original = {
+        tenant.canonicalTenantId(),
+        request,
+        admission,
+        attempt,
+        "a".repeat(64),
+        new byte[] {1},
+        decision
+      };
+      assertThat(dsl.execute(insert, original)).isEqualTo(1);
+      var retained =
+          dsl.fetchSingle(
+                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions")
+              .intoMap();
+      // Exact retry must not spend another slot or update the immutable evidence.
+      assertThat(dsl.execute(insert, original)).isZero();
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      insert,
+                      tenant.canonicalTenantId(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      "a".repeat(64),
+                      new byte[] {1},
+                      UUID.randomUUID()))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
+      // A different outer identity with the same global attempt reaches conflict arbitration,
+      // not the missing budget guard. The repository then verifies exact retained identity.
+      assertThat(
+              dsl.execute(
+                  insert,
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  attempt,
+                  "b".repeat(64),
+                  new byte[] {2},
+                  UUID.randomUUID()))
+          .isZero();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions")
+                  .intoMap())
+          .usingRecursiveComparison()
+          .isEqualTo(retained);
+      // A genuinely new refusal without a budget still fails and leaves no evidence.
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      insert,
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      "b".repeat(64),
+                      new byte[] {2},
+                      UUID.randomUUID()))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
+      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(1);
+
+      var concurrentTenant = source();
+      transaction.executeWithoutResult(
+          status -> {
+            new FreshTenantIdentityAssociationRepository(dsl, "prod")
+                .importVerified(concurrentTenant);
+            new AccountCapacityRefusalBudgetRepository(dsl)
+                .provision(concurrentTenant.canonicalTenantId(), 1);
+          });
+      UUID concurrentAttempt = UUID.randomUUID();
+      try (var stale = data.getConnection();
+          var winner = data.getConnection()) {
+        stale.setTransactionIsolation(java.sql.Connection.TRANSACTION_SERIALIZABLE);
+        stale.setAutoCommit(false);
+        var staleDsl = DSL.using(stale, SQLDialect.POSTGRES);
+        // Establish the serializable snapshot before the winning global identity is committed.
+        assertThat(staleDsl.fetchCount(DSL.table("account_capacity_origin_decisions")))
+            .isEqualTo(1);
+        assertThat(
+                DSL.using(winner, SQLDialect.POSTGRES)
+                    .execute(
+                        insert,
+                        concurrentTenant.canonicalTenantId(),
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        concurrentAttempt,
+                        "c".repeat(64),
+                        new byte[] {3},
+                        UUID.randomUUID()))
+            .isEqualTo(1);
+        assertThatThrownBy(
+                () ->
+                    staleDsl.execute(
+                        insert,
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        concurrentAttempt,
+                        "d".repeat(64),
+                        new byte[] {4},
+                        UUID.randomUUID()))
+            .isInstanceOfSatisfying(
+                org.jooq.exception.DataAccessException.class,
+                failure -> assertThat(failure.sqlState()).isEqualTo("40001"));
+        stale.rollback();
+      }
+      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(2);
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT decision FROM account_capacity_origin_decisions WHERE admission_attempt_id = ?",
+                      concurrentAttempt)
+                  .get("decision"))
+          .isEqualTo("NO_ACCEPT");
+    } finally {
+      new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
   private static Account creator() {
     String suffix = UUID.randomUUID().toString().replace("-", "");
     var account = new Account();

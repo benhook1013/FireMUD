@@ -522,10 +522,10 @@ class AccountTenantCapacityClientMtlsTest {
           public void commitTenantCapacityAdmission(
               CommitTenantCapacityAdmissionRequest wire,
               StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
-            calls.incrementAndGet();
             observedNanos.set(
                 Objects.requireNonNull(Context.current().getDeadline())
                     .timeRemaining(TimeUnit.NANOSECONDS));
+            calls.incrementAndGet();
             if (!respond.get()) return;
             assertServerSide(
                 serverFailure,

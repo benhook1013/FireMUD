@@ -230,6 +230,112 @@ class AccountTenantCapacityOwnerTest {
   }
 
   @Test
+  void expiryDuringOriginRetentionRollsBackAcceptanceAndRefusal() throws Exception {
+    for (boolean quotaFull : new boolean[] {false, true}) {
+      var f = new Fixture(false, qualifiedRequest(true));
+      f.existing = false;
+      f.retained = true;
+      qualifySources(f);
+      Record usage = mock(Record.class);
+      when(usage.get("held_units", Long.class))
+          .thenReturn(quotaFull ? f.request.evidence().quota() : 0L);
+      when(usage.get("used_units", Long.class)).thenReturn(0L);
+      org.mockito.Mockito.doReturn(usage)
+          .when(f.dsl)
+          .fetchOne(
+              startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+      retainOriginThenAdvanceClock(
+          f, f.request, quotaFull ? "NO_ACCEPT" : "ACCEPTED", f.request.evidence().expiresAt());
+
+      assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityRepository.CapacityException.class,
+              failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
+      verify(f.dsl)
+          .execute(
+              startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class));
+      verify(f.dsl, never())
+          .execute(startsWith("UPDATE account_tenant_capacity_usage "), any(Object[].class));
+      verify(f.dsl, never())
+          .execute(
+              startsWith("INSERT INTO account_tenant_capacity_reservations "), any(Object[].class));
+      assertThat(f.originDecision).isNull();
+      assertThat(f.pendingOriginDecision).isNull();
+    }
+  }
+
+  @Test
+  void claimExpiryDuringRearmAcceptanceRollsBackBeforeHistoryOrFenceMutation() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.retained = true;
+    qualifySources(f);
+    var next =
+        new Request(
+                f.request.identity(),
+                UUID.randomUUID(),
+                2,
+                f.request.targetNamespace(),
+                f.request.context(),
+                f.request.operation(),
+                f.request.priorShape(),
+                f.request.requestedShape(),
+                f.request.evidence(),
+                f.request.capacityDelta(),
+                null)
+            .withDigest();
+    Record row =
+        java.util.Objects.requireNonNull(
+            f.dsl.fetchOne("SELECT * FROM account_tenant_capacity_reservations ", new Object[0]));
+    UUID claimOwner = UUID.randomUUID();
+    var claimExpiry = CapacityAdmissionTestFixture.NOW.plusSeconds(2);
+    when(row.get("recovery_owner", UUID.class)).thenReturn(claimOwner);
+    when(row.get("recovery_claim_fence", Long.class)).thenReturn(7L);
+    when(row.get("recovery_claim_expires_at", java.time.OffsetDateTime.class))
+        .thenReturn(AccountTenantCapacityRepository.at(claimExpiry));
+    when(row.get("execution_status", String.class)).thenReturn("NOT_EXECUTED_AFTER_AUTHORIZATION");
+    when(row.get("owner_readback", byte[].class)).thenReturn(new byte[] {1});
+    retainOriginThenAdvanceClock(f, next, "ACCEPTED", claimExpiry);
+    var rearm =
+        AccountTenantCapacityOwner.class.getDeclaredMethod(
+            "rearm", Request.class, Request.class, UUID.class, long.class);
+    rearm.setAccessible(true);
+    assertThatThrownBy(() -> rearm.invoke(f.owner, f.request, next, claimOwner, 7L))
+        .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class)
+        .hasRootCauseMessage("IDEMPOTENCY_CONFLICT");
+    verify(f.dsl)
+        .execute(startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class));
+    verify(f.dsl, never())
+        .execute(
+            startsWith("INSERT INTO account_tenant_capacity_attempt_history "),
+            any(Object[].class));
+    verify(f.dsl, never())
+        .execute(startsWith("UPDATE account_tenant_capacity_reservations "), any(Object[].class));
+    assertThat(f.originDecision).isNull();
+    assertThat(f.pendingOriginDecision).isNull();
+  }
+
+  private static void retainOriginThenAdvanceClock(
+      Fixture f, Request request, String decision, java.time.Instant afterWrite) {
+    Record retained = mock(Record.class);
+    when(retained.get("admission_attempt_id", UUID.class)).thenReturn(request.admissionAttemptId());
+    when(retained.get("mutation_digest", String.class)).thenReturn(request.mutationDigest());
+    when(retained.get("canonical_payload", byte[].class))
+        .thenReturn(CapacityAdmissionDigest.preimage(request));
+    when(retained.get("decision", String.class)).thenReturn(decision);
+    when(retained.get("decision_id", UUID.class)).thenReturn(UUID.randomUUID());
+    when(retained.get("refusal_code", String.class))
+        .thenReturn("NO_ACCEPT".equals(decision) ? "CAPACITY_QUOTA_EXCEEDED" : null);
+    when(f.dsl.execute(
+            startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class)))
+        .thenAnswer(
+            invocation -> {
+              f.pendingOriginDecision = retained;
+              when(f.clock.instant()).thenReturn(afterWrite);
+              return 1;
+            });
+  }
+
+  @Test
   void repeatedSerializationFailuresRetryAndReplayInAFreshTransaction() throws Exception {
     var f = new Fixture(true);
     f.existing = false;

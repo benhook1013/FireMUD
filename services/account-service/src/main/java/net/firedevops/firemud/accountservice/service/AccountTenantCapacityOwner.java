@@ -121,7 +121,9 @@ public final class AccountTenantCapacityOwner {
               if (reservation.isPresent()) {
                 return new CommitDecision(reservation.orElseThrow(), null);
               }
-              return new CommitDecision(null, originDecisions.refuseQuota(request));
+              UUID denialId = originDecisions.refuseQuota(request);
+              requireCurrentLifetime(request.evidence(), clock.instant());
+              return new CommitDecision(null, denialId);
             });
     // Throw only after the transaction has committed the exact denial.
     if (decision.denialId() != null)
@@ -164,6 +166,7 @@ public final class AccountTenantCapacityOwner {
           current(next);
           requireSupportedShape(next);
           originDecisions.accept(next);
+          requireClaim(row, recoveryOwner, claimFence, clock.instant());
           requireCurrentLifetime(next.evidence(), clock.instant());
           int history =
               dsl.execute(

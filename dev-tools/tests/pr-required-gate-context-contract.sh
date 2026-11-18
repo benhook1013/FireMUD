@@ -3529,7 +3529,7 @@ const candidate = {id: 123, run_id: 99, run_attempt: 2, head_sha: headSha, name:
   steps: [...failures.map(name => step(name, "success")), step("Stop smoke stack", "success"),
     step("Known canonical transition PLAY failure with successful authenticated cleanup", "success"),
     step("Export fixed-tag preview image artifact", "skipped"), step("Upload preview image artifact", "skipped")]};
-async function verify(mutate = () => {}, event = "pull_request", knownPlay = true) {
+async function verify(mutate = () => {}, event = "pull_request", knownPlay = true, allowIncompleteSteps = false) {
   const data = structuredClone({pr: "3390", consumerRepository: repositoryName, run, identity, source, candidate, jobs: [candidate], latest: {...source},
     eventHeadRepository: repositoryName,
     currentPullRequest: {state: "open", head: {sha: headSha, repo: {full_name: repositoryName}},
@@ -3565,7 +3565,7 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
   const verifier = knownPlay ? "verifyKnownPlayFailure" : "verifyCanonicalSmokeProducer";
   const accepted = await new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
     "canonicalRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
-    `${fn}; return ${verifier}(data.run, data.candidate, data.identity);`)(
+    `${fn}; return ${verifier}(data.run, data.candidate, data.identity, ${allowIncompleteSteps});`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
       canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
       data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
@@ -3576,13 +3576,16 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
   return accepted;
 }
 // Final attempt authority remains separate from PR identity and label authority.
-async function finalAttemptCheck(latest) {
+async function finalAttemptCheck(latest, error = null) {
   const start = script.indexOf("async function isCurrentCanonicalAttempt(");
   const end = script.indexOf("async function verifyFailedPullCanonicalRefresh(", start);
   const check = new Function("github", "withTransientGitHubRetry", "owner", "repo",
+    "TerminalGitHubRequestError", "retryableStatuses", "core",
     `${script.slice(start, end)}; return isCurrentCanonicalAttempt;`)(
-      {rest: {actions: {getWorkflowRun: async ({run_id}) => {assert.equal(run_id, 99); return {data: latest};}}}},
-      (_label, call) => call(), "benhook1013", "FireMUD");
+      {rest: {actions: {getWorkflowRun: async ({run_id}) => {
+        assert.equal(run_id, 99); if (error) throw error; return {data: latest};
+      }}}}, (_label, call) => call(), "benhook1013", "FireMUD", TerminalGitHubRequestError,
+      new Set([408, 425, 429, 500, 502, 503, 504]), {warning: () => {}});
   return check({id: 99, run_attempt: 2, conclusion: "success"});
 }
 assert.ok(script.includes("const refreshDiscoveryTimeoutMs = prerequisiteAndQueueAllowanceMinutes * 60 * 1000;"));
@@ -3618,7 +3621,7 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
     }, rest: {actions: {getWorkflowRun: async ({run_id}) => {
       assert.equal(run_id, replacement.id);
       return {data: {...replacement, ...options.latest}};
-    }}}}, "benhook1013", "FireMUD", canonicalSmokeJobName, async (selected, job, proofIdentity) => {
+    }}}}, "benhook1013", "FireMUD", canonicalSmokeJobName, async (selected, job, proofIdentity, allowIncompleteSteps) => {
       verified++;
       assert.deepEqual(proofIdentity, selectedIdentity);
       assert.equal(selected, replacement); assert.deepEqual(job, selectedCandidate);
@@ -3641,7 +3644,7 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
           }
         }
         if (options.mutateProof) options.mutateProof(data);
-      }, "repository_dispatch");
+      }, "repository_dispatch", true, allowIncompleteSteps);
     }, {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}});
   const proof = await recover(original, selectedIdentity);
   return {accepted: raw ? proof : proof?.status === "verified" ? true
@@ -3751,6 +3754,8 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
         : status === "absent" ? {absent: true}
         : status === "older" ? {replacement: {id: 97}}
         : status === "superseded" ? {latest: {run_attempt: 3}, mutateProof: data => {data.latest.run_attempt = 3;}}
+        : status === "missing-step" ? {candidate: {steps: candidate.steps.filter(step => step.name !== "Stop smoke stack")}}
+        : status === "nonterminal-step" ? {candidate: {steps: candidate.steps.map(step => step.name === "Stop smoke stack" ? {...step, status: "in_progress", conclusion: null} : step)}}
         : status === "missing-job" ? {noProducer: true}
         : status === "pending-job" ? {candidate: {status: "in_progress"}}
         : {replacement: {status, conclusion: status === "completed" ? "success" : null,
@@ -3783,6 +3788,9 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
       if (!options.directProof && !options.recoverDrift) {
         assert.equal(selected.id, 99);
         assert.equal(selected.run_attempt, statuses[0] === "superseded" && polls > 1 ? 3 : 2);
+      }
+      if (options.transientFinal && finalChecks === 1) {
+        return finalAttemptCheck(null, Object.assign(new Error("temporary"), {status: 502}));
       }
       return !options.rerunFinal || finalChecks > 1;
     });
@@ -3888,6 +3896,28 @@ function markerAccepted(overrides = {}) {
   }
   const currentAttempt = {id: 99, run_attempt: 2, status: "completed", conclusion: "success"};
   assert.equal(await finalAttemptCheck(currentAttempt), true);
+  assert.equal(await finalAttemptCheck(null, Object.assign(new Error("temporary"), {status: 502})), false);
+  assert.equal(await finalAttemptCheck(null, new Error("network")), false);
+  const denied = new TerminalGitHubRequestError("denied");
+  await assert.rejects(finalAttemptCheck(null, denied), error => error === denied);
+  const missing = Object.assign(new Error("missing"), {status: 404});
+  await assert.rejects(finalAttemptCheck(null, missing), error => error === missing);
+  await pendingRefreshCaller(["completed", "completed"], false, {transientFinal: true});
+  await pendingRefreshCaller(["missing-step", "completed"]);
+  await pendingRefreshCaller(["nonterminal-step", "completed"]);
+  await pendingRefreshCaller(["missing-step", "missing-step", "missing-step", "completed"], false, {snapshotExpires: true});
+  const missingCleanup = candidate.steps.filter(step => step.name !== "Stop smoke stack");
+  assert.equal((await recoveredFailure({candidate: {steps: missingCleanup}, mutateProof: data => {
+    data.definitions[workflowPath].content = Buffer.from("untrusted").toString("base64");
+  }})).accepted, false, "missing step metadata cannot hide invalid workflow authority");
+  assert.equal((await recoveredFailure({candidate: {steps: missingCleanup}, mutateProof: data => {
+    data.currentPullRequest.head.sha = "e".repeat(40);
+  }})).accepted, false, "missing steps cannot hide changed live identity");
+  assert.equal((await recoveredFailure({candidate: {steps: candidate.steps.map(step =>
+    step.name === "Stop smoke stack" ? {...step, conclusion: "failure"} : step)}})).accepted, false);
+  assert.equal((await recoveredFailure({candidate: {steps: candidate.steps.map(step =>
+    step.name.startsWith("Known canonical") ? {...step, conclusion: "skipped"} : step)}})).accepted, false);
+
   for (const change of [{run_attempt: 3}, {run_attempt: 1}, {id: 98}, {status: "in_progress"}, {conclusion: "failure"}]) {
     assert.equal(await finalAttemptCheck({...currentAttempt, ...change}), false);
   }
