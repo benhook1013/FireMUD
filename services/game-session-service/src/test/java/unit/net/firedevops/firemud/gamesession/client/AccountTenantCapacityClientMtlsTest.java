@@ -240,12 +240,14 @@ class AccountTenantCapacityClientMtlsTest {
       long explicitMillis, long incomingMillis, long expectedMaximumMillis) throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicLong observedNanos = new AtomicLong();
-    // Each case owns one server and one successful RPC, so no other call can supply its sample.
+    // Warm the channel, then reset the sample before the measured RPC.
     Server server = server("account", calls, false, observedNanos, new AtomicBoolean(true));
     var scheduler = Executors.newSingleThreadScheduledExecutor();
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
+      client.commit(request, deadline());
+      observedNanos.set(0);
       try (var context =
           Context.current().withDeadlineAfter(incomingMillis, TimeUnit.MILLISECONDS, scheduler)) {
         var result =
@@ -255,9 +257,9 @@ class AccountTenantCapacityClientMtlsTest {
                         request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + explicitMillis));
         assertThat(result.identity()).isEqualTo(request.identity());
       }
-      assertThat(calls).hasValue(1);
+      assertThat(calls).hasValue(2);
       assertThat(observedNanos.get())
-          .isPositive()
+          .isGreaterThan(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis - 1_000L))
           .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis));
     } finally {
       scheduler.shutdownNow();

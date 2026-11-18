@@ -611,7 +611,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "1d5cb2928f55a45069ab251889e6cd5fc9c9d5df15b27bb94d4d40a2ea030d02";
+            const canonicalRuntimeWorkflowSha256 = "41ee9bca3d7b982a648384c68471aa5cc7f9a7ff1ef9a9f942c5d4116242aae3";
             // Trusted refreshes can still execute the previous successful default-branch definition.
             const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112";
             // Retain the exact fail-red producer still executed by trusted base refreshes.
@@ -888,8 +888,11 @@ jobs:
                   (step.conclusion === "failure" && !(source.conclusion === "failure" &&
                     expectedSuccessfulSteps.includes(step.name)))) return false;
               }
-              if (jobs.some((other) => other.id !== job.id &&
-                  (other.status !== "completed" || !["success", "skipped"].includes(other.conclusion)))) return false;
+              for (const other of jobs) {
+                if (other.id === job.id) continue;
+                if (["queued", "in_progress", "waiting", "pending", "requested"].includes(other.status)) incompleteSteps = true;
+                else if (other.status !== "completed" || !["success", "skipped"].includes(other.conclusion)) return false;
+              }
               // Typed refresh workflow authority is its native default-branch revision;
               // the executed classifier source still belongs to the verified PR merge.
               const workflowSha = source.event === "pull_request" ? identity.mergeSha : source.head_sha;
@@ -967,7 +970,7 @@ jobs:
               if (repositoryName !== "benhook1013/FireMUD" ||
                   context.payload.pull_request.head.repo?.full_name !== repositoryName ||
                   run.event !== "pull_request" ||
-                  run.status !== "completed" || run.conclusion !== "failure" ||
+                  run.status !== "completed" || !["failure", "timed_out"].includes(run.conclusion) ||
                   !positiveInteger(run.id)) return false;
               const title = `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
                 `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
@@ -1321,7 +1324,7 @@ jobs:
                   if (await isCurrentPullRequestObsolete("Stopping obsolete failed smoke gate for")) {
                     return;
                   }
-                  if (matching.conclusion === "failure" && repositoryName === "benhook1013/FireMUD" &&
+                  if (["failure", "timed_out"].includes(matching.conclusion) && repositoryName === "benhook1013/FireMUD" &&
                       ["pull_request", "repository_dispatch"].includes(matching.event)) {
                     let knownPlayVerified = false;
                     let refreshVerified = false;
@@ -1333,8 +1336,24 @@ jobs:
                         })
                       );
                       const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
-                      knownPlayVerified = Boolean(candidate) &&
-                        await verifyKnownPlayFailure(matching, candidate, currentIdentity);
+                      const directRefresh = matching.event === "repository_dispatch" && matching.conclusion === "failure";
+                      const directProof = matching.conclusion !== "failure" ? false
+                        : directRefresh && (!candidate || candidate.status !== "completed") ? "snapshot-pending"
+                        : Boolean(candidate) && await verifyKnownPlayFailure(matching, candidate, currentIdentity, directRefresh);
+                      knownPlayVerified = directProof === true;
+                      if (directRefresh && directProof === "snapshot-pending") {
+                        const snapshotKey = `direct:${identityKey(currentIdentity)}:${matching.id}:${matching.run_attempt}`;
+                        if (incompleteRefreshKey !== snapshotKey) {
+                          incompleteRefreshKey = snapshotKey;
+                          incompleteRefreshObservedAt = Date.now();
+                        }
+                        if (Date.now() - incompleteRefreshObservedAt >= completedSnapshotTimeoutMs) {
+                          core.setFailed("Terminal canonical refresh did not expose complete smoke-job proof within the snapshot convergence allowance.");
+                          return;
+                        }
+                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                        continue smokeGatePolling;
+                      }
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;
                       core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
@@ -149,6 +150,7 @@ class AccountTenantCapacityGrpcServiceTest {
           .contains(new Refusal(code, null));
       ordered.verify(observer).onCompleted();
       verify(observer, never()).onError(any());
+      verifyNoMoreInteractions(observer);
     }
   }
 
@@ -171,6 +173,7 @@ class AccountTenantCapacityGrpcServiceTest {
           .contains(new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
       ordered.verify(observer).onCompleted();
       verify(observer, never()).onError(any());
+      verifyNoMoreInteractions(observer);
     }
   }
 

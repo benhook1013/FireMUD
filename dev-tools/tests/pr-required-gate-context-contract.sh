@@ -3702,13 +3702,13 @@ const loopStart = script.indexOf("let currentIdentity = null;");
 const actualPollingLoop = script.slice(loopStart);
 async function pendingRefreshCaller(statuses, expires = false, options = {}) {
   const failures = [], outputs = [];
-  let sleeps = 0, polls = 0, writes = 0, now = 0, currentChecks = 0, finalChecks = 0, nullReads = 0;
+  let sleeps = 0, polls = 0, writes = 0, now = 0, currentChecks = 0, finalChecks = 0, nullReads = 0, directReads = 0;
   const proofLive = {baseSha: identity.baseSha, mergeSha: identity.mergeSha};
   const core = {info: () => {}, warning: () => {},
     setFailed: value => failures.push(value), setOutput: (...value) => outputs.push(value)};
   core.summary = {addHeading() {return this;}, addRaw() {return this;},
     async write() {writes++;}};
-  const original = {...source, id: 98, event: "pull_request", status: "completed", conclusion: "failure"};
+  const original = {...source, id: 98, event: "pull_request", status: "completed", conclusion: options.originalConclusion || "failure"};
   const execute = new Function("repositoryName", "github", "owner", "repo",
     "canonicalSmokeJobName", "withTransientGitHubRetry", "verifyKnownPlayFailure",
     "verifyFailedPullCanonicalRefresh", "isCurrentPullRequestObsolete", "TerminalGitHubRequestError",
@@ -3723,6 +3723,10 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     if (options.ordinaryAfterDrift) job.steps.find(s => s.name.startsWith("Known canonical")).conclusion = "skipped";
     return [job];
   }}, "benhook1013", "FireMUD", canonicalSmokeJobName, (_label, call) => call(), async run => {
+    if (options.directSnapshots && run.event === "repository_dispatch") {
+      const status = options.directSnapshots[Math.min(directReads++, options.directSnapshots.length - 1)];
+      return status === "complete" ? true : status === "invalid" ? false : "snapshot-pending";
+    }
     if (options.proofDrift && run.event === "repository_dispatch") {
       return verify(data => {
         Object.assign(data.identity, proofLive);
@@ -3735,6 +3739,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     return Boolean(options.directProof || (options.recoverDrift && run.event === "repository_dispatch"));
   },
     async (selectedRun, selectedIdentity) => {
+      if (options.directSnapshots && selectedRun.event === "repository_dispatch") return false;
       assert.equal(selectedRun.id, original.id);
       assert.equal(selectedIdentity.headSha, identity.headSha);
       assert.equal(selectedIdentity.baseSha, identity.baseSha);
@@ -3778,7 +3783,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
         assert.equal(event, "repository_dispatch");
         assert.equal(selected.baseSha, options.finalIdentity.baseSha);
         assert.equal(selected.mergeSha, options.finalIdentity.mergeSha);
-        return {...source, event: "repository_dispatch", status: "completed", conclusion: "success"};
+        return {...source, event: "repository_dispatch", status: "completed", conclusion: options.directSnapshots ? "failure" : "success"};
       }
       return original;
     }, "3390", "test identity", 60,
@@ -3796,6 +3801,9 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     });
   if (options.ordinaryAfterDrift) {
     assert.deepEqual(failures, []); assert.deepEqual(outputs, []); assert.equal(writes, 0);
+  } else if (options.directInvalid) {
+    assert.deepEqual(failures, ["Runtime images run 99 did not complete successfully: run=failure"]);
+    assert.deepEqual(outputs, []); assert.equal(writes, 0);
   } else if (options.rejectedObject) {
     assert.deepEqual(failures, ["Runtime images run 98 did not complete successfully: run=failure"]);
     assert.deepEqual(outputs, []); assert.equal(writes, 0);
@@ -3825,10 +3833,10 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     assert.equal(writes, 1);
     assert.ok(options.directProof || currentChecks >= 1);
   }
-  assert.equal(polls, options.ordinaryAfterDrift || options.directProof || options.labelRemoved ? 0
+  assert.equal(polls, options.directSnapshots ? 1 : options.ordinaryAfterDrift || options.directProof || options.labelRemoved ? 0
     : options.withdrawDuringProof || options.rejectedObject ? 1 : options.absentExpires ? 5
     : options.snapshotExpires ? 3 : options.recoverDrift ? 1 : statuses.length);
-  assert.equal(sleeps, options.ordinaryAfterDrift || options.labelRemoved || options.withdrawDuringProof || options.rejectedObject ? 0
+  assert.equal(sleeps, options.directSnapshots ? (options.snapshotExpires ? 2 : options.directSnapshots.length - 1) : options.ordinaryAfterDrift || options.labelRemoved || options.withdrawDuringProof || options.rejectedObject ? 0
     : options.absentExpires ? 4 : options.snapshotExpires ? 2 : options.finalIdentity ? (statuses[0] === "absent" ? 1 : 0)
     : expires ? statuses.length : statuses.length - 1);
 }
@@ -3903,6 +3911,26 @@ function markerAccepted(overrides = {}) {
   const missing = Object.assign(new Error("missing"), {status: 404});
   await assert.rejects(finalAttemptCheck(null, missing), error => error === missing);
   await pendingRefreshCaller(["completed", "completed"], false, {transientFinal: true});
+  assert.equal((await recoveredFailure({original: {conclusion: "timed_out"}})).accepted, true);
+  await pendingRefreshCaller(["queued", "completed"], false, {originalConclusion: "timed_out"});
+  for (const siblingStatus of ["in_progress", "queued"]) {
+    assert.equal(await verify(data => {data.jobs.push({id: 999, status: siblingStatus, conclusion: null});},
+      "repository_dispatch", true, true), "snapshot-pending");
+  }
+  assert.equal(await verify(data => {data.jobs.push({id: 999, status: "completed", conclusion: "skipped"});},
+    "repository_dispatch", true, true), true);
+  assert.equal(await verify(data => {data.jobs.push({id: 999, status: "completed", conclusion: "failure"});},
+    "repository_dispatch", true, true), false);
+  assert.equal(await verify(data => {
+    data.jobs.push({id: 999, status: "in_progress", conclusion: null});
+    data.currentPullRequest.head.sha = "e".repeat(40);
+  }, "repository_dispatch", true, true), false, "unfinished sibling cannot hide invalid live identity");
+  for (const directSnapshots of [["pending", "complete"], ["pending", "pending", "pending", "complete"], ["invalid"]]) {
+    await pendingRefreshCaller(["completed", "completed", "completed", "completed"], false, {
+      recoverDrift: true, finalIdentity: {baseSha: "d".repeat(40), mergeSha: "e".repeat(40)}, directSnapshots,
+      snapshotExpires: directSnapshots.length === 4, directInvalid: directSnapshots[0] === "invalid",
+    });
+  }
   await pendingRefreshCaller(["missing-step", "completed"]);
   await pendingRefreshCaller(["nonterminal-step", "completed"]);
   await pendingRefreshCaller(["missing-step", "missing-step", "missing-step", "completed"], false, {snapshotExpires: true});
@@ -4170,25 +4198,30 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         ? {id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation"}
         : {id: 7, path: source.path, name: source.name}}),
       getWorkflowRun: async ({run_id}) => {
-        if (run_id === 90) return {data: {...ci, ...(kind === "ci-rerun" ? {run_attempt: 2} : {})}};
+        if (run_id === 90 || run_id === 91) return {data: {...ci, id: run_id, ...(kind === "ci-rerun" ? {run_attempt: 2} : {})}};
         sourceReads++;
         return {data: {...source, ...((kind === "stale-attempt" || kind === "late-rerun" && sourceReads > 1) ? {run_attempt: 2} : {})}};
       },
       listWorkflowRuns: async ({workflow_id, page, event: runEvent}) => {
         let runs = workflow_id === "ci.yml" ? [{...ci, ...(kind === "ci-pending" ? {status: "in_progress"} : {})}]
           : shared.visible ? [refresh] : [];
+        if (workflow_id === "ci.yml" && ["metadata-newer", "unclassified-newer", "pending-newer"].includes(kind)) {
+          runs = [{...ci, id: 91, ...(kind === "pending-newer" ? {status: "in_progress"} : {})}, ci];
+        }
         if (workflow_id === "runtime-images.yml" && runEvent === "pull_request") {
           runs = kind === "newer-original" ? [{...source, id: 105, status: "in_progress"}] : [source];
         }
         if (workflow_id === "runtime-images.yml" && runEvent === "repository_dispatch" && kind === "second-page") {
           runs = Array.from({length: 100}, (_, i) => ({...refresh, id: 1000 + i, display_title: "unrelated"})).concat(refresh);
         }
-        return {data: {total_count: kind === "incomplete" ? 1001 : runs.length, workflow_runs: runs.slice((page - 1) * 100, page * 100)}};
+        return {data: {total_count: kind === "incomplete" ? 1001 : kind === "at-cap" ? 1000 : runs.length, workflow_runs: runs.slice((page - 1) * 100, page * 100)}};
       },
     },
-    pulls: {get: async () => { tupleReads++; return {data: {state: "open", mergeable: true, merge_commit_sha: merge,
+    pulls: {get: async () => { tupleReads++; return {data: {state: "open",
+      mergeable: kind === "merge-conflict" ? false : kind === "merge-unknown" || kind === "merge-drift" || kind === "merge-pending" && tupleReads === 1 ? null : true,
+      merge_commit_sha: merge,
       head: {sha: head, ref: "feature", repo: {full_name: repository}},
-      base: {ref: "develop", sha: kind === "late-drift" && tupleReads > 1 ? head : base, repo: {full_name: repository}}}};}},
+      base: {ref: "develop", sha: (kind === "late-drift" || kind === "merge-drift") && tupleReads > 1 ? head : base, repo: {full_name: repository}}}};}},
     git: {getRef: async () => ({data: {object: {sha: base}}})},
     repos: {
       getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}}),
@@ -4198,24 +4231,32 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         if (kind !== "invisible") shared.visible = true;
       },
     },
-  }, paginate: async () => [{id: 30, run_id: 90, run_attempt: 1, head_sha: head, name: "Validation Gate",
-    workflow_name: "CI — Validation", status: "completed", check_run_url: `https://api.github.com/repos/${repository}/check-runs/30`,
-    steps: [{name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: kind === "metadata" ? "success" : "skipped"},
-      {name: "Enforce validation success", status: "completed", conclusion: "failure"}]}]};
+  }, paginate: async (_route, request) => {
+    const metadata = kind === "metadata" || kind === "metadata-newer" && request.run_id === 91;
+    return [{id: 30, run_id: request.run_id, run_attempt: 1, head_sha: head, name: "Validation Gate",
+      workflow_name: "CI — Validation", status: "completed", check_run_url: `https://api.github.com/repos/${repository}/check-runs/30`,
+      steps: kind === "unclassified-newer" && request.run_id === 91 ? [] : [
+        {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: metadata ? "success" : "skipped"},
+        {name: "Enforce validation success", status: "completed", conclusion: metadata ? "skipped" : "failure"}]}];
+  }};
   await execute(github, {repo: {owner: "example", repo: "firemud"}, eventName: "workflow_run",
     payload: {workflow_run: event, repository: {default_branch: "develop"}}}, {info: () => {}},
     class extends Date { static now() { return clock; } }, callback => {clock += 5000; callback();});
+  if (kind === "merge-unknown") assert.equal(tupleReads, 6, "unresolved mergeability retries are bounded");
+  if (kind === "merge-pending") assert.equal(tupleReads, 3, "one convergence retry plus final current tuple fence");
   return shared.posts;
 }
 (async () => {
   assert.equal(await run("valid"), 1);
-  for (const scenario of ["typed-callback", "nested-callback", "fork", "success", "stale-attempt", "late-rerun", "ci-rerun", "ci-pending", "metadata", "late-drift", "second-page", "newer-original"]) {
+  assert.equal(await run("metadata-newer"), 1, "proven metadata completion cannot hide substantive CI");
+  assert.equal(await run("merge-pending"), 1, "mergeability may converge without tuple changes");
+  for (const scenario of ["typed-callback", "nested-callback", "fork", "success", "stale-attempt", "late-rerun", "ci-rerun", "ci-pending", "metadata", "late-drift", "second-page", "newer-original", "unclassified-newer", "pending-newer", "merge-unknown", "merge-conflict", "merge-drift"]) {
     assert.equal(await run(scenario), 0, scenario);
   }
-  for (const scenario of ["incomplete", "ambiguous-post", "invisible"]) {
+  for (const scenario of ["incomplete", "at-cap", "ambiguous-post", "invisible"]) {
     const state = {visible: false, posts: 0};
     await assert.rejects(run(scenario, state));
-    assert.equal(state.posts, scenario === "incomplete" ? 0 : 1, "never retry unknown POST");
+    assert.equal(state.posts, ["incomplete", "at-cap"].includes(scenario) ? 0 : 1, "never retry unknown POST");
   }
   // Under the shared job mutex, a CI-first visible refresh suppresses completion recovery.
   assert.equal(await run("valid", {visible: true, posts: 0}), 0);
