@@ -1663,6 +1663,9 @@ CI_PULL_REQUESTS="[{\"number\":41,\"base\":{\"sha\":\"${loc_base}\"},\"head\":{\
 expect_skip "native PR association does not match"
 [[ ! -s "$WORKFLOW_DIR/gh.log" ]] || { echo "a mismatched association must skip before any API call" >&2; exit 1; }
 
+CI_PULL_REQUESTS="null" run_decide
+expect_skip "native PR association does not match"
+
 CI_PATH=".github/workflows/other.yml" run_decide
 expect_skip "source run is not ci.yml"
 

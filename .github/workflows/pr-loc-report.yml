@@ -76,7 +76,7 @@ jobs:
           [[ "$CI_PATH" == .github/workflows/ci.yml || "$CI_PATH" == .github/workflows/ci.yml@?* ]] || skip "source run is not ci.yml"
           # GitHub's native association may be empty; when present it must name this exact PR, base, and head.
           [[ "$(jq --argjson n "$number" --arg b "$base" --arg h "$head" \
-            'length == 0 or (length == 1 and .[0].number == $n and .[0].base.sha == $b and .[0].head.sha == $h)' \
+            'type == "array" and (length == 0 or (length == 1 and .[0].number == $n and .[0].base.sha == $b and .[0].head.sha == $h))' \
             <<<"$CI_PULL_REQUESTS")" == true ]] || skip "CI run's native PR association does not match its title"
           # Edit-only (metadata) CI runs skip change detection; they have nothing new to count.
           detector="$(gh api --paginate "repos/${REPOSITORY}/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?per_page=100" \

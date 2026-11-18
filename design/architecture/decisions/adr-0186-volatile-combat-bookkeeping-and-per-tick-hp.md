@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Not implemented. Combat currently writes one guarded durable HP effect per hit, and aggro, round and swing-timer state has no declared loss class.
+Not implemented. No combat damage path exists yet; under the existing rules it would write one guarded durable HP effect per hit, and aggro, round and swing-timer state has no declared loss class.
 
 ## Canonical Design
 
@@ -29,15 +29,15 @@ Not implemented. Combat currently writes one guarded durable HP effect per hit, 
 
 ## Context
 
-Under [ADR 0053](./adr-0053-command-atomicity-by-invariant-class.md), [ADR 0071](./adr-0071-durable-tick-commit-before-fenced-coordination-cleanup.md) and the damage guard in Entity Management, every hit writes an effect ledger row, a `tick_effect_guard` row and an HP update, because Entity Management cannot assume one HP mutation per entity per tick. Aggro, threat, round and swing-timer state has never been classified under [ADR 0058](./adr-0058-class-specific-redis-loss-outcomes.md) or [ADR 0072](./adr-0072-class-specific-timer-durability-and-recovery.md), so it defaults to durable. On small hosts this spends the write budget on per-hit history that nothing reads after a fight.
+Under [ADR 0053](./adr-0053-command-atomicity-by-invariant-class.md), [ADR 0071](./adr-0071-durable-tick-commit-before-fenced-coordination-cleanup.md) and the damage guard in Entity Management, every hit would write an effect ledger row, a `tick_effect_guard` row and an HP update, because Entity Management cannot assume one HP mutation per entity per tick. Aggro, threat, round and swing-timer state has never been classified under [ADR 0058](./adr-0058-class-specific-redis-loss-outcomes.md) or [ADR 0072](./adr-0072-class-specific-timer-durability-and-recovery.md), so it defaults to durable. On small hosts this spends the write budget on per-hit history that nothing reads after a fight.
 
 Making HP itself volatile was considered and rejected for now. It voids fights on every crash or deploy, lets mid-fight outcomes such as HP-threshold loot fire twice, can re-create a spawn whose death is still being committed, and races player death against HP checkpoints.
 
 ## Decision
 
 1. Combat AI bookkeeping is a declared volatile class: aggro and threat, target choice, round and turn order, swing timers, a bounded per-spawn damage-share log, and cooldowns that gate no durable outcome. Each feature declares which of its state is volatile. The state is held by the region executor and bound to `(tenantId, gameInstanceId, regionId, regionEpoch, executorFence)`; a new fence starts empty. Loss is allowed: NPCs pick targets again, rounds restart, and damage shares logged before the loss no longer count toward that NPC's death reward credit.
-2. No durable effect may be triggered by, keyed on, or targeted at volatile state, and authoritative script handlers may not read it. Volatile data reaches durable state only when frozen into the request digest of an outcome whose identity is already durable, such as damage shares in an NPC death effect. The frozen payload and digest are recorded with that outcome before submission, and a retry resubmits the recorded payload rather than rebuilding it from volatile state.
-3. HP, mana, combat buffs, spawn lifecycle, death, loot, XP, gold, HP-threshold triggers, quest flags and any timer that gates a durable outcome stay durable under the existing effect path. Mid-fight durable outcomes are one-shots keyed by spawn, trigger and ordinal.
+2. Volatile state may choose NPC actions (target and timing); their HP results enter only through the net HP effect in decision 4, whose identity comes from the tick, not from the volatile state. No other durable effect may be triggered by, keyed on, or targeted at volatile state, and authoritative script handlers may not read it. Volatile data reaches durable state only when frozen into the request digest of an outcome whose identity is already durable, such as damage shares in an NPC death effect. The frozen payload and digest are recorded with that outcome before submission, and a retry resubmits the recorded payload rather than rebuilding it from volatile state.
+3. HP, mana, combat buffs, spawn lifecycle, death, loot, XP, gold, HP-threshold triggers, quest flags and any timer that gates a durable outcome other than combat HP stay durable under the existing effect path. Mid-fight durable outcomes are one-shots keyed by spawn, trigger and ordinal.
 4. The region executor combines each entity's damage and healing in a tick into one net HP effect owned by Entity Management. That effect keeps its mutation `EffectId` ledger entry and one `tick_effect_guard` row, written in the same transaction as the HP update; the disposable `entity_tick_state` watermark alone does not give replay safety across runtime replacement. Like the death payload, the net HP request and digest are recorded before submission and a retry resubmits them. Any HP-threshold trigger is evaluated on the net end-of-tick HP, so a threshold crossed and healed back within one tick does not fire.
 
 ## Consequences

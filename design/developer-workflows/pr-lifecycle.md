@@ -46,7 +46,7 @@ Rules for triage:
 A PR is ready for the human's merge decision when:
 
 - every thread, current and outdated, is resolved under the triage rules, and every Fix-now finding is verified fixed at the current head;
-- every required review channel has completed its configured policy with attributable results, or the human waived Hosted review under Change And Merge Policy (a waived request still earns no review credit);
+- every required review channel has completed its configured policy with attributable results; a human waiver under Change And Merge Policy can excuse only the Hosted channel, and earns no review credit;
 - required CI is green on the exact head; on a stacked base with no required checks, the applicable substantive workflows must actually have run, and the candidate must contain any workflow changes it relies on;
 - proportionate validation and runtime proof from [validation and runtime proof](./validation-and-runtime-proof.md) is complete, including focused tests for important changed behavior that patch coverage shows is untested;
 - the title and body are current.
@@ -57,7 +57,7 @@ Merge authority:
 
 - Implementing agents report readiness and never merge, enable auto-merge, or close PRs.
 - The Overseer may merge a specific product PR only on a traceable, explicit human instruction to merge that PR, after checking the criteria above.
-- Standing exceptions, for the Overseer or merge-train operator only: separately authorized FireController and private-website maintenance merges, and closing a PR verified as superseded after recording its replacement and checking it preserves the intended work.
+- Standing exceptions, for the Overseer or merge-train operator only: separately authorized FireController and private-website maintenance merges, and separately authorized closing of a PR verified as superseded, after recording its replacement and checking it preserves the intended work.
 - Merging or closing a PR never removes it from the FireController queue. Queue removal needs explicit human authorization and a recorded reason.
 
 ## Change And Merge Policy
