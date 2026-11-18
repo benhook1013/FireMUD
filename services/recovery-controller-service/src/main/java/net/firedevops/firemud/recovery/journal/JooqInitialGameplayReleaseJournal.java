@@ -315,14 +315,16 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           if (current.state() == resultState || current.state() == EffectOutboxState.ACKNOWLEDGED) {
             return current;
           }
-          if (current.state() != EffectOutboxState.DISPATCHED) {
+          if (current.state() != EffectOutboxState.DISPATCHED
+              && !(current.state() == EffectOutboxState.AMBIGUOUS
+                  && resultState == EffectOutboxState.RETRYABLE)) {
             throw conflict("effect is not in a dispatchable attempt");
           }
           tx.execute(
               """
                   UPDATE recovery_control.initial_gameplay_release_outbox
                   SET state = ?, last_outcome_code = ?, updated_at = CAST(? AS timestamptz)
-                  WHERE operation_id = ? AND effect_id = ? AND state = 'dispatched'
+                  WHERE operation_id = ? AND effect_id = ? AND state IN ('dispatched', 'ambiguous')
                       AND last_attempt_id = ?
                   """,
               resultState.databaseValue(),
@@ -650,10 +652,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (!readback.operationId().equals(operationId)
         || !readback.operationId().equals(outbox.effect().operationId())
         || !readback.effectId().equals(effectId)
+        || !readback.attemptId().equals(outbox.lastAttemptId())
         || readback.effectKind() != outbox.effect().kind()
-        || readback.authority()
-            != InitialGameplayReleaseModel.EffectReadbackAuthority
-                .GAME_SESSION_DURABLE_CURRENT_STATE
         || !readback.operationTupleDigest().equals(outbox.effect().operationTupleDigest())
         || !readback.payloadDigest().equals(outbox.payloadDigest())) {
       throw conflict("effect readback does not match the exact dispatched tuple");

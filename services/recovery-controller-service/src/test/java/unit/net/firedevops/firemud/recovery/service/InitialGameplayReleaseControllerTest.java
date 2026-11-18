@@ -209,6 +209,7 @@ class InitialGameplayReleaseControllerTest {
         new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback(
             scope.operationId(),
             effect.effectId(),
+            attempt,
             effect.kind(),
             DIGEST,
             DIGEST,

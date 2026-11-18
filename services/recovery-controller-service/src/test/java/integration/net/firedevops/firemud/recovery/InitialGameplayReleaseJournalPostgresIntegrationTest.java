@@ -146,6 +146,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         new EffectReadback(
             scope.operationId(),
             prepare.effect().effectId(),
+            prepareAttempt,
             prepare.effect().kind(),
             prepare.effect().operationTupleDigest(),
             prepare.payloadDigest(),
@@ -153,6 +154,28 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
             "gamesession-preparation-readback-1",
             base.plusSeconds(6));
+    UUID prepareEffectId = prepare.effect().effectId();
+    EffectReadback otherAttempt =
+        new EffectReadback(
+            scope.operationId(),
+            prepareEffectId,
+            UUID.randomUUID(),
+            prepare.effect().kind(),
+            prepare.effect().operationTupleDigest(),
+            prepare.payloadDigest(),
+            EffectReadbackState.PREPARED_FENCED,
+            EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
+            "wrong-attempt",
+            base.plusSeconds(6));
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    scope.operationId(),
+                    prepareEffectId,
+                    prepareAttempt,
+                    otherAttempt,
+                    base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
     journal.recordAmbiguousEffect(
         scope.operationId(),
         prepare.effect().effectId(),
@@ -204,6 +227,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         new EffectReadback(
             scope.operationId(),
             handoff.effect().effectId(),
+            handoffAttempt,
             handoff.effect().kind(),
             handoff.effect().operationTupleDigest(),
             handoff.payloadDigest(),
@@ -290,6 +314,20 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(retryRead.attemptCount()).isEqualTo(1);
     assertThat(journal.find(scope.operationId()).orElseThrow().phase())
         .isEqualTo(Phase.RESUME_AUTHORIZED);
+    OutboxEntry definitiveNoEffect =
+        journal.recordRetryableEffect(
+            scope.operationId(),
+            prepare.effect().effectId(),
+            attemptId,
+            "OWNER_DECLINED_WITHOUT_EFFECT",
+            base.plusSeconds(8));
+    assertThat(definitiveNoEffect.state()).isEqualTo(EffectOutboxState.RETRYABLE);
+    UUID nextAttempt = UUID.randomUUID();
+    OutboxEntry next =
+        journal.claimEffect(
+            scope.operationId(), prepare.effect().effectId(), nextAttempt, base.plusSeconds(9));
+    assertThat(next.lastAttemptId()).isEqualTo(nextAttempt);
+    assertThat(next.attemptCount()).isEqualTo(2);
   }
 
   @Test

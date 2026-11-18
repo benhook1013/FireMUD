@@ -157,7 +157,9 @@ public final class InitialGameplayReleaseModel {
   }
 
   public enum EffectReadbackAuthority {
-    GAME_SESSION_DURABLE_CURRENT_STATE
+    GAME_SESSION_DURABLE_CURRENT_STATE,
+    // Owner has durably closed this exact attempt against any delayed apply.
+    GAME_SESSION_DURABLE_CLOSED_ATTEMPT
   }
 
   public record PeerStorageBinding(
@@ -286,7 +288,8 @@ public final class InitialGameplayReleaseModel {
   }
 
   public record PartitionAcknowledgement(
-      int partitionId,
+      @com.fasterxml.jackson.annotation.JsonProperty(value = "partitionId", required = true)
+          int partitionId,
       String acknowledgementIdentity,
       String acknowledgedLayoutDigest,
       String readbackDigest,
@@ -687,6 +690,7 @@ public final class InitialGameplayReleaseModel {
   public record EffectReadback(
       UUID operationId,
       UUID effectId,
+      UUID attemptId,
       EffectKind effectKind,
       String operationTupleDigest,
       String payloadDigest,
@@ -695,6 +699,7 @@ public final class InitialGameplayReleaseModel {
       String readbackIdentity,
       Instant observedAt) {
     public EffectReadback {
+      attemptId = requiredUuid(attemptId, "attemptId");
       operationId = requiredUuid(operationId, "operationId");
       effectId = requiredUuid(effectId, "effectId");
       Objects.requireNonNull(effectKind, "effectKind must not be null");
@@ -702,6 +707,11 @@ public final class InitialGameplayReleaseModel {
       payloadDigest = requiredDigest(payloadDigest, "payloadDigest");
       Objects.requireNonNull(state, "state must not be null");
       Objects.requireNonNull(authority, "authority must not be null");
+      if ((state == EffectReadbackState.PROVEN_NO_EFFECT)
+          != (authority == EffectReadbackAuthority.GAME_SESSION_DURABLE_CLOSED_ATTEMPT)) {
+        throw new IllegalArgumentException(
+            "No-effect proof requires durable closure of the exact owner attempt");
+      }
       readbackIdentity = requiredText(readbackIdentity, "readbackIdentity");
       Objects.requireNonNull(observedAt, "observedAt must not be null");
     }

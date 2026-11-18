@@ -21,7 +21,10 @@ public final class InitialGameplayReleaseTupleCodec {
 
   public InitialGameplayReleaseTupleCodec(ObjectMapper objectMapper) {
     this.objectMapper =
-        Objects.requireNonNull(objectMapper, "objectMapper must not be null").rebuild().build();
+        Objects.requireNonNull(objectMapper, "objectMapper must not be null")
+            .rebuild()
+            .enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+            .build();
     this.digestMapper = this.objectMapper.writer().with(JsonWriteFeature.WRITE_NUMBERS_AS_STRINGS);
   }
 

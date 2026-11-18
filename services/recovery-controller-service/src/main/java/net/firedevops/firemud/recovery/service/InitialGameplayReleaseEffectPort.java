@@ -12,6 +12,11 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEf
 public interface InitialGameplayReleaseEffectPort {
   EffectApplyResult apply(TypedEffect effect, UUID attemptId);
 
+  /**
+   * Returns evidence bound to this exact attempt. PROVEN_NO_EFFECT requires the owner to have
+   * durably closed the attempt so a delayed claimant can no longer apply it; absence alone is not
+   * proof.
+   */
   EffectReadbackResolution readback(TypedEffect effect, UUID attemptId);
 
   record EffectApplyResult(ApplyStatus status, String outcomeCode) {

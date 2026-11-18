@@ -427,6 +427,52 @@ class InitialGameplayReleaseModelTest {
     assertThat(codec.toJson(next)).contains("9007199254740993");
   }
 
+  @Test
+  void noEffectReadbackRequiresClosedAttemptRatherThanObservedAbsence() {
+    assertThatThrownBy(
+            () ->
+                new InitialGameplayReleaseModel.EffectReadback(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+                    DIGEST,
+                    DIGEST,
+                    InitialGameplayReleaseModel.EffectReadbackState.PROVEN_NO_EFFECT,
+                    InitialGameplayReleaseModel.EffectReadbackAuthority
+                        .GAME_SESSION_DURABLE_CURRENT_STATE,
+                    "absence-only",
+                    java.time.Instant.EPOCH))
+        .isInstanceOf(IllegalArgumentException.class);
+    var closed =
+        new InitialGameplayReleaseModel.EffectReadback(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+            DIGEST,
+            DIGEST,
+            InitialGameplayReleaseModel.EffectReadbackState.PROVEN_NO_EFFECT,
+            InitialGameplayReleaseModel.EffectReadbackAuthority.GAME_SESSION_DURABLE_CLOSED_ATTEMPT,
+            "terminal-attempt-proof",
+            java.time.Instant.EPOCH);
+    assertThat(closed.state())
+        .isEqualTo(InitialGameplayReleaseModel.EffectReadbackState.PROVEN_NO_EFFECT);
+  }
+
+  @Test
+  void persistedPartitionAcknowledgementRequiresExplicitNonNullPartitionId() {
+    InitialGameplayReleaseTupleCodec codec =
+        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    String json = codec.toJson(evidence(scope(UUID.randomUUID())));
+    assertThat(json).contains("\"partitionId\":0");
+    assertThatThrownBy(() -> codec.readEvidence(json.replace("\"partitionId\":0,", "")))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(
+            () -> codec.readEvidence(json.replace("\"partitionId\":0", "\"partitionId\":null")))
+        .isInstanceOf(RuntimeException.class);
+  }
+
   private static Scope scope(UUID playableNamespace) {
     return new Scope(
         UUID.randomUUID(),
