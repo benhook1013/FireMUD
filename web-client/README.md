@@ -59,6 +59,13 @@ The owning [Account contract](../design/architecture/microservices/account-servi
 
 ### Disabled static-host preparation
 
+Build the static image from the repository root with
+`docker build -f web-client/Dockerfile -t firemud-frontend:local .`.
+The Dockerfile-specific ignore file includes frontend sources and the shared
+TypeScript configuration without broadening service-image contexts. A
+`web-client/`-only context cannot resolve that shared configuration during Vite's
+build.
+
 The recovered unprivileged static image and Helm host remain default-off behind both `previewStack.enabled` and `previewStack.frontend.enabled`. Only an explicit frontend enablement selects the SPA/API/WebSocket split; existing Gateway ingress is unchanged by default. Image publication and fresh browser/edge qualification remain prerequisites to activation. Nginx logs the path without query strings, emits no-referrer, refuses reserved API/asset/WebSocket paths and uses immutable content-hash caching.
 
 The CSP permits only Stripe.js script/frame origins and its API connection needed by the existing next-action checkout adapter, following the [Stripe integration security guide](https://docs.stripe.com/security/guide#content-security-policy). It does not enable Link, Maps, Checkout-hosted or unrelated third-party scripts. These headers are prepared configuration, not deployed CSP/browser proof.
