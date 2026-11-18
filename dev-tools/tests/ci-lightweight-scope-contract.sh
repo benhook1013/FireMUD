@@ -1469,10 +1469,18 @@ require_equal(
     "ci workflow",
 )
 ci_compute_step = find_step(ci, "changes", "Compute affected jobs", "ci workflow")
+for guard in (
+    "completeModules.every(module => ALL_MODULES.includes(module))",
+    "run_all: scope.runAll || !moduleScopeAvailable",
+    "affected_modules: moduleScopeAvailable ? scope.affectedModules : completeModules",
+    "bootable_modules: moduleScopeAvailable ? scope.bootableModules : completeBootableModules",
+    "lightweight_only: moduleScopeAvailable && scope.lightweightOnly",
+):
+    require_contains(ci_compute_step, ("with", "script"), guard, "ci workflow")
 require_contains(
     ci_compute_step,
     ("with", "script"),
-    "const { classifyGithubChangeScope } = require(classifierPath)",
+    "const { classifyGithubChangeScope, ALL_MODULES } = require(classifierPath)",
     "ci workflow",
 )
 require_contains(
