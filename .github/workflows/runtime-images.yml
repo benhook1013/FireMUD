@@ -428,6 +428,9 @@ jobs:
 
   dispatch-pr-base-refreshes:
     name: Dispatch PR Base Refreshes
+    concurrency:
+      group: runtime-pr-refresh-dispatch
+      queue: max
     if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.status == 'completed' && (github.event.workflow_run.event == 'pull_request' || (github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop'))) && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -645,28 +648,37 @@ jobs:
                 let complete = true;
                 let incompleteReason = null;
                 for (const event of runtimeRunEvents) {
-                  const response = await github.rest.actions.listWorkflowRuns({
-                    ...context.repo,
-                    workflow_id: "runtime-images.yml",
-                    event,
-                    created: `${createdSince}..*`,
-                    per_page: runtimeRunPageSize,
-                    page: 1,
-                  });
-                  const payload = response?.data;
-                  if (!payload || !Number.isInteger(payload.total_count) ||
-                    payload.total_count < 0 || !Array.isArray(payload.workflow_runs)) {
-                    throw new Error(`runtime-images ${event} recent run inventory is malformed`);
+                  let total;
+                  const eventRuns = [], ids = new Set();
+                  for (let page = 1; page <= 10; page += 1) {
+                    const response = await github.rest.actions.listWorkflowRuns({
+                      ...context.repo, workflow_id: "runtime-images.yml", event,
+                      created: `${createdSince}..*`, per_page: runtimeRunPageSize, page,
+                    });
+                    const payload = response?.data;
+                    total ??= payload?.total_count;
+                    if (!Number.isInteger(total) || total < 0 || !Array.isArray(payload?.workflow_runs) ||
+                        payload.total_count !== total) throw new Error(`runtime-images ${event} inventory shifted or is malformed`);
+                    if (total > 1000) {
+                      complete = false;
+                      incompleteReason ??= `runtime-images ${event} exceeds 1000-run bound`;
+                      // Retain this untrusted sample only for the existing conservative in-flight refinement.
+                      // It is never treated as a complete inventory or dispatch authority.
+                      eventRuns.push(...payload.workflow_runs);
+                      break;
+                    }
+                    if (payload.workflow_runs.length !== Math.min(runtimeRunPageSize, total - eventRuns.length)) {
+                      throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
+                    }
+                    for (const run of payload.workflow_runs) {
+                      if (!Number.isSafeInteger(run.id) || run.id <= 0 || ids.has(run.id)) {
+                        throw new Error(`runtime-images ${event} inventory has duplicate or invalid run IDs`);
+                      }
+                      ids.add(run.id); eventRuns.push(run);
+                    }
+                    if (eventRuns.length === total) break;
                   }
-                  if (payload.total_count > runtimeRunPageSize) {
-                    complete = false;
-                    incompleteReason ??= `runtime-images ${event} has more than ${runtimeRunPageSize} runs since ${createdSince}`;
-                  }
-                  const expectedPageLength = Math.min(payload.total_count, runtimeRunPageSize);
-                  if (payload.workflow_runs.length !== expectedPageLength) {
-                    throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
-                  }
-                  inventory.push(...payload.workflow_runs);
+                  inventory.push(...eventRuns);
                 }
                 return {complete, runs: inventory, reason: incompleteReason};
               };
@@ -789,7 +801,11 @@ jobs:
                 return [newest];
               }
               if (newest.status === "completed") {
-                // Completed source success does not prove publication remains usable; preserve recovery dispatch.
+                // A refresh created after this CI completed already owns this callback's recovery.
+                // A later substantive CI signal may still recover publication from an older producer.
+                const ciCompleted = Date.parse(workflowRun.updated_at || "");
+                if (newest.event === "repository_dispatch" && Number.isFinite(ciCompleted) &&
+                    Date.parse(newest.created_at) >= ciCompleted) return [newest];
                 return [];
               }
               throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
@@ -979,9 +995,10 @@ jobs:
                   }
                 }
                 if (fallbackReason) {
-                  core.warning(
-                    `Cannot verify recent runtime producer evidence for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}); falling back to the required refresh dispatch: ${fallbackReason}`
-                  );
+                  core.setFailed(`Cannot verify exact runtime producer inventory for PR #${tuple.prNumber}; no dispatch issued: ${fallbackReason}`);
+                  runtimeInventoryPromise = undefined;
+                  runtimeInventoryError = null;
+                  continue;
                 }
                 if (existingProducers.length > 0) {
                   const producer = existingProducers[0];
@@ -990,17 +1007,43 @@ jobs:
                   );
                 } else {
                   core.info(`No reusable in-flight exact producer was verified in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
-                  await github.rest.repos.createDispatchEvent({
-                    ...context.repo,
-                    event_type: "pr-runtime-base-refresh",
-                    client_payload: {
-                      pr_number: tuple.prNumber,
-                      base_ref: tuple.baseRef,
-                      base_sha: tuple.baseSha,
-                      head_sha: tuple.headSha,
-                      merge_sha: tuple.mergeSha,
-                    },
-                  });
+                  // Refresh tuple custody after preceding fan-out/API work under the shared dispatcher lock.
+                  const current = await resolveExactMerge(tuple.prNumber, tuple.baseRef, tuple.baseSha, tuple.headSha);
+                  const {data: currentBase} = await github.rest.git.getRef({...context.repo, ref: `heads/${tuple.baseRef}`});
+                  if (!current || current.tuple.mergeSha !== tuple.mergeSha || currentBase.object?.sha !== tuple.baseSha) {
+                    core.info(`Skipping changed runtime tuple for PR #${tuple.prNumber}.`);
+                    continue;
+                  }
+                  const previousIds = new Set(inventory?.runs?.map(run => run.id) || []);
+                  try {
+                    await github.rest.repos.createDispatchEvent({
+                      ...context.repo,
+                      event_type: "pr-runtime-base-refresh",
+                      client_payload: {
+                        pr_number: tuple.prNumber,
+                        base_ref: tuple.baseRef,
+                        base_sha: tuple.baseSha,
+                        head_sha: tuple.headSha,
+                        merge_sha: tuple.mergeSha,
+                      },
+                    });
+                    // No retry of an ambiguous POST. Hold only this API dispatcher lock for bounded visibility.
+                    const visibilityDeadline = Date.now() + 120000;
+                    for (;;) {
+                      const observed = await loadExistingRuntimeRuns();
+                      if (!observed.complete) throw new Error("Accepted refresh has incomplete visibility; no retry issued");
+                      const exactTitle = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
+                      if (observed.runs.some(run => run.event === "repository_dispatch" &&
+                          run.display_title === exactTitle && !previousIds.has(run.id))) break;
+                      if (Date.now() >= visibilityDeadline) throw new Error("Refresh dispatch accepted but visibility is unknown; no retry issued");
+                      await new Promise(resolve => setTimeout(resolve, 5000));
+                    }
+                  } catch (error) {
+                    core.setFailed(`Runtime refresh handoff for PR #${tuple.prNumber} is uncertain; no retry issued: ${error.message || error}`);
+                    runtimeInventoryPromise = undefined;
+                    continue;
+                  }
+                  runtimeInventoryPromise = undefined;
                 }
               } else {
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);

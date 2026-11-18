@@ -4120,3 +4120,108 @@ function markerAccepted(overrides = {}) {
   console.log("Canonical PLAY transition exception positive and negative contracts passed.");
 })().catch(error => {console.error(error); process.exitCode = 1;});
 NODE
+
+
+# Exercise the actual trusted completion-reconciler script without provider calls.
+python3 - "$ROOT_DIR" "$smoke_clock_fixture.reconcile" <<'PY'
+import sys
+from pathlib import Path
+import yaml
+root = Path(sys.argv[1])
+publisher = yaml.load((root / ".github/workflows/publish-pr-runtime-images.yml").read_text(), Loader=yaml.BaseLoader)
+runtime = yaml.load((root / ".github/workflows/runtime-images.yml").read_text(), Loader=yaml.BaseLoader)
+job = publisher["jobs"]["reconcile-failed-pr-runtime"]
+assert job["permissions"] == {"actions": "read", "pull-requests": "read", "contents": "write"}
+assert job["concurrency"] == runtime["jobs"]["dispatch-pr-base-refreshes"]["concurrency"] == {"group": "runtime-pr-refresh-dispatch", "queue": "max"}
+assert "concurrency" not in runtime["jobs"]["image-meta"]
+def queue_paths(value, prefix=()):
+    if not isinstance(value, dict):
+        return []
+    return [prefix + (key,) for key in value if key == "queue"] + [path for key, child in value.items() for path in queue_paths(child, prefix + (key,))]
+assert queue_paths(publisher) == [("jobs", "reconcile-failed-pr-runtime", "concurrency", "queue")]
+assert queue_paths(runtime) == [("jobs", "dispatch-pr-base-refreshes", "concurrency", "queue")]
+
+assert all("checkout" not in step.get("uses", "") for step in job["steps"])
+assert "github.event.workflow_run.event == 'pull_request'" in job["if"]
+Path(sys.argv[2]).write_text(next(step["with"]["script"] for step in job["steps"] if "github-script" in step.get("uses", "")))
+PY
+node - "$smoke_clock_fixture.reconcile" <<'NODE'
+const assert = require("node:assert/strict"), fs = require("node:fs");
+const execute = new Function("github", "context", "core", "Date", "setTimeout",
+  `return (async () => {${fs.readFileSync(process.argv[2], "utf8")}\n})()`);
+async function run(kind, shared = {visible: false, posts: 0}) {
+  const base = "b".repeat(40), head = "a".repeat(40), merge = "c".repeat(40), repository = "example/firemud";
+  const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
+  const source = {id: 100, run_attempt: 1, workflow_id: 7, name: "Build Runtime Images", path: ".github/workflows/runtime-images.yml",
+    display_title: title, head_sha: head, head_branch: "feature", event: "pull_request", status: "completed", conclusion: "failure",
+    repository: {full_name: repository}, head_repository: {full_name: repository}, created_at: "2026-11-18T00:00:00Z"};
+  const ci = {...source, id: 90, workflow_id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation",
+    display_title: `CI — Validation pr-42 base-${base} head-${head}`};
+  const refresh = {...source, id: 110, event: "repository_dispatch", head_branch: "develop", head_sha: "d".repeat(40)};
+  const event = structuredClone(source);
+  if (kind === "typed-callback") event.event = "repository_dispatch";
+  if (kind === "nested-callback") event.event = "workflow_run";
+  if (kind === "fork") event.head_repository.full_name = "fork/repo";
+  if (kind === "success") event.conclusion = "success";
+  let clock = 0, tupleReads = 0, sourceReads = 0;
+  const github = {rest: {
+    actions: {
+      getWorkflow: async ({workflow_id}) => ({data: workflow_id === "ci.yml"
+        ? {id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation"}
+        : {id: 7, path: source.path, name: source.name}}),
+      getWorkflowRun: async ({run_id}) => {
+        if (run_id === 90) return {data: {...ci, ...(kind === "ci-rerun" ? {run_attempt: 2} : {})}};
+        sourceReads++;
+        return {data: {...source, ...((kind === "stale-attempt" || kind === "late-rerun" && sourceReads > 1) ? {run_attempt: 2} : {})}};
+      },
+      listWorkflowRuns: async ({workflow_id, page, event: runEvent}) => {
+        let runs = workflow_id === "ci.yml" ? [{...ci, ...(kind === "ci-pending" ? {status: "in_progress"} : {})}]
+          : shared.visible ? [refresh] : [];
+        if (workflow_id === "runtime-images.yml" && runEvent === "pull_request") {
+          runs = kind === "newer-original" ? [{...source, id: 105, status: "in_progress"}] : [source];
+        }
+        if (workflow_id === "runtime-images.yml" && runEvent === "repository_dispatch" && kind === "second-page") {
+          runs = Array.from({length: 100}, (_, i) => ({...refresh, id: 1000 + i, display_title: "unrelated"})).concat(refresh);
+        }
+        return {data: {total_count: kind === "incomplete" ? 1001 : runs.length, workflow_runs: runs.slice((page - 1) * 100, page * 100)}};
+      },
+    },
+    pulls: {get: async () => { tupleReads++; return {data: {state: "open", mergeable: true, merge_commit_sha: merge,
+      head: {sha: head, ref: "feature", repo: {full_name: repository}},
+      base: {ref: "develop", sha: kind === "late-drift" && tupleReads > 1 ? head : base, repo: {full_name: repository}}}};}},
+    git: {getRef: async () => ({data: {object: {sha: base}}})},
+    repos: {
+      getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}}),
+      createDispatchEvent: async () => {
+        shared.posts++;
+        if (kind === "ambiguous-post") throw new Error("unknown POST outcome");
+        if (kind !== "invisible") shared.visible = true;
+      },
+    },
+  }, paginate: async () => [{id: 30, run_id: 90, run_attempt: 1, head_sha: head, name: "Validation Gate",
+    workflow_name: "CI — Validation", status: "completed", check_run_url: `https://api.github.com/repos/${repository}/check-runs/30`,
+    steps: [{name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: kind === "metadata" ? "success" : "skipped"},
+      {name: "Enforce validation success", status: "completed", conclusion: "failure"}]}]};
+  await execute(github, {repo: {owner: "example", repo: "firemud"}, eventName: "workflow_run",
+    payload: {workflow_run: event, repository: {default_branch: "develop"}}}, {info: () => {}},
+    class extends Date { static now() { return clock; } }, callback => {clock += 5000; callback();});
+  return shared.posts;
+}
+(async () => {
+  assert.equal(await run("valid"), 1);
+  for (const scenario of ["typed-callback", "nested-callback", "fork", "success", "stale-attempt", "late-rerun", "ci-rerun", "ci-pending", "metadata", "late-drift", "second-page", "newer-original"]) {
+    assert.equal(await run(scenario), 0, scenario);
+  }
+  for (const scenario of ["incomplete", "ambiguous-post", "invisible"]) {
+    const state = {visible: false, posts: 0};
+    await assert.rejects(run(scenario, state));
+    assert.equal(state.posts, scenario === "incomplete" ? 0 : 1, "never retry unknown POST");
+  }
+  // Under the shared job mutex, a CI-first visible refresh suppresses completion recovery.
+  assert.equal(await run("valid", {visible: true, posts: 0}), 0);
+  // Repeated completion callbacks, including after terminal refresh failure, dispatch at most once.
+  const shared = {visible: false, posts: 0};
+  await run("valid", shared); await run("valid", shared); assert.equal(shared.posts, 1);
+  console.log("Failed original runtime reconciliation contracts passed (offline serialized model, not GitHub delivery proof).");
+})().catch(error => {console.error(error); process.exitCode = 1;});
+NODE
