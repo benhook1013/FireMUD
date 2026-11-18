@@ -13,7 +13,9 @@ class GatewayDefaultRetryConfigurationTest {
   void defaultRetriesCannotReplayOneUseAccountMutations() throws IOException {
     var environment = new StandardEnvironment();
     for (var source :
-        new YamlPropertySourceLoader().load("gateway-defaults", new FileSystemResource("src/main/resources/application.yml"))) {
+        new YamlPropertySourceLoader()
+            .load(
+                "gateway-defaults", new FileSystemResource("src/main/resources/application.yml"))) {
       environment.getPropertySources().addFirst(source);
     }
     var properties =
