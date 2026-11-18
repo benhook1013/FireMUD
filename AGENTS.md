@@ -31,7 +31,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 ## Development And Documentation
 
 - FireMUD is pre-v1: converge directly on one canonical state rather than preserving obsolete schemas, APIs, routes, or compatibility scaffolding. Widen a slice when the same invariant spans services and a broader pass is cheaper and clearer.
-- Direct convergence remains qualified by live-data retention, security, and protocol constraints documented by the owning architecture. When a contract changes, update its call sites, tests, and documentation together and remove obsolete paths.
+- Direct convergence remains qualified by live-data retention (none before v1 under [ADR 0185](design/architecture/decisions/adr-0185-no-data-carry-over-before-v1.md) once accepted), security, and protocol constraints documented by the owning architecture. When a contract changes, update its call sites, tests, and documentation together and remove obsolete paths.
 - Do not seek approval merely because work becomes cross-service, breaking, or larger when the canonical design is clear. Stop for genuine design ambiguity, competing target states, or changes to consequential accepted decisions.
 - For implementation or branch reconciliation, read the owning implementation tracker before interpreting branch names, commits, or raw diffs. Proactively repair nearby in-scope drift when practical.
 - Prefer batches that measurably advance an owned capability, close a declared gap, or strengthen its focused proof rather than accumulating seams that leave tracked capability state unchanged.
