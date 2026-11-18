@@ -23,7 +23,11 @@ public record OriginalNewCapacityExecution(
     requireOriginalNewRequest(request);
     Objects.requireNonNull(reservation).requireBinding(request);
     TenantCapacityAdmission.uuid(transitionId);
-    if (selectedOwnerId == null || !selectedOwnerId.matches("[A-Za-z0-9._:-]{1,120}"))
+    if (selectedOwnerId == null
+        || selectedOwnerId.isBlank()
+        || !selectedOwnerId.equals(selectedOwnerId.trim())
+        || selectedOwnerId.codePointCount(0, selectedOwnerId.length()) > 120
+        || selectedOwnerId.codePoints().anyMatch(cp -> cp == 0 || (cp >= 0xD800 && cp <= 0xDFFF)))
       throw new IllegalArgumentException("Exact selected owner instance required");
     if ((reservation.state() != TenantCapacityAdmission.State.RESERVED
             && reservation.state() != TenantCapacityAdmission.State.FINALIZED)
@@ -46,7 +50,7 @@ public record OriginalNewCapacityExecution(
     }
   }
 
-  /** All strings have closed grammars; the complete canonical attempt includes Account evidence. */
+  /** Canonical JSON escapes runtime identity text; the attempt includes exact Account evidence. */
   public byte[] canonicalBytes() {
     Map<String, String> fields = new LinkedHashMap<>();
     fields.put("schema", "gs-original-new-capacity-execution/v1");
@@ -70,14 +74,9 @@ public record OriginalNewCapacityExecution(
     fields.put(
         "canonicalAttemptPayload",
         Base64.getEncoder().encodeToString(CapacityAdmissionDigest.preimage(request)));
-    StringBuilder json = new StringBuilder("{");
-    fields.forEach(
-        (name, value) -> {
-          if (json.length() > 1) json.append(',');
-          json.append('"').append(name).append("\":\"").append(value).append('"');
-        });
     try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(json.append('}').toString());
+      return Rfc8785CanonicalJson.canonicalizeUtf8(
+          tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(fields));
     } catch (java.io.IOException malformed) {
       throw new IllegalArgumentException("Invalid capacity execution", malformed);
     }

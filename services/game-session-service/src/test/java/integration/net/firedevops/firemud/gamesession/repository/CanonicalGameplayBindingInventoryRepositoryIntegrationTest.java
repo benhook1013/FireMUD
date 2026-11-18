@@ -497,8 +497,10 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     }
   }
 
-  @Test
-  void memberRepairPreservesAnEarlierPresentObservationUntilActualAcknowledgement() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void memberRepairPreservesTheFrozenProjectionContractAcrossConcurrentObservation(
+      boolean observeAfterFreeze) throws Exception {
     TestSchema testSchema = newTestSchema("gs_member_present_");
     RedisMemberFixture redisFixture = null;
     try {
@@ -508,6 +510,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       String member =
           CanonicalGameplayAccountIndexMember.of(fixture.evidence().candidate()).value();
 
+      var frozenBeforeObservation =
+          observeAfterFreeze ? fixture.repository().beginAccountMemberRepair(TRANSITION_ID) : null;
       // The old owner records PRESENT_AWAITING_COVERAGE but does not satisfy the obligation.
       var historicalObservation =
           fixture.repository().markCandidateAccountIndexPresent(fixture.evidence(), member);
@@ -523,14 +527,14 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
                   .CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED);
 
       var operation = fixture.repository().beginAccountMemberRepair(TRANSITION_ID);
-      assertThat(operation.originalObligation().projectionState())
-          .isEqualTo(
-              net.firedevops.firemud.gamesession.binding
-                  .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
-                  .PRESENT_AWAITING_COVERAGE);
-      assertThat(operation.originalObligation().projectedMember()).isEqualTo(member);
-      assertThat(operation.originalObligation().inventoryRevision())
-          .isEqualTo(historicalObservation.projectionInventoryRevision());
+      if (observeAfterFreeze) {
+        assertThat(operation).isEqualTo(frozenBeforeObservation);
+        assertThat(operation.originalObligation().projectionInventoryRevision()).isNull();
+      } else {
+        assertThat(operation.originalObligation().projectedMember()).isEqualTo(member);
+        assertThat(operation.originalObligation().inventoryRevision())
+            .isEqualTo(historicalObservation.projectionInventoryRevision());
+      }
       assertThat(fixture.repository().readSnapshot()).isEqualTo(beforeRepair);
 
       var redisOwner =
@@ -541,6 +545,56 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       var acknowledgement =
           fixture.repository().acknowledgeAccountMemberRepair(operation, readback);
       assertThat(acknowledgement.member()).isEqualTo(member);
+      var completed = fixture.repository().readSnapshot();
+      assertThat(completed.accountIndexObligations().getFirst().projectionInventoryRevision())
+          .isEqualTo(
+              observeAfterFreeze
+                  ? completed.inventoryRevision()
+                  : historicalObservation.projectionInventoryRevision());
+      assertThat(fixture.repository().acknowledgeAccountMemberRepair(operation, readback))
+          .isEqualTo(acknowledgement);
+      var immutableRepairBefore =
+          testSchema
+              .dsl()
+              .fetchSingle(
+                  "SELECT to_jsonb(repair)::text AS evidence FROM"
+                      + " game_session_canonical_account_member_repair_operation repair"
+                      + " WHERE transition_id = ?",
+                  TRANSITION_ID)
+              .get("evidence", String.class);
+      if (observeAfterFreeze) {
+        // Reproduce the old COALESCE writer's completed row, not a new repair operation.
+        testSchema
+            .dsl()
+            .execute(
+                "UPDATE game_session_canonical_binding_account_index_obligation"
+                    + " SET projection_inventory_revision = ? WHERE transition_id = ?",
+                historicalObservation.projectionInventoryRevision(),
+                TRANSITION_ID);
+      }
+      try (var migration =
+          getClass()
+              .getResourceAsStream(
+                  "/db/migration/V1065.0.13__repair_frozen_required_member_projection.sql")) {
+        assertThat(migration).isNotNull();
+        String correction =
+            new String(migration.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                .split("-- Runtime-family catalog registration", 2)[0];
+        assertThat(testSchema.dsl().execute(correction)).isEqualTo(observeAfterFreeze ? 1 : 0);
+        assertThat(testSchema.dsl().execute(correction)).isZero();
+      }
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT to_jsonb(repair)::text AS evidence FROM"
+                          + " game_session_canonical_account_member_repair_operation repair"
+                          + " WHERE transition_id = ?",
+                      TRANSITION_ID)
+                  .get("evidence", String.class))
+          .isEqualTo(immutableRepairBefore);
+      assertThat(fixture.repository().readSnapshot().accountIndexObligations())
+          .isEqualTo(completed.accountIndexObligations());
       assertThat(fixture.repository().readSnapshot().accountIndexObligations())
           .singleElement()
           .satisfies(

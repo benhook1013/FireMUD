@@ -263,9 +263,9 @@ public final class AccountCredentialAbuseRedisStore
     RedisFuture<T> future = dispatch.get();
     try {
       T result = future.get(attempt.remainingNanos(), TimeUnit.NANOSECONDS);
-      // get(timeout) may return after the deadline when completion wins the timeout race.
-      attempt.remainingNanos();
+      // A returned reply is known even when completion wins the deadline race.
       attempt.inFlight = false;
+      attempt.remainingNanos();
       return result;
     } catch (Exception failure) {
       try {
