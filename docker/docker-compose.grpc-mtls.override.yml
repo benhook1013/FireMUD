@@ -6,6 +6,8 @@
 # private key stays host-only and is never mounted into an app.
 x-grpc-mtls-environment: &grpc-mtls-environment
   FIREMUD_GRPC_PLAINTEXT: "false"
+  # Pre-v1 gate waivers (ADR 0185); listed in the player access and session tracker.
+  FIREMUD_PRE_V1_GATE_WAIVERS_ENABLED: "true"
   GRPC_SERVER_TLS_ENABLED: "true"
   GRPC_SERVER_CLIENT_AUTH: REQUIRE
   FIREMUD_GRPC_CERT_CHAIN_PATH: /app/certs/client.crt

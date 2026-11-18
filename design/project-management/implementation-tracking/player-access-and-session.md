@@ -14,6 +14,14 @@ Account initial/current/final creation owners, explicit initial billing-owner co
 
 The explicitly approved nonproduction canonical-cutover scope has a [bounded Smoke Gate diagnostic exception](../../architecture/system-architecture-cicd.md#pull-request-runtime-and-preview-chain), gated by the `canonical-play-transition` label and fresh evidence for the exact current PR tuple. The label does not authorize expanding that approved scope. The observed failure is successful backend LOGIN followed by exact direct-backend PLAY `ERROR ENTITLEMENT_UNAVAILABLE`, alone or with `Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.` Held-admission denial qualification and authenticated cleanup pass, while LOOK and successful public admission remain unproved. The probe retains its failed Actions-native outcome and exact classified error. Runtime CI and Smoke Gate may pass under the bounded exception after successful authenticated cleanup; their summaries explicitly report that runtime qualification is absent. Image export, upload, typed publication handoff and trusted publication remain blocked for an exception attempt. Repair the canonical Account PLAYER_ADMISSION receiving chain and its Game Session PLAY consumer, then obtain successful fresh-image LOGIN → PLAY → LOOK before removing the exception and resuming trusted branch-image promotion. The integrated stack still leaves the canonical receiver unregistered and numeric PLAY entitlement reads denied; merely registering that receiver or restoring numeric subscription reads does not complete this obligation. This is nonproduction merge-gate accommodation, not activation authority.
 
+### Pre-v1 gate waivers
+
+Under ADR 0185 (no data carry-over before v1, proposed in #3459), Compose smoke and previews set `FIREMUD_PRE_V1_GATE_WAIVERS_ENABLED=true` (`PreV1GateWaivers`) to open gates whose production qualification is still owed. A service refuses to start with the switch on under the `prod` profile, and `dev-tools/tests/pre-v1-gate-waivers-contract.sh` fails if production charts, release tooling or prod profiles set it. Every row must be qualified and removed before v1.
+
+| Waived gate | Owed before v1 |
+| --- | --- |
+| Gateway `gameplayRouteReadiness` reports ready | Canonical Account connect-context production, shared replay fencing and dedicated Gateway signing keys |
+
 ### Direct-text scope and JOIN identifier cutover
 
 The canonical Account boundary requires non-nil UUID tenant and game-instance identifiers. The held Game Session scope target now takes those UUIDs from `CanonicalPlayableTarget`, and its Account client validates the same canonical shape. JOIN correlation retains exact tenant equality. The numeric transport session identifier remains an independent, bounded positive-long coordinate: its original bytes, including leading zeros, are preserved through scope issuance and JOIN rather than replaced by the proxy connection UUID.

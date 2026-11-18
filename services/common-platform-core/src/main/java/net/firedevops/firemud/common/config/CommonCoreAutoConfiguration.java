@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.common.health.HttpEndpointAvailabilityChecker;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
+import net.firedevops.firemud.common.prev1.PreV1GateWaivers;
 import net.firedevops.firemud.common.health.TlsCertificateReadinessHealthEndpointGroupsPostProcessor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityController;
@@ -52,6 +53,12 @@ import org.springframework.core.env.Environment;
 })
 @Import({TracingConfig.class, CommonGrpcServerConfiguration.class, GrpcServerTlsReloader.class})
 public class CommonCoreAutoConfiguration {
+
+  @Bean
+  @ConditionalOnMissingBean(PreV1GateWaivers.class)
+  public PreV1GateWaivers preV1GateWaivers(Environment environment) {
+    return PreV1GateWaivers.from(environment);
+  }
 
   @Bean
   @ConditionalOnMissingBean(MeterRegistry.class)
