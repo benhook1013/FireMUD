@@ -1650,7 +1650,7 @@ run_decide() {
     CI_TITLE="CI — Validation pr-42 base-${loc_base} head-${loc_head}" CI_HEAD_SHA="$loc_head" \
     CI_PATH="${CI_PATH:-.github/workflows/ci.yml}" CI_PULL_REQUESTS="${CI_PULL_REQUESTS:-[]}" \
     FAKE_DETECTOR="${FAKE_DETECTOR:-success}" \
-    FAKE_PR="{\"state\":\"open\",\"head\":\"${loc_head}\",\"base\":\"${loc_base}\",\"head_repo\":\"example/example\",\"base_repo\":\"example/example\",\"author\":\"someone\",\"body\":\"\"}" \
+    FAKE_PR="{\"state\":\"open\",\"head\":\"${loc_head}\",\"base\":\"${loc_base}\",\"head_repo\":\"example/example\",\"base_repo\":\"example/example\",\"author\":\"someone\",\"body\":${FAKE_BODY:-\"\"}}" \
     bash "$WORKFLOW_DIR/decide.sh" >"$WORKFLOW_DIR/stdout"
 }
 expect_skip() {
@@ -1674,4 +1674,9 @@ if ! { grep -qx 'update=true' "$WORKFLOW_DIR/out" && grep -qx 'number=42' "$WORK
   && grep -qx "base=${loc_base}" "$WORKFLOW_DIR/out" && grep -qx "head=${loc_head}" "$WORKFLOW_DIR/out"; }; then
   echo "PR LOC Report must target the run's exact PR, base, and head" >&2; cat "$WORKFLOW_DIR/stdout" "$WORKFLOW_DIR/out" >&2; exit 1
 fi
+loc_meta="<!-- firemud:cloc-report:metadata {\\\"base_oid\\\":\\\"${loc_base}\\\",\\\"head_oid\\\":\\\"${loc_head}\\\"} -->"
+FAKE_BODY="\"${loc_meta}\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "a metadata line without a complete marked block must not count as current" >&2; exit 1; }
+FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n<!-- firemud:cloc-report:end -->\"" run_decide
+expect_skip "LOC section already matches this head and base"
 echo "PR LOC Report callback contract checks passed"
