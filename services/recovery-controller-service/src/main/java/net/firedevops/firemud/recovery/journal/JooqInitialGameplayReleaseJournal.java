@@ -15,7 +15,6 @@ import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TransitionVerb;
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEffect;
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.requiredDigest;
-import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.requiredText;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -86,7 +85,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   @Override
   public Optional<Operation> find(UUID operationId) {
     Objects.requireNonNull(operationId, "operationId must not be null");
-    return Optional.ofNullable(selectOperation(dsl, operationId, false));
+    return Optional.ofNullable(selectOperationOrNull(dsl, operationId, false));
   }
 
   @Override
@@ -210,17 +209,21 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   @Override
   public Optional<Operation> findTransition(PublicTransitionTuple tuple) {
     Objects.requireNonNull(tuple, "tuple must not be null");
-    Operation operation = selectOperation(dsl, tuple.operationId(), false);
-    requireTransitionMatchesOperation(tuple, operation);
     Record previous =
         dsl.fetchOne(
-            "SELECT tuple_digest FROM " + TRANSITION_TABLE + " WHERE operation_id = ? AND verb = ?",
+            "SELECT o.*, t.tuple_digest AS transition_digest FROM recovery_control.initial_gameplay_release_operation o "
+                + "JOIN "
+                + TRANSITION_TABLE
+                + " t ON t.operation_id=o.operation_id "
+                + "WHERE o.operation_id=? AND t.verb=?",
             tuple.operationId(),
             tuple.verb().wireValue());
     if (previous == null) {
       return Optional.empty();
     }
-    if (!tupleCodec.digest(tuple).equals(previous.get("tuple_digest", String.class))) {
+    Operation operation = toOperation(previous);
+    requireTransitionMatchesOperation(tuple, operation);
+    if (!tupleCodec.digest(tuple).equals(previous.get("transition_digest", String.class))) {
       throw conflict("public transition tuple changed");
     }
     return Optional.of(operation);
@@ -263,12 +266,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                   """
                   UPDATE recovery_control.initial_gameplay_release_outbox
                   SET state = 'dispatched', attempt_count = attempt_count + 1,
-                      last_attempt_id = ?, last_outcome_code = NULL,
+                      last_attempt_id = ?, last_dispatched_at = CAST(? AS timestamptz), last_outcome_code = NULL,
                       readback_identity = NULL, readback_payload = NULL, readback_digest = NULL,
                       updated_at = CAST(? AS timestamptz)
                   WHERE operation_id = ? AND effect_id = ? AND state IN ('pending', 'retryable')
                   """,
                   attemptId,
+                  toOffsetDateTime(now),
                   toOffsetDateTime(now),
                   operationId,
                   effectId);
@@ -300,10 +304,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       String outcomeCode,
       EffectOutboxState resultState,
       Instant now) {
-    requiredText(outcomeCode, "outcomeCode");
-    if (!outcomeCode.matches("[A-Z0-9_]{1,64}")) {
-      throw new IllegalArgumentException("outcomeCode must be a bounded uppercase code");
-    }
+    InitialGameplayReleaseModel.requiredOutcomeCode(outcomeCode);
     return dsl.transactionResult(
         configuration -> {
           DSLContext tx = DSL.using(configuration);
@@ -311,7 +312,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           if (current.lastAttemptId() != null && !current.lastAttemptId().equals(attemptId)) {
             throw conflict("effect attempt identity changed");
           }
-          if (current.state() == resultState) {
+          if (current.state() == resultState || current.state() == EffectOutboxState.ACKNOWLEDGED) {
             return current;
           }
           if (current.state() != EffectOutboxState.DISPATCHED) {
@@ -371,7 +372,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           }
           Record timestamps =
               tx.fetchOne(
-                  "SELECT updated_at FROM "
+                  "SELECT last_dispatched_at FROM "
                       + OUTBOX_TABLE
                       + " WHERE operation_id = ? AND effect_id = ?",
                   operationId,
@@ -379,7 +380,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           if (timestamps == null) {
             throw conflict("effect dispatch timestamp is unavailable");
           }
-          OffsetDateTime dispatchTime = timestamps.get("updated_at", OffsetDateTime.class);
+          OffsetDateTime dispatchTime = timestamps.get("last_dispatched_at", OffsetDateTime.class);
           if (dispatchTime == null) {
             throw conflict("effect dispatch timestamp is unavailable");
           }
@@ -527,6 +528,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   private Operation selectOperation(DSLContext context, UUID operationId, boolean forUpdate) {
+    Operation operation = selectOperationOrNull(context, operationId, forUpdate);
+    if (operation == null) {
+      throw new IllegalArgumentException("INITIAL_GAMEPLAY_RELEASE_NOT_FOUND");
+    }
+    return operation;
+  }
+
+  private Operation selectOperationOrNull(DSLContext context, UUID operationId, boolean forUpdate) {
     Record record =
         context.fetchOne(
             """
@@ -539,9 +548,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             """
                 + (forUpdate ? " FOR UPDATE" : ""),
             operationId);
-    if (record == null) {
-      throw new IllegalArgumentException("INITIAL_GAMEPLAY_RELEASE_NOT_FOUND");
-    }
+    return record == null ? null : toOperation(record);
+  }
+
+  private Operation toOperation(Record record) {
     JSONB scopeJson = record.get("scope_payload", JSONB.class);
     JSONB evidenceJson = record.get("evidence_snapshot", JSONB.class);
     JSONB bindingJson = record.get("peer_storage_binding", JSONB.class);

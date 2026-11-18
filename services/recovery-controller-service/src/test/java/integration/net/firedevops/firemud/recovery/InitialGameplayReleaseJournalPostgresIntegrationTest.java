@@ -113,6 +113,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(created.phase()).isEqualTo(Phase.COLLECTING);
     assertThat(duplicateCreate.maintenanceLockIdentity()).isEqualTo(lockIdentity);
     assertThat(journal.find(created.scope().operationId())).contains(created);
+    assertThat(journal.find(UUID.randomUUID())).isEmpty();
 
     InitialGameplayReleaseEvidence proof = evidence(scope);
     Operation ready =
@@ -125,6 +126,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(journal.findTransition(continueTuple)).isEmpty();
     Operation awaitingResume = journal.transition(continueTuple, base.plusSeconds(2));
     assertThat(awaitingResume.phase()).isEqualTo(Phase.AWAITING_RESUME);
+    assertThat(journal.findTransition(continueTuple)).contains(awaitingResume);
     assertThat(journal.transition(continueTuple, base.plusSeconds(3))).isEqualTo(awaitingResume);
 
     PublicTransitionTuple resumeTuple = transitionTuple(awaitingResume, TransitionVerb.RESUME);
@@ -151,6 +153,12 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
             "gamesession-preparation-readback-1",
             base.plusSeconds(6));
+    journal.recordAmbiguousEffect(
+        scope.operationId(),
+        prepare.effect().effectId(),
+        prepareAttempt,
+        "TRANSPORT_OUTCOME_UNKNOWN",
+        base.plusSeconds(7));
     Operation releasing =
         journal.recordEffectReadback(
             scope.operationId(),
@@ -159,6 +167,26 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             prepareReadback,
             base.plusSeconds(7));
     assertThat(releasing.phase()).isEqualTo(Phase.RELEASING);
+    assertThat(
+            journal
+                .recordAmbiguousEffect(
+                    scope.operationId(),
+                    prepare.effect().effectId(),
+                    prepareAttempt,
+                    "LATE_TRANSPORT_OUTCOME_UNKNOWN",
+                    base.plusSeconds(8))
+                .state())
+        .isEqualTo(EffectOutboxState.ACKNOWLEDGED);
+    UUID preparedEffectId = prepare.effect().effectId();
+    assertThatThrownBy(
+            () ->
+                journal.recordAmbiguousEffect(
+                    scope.operationId(),
+                    preparedEffectId,
+                    UUID.randomUUID(),
+                    "WRONG_ATTEMPT",
+                    base.plusSeconds(8)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(journal.findEffect(scope.operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
         .get()
         .extracting(OutboxEntry::state)
@@ -260,7 +288,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(retryRead.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
     assertThat(retryRead.lastAttemptId()).isEqualTo(attemptId);
     assertThat(retryRead.attemptCount()).isEqualTo(1);
-    assertThat(authorized.phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
+    assertThat(journal.find(scope.operationId()).orElseThrow().phase())
+        .isEqualTo(Phase.RESUME_AUTHORIZED);
   }
 
   @Test

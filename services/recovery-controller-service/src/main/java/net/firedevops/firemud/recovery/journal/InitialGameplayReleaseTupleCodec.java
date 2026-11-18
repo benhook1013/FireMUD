@@ -10,16 +10,19 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
+import tools.jackson.core.json.JsonWriteFeature;
 import tools.jackson.databind.ObjectMapper;
 
 /** Stable JSON and digest encoding for the operation-owned immutable tuples. */
 @Component
 public final class InitialGameplayReleaseTupleCodec {
   private final ObjectMapper objectMapper;
+  private final tools.jackson.databind.ObjectWriter digestMapper;
 
   public InitialGameplayReleaseTupleCodec(ObjectMapper objectMapper) {
     this.objectMapper =
         Objects.requireNonNull(objectMapper, "objectMapper must not be null").rebuild().build();
+    this.digestMapper = this.objectMapper.writer().with(JsonWriteFeature.WRITE_NUMBERS_AS_STRINGS);
   }
 
   public String toJson(Object value) {
@@ -33,7 +36,11 @@ public final class InitialGameplayReleaseTupleCodec {
   public String digest(Object value) {
     final byte[] canonical;
     try {
-      canonical = Rfc8785CanonicalJson.canonicalizeUtf8(toJson(value));
+      // Digest encoding preserves full-width integer identities instead of JCS binary64 rounding.
+      canonical =
+          Rfc8785CanonicalJson.canonicalizeUtf8(
+              digestMapper.writeValueAsString(
+                  new DigestTuple("initial-gameplay-release-tuple/v2", value)));
     } catch (IOException exception) {
       throw new IllegalArgumentException(
           "Initial gameplay release tuple is not canonical JSON", exception);
@@ -44,6 +51,8 @@ public final class InitialGameplayReleaseTupleCodec {
       throw new IllegalStateException("SHA-256 is unavailable", exception);
     }
   }
+
+  private record DigestTuple(String schema, Object value) {}
 
   public String operationTupleDigest(
       Scope scope,

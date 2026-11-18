@@ -756,6 +756,14 @@ public final class InitialGameplayReleaseModel {
     return value;
   }
 
+  public static String requiredOutcomeCode(String value) {
+    requiredText(value, "outcomeCode");
+    if (!value.matches("[A-Z0-9_]{1,64}")) {
+      throw new IllegalArgumentException("outcomeCode must be a bounded uppercase code");
+    }
+    return value;
+  }
+
   public static String requiredText(String value, String name) {
     Objects.requireNonNull(value, name + " must not be null");
     if (value.isBlank()) {

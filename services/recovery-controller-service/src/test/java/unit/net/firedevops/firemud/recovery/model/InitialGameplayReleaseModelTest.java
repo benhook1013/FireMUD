@@ -417,6 +417,16 @@ class InitialGameplayReleaseModelTest {
         .hasNoCause();
   }
 
+  @Test
+  void tupleDigestPreservesFullWidthExecutorGeneration() {
+    InitialGameplayReleaseTupleCodec codec =
+        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    RegionLeaseProof first = new RegionLeaseProof("region", "lease", 9007199254740992L);
+    RegionLeaseProof next = new RegionLeaseProof("region", "lease", 9007199254740993L);
+    assertThat(codec.digest(first)).isNotEqualTo(codec.digest(next));
+    assertThat(codec.toJson(next)).contains("9007199254740993");
+  }
+
   private static Scope scope(UUID playableNamespace) {
     return new Scope(
         UUID.randomUUID(),

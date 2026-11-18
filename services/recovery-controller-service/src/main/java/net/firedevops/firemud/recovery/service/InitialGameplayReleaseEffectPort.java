@@ -18,10 +18,8 @@ public interface InitialGameplayReleaseEffectPort {
     public EffectApplyResult {
       Objects.requireNonNull(status, "status");
       if (status == ApplyStatus.RETRYABLE_NO_EFFECT || status == ApplyStatus.AMBIGUOUS) {
-        if (outcomeCode == null || outcomeCode.isBlank()) {
-          throw new IllegalArgumentException(
-              "non-success apply outcomes require a typed outcome code");
-        }
+        net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.requiredOutcomeCode(
+            outcomeCode);
       }
     }
 

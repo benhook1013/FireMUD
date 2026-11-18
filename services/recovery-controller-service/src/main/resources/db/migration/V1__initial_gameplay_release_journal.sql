@@ -61,6 +61,7 @@ CREATE TABLE recovery_control.initial_gameplay_release_outbox (
         CHECK (state IN ('pending', 'dispatched', 'retryable', 'ambiguous', 'acknowledged')),
     attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     last_attempt_id UUID,
+    last_dispatched_at TIMESTAMPTZ,
     last_outcome_code VARCHAR(64),
     readback_identity TEXT,
     readback_payload JSONB,

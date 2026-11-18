@@ -1,6 +1,7 @@
 package net.firedevops.firemud.recovery.service;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -115,7 +116,7 @@ public final class InitialGameplayReleaseController {
     Operation operation = requireOperation(operationId);
     Optional<OutboxEntry> next = journal.findNextEffect(operationId);
     if (next.isEmpty()) {
-      return operation;
+      return requireOperation(operationId);
     }
     OutboxEntry outbox = next.orElseThrow();
     if (outbox.state() == EffectOutboxState.PENDING
@@ -139,7 +140,8 @@ public final class InitialGameplayReleaseController {
     }
     final EffectApplyResult applyResult;
     try {
-      applyResult = effectPort.apply(dispatched.effect(), attemptId);
+      applyResult =
+          Objects.requireNonNull(effectPort.apply(dispatched.effect(), attemptId), "applyResult");
     } catch (RuntimeException exception) {
       journal.recordAmbiguousEffect(
           operation.scope().operationId(),
@@ -185,16 +187,15 @@ public final class InitialGameplayReleaseController {
       return operation;
     }
     EffectReadback readback = resolution.readback();
-    if (resolution.observedAt().isBefore(readback.observedAt())) {
+    Instant now = clock.instant();
+    if (resolution.observedAt().isBefore(readback.observedAt())
+        || resolution.observedAt().isAfter(now)
+        || readback.observedAt().isAfter(now)) {
       throw new InitialGameplayReleaseConflictException(
           "IDEMPOTENCY_CONFLICT: effect readback observation time changed");
     }
     return journal.recordEffectReadback(
-        operation.scope().operationId(),
-        outbox.effect().effectId(),
-        attemptId,
-        readback,
-        clock.instant());
+        operation.scope().operationId(), outbox.effect().effectId(), attemptId, readback, now);
   }
 
   private Operation transition(
