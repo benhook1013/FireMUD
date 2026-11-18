@@ -62,7 +62,7 @@ Deferred. It would also need a voided command result in ADR 0016 and ADR 0053, f
 
 ## Implementation and Proof Obligations
 
-Proof covers one HP effect per entity per tick across replay and failover, rejection of a second HP mutation in the same tick, no influence of stale-fence volatile state on a successor, mid-fight one-shots firing once across crash and retry, an NPC death retry after a lost response resubmitting the recorded payload and digest, each contributing command's own outcome remaining recoverable from a combined HP effect, a replayed tick reusing a committed NPC action, no script handler reading volatile state, and a load probe comparing per-hit and per-tick HP at 1000 ms and 250 ms ticks that counts every write.
+Proof covers one HP effect per entity per tick across replay and failover, rejection of a second HP mutation in the same tick, no influence of stale-fence volatile state on a successor, mid-fight one-shots firing once across crash and retry, an NPC death retry after a lost response resubmitting the recorded payload and digest, each contributing command's own outcome remaining recoverable from a combined HP effect, a replayed tick reusing a committed NPC action, a successor reconciling an NPC's HP submission of unknown outcome before choosing a new action, no script handler reading volatile state, and a load probe comparing per-hit and per-tick HP at 1000 ms and 250 ms ticks that counts every write.
 
 ## Reversibility and Revisit Triggers
 

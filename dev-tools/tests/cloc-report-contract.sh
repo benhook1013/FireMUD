@@ -1139,7 +1139,7 @@ try:
     # Any sign of an active CodeRabbit review skips the edit.
     for active in ({"statuses": "pending\nsuccess\n"}, {"running": "123\n"}, {"processing": "456\n"}):
         guarded_calls = []
-        cloc_report.run_command = guarded_update_command(guarded_calls, **{"statuses": "success\\n", **active})
+        cloc_report.run_command = guarded_update_command(guarded_calls, **{"statuses": "success\n", **active})
         try:
             cloc_report.update_pull_request_body(
                 repo, 2736, impact, expect_base="a" * 40, skip_while_hosted_review=True
