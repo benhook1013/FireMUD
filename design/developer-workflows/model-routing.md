@@ -10,7 +10,7 @@ FireMUD runs on two providers: Codex (Sol and Luna) and Claude (Opus). Either ca
 - Use the latest available version of each family, as reported by the tool's model metadata. Do not pin version identifiers.
 - An explicit human model choice always wins. Keep the model and reasoning settings the human chose for a task.
 - The human starts Codex tasks with Sol. Luna is only ever a subagent, and the orchestrator verifies its work.
-- Prefer a reviewer or arbiter from a different model family than the author, because different families miss different things.
+- Prefer a reviewer or arbiter from the other provider (Codex versus Claude) when the mode allows, because different providers miss different things. That reviewer runs as a separate task, since a host cannot spawn the other provider's models. Otherwise use a different, stronger model from the same provider in a fresh context.
 - Within one host, subagents use that host's models: a Codex orchestrator delegates to Codex models, a Claude orchestrator to Claude models. Work for the other provider goes through a separate task (a t3code thread or a FireController job), not a subagent.
 
 ## Provider Mode
@@ -27,11 +27,11 @@ The FireController operator variable `provider_mode` says which providers to lea
 | --- | --- | --- | --- | --- |
 | Orchestrator | Plans and runs a workstream, integrates and verifies subagent work, adjudicates findings, owns PRs | The human's choice: Sol or Opus | Opus | Sol |
 | Bulk executor (subagent) | Bounded investigation, mechanical edits, straightforward test updates | Luna `high` under Sol; Opus `medium` under Opus | Opus `medium` | Luna `high` |
-| Deep executor (subagent or task) | Substantial multi-file implementation, wide reading, documentation rewrites | Opus `high`; Luna `xhigh` under Sol | Opus `high` | Luna `xhigh`, then Sol `medium` |
-| Independent reviewer | Fresh-context review or commissioned audit | Sol `high` or Opus `high`, from a different family than the author | Opus `high`, fresh context | Sol `high`, fresh context |
+| Deep executor (subagent or task) | Substantial multi-file implementation, wide reading, documentation rewrites | Opus `high` under Opus; Luna `xhigh` under Sol | Opus `high` | Luna `xhigh`, then Sol `medium` |
+| Independent reviewer | Fresh-context review or commissioned audit | Sol `high` or Opus `high`, from the other provider than the author where possible | Opus `high`, fresh context | Sol `high`, fresh context |
 | Arbiter | Conflicting evidence, competing options, consequential analysis | Sol or Opus at `high`, preferring the one that did not produce the evidence | Opus `high` | Sol `high` |
 
-Effort scales differ: Codex has `low`, `medium`, `high`, and `xhigh`; Claude has `low`, `medium`, `high`, `xhigh`, and `max`. Any tier in the table may be chosen without approval. `max` is never used autonomously.
+Effort scales differ: Codex has `low`, `medium`, `high`, and `xhigh`; Claude has `low`, `medium`, `high`, `xhigh`, and `max`. Any tier in the table may be chosen without approval. `max` is not used.
 
 ## Escalation
 
@@ -40,8 +40,8 @@ Effort scales differ: Codex has `low`, `medium`, `high`, and `xhigh`; Claude has
 
 ## Capacity, Quota, And Outages
 
-- **Model at capacity** (a temporary capacity error): wait 30 to 60 seconds and retry the same model once. If that fails, use the next model the role allows in the current mode and report the substitution.
-- **Usage or quota limit, or provider down:** stop starting new work on that provider. Bring the current step to a safe checkpoint, record the state and next step in the FireController job, and hand off per the table to the other provider's column. Tell the human, who decides whether to change `provider_mode`.
+- **Model at capacity** (a temporary capacity error): wait 30 to 60 seconds and retry the same model once. If that fails, use the next model the role allows in the current mode and tell the human when the substitution starts.
+- **Usage or quota limit, or provider down:** stop starting new work on that provider. Bring the current step to a safe checkpoint, record the state and next step in the FireController job, and hand off to the remaining provider using the column for that situation (`codex_low` when Codex is out, `claude_low` when Claude is out). Tell the human when the substitution starts; the human decides whether to change `provider_mode`.
 - When a provider is back, do not redo finished work. New assignments follow the current mode.
 - If no permitted model is available, report a capacity blocker and continue any other authorized work.
 - Report every substitution in the end-of-round delegation line, separately from reasoning-driven escalation.

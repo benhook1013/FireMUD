@@ -10,15 +10,15 @@ This applies only when the human sets up an Overseer.
 - On routine wakes the Overseer reads pending coordination and acts only when a decision or integration is due.
 - When a worker's behavior or understanding of its authority is wrong, the Overseer gives a direct, bounded correction and checks it took effect.
 - Workers own routine choices within accepted design, including fixes, retries, and test failures. They escalate only a real conflict with accepted design, a change to authority, priority, or scope, or a blocker that needs the Overseer, with a short evidence pointer and a proposed next step. They do not send debugging noise or ask permission for authorized steps.
-- The Overseer may fix small agent-process documentation itself (delegating the edit, checking the result, and publishing it) without routine human approval. This does not cover product, architecture, or design documents or consequential decisions, and does not widen merge or closure authority.
-- When assigned, the Overseer stewards [AI observations](../project-management/ai-observations.md): at existing checkpoints it notices worthwhile batches, has helpers group and check them, assigns improvements, and removes entries shown addressed, obsolete, or disproved. Otherwise workers only append.
+- The Overseer may fix small agent-process documentation (delegating the edit, checking the result, and opening or updating the PR) without routine human approval; merging still follows [PR lifecycle](./pr-lifecycle.md#review-completion-criteria). This does not cover product, architecture, or design documents or consequential decisions, and does not widen merge or closure authority.
+- When assigned, the Overseer stewards [AI observations](../project-management/ai-observations.md): at existing checkpoints it notices worthwhile batches, has helpers group and check them, assigns improvements, and removes entries shown addressed, obsolete, or disproved. Otherwise workers only append, except during a human-requested [repository health check](./repository-health-check.md).
 - Lanes contact each other only when the human allows it and there is a real coordination need (a shared resource, a review-slot claim, a dependency). Keep such messages to a sentence or two. No acknowledgement loops or status polling.
 - Keep track of where instructions came from. Do not claim "the human said" something without a traceable source, and do not let an old message override a later direction.
 - Task briefs hold durable goals and constraints; progress records hold the current phase, next step, and blocker. Replace stale state rather than appending.
 
 ## General Delegation Rules
 
-- Delegate bounded investigation, bulk reading, mechanical edits, or focused checks when it saves real cost or context. Do not delegate to avoid a few tool calls, and do not split trivial work. Keep one orchestrator per workstream.
+- Delegate bounded investigation, bulk reading, mechanical edits, or focused checks when it saves real cost or context. Do not delegate to avoid a few tool calls, and do not split trivial work. Keep one orchestrator per workstream, and give concurrent subagents disjoint write scopes.
 - Do not delegate product or architecture decisions.
 - **Every delegation prompt states:** the absolute worktree path and branch (and the commit, when the evidence depends on it); the exact write scope; the governing design, tracker, or workflow doc; the success condition; the exact validation commands allowed, or `none` with whether it is not applicable or deferred; and the standard limits block below.
 - The subagent checks `pwd` and `git branch --show-current` (and `git rev-parse HEAD` when a commit is pinned) before reading or editing, and reports any mismatch instead of proceeding. It reports if the revision drifted before handoff.
@@ -34,7 +34,7 @@ This applies only when the human sets up an Overseer.
 
 > Do not inspect or change review, CI, or PR state: no review requests or commands, no CI triggers or reruns, no resolving threads, no commit, push, retarget, open, merge, or close. Do not revert, delete, overwrite, stage, or commit anything outside your assigned files; preserve unrelated edits and stop to report if your files have overlapping changes.
 
-The orchestrator may lift a specific line of that block for a specific task by saying so explicitly. Merge authority is never delegated.
+The orchestrator may lift a specific line of that block for a specific task by saying so explicitly, but never grants more than it holds itself. Merge, auto-merge, and closure authority are never delegated.
 
 ## Integrating Delegated Work
 

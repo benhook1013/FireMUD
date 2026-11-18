@@ -1,6 +1,6 @@
 # FireMUD AI Contributor Notes
 
-This is the always-on guidance for AI agents working in FireMUD. It states intent; the linked workflow guides hold the detail and apply only when their trigger does. Repository documentation and scripts are the system of record. When a rule here seems to conflict with good judgment about the human's goal, stop and ask rather than follow the letter.
+This is the always-on guidance for AI agents working in FireMUD. It states intent; the linked workflow guides hold the detail and apply only when their trigger does. Repository documentation and scripts are the system of record. When a rule here seems to conflict with the human's evident goal, flag it and ask, and continue unaffected work meanwhile.
 
 ## Where Authority Lives
 
@@ -28,7 +28,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 - FireMUD is pre-v1. Converge on one canonical state: when a contract changes, update its call sites, tests, and docs together and remove the old path. Keep compatibility only where the owning architecture requires it for live data, security, or protocol reasons.
 - **One purpose per PR.** Keep existing batching where it saves CodeRabbit quota, but do not mix unrelated work.
 - **Design first.** A PR that changes behavior updates the design doc that owns that behavior in the same PR.
-- Update an implementation tracker when capability status actually changes, not on every PR.
+- Update an implementation tracker when capability status actually changes, not on every PR. Read the owning tracker before interpreting branch names, commits, or raw diffs during implementation or branch reconciliation.
 - Do not ask for approval just because work is cross-service, breaking, or large when the design is clear. Stop for genuine design ambiguity, competing target states, or a change to a consequential accepted decision.
 - Once the human picks a workstream, keep going through its clear next steps (implementation, validation, PR publication, review fixes) without checking in at each step. An explicit pause or stop wins: finish only the in-progress step and start nothing new until resumed.
 - Match process to risk. Do not build ledgers, audit suites, or extra review machinery for small changes.
