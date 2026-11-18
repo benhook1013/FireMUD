@@ -59,16 +59,19 @@ public final class InitialGameplayRecoverCodec {
   public static InitialGameplayRecoverRequest decode(byte[] raw) {
     Objects.requireNonNull(raw, "raw");
     if (raw.length > MAX_RAW_BYTES) throw invalid();
+    final String decoded;
     try {
-      StandardCharsets.UTF_8
-          .newDecoder()
-          .onMalformedInput(CodingErrorAction.REPORT)
-          .onUnmappableCharacter(CodingErrorAction.REPORT)
-          .decode(ByteBuffer.wrap(raw));
+      decoded =
+          StandardCharsets.UTF_8
+              .newDecoder()
+              .onMalformedInput(CodingErrorAction.REPORT)
+              .onUnmappableCharacter(CodingErrorAction.REPORT)
+              .decode(ByteBuffer.wrap(raw))
+              .toString();
     } catch (CharacterCodingException exception) {
       throw new IllegalArgumentException("Recover request must be valid UTF-8", exception);
     }
-    try (JsonParser parser = JSON.createParser(raw)) {
+    try (JsonParser parser = JSON.createParser(decoded)) {
       require(parser.nextToken(), JsonToken.START_OBJECT);
       literal(
           parser, "actionFamilySchemaId", InitialGameplayRecoverRequest.ACTION_FAMILY_SCHEMA_ID);
@@ -272,7 +275,10 @@ public final class InitialGameplayRecoverCodec {
   private static String string(JsonParser parser, String name) throws IOException {
     member(parser, name);
     require(parser.nextToken(), JsonToken.VALUE_STRING);
-    return InitialGameplayRecoverRequest.text(parser.getText(), MAX_RAW_STRING_CHARACTERS);
+    String raw = parser.getText();
+    InitialGameplayRecoverRequest.text(raw, MAX_RAW_STRING_CHARACTERS);
+    // Field constructors must see the original value to enforce their raw byte limits.
+    return raw;
   }
 
   private static void literal(JsonParser parser, String name, String value) throws IOException {

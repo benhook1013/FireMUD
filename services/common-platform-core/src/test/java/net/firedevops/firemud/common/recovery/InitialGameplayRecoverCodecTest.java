@@ -112,7 +112,7 @@ class InitialGameplayRecoverCodecTest {
         WIRE.replace(
             "\"storageIdentity\":\"pg\",\"storageRevision\":\"1\"",
             "\"storageRevision\":\"1\",\"storageIdentity\":\"pg\""));
-    rejects(WIRE.replace("\"detail\"", "\"deta\\u0069l\",\"detail\""));
+    rejects(WIRE.replace("\"detail\"", "\"deta\\u0069l\":\"first\",\"detail\""));
   }
 
   @Test
@@ -152,6 +152,23 @@ class InitialGameplayRecoverCodecTest {
     rejects(WIRE + "{}");
     assertThatThrownBy(() -> InitialGameplayRecoverCodec.decode(new byte[] {(byte) 0xc3, 0x28}))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void rejectsRawFieldsThatShrinkBelowTheirLimitOnlyAfterNormalization() {
+    rejects(WIRE.replace("\"world\"", "\"" + "e\u0301".repeat(43) + "\""));
+    rejects(WIRE.replace("\"initial\"", "\"" + "e\u0301".repeat(342) + "\""));
+  }
+
+  @Test
+  void rejectsUtf16AndUtf32EvenWhenTheirBytesAreValidUtf8() {
+    for (String encoding : List.of("UTF-16BE", "UTF-16LE", "UTF-32BE", "UTF-32LE")) {
+      assertThatThrownBy(
+              () ->
+                  InitialGameplayRecoverCodec.decode(
+                      WIRE.getBytes(java.nio.charset.Charset.forName(encoding))))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
   }
 
   private static InitialGameplayRecoverRequest decode(String wire) {
