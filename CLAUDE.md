@@ -2,4 +2,4 @@
 
 @AGENTS.md
 
-Repository skills live in `.agents/skills/`; `.claude/skills` links there. Model selection for Claude and Codex follows [model routing](design/developer-workflows/model-routing.md).
+`AGENTS.md` above is the shared guidance for every agent; Claude follows it unchanged. Repository skills live in `.agents/skills/`, and `.claude/skills` links there. Model choice and provider hand-off follow [model routing](design/developer-workflows/model-routing.md).

@@ -1,44 +1,54 @@
 # Model Routing
 
-Use this guide when choosing a model for a subagent, an independent review, or a persistent task. It is the only place in the repository that names model families. [AI delegation and review](./ai-delegation-and-review.md) owns delegation boundaries, prompt requirements, and review evidence; this guide only selects the model.
+Use this guide when choosing a model for a task, a subagent, or an independent review. It is the only place in the repository that names model families. [AI delegation and review](./ai-delegation-and-review.md) owns how delegation and review work; this guide only picks the model.
 
-FireMUD work runs on two providers: Codex (Luna and Sol families) and Claude (Opus, with Sonnet as an optional cheaper option). Either may be unavailable at any time, so every role has a default plus a single-provider fallback.
+FireMUD runs on two providers: Codex (Sol and Luna) and Claude (Opus). Either can run low on usage or go down, so each role has a model for every provider mode.
 
 ## Principles
 
-- Choose by task role, then read the model from the table. Do not assign work by provider name alone.
-- Resolve the latest available version of the selected family from actual tool model metadata at delegation time. Do not pin version identifiers or infer availability from marketing descriptions.
-- An explicit human model choice takes precedence. Preserve the user-selected model and reasoning settings of persistent tasks unless that provider is unavailable.
-- Prefer a reviewer from a different model family than the author. Different families tend to miss different things, which makes the review more independent.
+- Choose by task role, then read the model from the table. No role has a hard-coded provider.
+- Use the latest available version of each family, as reported by the tool's model metadata. Do not pin version identifiers.
+- An explicit human model choice always wins. Keep the model and reasoning settings the human chose for a task.
+- The human starts Codex tasks with Sol. Luna is only ever a subagent, and the orchestrator verifies its work.
+- Prefer a reviewer or arbiter from a different model family than the author, because different families miss different things.
+- Within one host, subagents use that host's models: a Codex orchestrator delegates to Codex models, a Claude orchestrator to Claude models. Work for the other provider goes through a separate task (a t3code thread or a FireController job), not a subagent.
+
+## Provider Mode
+
+The FireController operator variable `provider_mode` says which providers to lean on. The human sets it; agents read it and never check usage or quota themselves. Until the variable exists, or if it cannot be read, use `both`.
+
+- `both`: both providers have room.
+- `codex_low`: Codex usage is low; move work to Claude.
+- `claude_low`: Claude usage is low; move work to Codex.
 
 ## Routing Table
 
-| Role | What it covers | Both providers available | Codex only | Claude only |
+| Role | What it covers | `both` | `codex_low` | `claude_low` |
 | --- | --- | --- | --- | --- |
-| Orchestrator | Main thread or lane orchestrator: planning, integration, adjudication, PR and review operations | Human's choice per session (Sol or Opus) | Sol | Opus |
-| Bulk executor | Bounded investigation, mechanical patches, straightforward test updates | Luna `high` | Luna `high` | Opus `medium` (Sonnet optional) |
-| Deep executor | Substantial multi-file implementation, wide reading, documentation rewrites | Opus `high` | Luna `xhigh`, then Sol `medium` | Opus `high` |
-| Independent reviewer | Fresh-context review or commissioned audit | The other provider from the author: Sol `high` for Opus or Luna work, Opus `high` for Sol work | Sol `high`, fresh context | Opus `high` or `xhigh`, fresh context |
-| Arbiter | Conflicting evidence, competing options, consequential analysis | Sol or Opus at `high`, preferring whichever did not produce the evidence | Sol `high` | Opus `high` |
+| Orchestrator | Plans and runs a workstream, integrates and verifies subagent work, adjudicates findings, owns PRs | The human's choice: Sol or Opus | Opus | Sol |
+| Bulk executor (subagent) | Bounded investigation, mechanical edits, straightforward test updates | Luna `high` under Sol; Opus `medium` under Opus | Opus `medium` | Luna `high` |
+| Deep executor (subagent or task) | Substantial multi-file implementation, wide reading, documentation rewrites | Opus `high`; Luna `xhigh` under Sol | Opus `high` | Luna `xhigh`, then Sol `medium` |
+| Independent reviewer | Fresh-context review or commissioned audit | Sol `high` or Opus `high`, from a different family than the author | Opus `high`, fresh context | Sol `high`, fresh context |
+| Arbiter | Conflicting evidence, competing options, consequential analysis | Sol or Opus at `high`, preferring the one that did not produce the evidence | Opus `high` | Sol `high` |
 
-Reasoning or effort scales differ by provider. Codex offers `low`, `medium`, `high`, and `xhigh`; Claude offers `low`, `medium`, `high`, `xhigh`, and `max`. `max` is not an allowed autonomous tier for either provider. Every tier in the table may be chosen without separate approval.
+Effort scales differ: Codex has `low`, `medium`, `high`, and `xhigh`; Claude has `low`, `medium`, `high`, `xhigh`, and `max`. Any tier in the table may be chosen without approval. `max` is never used autonomously.
 
 ## Escalation
 
-- Start at the role's tier. Escalate by raising effort within the role.
-- After two inconclusive passes, switch to the other provider at the same role when it is available, rather than climbing further on the same model.
-- Do not delegate product or architecture design decisions at any tier.
+- Start at the role's tier and escalate by raising effort within the role.
+- After two inconclusive passes, change model family if the provider mode allows it, rather than climbing further on the same model.
 
-## Fallback
+## Capacity, Quota, And Outages
 
-- If a launch fails because the selected model is at capacity, wait 30 to 60 seconds and retry the same model and tier once.
-- If the retry fails, or the provider is down, out of quota, or rate-limited, use the single-provider column for the remaining provider. This needs no approval. Report the substitution when it starts and in the end-of-round delegation line, and distinguish it from reasoning-driven escalation.
-- When the provider returns, do not redo completed work. New assignments use the default column again.
-- If no permitted model is available, report a capacity blocker and continue independent authorized work.
+- **Model at capacity** (a temporary capacity error): wait 30 to 60 seconds and retry the same model once. If that fails, use the next model the role allows in the current mode and report the substitution.
+- **Usage or quota limit, or provider down:** stop starting new work on that provider. Bring the current step to a safe checkpoint, record the state and next step in the FireController job, and hand off per the table to the other provider's column. Tell the human, who decides whether to change `provider_mode`.
+- When a provider is back, do not redo finished work. New assignments follow the current mode.
+- If no permitted model is available, report a capacity blocker and continue any other authorized work.
+- Report every substitution in the end-of-round delegation line, separately from reasoning-driven escalation.
 
 ## Host Notes
 
 These are harness mechanics, not policy.
 
-- **Codex:** treat `agent thread limit reached` as a structural harness limit, not model capacity. Do not change models or use capacity retries; inspect agent states, recover a slot without discarding useful active threads, or report the blocker. When editing a non-default worktree with `apply_patch`, use absolute target paths.
+- **Codex:** `agent thread limit reached` is a harness slot limit, not model capacity. Do not change models; recover a slot without discarding useful active threads, or report the blocker. When editing a non-default worktree with `apply_patch`, use absolute paths.
 - **Claude Code:** reads [CLAUDE.md](../../CLAUDE.md), which imports `AGENTS.md`. Subagents run through the Agent tool; pass the model and effort from the table. Repository skills are visible through `.claude/skills`, which links to `.agents/skills`.

@@ -32,6 +32,11 @@ reviews:
     pmd:
       config_file: "ruleset.xml"
   path_instructions:
+    - path: "**"
+      instructions: |
+        FireMUD is pre-v1. Focus on defects that break this PR's stated purpose, correctness, security, data integrity, or documented contracts.
+        For improvements outside the PR's purpose or not needed before v1, say so explicitly (for example "outside v1 scope" or "can be routed") so the orchestrator can route rather than fix them in this PR.
+        Avoid speculative hardening, broad refactors, and style preferences unless they cause a real defect.
     - path: "services/**"
       instructions: |
         Prioritize bugs, regressions, missing tests, cross-service contract drift, and architecture mismatches over style nits.
