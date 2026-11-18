@@ -15,10 +15,10 @@ on:
 permissions:
   contents: read
 
-# One group per PR/base/head. A newer run queues behind a running one rather than
-# cancelling it; only a still-pending duplicate for the same identity is replaced.
+# One group per source CI run, so no run (including a metadata-only one) can
+# cancel or replace another's update. The script's final recheck orders edits.
 concurrency:
-  group: pr-loc-report-${{ github.event.workflow_run.display_title }}
+  group: pr-loc-report-${{ github.event.workflow_run.id }}
   cancel-in-progress: false
 
 jobs:
@@ -69,8 +69,8 @@ jobs:
           number="${BASH_REMATCH[1]}"; base="${BASH_REMATCH[2]}"; head="${BASH_REMATCH[3]}"
           [[ "$head" == "$CI_HEAD_SHA" ]] || skip "CI run title and head disagree"
           # Edit-only (metadata) CI runs skip change detection; they have nothing new to count.
-          detector="$(gh api "repos/${REPOSITORY}/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs" -f per_page=100 -X GET \
-            --jq '[.jobs[] | select(.name == "Detect CI-Relevant Changes") | .conclusion]')"
+          detector="$(gh api --paginate "repos/${REPOSITORY}/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name == "Detect CI-Relevant Changes") | .conclusion' | jq -R . | jq -s .)"
           [[ "$(jq 'length' <<<"$detector")" == 1 ]] || skip "CI run has no single change-detection job"
           [[ "$(jq -r '.[0]' <<<"$detector")" != "skipped" ]] || skip "metadata-only CI run"
           pr="$(gh api "repos/${REPOSITORY}/pulls/${number}" \
