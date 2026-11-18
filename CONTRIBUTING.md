@@ -65,7 +65,7 @@ Hooks run `spotlessApply` on commit and then run file-scoped fixes/checks for Ma
 ## How to Submit a PR
 
 1. Fork the repository and clone your fork locally.
-2. Create your feature branch: `git checkout -b feature/my-change`.
+2. Create your feature branch: `git switch -c feature/my-change`.
 3. Make your code and documentation changes.
 4. Run the test suite locally and ensure all checks pass.
 5. Commit using clear, descriptive messages and push your branch to your fork.

@@ -41,7 +41,7 @@ Effort scales differ: Codex has `low`, `medium`, `high`, and `xhigh`; Claude has
 ## Capacity, Quota, And Outages
 
 - **Model at capacity** (a temporary capacity error): wait 30 to 60 seconds and retry the same model once. If that fails, use the next model the role allows in the current mode and tell the human when the substitution starts.
-- **Usage or quota limit, or provider down:** stop starting new work on that provider. Bring the current step to a safe checkpoint, record the state and next step in the FireController job, and hand off to the remaining provider using the column for that situation (`codex_low` when Codex is out, `claude_low` when Claude is out). Tell the human when the substitution starts; the human decides whether to change `provider_mode`.
+- **Usage or quota limit, or provider down:** stop starting new work on that provider. Bring the current step to a safe checkpoint, record the state and next step in the FireController job (or, for a task without one, in its own thread), and hand off to the remaining provider using the column for that situation (`codex_low` when Codex is out, `claude_low` when Claude is out). Tell the human when the substitution starts; the human decides whether to change `provider_mode`.
 - When a provider is back, do not redo finished work. New assignments follow the current mode.
 - If no permitted model is available, report a capacity blocker and continue any other authorized work.
 - Report every substitution in the end-of-round delegation line, separately from reasoning-driven escalation.

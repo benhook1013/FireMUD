@@ -1650,7 +1650,7 @@ run_decide() {
     CI_TITLE="CI — Validation pr-42 base-${loc_base} head-${loc_head}" CI_HEAD_SHA="$loc_head" \
     CI_PATH="${CI_PATH:-.github/workflows/ci.yml}" CI_PULL_REQUESTS="${CI_PULL_REQUESTS:-[]}" \
     FAKE_DETECTOR="${FAKE_DETECTOR:-success}" \
-    FAKE_PR="{\"state\":\"open\",\"head\":\"${loc_head}\",\"base\":\"${loc_base}\",\"head_repo\":\"example/example\",\"base_repo\":\"example/example\",\"author\":\"someone\",\"body\":${FAKE_BODY:-\"\"}}" \
+    FAKE_PR="{\"state\":\"open\",\"head\":\"${loc_head}\",\"base\":\"${loc_base}\",\"base_ref\":\"develop\",\"head_repo\":\"example/example\",\"base_repo\":\"example/example\",\"author\":\"someone\",\"body\":${FAKE_BODY:-\"\"}}" \
     bash "$WORKFLOW_DIR/decide.sh" >"$WORKFLOW_DIR/stdout"
 }
 expect_skip() {
@@ -1683,5 +1683,7 @@ grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "a metadata line without a 
 FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n<!-- firemud:cloc-report:end -->\\n${loc_meta}\"" run_decide
 grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "metadata outside an empty marked block must not count as current" >&2; exit 1; }
 FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n<!-- firemud:cloc-report:end -->\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "metadata without a rendered report must be regenerated" >&2; exit 1; }
+FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n### FireMUD LOC impact\\n<!-- firemud:cloc-report:end -->\"" run_decide
 expect_skip "LOC section already matches this head and base"
 echo "PR LOC Report callback contract checks passed"

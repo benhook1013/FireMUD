@@ -84,12 +84,12 @@ jobs:
           [[ "$(jq 'length' <<<"$detector")" == 1 ]] || skip "CI run has no single change-detection job"
           [[ "$(jq -r '.[0]' <<<"$detector")" != "skipped" ]] || skip "metadata-only CI run"
           pr="$(gh api "repos/${REPOSITORY}/pulls/${number}" \
-            --jq '{state, head: .head.sha, base: .base.sha, head_repo: .head.repo.full_name, base_repo: .base.repo.full_name, author: .user.login, body: (.body // "")}')"
+            --jq '{state, head: .head.sha, base: .base.sha, base_ref: .base.ref, head_repo: .head.repo.full_name, base_repo: .base.repo.full_name, author: .user.login, body: (.body // "")}')"
           [[ "$(jq -r '.state' <<<"$pr")" == open ]] || skip "PR #${number} is not open"
           [[ "$(jq -r '.head_repo' <<<"$pr")" == "$REPOSITORY" && "$(jq -r '.base_repo' <<<"$pr")" == "$REPOSITORY" ]] \
             || skip "PR #${number} is not a same-repository PR"
           [[ "$(jq -r '.head' <<<"$pr")" == "$head" && "$(jq -r '.base' <<<"$pr")" == "$base" ]] \
-            || skip "PR #${number} head or base moved past this CI run; the next CI run refreshes it"
+            || skip "PR #${number} head or base moved past this CI run; the section stays stale until PR CI runs for the current base and head"
           [[ "$(jq -r '.author' <<<"$pr")" != "renovate[bot]" ]] || skip "Renovate PR #${number}"
           # Skip when a complete marked section already counts this exact head and base.
           body="$(jq -r '.body' <<<"$pr" | tr -d '\r')"
@@ -97,7 +97,8 @@ jobs:
           recorded="$(awk '$0 == "<!-- firemud:cloc-report:start -->" && !done { inside = 1; next }
             inside && $0 == "<!-- firemud:cloc-report:end -->" { done = 1; inside = 0; next }
             inside && sub(/^<!-- firemud:cloc-report:metadata /, "") && sub(/ -->$/, "") && !found { found = 1; meta = $0 }
-            END { if (done && found) print meta }' <<<"$body")"
+            inside && $0 == "### FireMUD LOC impact" { table = 1 }
+            END { if (done && found && table) print meta }' <<<"$body")"
           if [[ -n "$recorded" ]] \
             && [[ "$(jq -r '.head_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$head" ]] \
             && [[ "$(jq -r '.base_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$base" ]]; then
@@ -106,6 +107,7 @@ jobs:
           {
             echo "number=${number}"
             echo "base=${base}"
+            echo "base_ref=$(jq -r '.base_ref' <<<"$pr")"
             echo "head=${head}"
             echo "update=true"
           } >> "$GITHUB_OUTPUT"
@@ -140,6 +142,7 @@ jobs:
           PR_NUMBER: ${{ steps.target.outputs.number }}
           PR_BASE: ${{ steps.target.outputs.base }}
           PR_HEAD: ${{ steps.target.outputs.head }}
+          PR_BASE_REF: ${{ steps.target.outputs.base_ref }}
         run: |
           set -euo pipefail
           # The script rechecks the PR's head, base, body, and CodeRabbit activity
@@ -149,9 +152,9 @@ jobs:
             exit 0
           fi
           # The script refuses to write when the PR moved underneath it; treat that as a skip.
-          current="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.state, .head.sha, .base.sha] | join(" ")')"
-          if [[ "$current" != "open ${PR_HEAD} ${PR_BASE}" ]]; then
-            echo "Skipping: PR #${PR_NUMBER} moved during the update; the next CI run refreshes it."
+          current="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '[.state, .head.sha, .base.sha, .base.ref] | join(" ")')"
+          if [[ "$current" != "open ${PR_HEAD} ${PR_BASE} ${PR_BASE_REF}" ]]; then
+            echo "Skipping: PR #${PR_NUMBER} moved or was retargeted during the update; the section stays stale until PR CI runs for the current base and head."
             exit 0
           fi
           exit 1

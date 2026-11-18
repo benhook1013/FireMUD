@@ -31,7 +31,7 @@ Not implemented. Develop still carries legacy and retained numeric-identifier ta
 
 ## Decision
 
-Until the first v1 release, all data in every FireMUD environment is disposable. A schema or identifier change may replace the old representation directly, and environments reset their databases instead of migrating rows. No legacy or retained tables, old-to-new mappings, disposition records or compatibility readers are built for pre-v1 data, and existing ones are removed. Expand/migrate/contract, including old/new binary overlap compatibility, and the ADR 0082 mapping obligations apply from the first v1 release; before v1 a schema change resets the environment behind the quiesced writer boundary in the migration guide, so old and new binaries never share a database.
+Until the first v1 release, all data in every FireMUD environment is disposable. A schema or identifier change may replace the old representation directly, and environments reset their databases instead of migrating rows. No legacy or retained tables, old-to-new mappings, disposition records or compatibility readers are built for pre-v1 data, and existing ones are removed. Expand/migrate/contract, including old/new binary overlap compatibility, and the ADR 0082 mapping obligations apply from the first v1 release; before v1 a schema change resets the environment behind the quiesced writer boundary in the migration guide, once no `IN_PROGRESS` external-action intent is pending, so old and new binaries never share a database.
 
 This decision covers data only. Security, protocol and in-flight runtime correctness rules, such as crash-recovery evidence, still apply.
 
