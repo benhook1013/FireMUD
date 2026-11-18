@@ -168,15 +168,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
         selected.activeCalls--;
         shutdown = selected.retired && selected.activeCalls == 0;
       }
-      if (shutdown) {
-        try {
-          selected.channel.shutdown();
-        } catch (RuntimeException shutdownFailure) {
-          // Retirement must not replace a completed RPC response or its original failure.
-          logger.warn(
-              "Failed to shut down retired gRPC channel after call completion", shutdownFailure);
-        }
-      }
+      if (shutdown) shutdownRetired(selected);
     }
   }
 
@@ -298,7 +290,16 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
         return;
       }
     }
-    previous.channel.shutdown();
+    shutdownRetired(previous);
+  }
+
+  private void shutdownRetired(ChannelGeneration retired) {
+    try {
+      retired.channel.shutdown();
+    } catch (RuntimeException shutdownFailure) {
+      // Cleanup cannot invalidate a published replacement or replace an RPC outcome.
+      logger.warn("Failed to shut down retired gRPC channel", shutdownFailure);
+    }
   }
 
   private static final class ChannelGeneration {

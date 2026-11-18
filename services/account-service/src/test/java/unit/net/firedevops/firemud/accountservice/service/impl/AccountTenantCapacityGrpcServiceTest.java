@@ -82,6 +82,39 @@ class AccountTenantCapacityGrpcServiceTest {
   }
 
   @Test
+  void quotaExceptionRequiresDurableDecisionIdentity() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> {
+              throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED);
+            })
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void invalidDomainRefusalIsSanitizedInternal() {
+    // Noncreating evidence cannot authorize a quota refusal, even with a decision UUID.
+    var request = CapacityAdmissionTestFixture.playerRequest(false);
+    try (var guards = authenticatedCaller()) {
+      AccountTenantCapacityOwner owner = mock();
+      when(owner.commit(request, CapacityAdmissionTestFixture.PEER))
+          .thenThrow(
+              new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, java.util.UUID.randomUUID()));
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+      new AccountTenantCapacityGrpcService(owner, "prod")
+          .commitTenantCapacityAdmission(
+              TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
+      var error = ArgumentCaptor.forClass(Throwable.class);
+      verify(observer).onError(error.capture());
+      Status status = Status.fromThrowable(error.getValue());
+      assertThat(status.getCode()).isEqualTo(Status.Code.INTERNAL);
+      assertThat(status.getDescription()).isNull();
+      assertThat(status.getCause()).isNull();
+      verify(observer, never()).onNext(any());
+      verify(observer, never()).onCompleted();
+    }
+  }
+
+  @Test
   void typedOwnerEvidenceUnavailableKeepsItsPublicFailure() {
     var request = CapacityAdmissionTestFixture.playerRequest();
     try (var guards = authenticatedCaller()) {

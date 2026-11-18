@@ -565,6 +565,9 @@ jobs:
             const cancelledReplacementTimeoutMs = 5 * 60 * 1000;
             const sleepMs = 30000;
             const snapshotSleepMs = 15000;
+            // Reuse the overall prerequisite/queue allowance for Validation's dispatch callback.
+            const refreshDiscoveryTimeoutMs = prerequisiteAndQueueAllowanceMinutes * 60 * 1000;
+            const completedSnapshotTimeoutMs = 8 * snapshotSleepMs;
             const pullRequestCheckInterval = 2;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
             let pollIteration = 0;
@@ -933,6 +936,15 @@ jobs:
             // A failed original event is not replaced by arbitrary green history. Only
             // a newer exact typed refresh with independently proven canonical exception
             // evidence can recover this diagnostic gate; it never proves PLAY succeeded.
+            async function isCurrentCanonicalAttempt(run) {
+              const { data: latest } = await withTransientGitHubRetry(
+                "final canonical exception attempt lookup",
+                () => github.rest.actions.getWorkflowRun({owner, repo, run_id: run.id})
+              );
+              return latest.id === run.id && latest.run_attempt === run.run_attempt &&
+                latest.status === "completed" && latest.conclusion === run.conclusion;
+            }
+
             async function verifyFailedPullCanonicalRefresh(run, identity) {
               if (repositoryName !== "benhook1013/FireMUD" ||
                   context.payload.pull_request.head.repo?.full_name !== repositoryName ||
@@ -943,8 +955,9 @@ jobs:
                 `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
               const replacement = await findMatchingRuntimeImagesRun("repository_dispatch", title, identity);
               if (!replacement) return "absent";
-              if (!positiveInteger(replacement.id) || !positiveInteger(replacement.run_attempt) || replacement.id <= run.id ||
+              if (!positiveInteger(replacement.id) || !positiveInteger(replacement.run_attempt) ||
                   replacement.event !== "repository_dispatch") return false;
+              if (replacement.id <= run.id) return "absent";
               // Pending exact refreshes are not proof, but must not fail the caller
               // before the asynchronous producer can finish within its existing deadline.
               if (["queued", "in_progress", "waiting", "pending", "requested"].includes(replacement.status)) {
@@ -957,8 +970,14 @@ jobs:
                 })
               );
               const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
-              if (!candidate || candidate.status !== "completed") return "pending";
-              if (await verifyKnownPlayFailure(replacement, candidate, identity)) return true;
+              const proofRun = {id: replacement.id, run_attempt: replacement.run_attempt,
+                conclusion: replacement.conclusion};
+              if (!candidate || candidate.status !== "completed") {
+                return {status: "snapshot-pending", run: proofRun};
+              }
+              if (await verifyKnownPlayFailure(replacement, candidate, identity)) {
+                return {status: "verified", run: proofRun};
+              }
               // A new attempt can start between list/proof reads. Invalid current proof
               // is terminal; only a verified newer attempt warrants bounded reselection.
               const { data: latest } = await withTransientGitHubRetry(
@@ -1194,6 +1213,8 @@ jobs:
             }
 
             let currentIdentity = null;
+            let incompleteRefreshKey = null;
+            let incompleteRefreshObservedAt = null;
             let absentRefreshKey = null;
             let discoveredRefreshKey = null;
             let absentRefreshObservedAt = null;
@@ -1286,6 +1307,7 @@ jobs:
                       ["pull_request", "repository_dispatch"].includes(matching.event)) {
                     let knownPlayVerified = false;
                     let refreshVerified = false;
+                    let verifiedRefreshRun = null;
                     try {
                       const jobs = await withTransientGitHubRetry("canonical transition PLAY failure jobs lookup", () =>
                         github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
@@ -1312,15 +1334,15 @@ jobs:
                             await new Promise((resolve) => setTimeout(resolve, sleepMs));
                             continue smokeGatePolling;
                           }
-                          if (!liveIdentity.canonicalPlayEligible) {
-                            core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
-                            return;
-                          }
                           if (identityKey({...liveIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
                               identityKey(currentIdentity)) {
                             requireCurrentIdentity = true;
                             currentIdentity = liveIdentity;
                             continue smokeGatePolling;
+                          }
+                          if (!liveIdentity.canonicalPlayEligible) {
+                            core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                            return;
                           }
                         }
                         const refreshProof = await verifyFailedPullCanonicalRefresh(matching, currentIdentity);
@@ -1331,9 +1353,9 @@ jobs:
                             absentRefreshKey = missingKey;
                             absentRefreshObservedAt = Date.now();
                           }
-                          if (Date.now() - absentRefreshObservedAt >= cancelledReplacementTimeoutMs) {
+                          if (Date.now() - absentRefreshObservedAt >= refreshDiscoveryTimeoutMs) {
                             core.setFailed(`Failed runtime-images run ${matching.id} has no exact canonical refresh ` +
-                              `after ${cancelledReplacementTimeoutMs / 60000} minutes`);
+                              `after ${refreshDiscoveryTimeoutMs / 60000} minutes`);
                             return;
                           }
                         } else {
@@ -1341,7 +1363,22 @@ jobs:
                           absentRefreshKey = null;
                           absentRefreshObservedAt = null;
                         }
-                        if (refreshProof === "pending" || refreshProof === "absent") {
+                        const snapshotPending = refreshProof?.status === "snapshot-pending";
+                        if (snapshotPending) {
+                          const snapshotKey = `${refreshKey}:${refreshProof.run.id}:${refreshProof.run.run_attempt}`;
+                          if (incompleteRefreshKey !== snapshotKey) {
+                            incompleteRefreshKey = snapshotKey;
+                            incompleteRefreshObservedAt = Date.now();
+                          }
+                          if (Date.now() - incompleteRefreshObservedAt >= completedSnapshotTimeoutMs) {
+                            core.setFailed("Terminal canonical refresh did not expose complete smoke-job proof within the snapshot convergence allowance.");
+                            return;
+                          }
+                        } else {
+                          incompleteRefreshKey = null;
+                          incompleteRefreshObservedAt = null;
+                        }
+                        if (refreshProof === "pending" || refreshProof === "absent" || snapshotPending) {
                           core.info("Exact canonical refresh is pending; continuing within the existing smoke-gate deadline.");
                           await new Promise((resolve) => setTimeout(resolve, sleepMs));
                           continue smokeGatePolling;
@@ -1364,30 +1401,43 @@ jobs:
                             continue smokeGatePolling;
                           }
                         }
-                        knownPlayVerified = refreshProof === true;
+                        knownPlayVerified = refreshProof?.status === "verified" &&
+                          positiveInteger(refreshProof.run?.id) && refreshProof.run.id > matching.id &&
+                          positiveInteger(refreshProof.run?.run_attempt) &&
+                          ["success", "failure"].includes(refreshProof.run?.conclusion);
                         refreshVerified = knownPlayVerified;
+                        if (refreshVerified) verifiedRefreshRun = refreshProof.run;
                       }
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;
                       core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
                     }
                     if (knownPlayVerified) {
-                      requireCurrentIdentity ||= refreshVerified;
                       const freshIdentity = await resolveCurrentIdentity(
-                        "Stopping stale canonical transition PLAY exception", requireCurrentIdentity);
+                        "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || refreshVerified);
                       // Original event proof keeps its immutable tuple semantics. Refreshed
                       // proof additionally requires the live base and test merge right now.
                       const comparableFreshIdentity = refreshVerified && freshIdentity
                         ? {...freshIdentity, sourceEvent: currentIdentity.sourceEvent}
                         : freshIdentity;
                       if (freshIdentity?.obsolete) return;
-                      if (!freshIdentity || identityKey(comparableFreshIdentity) !== identityKey(currentIdentity)) {
+                      if (!freshIdentity) {
+                        // Unknown identity is not tuple movement: retain the failed-run age constraint.
+                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                        continue smokeGatePolling;
+                      }
+                      if (identityKey(comparableFreshIdentity) !== identityKey(currentIdentity)) {
+                        if (refreshVerified) requireCurrentIdentity = true;
                         currentIdentity = freshIdentity;
                         continue smokeGatePolling;
                       }
                       if (!freshIdentity.canonicalPlayEligible) {
                         core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                         return;
+                      }
+                      if (!await isCurrentCanonicalAttempt(verifiedRefreshRun ?? matching)) {
+                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                        continue smokeGatePolling;
                       }
                       core.setOutput("known_play_exception", "true");
                       core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
@@ -1539,6 +1589,10 @@ jobs:
                     if (!freshIdentity.canonicalPlayEligible) {
                       core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                       return;
+                    }
+                    if (!await isCurrentCanonicalAttempt(matching)) {
+                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                      continue smokeGatePolling;
                     }
                     core.setOutput("known_play_exception", "true");
                     core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");

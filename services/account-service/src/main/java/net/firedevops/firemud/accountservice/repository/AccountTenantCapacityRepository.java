@@ -256,6 +256,8 @@ public final class AccountTenantCapacityRepository {
 
     public CapacityException(Failure code) {
       super(code.name());
+      if (code == Failure.CAPACITY_QUOTA_EXCEEDED)
+        throw new IllegalArgumentException("A quota refusal requires a durable denial");
       this.code = code;
       this.durableDenialId = null;
     }

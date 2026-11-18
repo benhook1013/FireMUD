@@ -3575,11 +3575,23 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
   if (accepted) assert.deepEqual(contentRequests, knownPlay ? [workflowPath, ...Object.keys(classifierDefinitions)] : [workflowPath]);
   return accepted;
 }
+// Final attempt authority remains separate from PR identity and label authority.
+async function finalAttemptCheck(latest) {
+  const start = script.indexOf("async function isCurrentCanonicalAttempt(");
+  const end = script.indexOf("async function verifyFailedPullCanonicalRefresh(", start);
+  const check = new Function("github", "withTransientGitHubRetry", "owner", "repo",
+    `${script.slice(start, end)}; return isCurrentCanonicalAttempt;`)(
+      {rest: {actions: {getWorkflowRun: async ({run_id}) => {assert.equal(run_id, 99); return {data: latest};}}}},
+      (_label, call) => call(), "benhook1013", "FireMUD");
+  return check({id: 99, run_attempt: 2, conclusion: "success"});
+}
+assert.ok(script.includes("const refreshDiscoveryTimeoutMs = prerequisiteAndQueueAllowanceMinutes * 60 * 1000;"));
+assert.ok(script.includes("const completedSnapshotTimeoutMs = 8 * snapshotSleepMs;"));
 // A failed original event may recover only through a newer exact verified exception.
 const refreshStart = script.indexOf("async function verifyFailedPullCanonicalRefresh(");
 const refreshEnd = script.indexOf("// Commit objects", refreshStart);
 const refreshFunction = script.slice(refreshStart, refreshEnd);
-async function recoveredFailure(options = {}, selectedRun = null, selectedIdentity = identity) {
+async function recoveredFailure(options = {}, selectedRun = null, selectedIdentity = identity, raw = false) {
   const original = selectedRun ?? {id: 98, event: "pull_request", status: "completed", conclusion: "failure", ...options.original};
   const replacement = options.absent ? null : {id: original.id + 1, run_attempt: 2, event: "repository_dispatch",
     status: "completed", conclusion: "success", ...options.replacement};
@@ -3631,7 +3643,9 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
         if (options.mutateProof) options.mutateProof(data);
       }, "repository_dispatch");
     }, {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}});
-  return {accepted: await recover(original, selectedIdentity), verified, queries};
+  const proof = await recover(original, selectedIdentity);
+  return {accepted: raw ? proof : proof?.status === "verified" ? true
+    : proof?.status === "snapshot-pending" ? "snapshot-pending" : proof, verified, queries};
 }
 // Proof errors in a successful exception attempt must fail closed.
 const failedStart = script.indexOf('// A continued probe');
@@ -3668,6 +3682,7 @@ async function failedLegacyProof(stage, error, event = "pull_request") {
     "canonicalSmokeJobName", "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure",
     "isCurrentPullRequestObsolete", "TerminalGitHubRequestError", "core", "verifyFailedPullCanonicalRefresh", "context", "resolveCurrentIdentity", "identityKey",
     `return (async () => { let absentRefreshKey = null, discoveredRefreshKey = null, absentRefreshObservedAt = null;
+      let incompleteRefreshKey = null, incompleteRefreshObservedAt = null;
       smokeGatePolling: while (true) { ${legacyFailedBranch} break; } })();`);
   await execute({...source, conclusion: "failure", event}, repositoryName, github, "benhook1013", "FireMUD", canonicalSmokeJobName,
     identity, (_label, call) => call(), async () => {throw error;}, async () => false,
@@ -3684,7 +3699,7 @@ const loopStart = script.indexOf("let currentIdentity = null;");
 const actualPollingLoop = script.slice(loopStart);
 async function pendingRefreshCaller(statuses, expires = false, options = {}) {
   const failures = [], outputs = [];
-  let sleeps = 0, polls = 0, writes = 0, now = 0, currentChecks = 0;
+  let sleeps = 0, polls = 0, writes = 0, now = 0, currentChecks = 0, finalChecks = 0, nullReads = 0;
   const proofLive = {baseSha: identity.baseSha, mergeSha: identity.mergeSha};
   const core = {info: () => {}, warning: () => {},
     setFailed: value => failures.push(value), setOutput: (...value) => outputs.push(value)};
@@ -3697,10 +3712,13 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     "core", "resolveCurrentIdentity", "identityKey", "setTimeout", "sleepMs",
     "Date", "started", "timeoutMs", "pullRequestCheckInterval", "findMatchingRuntimeImagesRun",
     "prNumber", "identityDiagnostic", "cancelledReplacementTimeoutMs", "context",
+    "refreshDiscoveryTimeoutMs", "completedSnapshotTimeoutMs", "positiveInteger", "isCurrentCanonicalAttempt",
     `return (async () => { let pollIteration = 0; ${actualPollingLoop} })();`);
   await execute(repositoryName, {rest: {actions: {listJobsForWorkflowRun: "jobs"}}, paginate: async () => {
     if (options.originalError) throw options.originalError;
-    return [candidate];
+    const job = structuredClone(candidate);
+    if (options.ordinaryAfterDrift) job.steps.find(s => s.name.startsWith("Known canonical")).conclusion = "skipped";
+    return [job];
   }}, "benhook1013", "FireMUD", canonicalSmokeJobName, (_label, call) => call(), async run => {
     if (options.proofDrift && run.event === "repository_dispatch") {
       return verify(data => {
@@ -3719,6 +3737,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
       assert.equal(selectedIdentity.baseSha, identity.baseSha);
       assert.equal(selectedIdentity.mergeSha, identity.mergeSha);
       const status = statuses[Math.min(polls++, statuses.length - 1)];
+      if (options.rejectedObject) return {status: "rejected", run: {id: 99, run_attempt: 2}};
       if (options.proofDrift) {
         const result = await recoveredFailure({mutateProof(data) {
           Object.assign(proofLive, options.finalIdentity);
@@ -3730,23 +3749,27 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
       }
       return (await recoveredFailure(options.headRepository ? {headRepository: options.headRepository}
         : status === "absent" ? {absent: true}
+        : status === "older" ? {replacement: {id: 97}}
         : status === "superseded" ? {latest: {run_attempt: 3}, mutateProof: data => {data.latest.run_attempt = 3;}}
         : status === "missing-job" ? {noProducer: true}
         : status === "pending-job" ? {candidate: {status: "in_progress"}}
         : {replacement: {status, conclusion: status === "completed" ? "success" : null,
           run_attempt: statuses[0] === "superseded" && polls > 1 ? 3 : 2}},
-        selectedRun, selectedIdentity)).accepted;
+        selectedRun, selectedIdentity, true)).accepted;
     }, async () => false, TerminalGitHubRequestError, core, async (_label, requireCurrent) => {
+      if (options.finalNull && _label === "Stopping stale canonical transition PLAY exception" && nullReads++ === 0) return null;
+      const eligible = !options.labelRemoved && !(options.withdrawDuringProof && polls > 0);
       if (requireCurrent) {
         currentChecks++;
         if (options.finalIdentity && polls > 0 && !options.recoverDrift) now += 30;
-        return {...identity, canonicalPlayEligible: !options.labelRemoved,
-          sourceEvent: "repository_dispatch", ...(options.proofDrift ? proofLive : polls > 0 ? options.finalIdentity : {})};
+        return {...identity, canonicalPlayEligible: eligible,
+          sourceEvent: "repository_dispatch", ...(options.proofDrift ? proofLive : polls > 0 || options.ordinaryAfterDrift ? options.finalIdentity : {})};
       }
-      return {...identity, canonicalPlayEligible: !options.labelRemoved};
+      return {...identity, canonicalPlayEligible: eligible};
     }, selected => { const {canonicalPlayEligible, ...tuple} = selected; return JSON.stringify(tuple); }, resolve => {sleeps++; now += 30; resolve();}, 30,
     {now: () => now}, 0, statuses.length * 30, 1, async (event, _title, selected) => {
-      if (options.recoverDrift && polls > 0 && event === "repository_dispatch") {
+      if (options.finalNull) assert.notEqual(event, "repository_dispatch", "unknown final identity must retain failed PR custody");
+      if (options.recoverDrift && (polls > 0 || options.ordinaryAfterDrift) && event === "repository_dispatch") {
         assert.equal(event, "repository_dispatch");
         assert.equal(selected.baseSha, options.finalIdentity.baseSha);
         assert.equal(selected.mergeSha, options.finalIdentity.mergeSha);
@@ -3754,17 +3777,33 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
       }
       return original;
     }, "3390", "test identity", 60,
-    {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}});
-  if (options.headRepository) {
+    {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}},
+    120, 60, value => Number.isSafeInteger(value) && value > 0, async selected => {
+      finalChecks++;
+      if (!options.directProof && !options.recoverDrift) {
+        assert.equal(selected.id, 99);
+        assert.equal(selected.run_attempt, statuses[0] === "superseded" && polls > 1 ? 3 : 2);
+      }
+      return !options.rerunFinal || finalChecks > 1;
+    });
+  if (options.ordinaryAfterDrift) {
+    assert.deepEqual(failures, []); assert.deepEqual(outputs, []); assert.equal(writes, 0);
+  } else if (options.rejectedObject) {
+    assert.deepEqual(failures, ["Runtime images run 98 did not complete successfully: run=failure"]);
+    assert.deepEqual(outputs, []); assert.equal(writes, 0);
+  } else if (options.snapshotExpires) {
+    assert.deepEqual(failures, ["Terminal canonical refresh did not expose complete smoke-job proof within the snapshot convergence allowance."]);
+    assert.deepEqual(outputs, []); assert.equal(writes, 0);
+  } else if (options.headRepository) {
     assert.deepEqual(failures, ["Runtime images run 98 did not complete successfully: run=failure"]);
     assert.deepEqual(outputs, []);
     assert.equal(writes, 0);
-  } else if (options.labelRemoved) {
+  } else if (options.labelRemoved || options.withdrawDuringProof) {
     assert.deepEqual(failures, ["Canonical PLAY transition exception label is absent or no longer eligible."]);
     assert.deepEqual(outputs, []);
     assert.equal(writes, 0);
   } else if (options.absentExpires) {
-    assert.deepEqual(failures, ["Failed runtime-images run 98 has no exact canonical refresh after 0.001 minutes"]);
+    assert.deepEqual(failures, ["Failed runtime-images run 98 has no exact canonical refresh after 0.002 minutes"]);
     assert.deepEqual(outputs, []);
     assert.equal(writes, 0);
   } else if (expires) {
@@ -3778,8 +3817,11 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     assert.equal(writes, 1);
     assert.ok(options.directProof || currentChecks >= 1);
   }
-  assert.equal(polls, options.directProof || options.labelRemoved ? 0 : options.absentExpires ? 3 : options.recoverDrift ? 1 : statuses.length);
-  assert.equal(sleeps, options.labelRemoved ? 0 : options.absentExpires ? 2 : options.finalIdentity ? (statuses[0] === "absent" ? 1 : 0)
+  assert.equal(polls, options.ordinaryAfterDrift || options.directProof || options.labelRemoved ? 0
+    : options.withdrawDuringProof || options.rejectedObject ? 1 : options.absentExpires ? 5
+    : options.snapshotExpires ? 3 : options.recoverDrift ? 1 : statuses.length);
+  assert.equal(sleeps, options.ordinaryAfterDrift || options.labelRemoved || options.withdrawDuringProof || options.rejectedObject ? 0
+    : options.absentExpires ? 4 : options.snapshotExpires ? 2 : options.finalIdentity ? (statuses[0] === "absent" ? 1 : 0)
     : expires ? statuses.length : statuses.length - 1);
 }
 // Exercise the real resolver, not merely a stub that honors requireCurrent.
@@ -3844,6 +3886,11 @@ function markerAccepted(overrides = {}) {
     await assert.rejects(failedLegacyProof(stage, terminal), error => error === terminal);
     await assert.rejects(failedProof(terminal), error => error === terminal);
   }
+  const currentAttempt = {id: 99, run_attempt: 2, status: "completed", conclusion: "success"};
+  assert.equal(await finalAttemptCheck(currentAttempt), true);
+  for (const change of [{run_attempt: 3}, {run_attempt: 1}, {id: 98}, {status: "in_progress"}, {conclusion: "failure"}]) {
+    assert.equal(await finalAttemptCheck({...currentAttempt, ...change}), false);
+  }
   assert.deepEqual(await recoveredFailure(), {accepted: true, verified: 1, queries: 1});
   const alternateIdentity = {...identity, baseSha: "e".repeat(40), mergeSha: "f".repeat(40)};
   assert.equal((await recoveredFailure({}, {...source, id: 199, conclusion: "failure"}, alternateIdentity)).accepted, true);
@@ -3858,7 +3905,16 @@ function markerAccepted(overrides = {}) {
   assert.equal((await recoveredFailure({mutateProof: data => {
     data.jobs[0].steps.push(step("Start database", "failure"));
   }, latest: {run_attempt: 2}})).accepted, false);
-  await pendingRefreshCaller(["absent", "absent", "absent", "completed"], false, {absentExpires: true});
+  await pendingRefreshCaller(["absent", "absent", "absent", "absent", "absent", "completed"], false, {absentExpires: true});
+  await pendingRefreshCaller(["absent", "absent", "absent", "completed"]); // Validation may outlast the former5min-equivalent window.
+  await pendingRefreshCaller(["missing-job", "missing-job", "missing-job", "completed"], false, {snapshotExpires: true});
+  await pendingRefreshCaller(["completed"], false, {rejectedObject: true});
+  await pendingRefreshCaller(["completed", "older", "completed"], false, {finalNull: true});
+  await pendingRefreshCaller(["older", "completed"]);
+  await pendingRefreshCaller(["completed", "queued", "completed"], false, {rerunFinal: true});
+  await pendingRefreshCaller(["completed"], false, {withdrawDuringProof: true});
+  await pendingRefreshCaller(["completed"], false, {recoverDrift: true, ordinaryAfterDrift: true, labelRemoved: true,
+    finalIdentity: {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)}});
   await pendingRefreshCaller(["absent", "queued", "in_progress", "in_progress", "completed"]);
   await pendingRefreshCaller(["absent", "queued", "absent", "absent", "absent", "completed"]);
   await pendingRefreshCaller(["superseded", "queued", "completed"]);
@@ -3885,8 +3941,8 @@ function markerAccepted(overrides = {}) {
   await pendingRefreshCaller(["queued", "in_progress", "completed"]);
   await pendingRefreshCaller(["queued", "in_progress"], true);
   assert.equal((await recoveredFailure({absent: true})).accepted, "absent");
-  assert.equal((await recoveredFailure({noProducer: true})).accepted, "pending");
-  assert.equal((await recoveredFailure({candidate: {status: "in_progress"}})).accepted, "pending");
+  assert.equal((await recoveredFailure({noProducer: true})).accepted, "snapshot-pending");
+  assert.equal((await recoveredFailure({candidate: {status: "in_progress"}})).accepted, "snapshot-pending");
   await pendingRefreshCaller(["absent", "queued", "completed"]);
   await pendingRefreshCaller(["missing-job", "pending-job", "completed"]);
   await pendingRefreshCaller(["absent", "absent"], true);
@@ -3906,7 +3962,7 @@ function markerAccepted(overrides = {}) {
   for (const options of [
     {repository: "attacker/FireMUD"}, {original: {event: "repository_dispatch"}},
     {original: {status: "in_progress"}}, {original: {conclusion: "success"}},
-    {original: {id: 0}}, {replacement: {id: 98}}, {replacement: {id: 97}},
+    {original: {id: 0}},
     {replacement: {run_attempt: 0}}, {replacement: {event: "pull_request"}},
     {replacement: {status: "unknown"}},
     {replacement: {conclusion: "cancelled"}},
