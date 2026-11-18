@@ -18,7 +18,7 @@ Use this guide for PR status, review, CI, Renovate, merging, and branch or workt
 Every review finding gets a decision from the orchestrator, recorded in FireController.
 
 - **Fix now**: a real defect or gap that belongs in this PR's purpose, especially when the fix is small and does not grow the PR materially. Fix it in this PR, verify the fix at the current published head, then resolve the thread. A defect this PR introduces (a regression, security or data-integrity issue, or broken documented contract) is always Fix now, whatever the PR's purpose.
-- **Route**: real, but outside this PR's purpose, outside v1 scope, or a fix that would grow this PR materially. Record a route to an existing FireController job or workstream that owns it, reply on the thread with the route link, and resolve the thread. Route is a strong option before v1, but not a way to avoid fixes that belong in this PR.
+- **Route**: real, but outside this PR's purpose, outside v1 scope, or a fix that would grow this PR materially. Record a route to an existing FireController job or workstream that owns it, reply on the thread with the route link, and resolve the thread. Route is a strong option before v1, but not a way to avoid fixes that belong in this PR: work this PR needs for correctness or proof is never routed for size (split it instead, under Change And Merge Policy), and a finding with no receiving owner stays open.
 - **Reject**: wrong, already handled, or not worth its cost. Record the reason, reply briefly on the thread if a human reader would need context, and resolve it.
 
 Rules for triage:
@@ -32,9 +32,10 @@ Rules for triage:
 
 ## Review Orchestration
 
-- Run focused checks of the changed behavior before requesting a Hosted review. By default wait for applicable CI to pass before the first Hosted review of a new boundary; you may proceed earlier on a stable candidate with a short recorded reason. Later rounds and CI can overlap.
+- Run focused checks of the changed behavior before requesting a Hosted review. By default wait for applicable CI to pass before the first Hosted or CLI review of a new boundary; you may proceed earlier on a stable candidate with a short recorded reason. Later rounds and CI can overlap.
 - Request Hosted reviews only against a stable target whose base is not about to change.
-- **While a Hosted review is active, do not push review-invalidating commits.** Prepare fixes locally and publish them after the review completes.
+- **While a Hosted review is active, do not push review-invalidating commits or retarget the PR.** Prepare fixes locally and publish them after the review completes.
+- A completed review covers only the comparison it saw. Re-review after new functionality, changed contracts, materially broader risk, or a retarget or base change that alters the diff, verifying the actual comparison and mergeability first. Verified direct fixes of findings need no extra round.
 - Keep useful work going elsewhere while one PR waits on CI, a cooldown, or a human. Report the blocker once.
 - Report each round's reviewed head, raw and useful counts, new versus repeat findings, decisions, and what remains.
 - The Overseer, or the human when there is no Overseer, decides whether another round within the configured cap is worth it and when evidence is ready for the human's merge decision. Only the human goes beyond a cap. A cap or human stop reached with open findings is reported as a review limitation, not as readiness.
@@ -48,7 +49,7 @@ A PR is ready for the human's merge decision when:
 - every required review channel has completed its configured policy with attributable results;
 - required CI is green on the exact head; on a stacked base with no required checks, the applicable substantive workflows must actually have run, and the candidate must contain any workflow changes it relies on;
 - proportionate validation and runtime proof from [validation and runtime proof](./validation-and-runtime-proof.md) is complete, including focused tests for important changed behavior that patch coverage shows is untested;
-- the title is current, the body is current, and its generated LOC section matches the current head.
+- the title and body are current.
 
 GitHub `CLEAN`, zero threads, or green CI alone is not readiness. Do not describe a head as reviewed if it was not.
 
@@ -62,16 +63,16 @@ Merge authority:
 ## Change And Merge Policy
 
 - Prefer the fewest PRs that stay reviewable. Group related or small changes, even across domains, because every extra PR costs a review and reconciliation. Split only when a combined PR would be hard to review or would mix unrelated risk, such as a risky runtime change with unrelated routine docs. State the grouped scope in the PR Summary; that stated purpose covers everything grouped, and Finding Triage judges Fix now against it.
-- Hosted CodeRabbit has a hard 100 changed-file limit. Plan feature PRs at around 80 files to leave room for fixes. A skip caused by the limit is not review coverage: restructure into coherent PRs or report the blocker. Only the human can waive Hosted review for a specific oversized PR, and a waived review earns no completed-review credit.
+- Hosted CodeRabbit has a hard 100 changed-file limit. Plan feature PRs at around 80 files to leave room for fixes. A skip caused by the limit is not review coverage: restructure into coherent PRs or report the blocker. Only the human can waive Hosted review for a specific oversized PR, and only when verified substantial CodeRabbit coverage of its feature-bearing work already exists; record the waived request as unrun, and it earns no completed-review credit.
 - A file limit changes how work is split, never what is correct. Do not drop needed changes, move code to the wrong owner, or mix unrelated risk to fit under it.
 - Every feature-bearing PR needs a completed Hosted review. CLI or model review does not substitute.
-- The orchestrator may split, add a prerequisite or successor PR, or retarget its own PRs without fresh approval. When a finding or proof moves to another PR, note the successor in both PR bodies and in the finding's disposition, and check whether the successor already fixes it. If a child PR supplies behavior the parent requires, the parent stays not ready until the child lands. Bring a markedly more fragmented topology, or an unclear owner, to the Overseer.
+- The orchestrator may split, add a prerequisite or successor PR, or retarget its own PRs without fresh approval, outside an active Hosted review. When a finding or proof moves to another PR, note the successor in both PR bodies and in the finding's disposition, and check whether the successor already fixes it. If a child PR supplies behavior the parent requires, the parent stays not ready until the child lands. Bring a markedly more fragmented topology, or an unclear owner, to the Overseer.
 - Failing Renovate PRs are maintenance: push the smallest compatible fix to the Renovate branch, or use a replacement branch when needed. Kubectl, Helm, and Velero CLI updates change exact versions with publisher checksums; Velero runtime image and Terraform Helm updates stay digest-pinned and grouped with the CLI release.
 
 ## Branch And PR Hygiene
 
 - Open or update a PR when a branch reaches a coherent checkpoint so CI can run. Draft PRs may expose work in progress. Do not open placeholder PRs.
-- Every PR body, draft included, follows the [PR template](../../.github/pull_request_template.md) headings. The [PR LOC Report](../../.github/workflows/pr-loc-report.yml) workflow fills the generated LOC section after each `CI — Validation` run on a same-repository PR, skipping Renovate PRs and heads with a CodeRabbit review in progress. Do not run the LOC tool by hand for that. When you edit a PR body, keep the `firemud:cloc-report` marker block intact, and avoid needless body or title edits, since each human or agent edit starts metadata-only gate runs (the workflow's own edits do not). If the section is missing or stale at readiness, check that workflow's latest run for the current head; if it skipped or failed, re-run it once no Hosted review is active rather than writing counts yourself.
+- Every PR body, draft included, follows the [PR template](../../.github/pull_request_template.md) headings. The [PR LOC Report](../../.github/workflows/pr-loc-report.yml) workflow fills the generated LOC section after each `CI — Validation` run on a same-repository PR, skipping Renovate PRs and heads with a CodeRabbit review in progress. Do not run the LOC tool by hand for that. When you edit a PR body, keep the `firemud:cloc-report` marker block intact, and avoid needless body or title edits, since each human or agent edit starts metadata-only gate runs (the workflow's own edits do not). The section is informational, not a size or readiness gate, and fork or Renovate PRs have none. If it is missing or stale on an eligible PR, re-run that workflow's latest run for the current head once no Hosted review is active (it rechecks the PR and CodeRabbit before editing) rather than writing counts yourself.
 - Stacked PRs are fine when the base dependency is explicit. After a parent merges, retarget the child to `develop` before rebasing or pushing it.
 - When active work moves to another worktree, report its absolute path and branch.
 - CI coverage for stacked bases, required gate names, and preview restrictions are owned by [CI/CD](../architecture/system-architecture-cicd.md#pull-request-runtime-and-preview-chain).

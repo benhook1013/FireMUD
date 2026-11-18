@@ -30,9 +30,9 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 - **Design first.** A PR that changes behavior updates the design doc that owns that behavior in the same PR.
 - Update an implementation tracker when capability status actually changes, not on every PR. Read the owning tracker before interpreting branch names, commits, or raw diffs during implementation or branch reconciliation.
 - Do not ask for approval just because work is cross-service, breaking, or large when the design is clear. Stop for genuine design ambiguity, competing target states, or a change to a consequential accepted decision.
-- Once the human picks a workstream, keep going through its clear next steps (implementation, validation, PR publication, review fixes) without checking in at each step. An explicit pause or stop wins: finish only the in-progress step and start nothing new until resumed.
+- Once the human picks a workstream, keep going through its clear next steps (implementation, validation, PR publication, review fixes) without checking in at each step. An explicit pause or stop wins: finish only the in-progress step and start nothing new until resumed; an immediate stop finishes nothing more.
 - Match process to risk. Do not build ledgers, audit suites, or extra review machinery for small changes.
-- Review findings are triaged as Fix now, Route, or Reject under [PR lifecycle](design/developer-workflows/pr-lifecycle.md). Fix what belongs in the PR's purpose, especially small fixes; route what is outside it, outside v1 scope, or would grow the PR materially.
+- Review findings are triaged as Fix now, Route, or Reject under [PR lifecycle](design/developer-workflows/pr-lifecycle.md). Fix what belongs in the PR's purpose, especially small fixes; route what is outside it, outside v1 scope, or would grow the PR materially, but never work the PR needs for correctness or proof.
 
 ## Documentation
 

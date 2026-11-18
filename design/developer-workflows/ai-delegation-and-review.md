@@ -21,7 +21,7 @@ This applies only when the human sets up an Overseer.
 - Delegate bounded investigation, bulk reading, mechanical edits, or focused checks when it saves real cost or context. Do not delegate to avoid a few tool calls, and do not split trivial work. Keep one orchestrator per workstream, and give concurrent subagents disjoint write scopes.
 - Do not delegate product or architecture decisions.
 - **Every delegation prompt states:** the absolute worktree path and branch (and the commit, when the evidence depends on it); the exact write scope; the governing design, tracker, or workflow doc; the success condition; the exact validation commands allowed, or `none` with whether it is not applicable or deferred; and the standard limits block below.
-- The subagent checks `pwd` and `git branch --show-current` (and `git rev-parse HEAD` when a commit is pinned) before reading or editing, and reports any mismatch instead of proceeding. It reports if the revision drifted before handoff.
+- The subagent checks `pwd` and `git branch --show-current` (and `git rev-parse HEAD` when a commit is pinned) before reading or editing, and reports any mismatch instead of proceeding. Before handoff it rechecks the commit and `git status` for its files; if either drifted, it reports that and does not attribute its results to an exact revision.
 - Documentation delegation names the canonical owner and what each secondary document should say locally. A request for repeated detail does not justify duplicating it.
 - For a review fix, the orchestrator decides the finding and states the smallest intended change first. The subagent does not widen a local fix into a new mechanism; if a wider change seems needed, it reports back.
 - Scope follows correctness, not file counts. Name every file the correct change needs; if that crosses a PR limit, the orchestrator handles topology under [PR lifecycle](./pr-lifecycle.md#change-and-merge-policy).
@@ -34,7 +34,7 @@ This applies only when the human sets up an Overseer.
 
 > Do not inspect or change review, CI, or PR state: no review requests or commands, no CI triggers or reruns, no resolving threads, no commit, push, retarget, open, merge, or close. Do not revert, delete, overwrite, stage, or commit anything outside your assigned files; preserve unrelated edits and stop to report if your files have overlapping changes.
 
-The orchestrator may lift a specific line of that block for a specific task by saying so explicitly, but never grants more than it holds itself. Merge, auto-merge, and closure authority are never delegated.
+The orchestrator may lift part of that block for a specific task by naming the exact operation and target (for example, push to one named branch), but never grants more than it holds itself. Merge, auto-merge, and closure authority are never delegated.
 
 ## Integrating Delegated Work
 

@@ -1097,6 +1097,72 @@ finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
 
+def guarded_update_command(calls, *, base="a" * 40, statuses="", running="", processing=""):
+    def command(args, _root, *, timeout=None):
+        calls.append(args)
+        assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
+        if args[:3] == ("gh", "pr", "view"):
+            payload = {"baseRefOid": base, "headRefOid": "b" * 40, "body": "existing"}
+            return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload).encode(), stderr=b"")
+        if args[:2] == ("gh", "api"):
+            endpoint = args[3]
+            assert ("b" * 40) in endpoint or "/issues/2736/" in endpoint
+            output = statuses if "/statuses" in endpoint else running if "/check-runs" in endpoint else processing
+            if "/issues/2736/comments" in endpoint:
+                assert cloc_report.CODERABBIT_PROCESSING_MARKER in args[-1]
+            return subprocess.CompletedProcess(args, 0, stdout=output.encode(), stderr=b"")
+        if args[:3] == ("gh", "pr", "edit"):
+            return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+        raise AssertionError(f"unexpected guarded update command: {args}")
+    return command
+
+cloc_report.require_tool = lambda _name: None
+try:
+    # A base that moved away from the CI run's base refuses before any API check or edit.
+    guarded_calls = []
+    cloc_report.run_command = guarded_update_command(guarded_calls, base="d" * 40)
+    merge_base_metadata.clear()
+    try:
+        cloc_report.update_pull_request_body(repo, 2736, impact, expect_base="a" * 40)
+    except cloc_report.ReportError as error:
+        assert "--expect-base" in str(error)
+    else:
+        raise AssertionError("an unexpected PR base must block body update")
+    assert [args[:3] for args in guarded_calls] == [("gh", "pr", "view")]
+
+    # Any sign of an active CodeRabbit review skips the edit.
+    for active in ({"statuses": "pending\nsuccess\n"}, {"running": "123\n"}, {"processing": "456\n"}):
+        guarded_calls = []
+        cloc_report.run_command = guarded_update_command(guarded_calls, **{"statuses": "success\\n", **active})
+        try:
+            cloc_report.update_pull_request_body(
+                repo, 2736, impact, expect_base="a" * 40, skip_while_hosted_review=True
+            )
+        except cloc_report.HostedReviewActive as error:
+            assert "CodeRabbit review in progress" in str(error)
+        else:
+            raise AssertionError(f"active CodeRabbit review {active} must skip body update")
+        assert ("gh", "pr", "edit") not in [args[:3] for args in guarded_calls]
+
+    # An older pending status behind a newer success, and no other activity, lets the edit through.
+    guarded_calls = []
+    cloc_report.run_command = guarded_update_command(guarded_calls, statuses="success\npending\n")
+    assert cloc_report.update_pull_request_body(
+        repo, 2736, impact, expect_base="a" * 40, skip_while_hosted_review=True
+    ) is True
+    guarded_steps = [args[:3] if args[1] == "pr" else ("gh", "api", args[3].split("?")[0].rsplit("/", 1)[-1]) for args in guarded_calls]
+    assert guarded_steps == [
+        ("gh", "pr", "view"),
+        ("gh", "api", "statuses"),
+        ("gh", "api", "check-runs"),
+        ("gh", "api", "comments"),
+        ("gh", "pr", "view"),
+        ("gh", "pr", "edit"),
+    ], guarded_steps
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
 cloc_report.pull_request_merge_base = original_update_merge_base
 
 original_main_functions = (
@@ -1137,6 +1203,36 @@ try:
             assert cloc_report.PR_REPORT_END in stdout.getvalue()
         assert "cloc-report: remote update failed" in stderr.getvalue()
         assert "Updated the marked LOC section" not in stderr.getvalue()
+
+    main_guard_calls = []
+
+    def guarded_main_update(_root, _number, _report, **guards):
+        main_guard_calls.append(guards)
+        raise cloc_report.HostedReviewActive("CodeRabbit review in progress on PR #2736")
+
+    cloc_report.update_pull_request_body = guarded_main_update
+    stderr = StringIO()
+    with redirect_stdout(StringIO()), redirect_stderr(stderr):
+        status = cloc_report.main([
+            "pr", "2736", "--update-pr", "--skip-while-hosted-review",
+            "--expect-head", "b" * 40, "--expect-base", "a" * 40,
+        ])
+    assert status == 0, stderr.getvalue()
+    assert "Skipping: CodeRabbit review in progress" in stderr.getvalue()
+    assert main_guard_calls == [{"expect_base": "a" * 40, "skip_while_hosted_review": True}]
+
+    for bad_args, message in (
+        (["--expect-head", "d" * 40], "PR head does not match --expect-head"),
+        (["--expect-base", "d" * 40], "PR base does not match --expect-base"),
+        (["--expect-head", "not-a-sha"], "invalid --expect-head commit SHA"),
+        (["--skip-while-hosted-review"], "--skip-while-hosted-review requires --update-pr"),
+    ):
+        main_guard_calls.clear()
+        stderr = StringIO()
+        with redirect_stdout(StringIO()), redirect_stderr(stderr):
+            status = cloc_report.main(["pr", "2736", *bad_args])
+        assert status == 1 and message in stderr.getvalue(), (bad_args, stderr.getvalue())
+        assert main_guard_calls == []
 finally:
     (
         cloc_report.repository_root,
@@ -1499,7 +1595,10 @@ pr_help_output = subprocess.check_output(
     [*script, "pr", "--help"], cwd=repo, env=help_env, text=True
 )
 assert cloc_report.PR_COMMAND_DESCRIPTION in pr_help_output
-for pr_argument in ("number", "--repo", "--json", "--update-pr", "--body-file"):
+for pr_argument in (
+    "number", "--repo", "--json", "--update-pr", "--body-file",
+    "--expect-head", "--expect-base", "--skip-while-hosted-review",
+):
     assert pr_argument in pr_help_output
 
 print("cloc report contract checks passed")
