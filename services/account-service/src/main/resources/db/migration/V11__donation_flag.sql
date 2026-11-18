@@ -1,1 +1,0 @@
-ALTER TABLE payment_transaction ADD COLUMN donation BOOLEAN NOT NULL DEFAULT FALSE;

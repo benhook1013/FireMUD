@@ -1,0 +1,331 @@
+{
+  "purpose": "Recovery archive only, NOT an integration or merge-ready branch. Checkout individual recovery_commit values to recover source. No tests rerun. Qualification records retained locally separately.",
+  "worktrees": [
+    {
+      "worktree": "FireMUD-dot-3434-ci-20261117",
+      "original_head": "1bd76c88399479cfb7686cdcb3c72ab94d7a8f4d",
+      "source_paths": [
+        "services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/repository/AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest.java",
+        "services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/service/session/AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest.java",
+        "services/world-management-service/src/test/java/crossservice/net/firedevops/firemud/worldmanagement/tenant/WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest.java"
+      ],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "4d4cc572c13e243fc49ad6fbb107213fef8b9012"
+    },
+    {
+      "worktree": "FireMUD-dot-account-qualified-carry-20261118",
+      "original_head": "e37d19bb7f92c721501c55f94d1386d2961b4057",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "e37d19bb7f92c721501c55f94d1386d2961b4057"
+    },
+    {
+      "worktree": "FireMUD-dot-account-test-20261115",
+      "original_head": "742fc46667cc3a6a6dae838335fd1140223d4a03",
+      "source_paths": [
+        "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/session/AccountControlUiIssuanceWorkflowTest.java"
+      ],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "01d3e256995fab8015253e9cdd9baebf16e4de53"
+    },
+    {
+      "worktree": "FireMUD-dot-authority-registration-proof-20261118",
+      "original_head": "9aefa5694d257012c1bee736830927ee4243391b",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "9aefa5694d257012c1bee736830927ee4243391b"
+    },
+    {
+      "worktree": "FireMUD-dot-carry3424-0700",
+      "original_head": "415f0cfce09b198e8c709f7c8e2b65c72e596a34",
+      "source_paths": [
+        "design/architecture/microservices/game-session-service/api-contracts.md",
+        "design/architecture/microservices/game-session-service/operations.md",
+        "design/architecture/microservices/game-session-service/runtime-and-data.md",
+        "design/project-management/implementation-tracking/player-access-and-session.md",
+        "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseRedisStore.java",
+        "services/account-service/src/main/resources/openapi.yaml",
+        "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseRedisStoreTest.java",
+        "services/common-platform-core/src/main/java/net/firedevops/firemud/common/account/capacity/OriginalNewCapacityExecution.java",
+        "services/common-platform-core/src/test/java/net/firedevops/firemud/common/account/capacity/CapacityAdmissionDigestTest.java",
+        "services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayBindingInventoryRepository.java",
+        "services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewCapacityExecutionOwner.java",
+        "services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.java",
+        "services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseOwner.java",
+        "services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseOwnerFactory.java",
+        "services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseRedisOwner.java",
+        "services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionRuntimeStatusRepository.java",
+        "services/game-session-service/src/main/resources/db/migration/V1065.0.11__bind_fence_receipt_dispatch_incarnation.sql",
+        "services/game-session-service/src/main/resources/db/migration/V1065.0.12__align_capacity_runtime_owner_identity.sql",
+        "services/game-session-service/src/main/resources/db/migration/V1065.0.13__repair_frozen_required_member_projection.sql",
+        "services/game-session-service/src/main/resources/redis/lua/game-session-original-new-final-admission.lua",
+        "services/game-session-service/src/main/resources/redis/lua/game-session-region-timeline-initialize-v2.lua",
+        "services/game-session-service/src/main/resources/redis/scripts/game-session-original-new-final-admission.json",
+        "services/game-session-service/src/main/resources/redis/scripts/game-session-region-timeline-initialize-v2.json",
+        "services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayBindingInventoryRepositoryIntegrationTest.java",
+        "services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest.java",
+        "services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.java",
+        "services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSupport.java",
+        "services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseOwnerIntegrationTest.java",
+        "services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest.java",
+        "services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerCompositionFixture.java",
+        "services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest.java",
+        "services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/GameSessionRuntimeFamilyCatalogPostgresIntegrationTest.java",
+        "services/game-session-service/src/test/java/unit/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewCapacityExecutionBudgetTest.java",
+        "services/game-session-service/src/test/java/unit/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest.java",
+        "services/spring-cloud-gateway/src/main/resources/openapi.yaml",
+        "web-client/src/billing/HostingFirstInvoiceCheckout.test.tsx",
+        "web-client/src/billing/HostingFirstInvoiceCheckout.tsx"
+      ],
+      "unmerged_index": "100644 c5eac5911cc58569790a12f2d8458bb846a0324a 1\tdesign/architecture/microservices/game-session-service/api-contracts.md\n100644 b64a9ad43126e17eb8b8b1c43f6428cc63f3b867 2\tdesign/architecture/microservices/game-session-service/api-contracts.md\n100644 a6d699b4d365eb27f10e440adb37011a5a15a979 3\tdesign/architecture/microservices/game-session-service/api-contracts.md\n100644 317804aac20b7817051f0b4b3a1320ac48e34022 1\tservices/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.java\n100644 d4f847b744455e9ac763231078ed162032c22515 2\tservices/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.java\n100644 8fde99e9c31367d4cd13f43903a1edeb94a4b4e3 3\tservices/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.java\n100644 e9a24199984b7d14cd05cad25738daac72ef8461 1\tservices/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseOwner.java\n100644 346eea7955bb24139f8aef22f4636450909f9bd8 2\tservices/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseOwner.java\n100644 a7fdb74556567794d4289141a9dc6eb018e237c2 3\tservices/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseOwner.java\n100644 b13ecf6f9638a24b7566c81b2956956a895ac0a8 1\tservices/game-session-service/src/main/resources/redis/scripts/game-session-original-new-final-admission.json\n100644 b565984a66e81281e3ddd473376542a90af7165a 2\tservices/game-session-service/src/main/resources/redis/scripts/game-session-original-new-final-admission.json\n100644 b966027d18a75a50370eae4c0972b8048446ea9e 3\tservices/game-session-service/src/main/resources/redis/scripts/game-session-original-new-final-admission.json\n100644 57985743cdb895e750ea6f48edaf6adf5afbd702 1\tservices/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/GameSessionRuntimeFamilyCatalogPostgresIntegrationTest.java\n100644 e934afdfec54eee18adb24594acc231d27948698 2\tservices/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/GameSessionRuntimeFamilyCatalogPostgresIntegrationTest.java\n100644 0393f8a0d2dc69365a59edd3cce6f2ef471c11ae 3\tservices/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/GameSessionRuntimeFamilyCatalogPostgresIntegrationTest.java",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "a70fe44d772f96adce706c87c830ed14c8b22caf"
+    },
+    {
+      "worktree": "FireMUD-dot-character-create-20261116",
+      "original_head": "cb8fada5ff4fa896df3c59d271c69f62b6980305",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "cb8fada5ff4fa896df3c59d271c69f62b6980305"
+    },
+    {
+      "worktree": "FireMUD-dot-coherent-mtls-proof-20261117",
+      "original_head": "aaf88ed8dcc2c8e0a8e3bb62bc98f15bec2d23d0",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "aaf88ed8dcc2c8e0a8e3bb62bc98f15bec2d23d0"
+    },
+    {
+      "worktree": "FireMUD-dot-coherent305-hold-proof-20261117",
+      "original_head": "1484953b4cdbebf83b546506245d042ce6233595",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "1484953b4cdbebf83b546506245d042ce6233595"
+    },
+    {
+      "worktree": "FireMUD-dot-creator-validation-20261115",
+      "original_head": "742fc46667cc3a6a6dae838335fd1140223d4a03",
+      "source_paths": [
+        "design/architecture/microservices/automation-scripting-service/api-contracts.md",
+        "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/session/AccountControlUiIssuanceWorkflowTest.java",
+        "services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/model/ScriptPatchAlreadySealedException.java",
+        "services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/model/ScriptPatchPublicationSeal.java",
+        "services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/repository/ScriptPatchPublicationSealRepository.java",
+        "services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/service/ScriptDesignDigestService.java",
+        "services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/service/impl/ScriptPatchPublicationSealService.java",
+        "services/automation-scripting-service/src/main/resources/db/migration/V1006__private_script_patch_snapshot_seal.sql",
+        "services/automation-scripting-service/src/test/java/integration/net/firedevops/firemud/automationscripting/repository/AutomationRuntimeFamilyCatalogPostgresIntegrationTest.java",
+        "services/automation-scripting-service/src/test/java/integration/net/firedevops/firemud/automationscripting/repository/ScriptPatchPublicationSealRepositoryIntegrationTest.java",
+        "services/automation-scripting-service/src/test/java/unit/net/firedevops/firemud/automationscripting/service/impl/ScriptDesignDigestServiceImplTest.java",
+        "services/automation-scripting-service/src/test/java/unit/net/firedevops/firemud/automationscripting/service/impl/ScriptPatchPublicationSealServiceTest.java",
+        "services/common-platform-core/src/test/java/net/firedevops/firemud/common/gamedesign/TemplateConfigSourceSnapshotTest.java"
+      ],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "c7771e7acfd6497f8f5996f4909859c5134ff0c1"
+    },
+    {
+      "worktree": "FireMUD-dot-donor2969-identity-20261117",
+      "original_head": "0d5860934c679137d9033978d64293a3d41214c1",
+      "source_paths": [
+        "services/common-security/src/main/java/net/firedevops/firemud/common/security/SessionContext.java",
+        "services/common-security/src/test/java/net/firedevops/firemud/common/security/SessionContextTenantAccessTest.java",
+        "services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/service/impl/GameSessionGrpcService.java",
+        "services/game-session-service/src/test/java/unit/net/firedevops/firemud/gamesession/service/impl/GameSessionGrpcServiceTest.java"
+      ],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "221f99ee8fabbc18876b145fb2659cdc446df579"
+    },
+    {
+      "worktree": "FireMUD-dot-donor2976-account-storage-20261117",
+      "original_head": "d2a45688c7d5251c83ad2207989c735a8c7c9c10",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "d2a45688c7d5251c83ad2207989c735a8c7c9c10"
+    },
+    {
+      "worktree": "FireMUD-dot-donor2998-physical-20261117",
+      "original_head": "9931fdacaf3b665ed564be00a6b6cffaa4de79e8",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "9931fdacaf3b665ed564be00a6b6cffaa4de79e8"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3065-proof-20261117",
+      "original_head": "1428c3154291bc31993749e3a19e25daf427a6f0",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "1428c3154291bc31993749e3a19e25daf427a6f0"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-account-proof-guard-20261117",
+      "original_head": "f7cfe1864e6ddc26b59e0f96807afef52bdec94b",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "f7cfe1864e6ddc26b59e0f96807afef52bdec94b"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-creation-order-20261117",
+      "original_head": "bb9587869b90870f3c7e8556cf3f5b35af492f03",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "bb9587869b90870f3c7e8556cf3f5b35af492f03"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-draft-20261117",
+      "original_head": "b23119c2a3d53ee8cc1975ee9bbf6fa2d422ab9a",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "b23119c2a3d53ee8cc1975ee9bbf6fa2d422ab9a"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-issuer-mixed-20261117",
+      "original_head": "f5459e3e7489dfe08fb3c3d54da3e497ecf61e81",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "f5459e3e7489dfe08fb3c3d54da3e497ecf61e81"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-logout-20261117",
+      "original_head": "6e9b83efda1beec11a57bb8c197016c524cb6062",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "6e9b83efda1beec11a57bb8c197016c524cb6062"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-physical-20261117",
+      "original_head": "4cb18d1fc7eab01799899fd8c7f1896d84a21e8d",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "4cb18d1fc7eab01799899fd8c7f1896d84a21e8d"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-proof-20261117",
+      "original_head": "c17bd964e4356c8a3b590a99f229ea7ba65ceed1",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "c17bd964e4356c8a3b590a99f229ea7ba65ceed1"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-publication-order-20261117",
+      "original_head": "604b0f7f9260f50b8f399889078aaa6abcd82231",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "604b0f7f9260f50b8f399889078aaa6abcd82231"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-reset-20261117",
+      "original_head": "ce2d99d6c2d6c3f010bdfd3266f20c37ee728e36",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "ce2d99d6c2d6c3f010bdfd3266f20c37ee728e36"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-reset-abort-20261117",
+      "original_head": "8731a0059e5ee3cf7a6c06016602fee74c405030",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "8731a0059e5ee3cf7a6c06016602fee74c405030"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-tenant-mixed-20261117",
+      "original_head": "51ee748c350a0c062b29e7e9effd7b25474cd68e",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "51ee748c350a0c062b29e7e9effd7b25474cd68e"
+    },
+    {
+      "worktree": "FireMUD-dot-donor3097-transfer-journal-20261117",
+      "original_head": "44ba7462f305018d0fce27c00546d3a5922f8fb5",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "44ba7462f305018d0fce27c00546d3a5922f8fb5"
+    },
+    {
+      "worktree": "FireMUD-dot-gamedesign-context-lifecycle-20261117",
+      "original_head": "efb0019ec3ebfe437b5c3f84319c331f08201756",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "efb0019ec3ebfe437b5c3f84319c331f08201756"
+    },
+    {
+      "worktree": "FireMUD-dot-gs-fixture-catalog-reseal-20261117",
+      "original_head": "e70c2ed5c1e4850f5be5bf845ac46a4950aea1c8",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "e70c2ed5c1e4850f5be5bf845ac46a4950aea1c8"
+    },
+    {
+      "worktree": "FireMUD-dot-issuer-contract-20261117",
+      "original_head": "40766f9177b7c4403e0c4dbe0e7d12f038294849",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "40766f9177b7c4403e0c4dbe0e7d12f038294849"
+    },
+    {
+      "worktree": "FireMUD-dot-materializer-intake-20261116",
+      "original_head": "946ab7ce8ee0492c2d18a35a6a79f1a33ad71652",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "946ab7ce8ee0492c2d18a35a6a79f1a33ad71652"
+    },
+    {
+      "worktree": "FireMUD-dot-transfer-capture-20261117",
+      "original_head": "e59943f7a56ad22480140b881a743866b360df18",
+      "source_paths": [
+        "services/account-service/src/main/java/net/firedevops/firemud/accountservice/tenantrole/AccountTransferCaptureRepository.java",
+        "services/account-service/src/main/java/net/firedevops/firemud/accountservice/tenantrole/TransferCaptureBounds.java",
+        "services/account-service/src/main/java/net/firedevops/firemud/accountservice/tenantrole/TransferCaptureCodec.java",
+        "services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/repository/AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest.java",
+        "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/tenantrole/TransferCaptureBoundsTest.java",
+        "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/tenantrole/TransferCaptureCodecTest.java"
+      ],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "502b982a73979ec88af542d6fea82ecf9e1a8f5b"
+    },
+    {
+      "worktree": "FireMUD-dot-transfer-capture-integrated-20261117",
+      "original_head": "b8a8379c7bee59575d9ea2d4ad3530deaf39f1f6",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "b8a8379c7bee59575d9ea2d4ad3530deaf39f1f6"
+    },
+    {
+      "worktree": "FireMUD-dot-world-parent-carry-20261117",
+      "original_head": "9831911e74fa454643c80473f65a7c09926c3a6c",
+      "source_paths": [],
+      "unmerged_index": "",
+      "tested": "Not retested during cleanup; preservation only",
+      "recovery_commit": "9831911e74fa454643c80473f65a7c09926c3a6c"
+    }
+  ]
+}

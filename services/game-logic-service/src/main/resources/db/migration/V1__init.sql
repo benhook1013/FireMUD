@@ -1,1 +1,0 @@
--- Game Logic Service is currently stateless; no tables required.
