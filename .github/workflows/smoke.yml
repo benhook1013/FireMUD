@@ -941,8 +941,13 @@ jobs:
                 `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
               const replacement = await findMatchingRuntimeImagesRun("repository_dispatch", title, identity);
               if (!replacement || !positiveInteger(replacement.id) || !positiveInteger(replacement.run_attempt) || replacement.id <= run.id ||
-                  replacement.event !== "repository_dispatch" || replacement.status !== "completed" ||
-                  replacement.conclusion !== "success") return false;
+                  replacement.event !== "repository_dispatch") return false;
+              // Pending exact refreshes are not proof, but must not fail the caller
+              // before the asynchronous producer can finish within its existing deadline.
+              if (["queued", "in_progress", "waiting", "pending", "requested"].includes(replacement.status)) {
+                return "pending";
+              }
+              if (replacement.status !== "completed" || replacement.conclusion !== "success") return false;
               const jobs = await withTransientGitHubRetry("canonical transition refresh jobs lookup", () =>
                 github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
                   owner, repo, run_id: replacement.id, attempt_number: replacement.run_attempt, per_page: 100,
@@ -1266,7 +1271,13 @@ jobs:
                       knownPlayVerified = Boolean(candidate) &&
                         await verifyKnownPlayFailure(matching, candidate, currentIdentity);
                       if (!knownPlayVerified) {
-                        knownPlayVerified = await verifyFailedPullCanonicalRefresh(matching, currentIdentity);
+                        const refreshProof = await verifyFailedPullCanonicalRefresh(matching, currentIdentity);
+                        if (refreshProof === "pending") {
+                          core.info("Exact canonical refresh is pending; continuing within the existing smoke-gate deadline.");
+                          await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                          continue smokeGatePolling;
+                        }
+                        knownPlayVerified = refreshProof === true;
                       }
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;

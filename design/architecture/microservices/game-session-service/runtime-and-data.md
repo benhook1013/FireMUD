@@ -6,6 +6,10 @@ Game Session coordinates with Redis to store volatile session state and command 
 
 The service runtime model assumes replaceable workers, not authoritative in-process state.
 
+### Finalized capacity usage retirement
+
+The exact current Game Session owner establishes irreversible closure of serving and resume for the admitted binding and retains settlement of applicable effects and indexes. Game Session supplies an authenticated terminal receipt linked to the original admission, FINAL evidence, binding lineage and Account reservation. [Account owns retirement of the corresponding used capacity](../account-service/runtime-and-data.md#finalized-capacity-usage-retirement).
+
 ## Implementation Status
 
 The manually composed initial region bridge preserves either PRESEEDED assignment provenance or the separate PLAYER_CREATED creation origin. It selects the matching authenticated Entity reader and exact purpose-versioned World placement; a sealed reference is constructed only after authenticated response validation. Preparation and bridge rows retain the closed origin independently from operation IDs, and created rows keep assignment columns NULL. Current acquisition, retry, ACK, definitive abort and final commit preserve each bridge’s own authenticated actor origin. The first actor matches its exact timeline preparation; later distinct actor transitions use that same installed region source and protected incarnation while retaining their own origins, without replacing the first preparation or its actor-bound read digest. The shared numeric runtime ID remains a scoped projection, never a creation/assignment UUID or a credential. This path is unregistered and supplies no production custody, first-OPEN or activation authority.

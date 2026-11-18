@@ -3649,6 +3649,39 @@ async function failedLegacyProof(stage, error, event = "pull_request") {
   assert.match(warnings[0], /^Canonical PLAY transition exception proof is unavailable:/);
   assert.deepEqual(outputs, []);
 }
+// Execute the actual failed-run caller, including its labelled continue, with
+// the actual refresh helper. Pending must neither grant proof nor fail early.
+async function pendingRefreshCaller(statuses, expires = false) {
+  const failures = [], outputs = [], warnings = [];
+  let sleeps = 0, polls = 0, writes = 0;
+  const core = {info: () => {}, warning: value => warnings.push(value),
+    setFailed: value => failures.push(value), setOutput: (...value) => outputs.push(value)};
+  core.summary = {addHeading() {return this;}, addRaw() {return this;},
+    async write() {writes++;}};
+  const original = {...source, id: 98, event: "pull_request", conclusion: "failure"};
+  const execute = new Function("matching", "repositoryName", "github", "owner", "repo",
+    "canonicalSmokeJobName", "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure",
+    "verifyFailedPullCanonicalRefresh", "isCurrentPullRequestObsolete", "TerminalGitHubRequestError",
+    "core", "resolveCurrentIdentity", "identityKey", "setTimeout", "sleepMs", "withinDeadline",
+    `return (async () => {
+      smokeGatePolling: while (withinDeadline()) { ${legacyFailedBranch} break; }
+      core.setFailed("existing deadline expired");
+    })();`);
+  await execute(original, repositoryName, {paginate: async () => [candidate]}, "benhook1013", "FireMUD",
+    canonicalSmokeJobName, identity, (_label, call) => call(), async () => false,
+    async () => {
+      const status = statuses[polls++];
+      return (await recoveredFailure({replacement: {status,
+        conclusion: status === "completed" ? "success" : null}})).accepted;
+    }, async () => false, TerminalGitHubRequestError, core, async () => identity,
+    selected => JSON.stringify(selected), resolve => {sleeps++; resolve();}, 0,
+    () => polls < statuses.length);
+  assert.equal(polls, statuses.length);
+  assert.equal(sleeps, expires ? statuses.length : statuses.length - 1);
+  assert.deepEqual(failures, expires ? ["existing deadline expired"] : []);
+  assert.deepEqual(outputs, expires ? [] : [["known_play_exception", "true"]]);
+  assert.equal(writes, expires ? 0 : 1);
+}
 const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
 const markerValues = {
   "github.event_name": "pull_request", "github.repository": repositoryName,
@@ -3684,12 +3717,19 @@ function markerAccepted(overrides = {}) {
     await assert.rejects(failedProof(terminal), error => error === terminal);
   }
   assert.deepEqual(await recoveredFailure(), {accepted: true, verified: 1, queries: 1});
+  for (const status of ["queued", "in_progress", "waiting", "pending", "requested"]) {
+    assert.deepEqual(await recoveredFailure({replacement: {status, conclusion: null}}),
+      {accepted: "pending", verified: 0, queries: 1});
+  }
+  await pendingRefreshCaller(["queued", "in_progress", "completed"]);
+  await pendingRefreshCaller(["queued", "in_progress"], true);
+
   for (const options of [
     {repository: "attacker/FireMUD"}, {original: {event: "repository_dispatch"}},
     {original: {status: "in_progress"}}, {original: {conclusion: "success"}},
     {original: {id: 0}}, {absent: true}, {replacement: {id: 98}}, {replacement: {id: 97}},
     {replacement: {run_attempt: 0}}, {replacement: {event: "pull_request"}},
-    {replacement: {status: "in_progress"}}, {replacement: {conclusion: "failure"}},
+    {replacement: {status: "unknown"}}, {replacement: {conclusion: "failure"}},
     {replacement: {conclusion: "cancelled"}}, {noProducer: true},
   ]) {
     const result = await recoveredFailure(options);
