@@ -241,8 +241,9 @@ class AbstractReloadingBlockingGrpcClientTest {
               assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
               return replacement;
             });
-    try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
-        var executor = Executors.newFixedThreadPool(2)) {
+    var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
+    var executor = Executors.newFixedThreadPool(2, Thread.ofPlatform().daemon().factory());
+    try {
       client.initExplicit();
       var reload =
           executor.submit(
@@ -261,6 +262,13 @@ class AbstractReloadingBlockingGrpcClientTest {
         release.countDown();
       }
       reload.get(5, TimeUnit.SECONDS);
+    } finally {
+      release.countDown();
+      executor.shutdownNow();
+      boolean terminated = executor.awaitTermination(5, TimeUnit.SECONDS);
+      // A regression may deadlock on non-interruptible monitors. Do not block cleanup on them.
+      if (terminated) client.close();
+      assertThat(terminated).isTrue();
     }
   }
 

@@ -162,7 +162,7 @@ class AccountTenantCapacityOwnerTest {
 
   @Test
   void durableQuotaDenialReplaysWithoutConsultingMutableCapacity() throws Exception {
-    var f = new Fixture(false);
+    var f = new Fixture(false, qualifiedRequest(true));
     f.existing = false;
     Record genericRefusal = mock(Record.class);
     UUID decisionId = UUID.randomUUID();
@@ -196,29 +196,20 @@ class AccountTenantCapacityOwnerTest {
               f.originDecision = genericRefusal;
               return 1;
             });
-    var transaction =
-        new org.springframework.transaction.support.TransactionTemplate(
-            new ControlledTransactions());
-    transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
-    transaction.setTimeout(5);
-    UUID committedId =
-        transaction.execute(
-            status -> {
-              assertThat(
-                      new AccountTenantCapacityRepository(f.dsl)
-                          .createIfQuotaAvailable(
-                              f.request,
-                              f.request.evidence().expiresAt(),
-                              Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC)))
-                  .isEmpty();
-              return new net.firedevops.firemud.accountservice.repository
-                      .AccountCapacityOriginDecisionRepository(f.dsl)
-                  .refuseQuota(f.request);
+    f.retained = true;
+    qualifySources(f);
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(failure.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+              assertThat(failure.durableDenialId())
+                  .isEqualTo(genericRefusal.get("decision_id", UUID.class));
             });
-    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    UUID committedId = genericRefusal.get("decision_id", UUID.class);
     when(usage.get("held_units", Long.class)).thenReturn(0L);
-    org.mockito.Mockito.clearInvocations(f.dsl);
+    org.mockito.Mockito.clearInvocations(f.dsl, f.accounts, f.memberships, f.issuances, f.scopes);
 
     // Capacity is now available, but the owner must replay the committed denial.
     for (int retry = 0; retry < 2; retry++) {
@@ -541,6 +532,148 @@ class AccountTenantCapacityOwnerTest {
     verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes, source);
   }
 
+  @Test
+  void attemptAlreadyBoundToAnotherReservationCannotBecomeQuotaDenial() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    Record usage = mock(Record.class);
+    when(usage.get("held_units", Long.class)).thenReturn(f.request.evidence().quota());
+    when(usage.get("used_units", Long.class)).thenReturn(0L);
+    org.mockito.Mockito.doReturn(usage)
+        .when(f.dsl)
+        .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+    // A retained reservation/history/origin with this attempt but a different outer identity.
+    org.mockito.Mockito.doReturn(mock(Record.class))
+        .when(f.dsl)
+        .fetchOne(startsWith("SELECT 1 FROM (SELECT tenant_uuid"), any(Object[].class));
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.IDEMPOTENCY_CONFLICT));
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void expiryDuringSourceQualificationCannotBecomeBillingRefusal() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(false));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    when(f.clock.instant())
+        .thenReturn(
+            CapacityAdmissionTestFixture.NOW.plusSeconds(1), f.request.evidence().expiresAt());
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
+    verify(f.scopes).findCanonicalEvidenceByTokenHash(anyString());
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Request qualifiedRequest(boolean creating) {
+    var original = CapacityAdmissionTestFixture.playerRequest();
+    var player = (TenantCapacityAdmission.PlayerContext) original.context();
+    var target = (Map<String, Object>) original.evidence().fields().get("target");
+    var admitted =
+        CapacityAdmissionTestFixture.playerRequestFor(
+            player,
+            original.identity().admissionId(),
+            original.admissionAttemptId(),
+            "prod",
+            target,
+            CapacityAdmissionTestFixture.NOW);
+    if (creating) return admitted;
+    var fields = admitted.evidence().fields();
+    var parsed =
+        net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence
+            .parseCanonical(admitted.evidence().canonicalBytes());
+    Map<String, Object> facts = new java.util.LinkedHashMap<>();
+    for (String key :
+        java.util.List.of(
+            "sourceKind",
+            "subscriptionStatus",
+            "provisioningStatus",
+            "gameplayAvailable",
+            "allowPublicJoin",
+            "allowNewGameplayBindings",
+            "allowNewInstanceStarts",
+            "quotas",
+            "entitlementVersion",
+            "tenantBillingSequence",
+            "tenantAuthorityGeneration")) {
+      facts.put(key, fields.get(key));
+    }
+    facts.put("allowNewGameplayBindings", false);
+    var evidence =
+        net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence
+            .fromOwnerEvaluation(
+                player.requestId(),
+                admitted.evidence().callerWorkload(),
+                parsed.verifiedConnectScopeTokenHash(),
+                parsed.membershipSource(),
+                target,
+                facts,
+                (Map<String, Object>) fields.get("sourceReferences"),
+                CapacityAdmissionTestFixture.NOW);
+    return new Request(
+            admitted.identity(),
+            admitted.admissionAttemptId(),
+            1,
+            admitted.targetNamespace(),
+            admitted.context(),
+            admitted.operation(),
+            admitted.priorShape(),
+            admitted.requestedShape(),
+            TenantCapacityAdmission.Evidence.player(evidence),
+            1L,
+            null)
+        .withDigest();
+  }
+
+  private static void qualifySources(Fixture f) {
+    var player = (TenantCapacityAdmission.PlayerContext) f.request.context();
+    var parsed =
+        net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence
+            .parseCanonical(f.request.evidence().canonicalBytes());
+    when(f.memberships.readCurrent(player.accountId(), player.tenantId()))
+        .thenReturn(parsed.membershipSource());
+    var source = (Map<?, ?>) f.request.evidence().fields().get("sourceReferences");
+    var issuance =
+        mock(
+            AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData.class,
+            org.mockito.Mockito.RETURNS_DEEP_STUBS);
+    when(issuance.identity().accountId()).thenReturn(player.accountId());
+    when(issuance.identity().callerWorkload()).thenReturn(f.request.evidence().callerWorkload());
+    when(issuance.identity().callerContextId())
+        .thenReturn(UUID.fromString((String) source.get("callerContextId")));
+    when(issuance.identity().operationId())
+        .thenReturn(UUID.fromString((String) source.get("callerOperationId")));
+    when(issuance.identity().notBeforeEpochSecond())
+        .thenReturn(CapacityAdmissionTestFixture.NOW.minusSeconds(60).getEpochSecond());
+    when(issuance.identity().expiresAtEpochSecond())
+        .thenReturn(CapacityAdmissionTestFixture.NOW.plusSeconds(3600).getEpochSecond());
+    when(issuance.tokenSha256()).thenReturn((String) source.get("callerTokenSha256"));
+    when(issuance.canonicalRegistryRecordSha256())
+        .thenReturn((String) source.get("callerRegistryRecordSha256"));
+    when(issuance.commitProofSha256()).thenReturn((String) source.get("callerCommitProofSha256"));
+    when(f.issuances.readCurrentCommittedCandidateByJti(any(UUID.class)))
+        .thenReturn(Optional.of(issuance));
+    var scope = mock(AccountConnectScopeRepository.CanonicalConnectScopeEvidence.class);
+    when(scope.accountUuid()).thenReturn(player.accountId());
+    when(scope.tenantUuid()).thenReturn(player.tenantId());
+    when(scope.scopeDigest()).thenReturn((String) source.get("scopeDigest"));
+    when(scope.gameInstanceUuid()).thenReturn(player.gameInstanceId());
+    when(scope.playableStateNamespaceUuid()).thenReturn(player.playableStateNamespaceId());
+    when(scope.realmId()).thenReturn(player.realmId());
+    when(scope.playableStateScope()).thenReturn(player.playableStateScope());
+    when(scope.connectScopeExpiresAt())
+        .thenReturn(CapacityAdmissionTestFixture.NOW.plusSeconds(3600).toString());
+    when(f.scopes.findCanonicalEvidenceByTokenHash(anyString())).thenReturn(Optional.of(scope));
+  }
+
   private static final class Fixture {
     private final DSLContext dsl = mock(DSLContext.class);
     private final AccountRepository accounts = mock(AccountRepository.class);
@@ -549,6 +682,7 @@ class AccountTenantCapacityOwnerTest {
     private final AccountGameplayDelegationIssuanceRepository issuances =
         mock(AccountGameplayDelegationIssuanceRepository.class);
     private final AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
+    private final Clock clock = mock(Clock.class);
     private final Request request;
     private final UUID reservation = UUID.randomUUID();
     private final AccountTenantCapacityOwner owner;
@@ -566,6 +700,8 @@ class AccountTenantCapacityOwnerTest {
 
     private Fixture(boolean expired, Request request, String namespace) throws Exception {
       this.request = request;
+      when(clock.instant())
+          .thenReturn(CapacityAdmissionTestFixture.NOW.plusSeconds(expired ? 60 : 1));
       when(accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
           .thenReturn(Optional.of(new Account()));
       Connection connection = mock(Connection.class);
@@ -614,6 +750,7 @@ class AccountTenantCapacityOwnerTest {
                 String sql = invocation.getArgument(0, String.class);
                 if (sql.startsWith("SELECT * FROM account_tenant_capacity_reservations "))
                   return existing ? row : null;
+                if (sql.startsWith("SELECT 1 FROM (SELECT tenant_uuid")) return null;
                 if (sql.startsWith("SELECT * FROM account_capacity_origin_decisions "))
                   return originDecision;
                 if (sql.startsWith(
@@ -631,8 +768,7 @@ class AccountTenantCapacityOwnerTest {
               issuances,
               scopes,
               new ControlledTransactions(),
-              Clock.fixed(
-                  CapacityAdmissionTestFixture.NOW.plusSeconds(expired ? 60 : 1), ZoneOffset.UTC),
+              clock,
               namespace);
     }
   }

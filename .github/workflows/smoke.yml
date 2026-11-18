@@ -934,7 +934,9 @@ jobs:
             // a newer exact typed refresh with independently proven canonical exception
             // evidence can recover this diagnostic gate; it never proves PLAY succeeded.
             async function verifyFailedPullCanonicalRefresh(run, identity) {
-              if (repositoryName !== "benhook1013/FireMUD" || run.event !== "pull_request" ||
+              if (repositoryName !== "benhook1013/FireMUD" ||
+                  context.payload.pull_request.head.repo?.full_name !== repositoryName ||
+                  run.event !== "pull_request" ||
                   run.status !== "completed" || run.conclusion !== "failure" ||
                   !positiveInteger(run.id)) return false;
               const title = `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
@@ -1085,6 +1087,11 @@ jobs:
                 return { obsolete: true };
               }
 
+              const canonicalPlayEligible =
+                currentPullRequest.head?.repo?.full_name === repositoryName &&
+                currentPullRequest.base?.repo?.full_name === repositoryName &&
+                Array.isArray(currentPullRequest.labels) &&
+                currentPullRequest.labels.some((label) => label?.name === "canonical-play-transition");
               try {
                 // Edited events can omit a usable test-merge SHA. Only immutable
                 // ordered parents authorize event proof; otherwise require the
@@ -1109,6 +1116,7 @@ jobs:
                     headSha,
                     mergeSha: eventMergeSha,
                     sourceEvent: "pull_request",
+                    canonicalPlayEligible,
                   };
                 }
 
@@ -1151,6 +1159,7 @@ jobs:
                   headSha,
                   mergeSha: currentMergeSha,
                   sourceEvent: "repository_dispatch",
+                  canonicalPlayEligible,
                 };
               } catch (error) {
                 if (error instanceof TerminalGitHubRequestError) throw error;
@@ -1281,6 +1290,24 @@ jobs:
                     }
                     try {
                       if (!knownPlayVerified) {
+                        // Direct event proof remains immutable. Its refresh fallback must
+                        // follow base movement even before any old refresh becomes visible.
+                        if (matching.event === "pull_request" &&
+                            context.payload.pull_request.head.repo?.full_name === repositoryName) {
+                          const liveIdentity = await resolveCurrentIdentity(
+                            "Resolving current canonical refresh identity", true);
+                          if (liveIdentity?.obsolete) return;
+                          if (!liveIdentity) {
+                            await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                            continue smokeGatePolling;
+                          }
+                          if (identityKey({...liveIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
+                              identityKey(currentIdentity)) {
+                            requireCurrentIdentity = true;
+                            currentIdentity = liveIdentity;
+                            continue smokeGatePolling;
+                          }
+                        }
                         const refreshProof = await verifyFailedPullCanonicalRefresh(matching, currentIdentity);
                         if (refreshProof === "pending") {
                           core.info("Exact canonical refresh is pending; continuing within the existing smoke-gate deadline.");
@@ -1307,6 +1334,10 @@ jobs:
                       if (!freshIdentity || identityKey(comparableFreshIdentity) !== identityKey(currentIdentity)) {
                         currentIdentity = freshIdentity;
                         continue smokeGatePolling;
+                      }
+                      if (!freshIdentity.canonicalPlayEligible) {
+                        core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                        return;
                       }
                       core.setOutput("known_play_exception", "true");
                       core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
@@ -1454,6 +1485,10 @@ jobs:
                     if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
                       currentIdentity = freshIdentity;
                       continue smokeGatePolling;
+                    }
+                    if (!freshIdentity.canonicalPlayEligible) {
+                      core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                      return;
                     }
                     core.setOutput("known_play_exception", "true");
                     core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");

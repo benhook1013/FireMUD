@@ -261,6 +261,9 @@ public final class AccountTenantCapacityOwner {
         || !scope.realmId().equals(player.realmId())
         || !scope.playableStateScope().equals(player.playableStateScope())
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
+    // Source reads can consume the remaining evaluation lifetime. Retained replays
+    // return before current(), but a fresh refusal must still be current after qualification.
+    requireCurrentLifetime(evidence, clock.instant());
   }
 
   private static <T> T qualifiedSource(Supplier<T> read) {

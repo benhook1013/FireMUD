@@ -21,8 +21,11 @@ import org.junit.jupiter.api.Test;
 class TenantCapacityAdmissionGrpcCodecTest {
   @Test
   void onlyCanonicalFailureDetailsSurviveWithoutChangingTransportStatus() {
+    var domainCodes =
+        java.util.Set.of(Failure.TENANT_BILLING_BLOCKED, Failure.CAPACITY_QUOTA_EXCEEDED);
     for (var failure : Failure.values()) {
-      if (failure.isDomainRefusal()) {
+      assertThat(failure.isDomainRefusal()).isEqualTo(domainCodes.contains(failure));
+      if (domainCodes.contains(failure)) {
         assertThatThrownBy(failure::toStatusException).isInstanceOf(IllegalArgumentException.class);
         var oldTransport =
             StatusProto.toStatusRuntimeException(
@@ -125,6 +128,47 @@ class TenantCapacityAdmissionGrpcCodecTest {
                             .CAPACITY_QUOTA_EXCEEDED))
             .build();
     assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusal(request, quota))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void nonExpandingRequestCannotCarryQuotaRefusal() {
+    var original = CapacityAdmissionTestFixture.playerRequest();
+    var request =
+        new Request(
+                original.identity(),
+                original.admissionAttemptId(),
+                1,
+                original.targetNamespace(),
+                original.context(),
+                TenantCapacityAdmission.Operation.NON_EXPANDING_RECOVERY,
+                original.requestedShape(),
+                original.requestedShape(),
+                original.evidence(),
+                0L,
+                null)
+            .withDigest();
+    request.requireStructurallyValid();
+    var id = UUID.randomUUID();
+    assertThatThrownBy(
+            () ->
+                TenantCapacityAdmissionGrpcCodec.toRefusal(
+                    request, Failure.CAPACITY_QUOTA_EXCEEDED, id))
+        .isInstanceOf(IllegalArgumentException.class);
+    var billing =
+        TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED);
+    var forged =
+        billing.toBuilder()
+            .setRefusal(
+                0,
+                billing.getRefusal(0).toBuilder()
+                    .setCode(
+                        0,
+                        net.firedevops.firemud.account.v1.TenantCapacityAdmissionRefusal.Code
+                            .CAPACITY_QUOTA_EXCEEDED)
+                    .addDurableDenialId(id.toString()))
+            .build();
+    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, forged))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

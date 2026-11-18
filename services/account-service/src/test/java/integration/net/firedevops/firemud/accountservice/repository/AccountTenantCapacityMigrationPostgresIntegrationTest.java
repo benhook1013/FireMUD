@@ -49,6 +49,69 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   }
 
   @Test
+  void duplicateHistoricalOriginAttemptsStopUpgradeWithoutRewritingEvidence() {
+    String schema = "capacity_duplicate_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      Flyway.configure()
+          .dataSource(data)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(java.util.Map.of("serviceSchema", schema))
+          .locations("classpath:db/migration")
+          .target("1040.1")
+          .load()
+          .migrate();
+      var dsl = DSL.using(data, SQLDialect.POSTGRES);
+      UUID attempt = UUID.randomUUID();
+      for (int index = 0; index < 2; index++) {
+        dsl.execute(
+            "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            attempt,
+            "a".repeat(64),
+            new byte[] {1},
+            UUID.randomUUID());
+      }
+      Flyway.configure()
+          .dataSource(data)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(java.util.Map.of("serviceSchema", schema))
+          .locations("classpath:db/migration")
+          .target("1040.3")
+          .load()
+          .migrate();
+      var original =
+          dsl.fetch(
+                  "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
+              .intoMaps();
+      assertThatThrownBy(
+              () ->
+                  Flyway.configure()
+                      .dataSource(data)
+                      .schemas(schema)
+                      .defaultSchema(schema)
+                      .placeholders(java.util.Map.of("serviceSchema", schema))
+                      .locations("classpath:db/migration")
+                      .load()
+                      .migrate())
+          .isInstanceOf(org.flywaydb.core.api.FlywayException.class);
+      assertThat(
+              dsl.fetch(
+                      "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
+                  .intoMaps())
+          .isEqualTo(original);
+      assertThat(original).hasSize(2);
+    } finally {
+      new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
+  @Test
   void budgetConflictDoesNotMaskRetainedHistoryAndFirstInstallStillChecksIt() {
     String schema = "capacity_budget_" + UUID.randomUUID().toString().replace("-", "");
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
@@ -69,13 +132,14 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       transaction.executeWithoutResult(
           status ->
               new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant));
+      UUID retainedAttempt = UUID.randomUUID();
       for (int index = 0; index < 3; index++) {
         dsl.execute(
             "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
             tenant.canonicalTenantId(),
             UUID.randomUUID(),
             UUID.randomUUID(),
-            UUID.randomUUID(),
+            index == 0 ? retainedAttempt : UUID.randomUUID(),
             "a".repeat(64),
             new byte[] {1},
             UUID.randomUUID());
@@ -119,6 +183,20 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                           "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"))
                   .intoMap())
           .isEqualTo(original);
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
+                      tenant.canonicalTenantId(),
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      retainedAttempt,
+                      "b".repeat(64),
+                      new byte[] {2},
+                      UUID.randomUUID()))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> assertThat(failure.sqlState()).isEqualTo("23505"));
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(3);
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
