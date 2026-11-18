@@ -10,6 +10,7 @@ Use the workflow that matches the current contribution, validation, review, or m
 - [repository-health-check.md](./repository-health-check.md) – Human-requested bounded check of observations, unattended automation, hosted environments, aged Renovate work, and recurring operational friction.
 - [validation-and-runtime-proof.md](./validation-and-runtime-proof.md) – Formatting, scoped checks, documentation hygiene, and canonical runtime/smoke proof selection.
 - [ai-delegation-and-review.md](./ai-delegation-and-review.md) – Subagent selection, delegation boundaries, and independent review.
+- [model-routing.md](./model-routing.md) – Model selection by task role across Codex and Claude, with single-provider fallback.
 
 ## Testing And Playtesting
 
