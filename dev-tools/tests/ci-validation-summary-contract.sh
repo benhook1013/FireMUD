@@ -6,6 +6,7 @@ SUMMARY_PAYLOAD="$(python3 - "$ROOT_DIR" <<'PY'
 from pathlib import Path
 import base64
 import json
+import re
 import sys
 import yaml
 
@@ -54,7 +55,11 @@ split_markers = [step for step in ci['jobs']['validation-gate']['steps']
                  if step.get('name') == 'Declare dev tool contract split']
 if split_markers != [{'name': 'Declare dev tool contract split', 'run': ':'}]:
     raise SystemExit('Split contract inventory must retain its unconditional native source marker')
-names = [job['name'] for job in ci['jobs'].values()]
+def substantive_name(name):
+    # Metadata-only edits rename a job; substantive runs use the fallback name.
+    match = re.fullmatch(r"\$\{\{ .* && 'PR Metadata Edit \((.+)\)' \|\| '\1' \}\}", name)
+    return match[1] if match else name
+names = [substantive_name(job['name']) for job in ci['jobs'].values()]
 for name in names:
     if '${{' not in name and json.dumps(name, ensure_ascii=False) not in script:
         raise SystemExit(f'Detached summary is missing the CI job name {name}')

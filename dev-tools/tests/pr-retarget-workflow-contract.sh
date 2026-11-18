@@ -362,7 +362,7 @@ for filename in ("ci.yml", "security.yml", "license-scan.yml", "codeql.yml"):
         expected_events.add("schedule")
         if events["schedule"] != [{"cron": "0 0 * * 0"}]:
             raise SystemExit("CodeQL must retain its weekly full-analysis schedule")
-        if workflow["jobs"]["codeql-gate"]["if"] != "${{ always() && github.event_name == 'pull_request' }}":
+        if workflow["jobs"]["codeql-gate"]["if"] != "${{ always() && github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}":
             raise SystemExit("CodeQL Gate must cover every PR base and remain PR-only")
     if set(events) != expected_events:
         raise SystemExit(f"{filename} must retain exactly its supported events")
@@ -552,9 +552,11 @@ PYTHON
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
 assert_job_contains security.yml security-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Security Summary)' || 'Security Summary' }}"
 assert_job_contains smoke.yml smoke-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}"
-# A metadata-only edit must retain the required gate name. Its preservation
-# action verifies prior proof before reporting success for the unchanged tuple.
-assert_job_contains smoke.yml smoke-gate 'name: Smoke Gate'
+# A metadata-only edit skips the required gate under a non-required name so the
+# earlier substantive result stands; pr-required-gate-context-contract.sh owns
+# the full gate-condition matrix.
+# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
+assert_job_contains smoke.yml smoke-gate "name: \${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
 assert_job_contains smoke.yml smoke-summary-pending 'name: Smoke Summary (Pending)'
 assert_job_contains smoke.yml smoke-summary-pending 'tracked-by-smoke-gate'
 assert_job_contains smoke.yml smoke-summary 'needs: [changes, smoke-gate, smoke-summary-pending]'
@@ -648,8 +650,8 @@ assert "branches" not in runtime["on"]["workflow_run"]
 PYTHON
 
 # Reproduce the metadata-edit sequence structurally: the edit has its own
-# concurrency namespace, all runtime construction jobs remain skipped, and no
-# dispatch-capable step exists in Smoke Gate. The original event tuple remains
+# concurrency namespace, all runtime construction jobs remain skipped, and Smoke
+# Gate skips under a non-required name. The original event tuple remains
 # valid for merge gating while trusted image publication and preview continue
 # to require current-base provenance.
 python3 - "$smoke_path" "$runtime_images_path" <<'PY'
@@ -663,8 +665,11 @@ smoke_path, runtime_path = map(Path, sys.argv[1:])
 smoke = yaml.load(smoke_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 runtime = yaml.load(runtime_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
-if smoke["jobs"]["smoke-gate"].get("name") != "Smoke Gate":
-    raise SystemExit("metadata-only smoke must retain its required gate context")
+if smoke["jobs"]["smoke-gate"].get("name") != (
+    "${{ github.event_name == 'pull_request' && github.event.action == 'edited' && "
+    "github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
+):
+    raise SystemExit("metadata-only smoke must skip under a non-required name and keep Smoke Gate otherwise")
 
 runtime_jobs = runtime["jobs"]
 metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
@@ -934,7 +939,6 @@ async function runDispatcher({
     workflow_name: "CI — Validation", name: "Validation Gate", status: "completed", conclusion: "success",
     check_run_url: `https://api.github.com/repos/${repository}/check-runs/8001`,
     steps: [
-      { name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped" },
       { name: "Enforce validation success", status: "completed", conclusion: "success" },
     ],
     ...(ciEvidence.gate ?? {}),
@@ -1124,14 +1128,12 @@ async function runDispatcher({
   const emptyBranch = await runDispatcher({ tuples: [child], callback: { ...prCallback, head_branch: "" } });
   assert.equal(emptyBranch.dispatches.length, 0);
   assert.equal(emptyBranch.refRequests.length, 0, "empty callback branch must be rejected before ref lookup");
-  const preservationStep = { name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped" };
   const enforcementStep = { name: "Enforce validation success", status: "completed", conclusion: "success" };
   for (const [label, ciEvidence] of [
-    ["metadata preservation executed", { gate: { steps: [{ ...preservationStep, conclusion: "success" }, { ...enforcementStep, conclusion: "skipped" }] } }],
-    ["failed metadata preservation", { gate: { steps: [{ ...preservationStep, conclusion: "failure" }, { ...enforcementStep, conclusion: "skipped" }] } }],
-    ["missing preservation", { gate: { steps: [enforcementStep] } }],
-    ["ambiguous preservation", { gate: { steps: [preservationStep, preservationStep, enforcementStep] } }],
-    ["skipped enforcement", { gate: { steps: [preservationStep, { ...enforcementStep, conclusion: "skipped" }] } }],
+    ["metadata-only edit gate", { gate: { name: "PR Metadata Edit (Validation Gate)", conclusion: "skipped", steps: [] } }],
+    ["legacy metadata gate with skipped enforcement", { gate: { steps: [{ ...enforcementStep, conclusion: "skipped" }] } }],
+    ["missing enforcement", { gate: { steps: [] } }],
+    ["ambiguous enforcement", { gate: { steps: [enforcementStep, enforcementStep] } }],
     ["old native attempt job", { gate: { run_attempt: 2 } }],
     ["wrong native job run", { gate: { run_id: 7002 } }],
     ["wrong native job head", { gate: { head_sha: sha("f") } }],
@@ -1151,7 +1153,7 @@ async function runDispatcher({
   }
   const failedSubstantive = await runDispatcher({
     tuples: [child], sourceTuples: [source], callback: { ...prCallback, conclusion: "failure" },
-    ciEvidence: { gate: { conclusion: "failure", steps: [preservationStep, { ...enforcementStep, conclusion: "failure" }] } },
+    ciEvidence: { gate: { conclusion: "failure", steps: [{ ...enforcementStep, conclusion: "failure" }] } },
   });
   assert.equal(runtimeDispatches(failedSubstantive).length, 2,
     "failed substantive CI remains a reconcile signal requiring each source/child's independent runtime smoke");
@@ -2383,21 +2385,17 @@ require_ordered_sequence \
   'if (fullSmokeJob?.conclusion !== "success") {' \
   'PR Full-Stack Smoke job did not complete successfully:'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
-require_contains "$smoke_path" 'SMOKE_GATE_REQUIRED: ${{ github.event.action != '\''edited'\'' || github.event.changes.base.ref != null }}'
-# shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
 require_contains "$smoke_path" 'CHANGES_RESULT: ${{ needs.changes.result }}'
 # shellcheck disable=SC2016 # Assert literal shell source.
-require_contains "$smoke_path" 'echo "required=$SMOKE_GATE_REQUIRED" >> "$GITHUB_OUTPUT"'
-# shellcheck disable=SC2016 # Assert literal shell source.
-require_contains "$smoke_path" 'if [ "$SMOKE_GATE_REQUIRED" = "true" ] && [ "$CHANGES_RESULT" = "success" ]; then'
+require_contains "$smoke_path" 'if [ "$CHANGES_RESULT" = "success" ]; then'
 # shellcheck disable=SC2016 # Assert literal shell source.
 require_contains "$smoke_path" 'echo "execute=true" >> "$GITHUB_OUTPUT"'
 # shellcheck disable=SC2016 # Assert literal shell source.
 require_contains "$smoke_path" 'echo "execute=false" >> "$GITHUB_OUTPUT"'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
-require_contains "$smoke_path" 'if: ${{ steps.smoke_gate_context.outputs.required == '\''true'\'' && steps.smoke_gate_context.outputs.execute != '\''true'\'' }}'
+require_contains "$smoke_path" 'if: ${{ steps.smoke_gate_context.outputs.execute != '\''true'\'' }}'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
-if grep -Fq 'echo "required=${{' "$smoke_path" || grep -Fq 'echo "execute=${{' "$smoke_path"; then
+if grep -Fq 'echo "execute=${{' "$smoke_path"; then
   echo "smoke_gate_context must pass expressions through step env" >&2
   exit 1
 fi
