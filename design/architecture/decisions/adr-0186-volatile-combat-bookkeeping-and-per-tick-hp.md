@@ -35,14 +35,14 @@ Making HP itself volatile was considered and rejected for now. It voids fights o
 
 ## Decision
 
-1. Combat AI bookkeeping is a declared volatile class: aggro and threat, target choice, round and turn order, swing timers, a bounded per-spawn damage-share log, and cooldowns that gate no durable outcome. Each feature declares which of its state is volatile. The state is held by the region executor and bound to `(tenantId, gameInstanceId, regionId, regionEpoch, executorFence)`; a new fence starts empty. Loss is allowed, and its only consequence is that NPCs pick targets again and rounds restart.
-2. No durable effect may be triggered by, keyed on, or targeted at volatile state, and authoritative script handlers may not read it. Volatile data reaches durable state only when frozen into the request digest of an outcome whose identity is already durable, such as damage shares in an NPC death effect.
+1. Combat AI bookkeeping is a declared volatile class: aggro and threat, target choice, round and turn order, swing timers, a bounded per-spawn damage-share log, and cooldowns that gate no durable outcome. Each feature declares which of its state is volatile. The state is held by the region executor and bound to `(tenantId, gameInstanceId, regionId, regionEpoch, executorFence)`; a new fence starts empty. Loss is allowed: NPCs pick targets again, rounds restart, and damage shares logged before the loss no longer count toward that NPC's death reward credit.
+2. No durable effect may be triggered by, keyed on, or targeted at volatile state, and authoritative script handlers may not read it. Volatile data reaches durable state only when frozen into the request digest of an outcome whose identity is already durable, such as damage shares in an NPC death effect. The frozen payload and digest are recorded with that outcome before submission, and a retry resubmits the recorded payload rather than rebuilding it from volatile state.
 3. HP, mana, combat buffs, spawn lifecycle, death, loot, XP, gold, boss phases, quest flags and any timer that gates a durable outcome stay durable under the existing effect path. Mid-fight durable outcomes are one-shots keyed by spawn, trigger and ordinal.
-4. The region executor combines each entity's damage and healing in a tick into one net HP effect owned by Entity Management. With at most one HP mutation per entity per tick, the per-entity `entity_tick_state` watermark is a valid guard for it.
+4. The region executor combines each entity's damage and healing in a tick into one net HP effect owned by Entity Management. That effect keeps its mutation `EffectId` ledger entry and one `tick_effect_guard` row, written in the same transaction as the HP update; the disposable `entity_tick_state` watermark alone does not give replay safety across runtime replacement.
 
 ## Consequences
 
-- Combat writes drop from per hit to per fighter per tick, estimated at about 600 to 250 row writes per second for 50 fights at the 1000 ms tick. A load probe must confirm this.
+- Combat writes drop from an effect ledger row, guard row and HP update per hit to the same three rows per fighter per tick. A load probe must measure the saving.
 - Crash and failover behavior for HP and outcomes is unchanged; after a failover an NPC may switch target.
 - On acceptance, the tick design goal against in-service volatile state and the Entity Management damage example are amended to match.
 
@@ -62,7 +62,7 @@ Deferred. It would also need a voided command result in ADR 0016 and ADR 0053, f
 
 ## Implementation and Proof Obligations
 
-Proof covers one HP effect per entity per tick across replay and failover, rejection of a second HP mutation in the same tick, no influence of stale-fence volatile state on a successor, mid-fight one-shots firing once across crash and retry, no script handler reading volatile state, and a load probe comparing per-hit and per-tick HP at 1000 ms and 250 ms ticks that counts every write.
+Proof covers one HP effect per entity per tick across replay and failover, rejection of a second HP mutation in the same tick, no influence of stale-fence volatile state on a successor, mid-fight one-shots firing once across crash and retry, an NPC death retry after a lost response resubmitting the recorded payload and digest, no script handler reading volatile state, and a load probe comparing per-hit and per-tick HP at 1000 ms and 250 ms ticks that counts every write.
 
 ## Reversibility and Revisit Triggers
 

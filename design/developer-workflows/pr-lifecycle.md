@@ -38,7 +38,7 @@ Rules for triage:
 - A completed review covers only the comparison it saw. Re-review after new functionality, changed contracts, materially broader risk, or a retarget or base change that alters the diff, verifying the actual comparison and mergeability first. Verified direct fixes that add no independently reviewable behavior need no extra round.
 - Keep useful work going elsewhere while one PR waits on CI, a cooldown, or a human. Report the blocker once.
 - Report each round's reviewed head, raw and useful counts, new versus repeat findings, decisions, and what remains.
-- The Overseer, or the human when there is no Overseer, decides whether another round within the configured cap is worth it and when evidence is ready for the human's merge decision. Only the human goes beyond a cap. A cap or human stop is reported as a review limitation, never as coverage or readiness, even with no open findings.
+- The Overseer, or the human when there is no Overseer, decides whether another round within the configured cap is worth it and when evidence is ready for the human's merge decision. Only the human goes beyond a cap. A cap or human stop that ends required review before its configured policy completes is a review limitation, never coverage or readiness, even with no open findings; a cap reached after the policy completes only stops further rounds.
 - Model-based (subagent) review is not part of normal PR polishing. Use it only for the cases listed in [AI delegation and review](./ai-delegation-and-review.md#independent-review-evidence). It never substitutes for a required Hosted review and earns no provider-round or taper credit.
 
 ## Review Completion Criteria
