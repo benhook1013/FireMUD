@@ -385,6 +385,7 @@ Packet 2 historical-alias rule: `MS-AA-TOKEN-REVOCATION` is a superseded service
 - [x] `OPS-07` — `revised` on 2026-09-06; [ADR 0182](../../architecture/decisions/adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md)
 - [x] `EDGE-WITHDRAWAL-01` — `accepted` on 2026-09-24; human-approved emergency cutoff despite possible service interruption; [ADR 0184](../../architecture/decisions/adr-0184-emergency-tcp-proxy-identity-withdrawal.md)
 - [x] `TICK-20` — `accepted` on 2026-10-04; human owner delegated the technical choice to the Overseer, who selected acceptance; [ADR 0183](../../architecture/decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md)
+- [x] `COMBAT-STATE-01` — `accepted` on 2026-11-18; the human owner wrote "accept ADR 0186" (project message `cmsg_01DK8C8kdN5bSS6hoTTbxeHXHytSz3dN3MYqN9w5FrguEf`) after agreeing the plain-terms proposal: volatile aggro, turn order, rounds and timers; durable HP once per fighter per tick; memory-only HP rejected; [ADR 0186](../../architecture/decisions/adr-0186-volatile-combat-bookkeeping-and-per-tick-hp.md)
 
 ### Post-Archive Clarification Of Existing Decision
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed - Pending Human Review
+Accepted
 
 ## Implementation Status
 
@@ -16,15 +16,16 @@ Not implemented. Combat currently writes one guarded durable HP effect per hit, 
 
 ## Decision Record
 
-- Human review status: Pending
-- Human review date: Not yet reviewed
-- Human review disposition: Pending
-- Review source: `AI-AUTHORED-PENDING`
+- Human review status: Completed
+- Human review date: 2026-11-18
+- Human review disposition: Accepted
+- Review source: `COMBAT-STATE-01`
 - Decision date: 2026-11-18
+- Decision key: `COMBAT-STATE-01`
 - Primary capability: `GR-4.2` Combat and conflict resolution
 - Affected capabilities: `GR-1.2`, `GR-1.3`, `GR-3`, `SF-2.2`, `SF-2.4`
 - Decision owner: FireMUD human product and architecture owner
-- Consultation: human-directed impact study with an adversarial review on 2026-11-18; the human owner agreed the direction, pending formal review
+- Consultation: human-directed impact study with an adversarial review on 2026-11-18; the human owner accepted the design on 2026-11-18
 
 ## Context
 
