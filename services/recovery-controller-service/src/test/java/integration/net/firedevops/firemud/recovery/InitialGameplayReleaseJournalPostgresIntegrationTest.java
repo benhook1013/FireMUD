@@ -292,8 +292,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     Operation awaiting =
         journal.transition(
             transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(3));
-    Operation authorized =
-        journal.transition(transitionTuple(awaiting, TransitionVerb.RESUME), base.plusSeconds(4));
+    journal.transition(transitionTuple(awaiting, TransitionVerb.RESUME), base.plusSeconds(4));
     OutboxEntry prepare = journal.findNextEffect(scope.operationId()).orElseThrow();
     UUID attemptId = UUID.randomUUID();
     OutboxEntry dispatched =
