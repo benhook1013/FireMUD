@@ -14,7 +14,7 @@ FireMUD work runs on two providers: Codex (Luna and Sol families) and Claude (Op
 ## Routing Table
 
 | Role | What it covers | Both providers available | Codex only | Claude only |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | Orchestrator | Main thread or lane orchestrator: planning, integration, adjudication, PR and review operations | Human's choice per session (Sol or Opus) | Sol | Opus |
 | Bulk executor | Bounded investigation, mechanical patches, straightforward test updates | Luna `high` | Luna `high` | Opus `medium` (Sonnet optional) |
 | Deep executor | Substantial multi-file implementation, wide reading, documentation rewrites | Opus `high` | Luna `xhigh`, then Sol `medium` | Opus `high` |
