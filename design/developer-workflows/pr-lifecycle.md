@@ -39,7 +39,7 @@ Rules for triage:
 - Keep useful work going elsewhere while one PR waits on CI, a cooldown, or a human. Report the blocker once.
 - Report each round's reviewed head, raw and useful counts, new versus repeat findings, decisions, and what remains.
 - The Overseer, or the human when there is no Overseer, decides whether another round within the configured cap is worth it and when evidence is ready for the human's merge decision. Only the human goes beyond a cap. A cap or human stop is reported as a review limitation, never as coverage or readiness, even with no open findings.
-- Model-based (subagent) review is not part of normal PR polishing. Use it only when the human or Overseer asks for it, or for a risk CodeRabbit cannot cover; see [AI delegation and review](./ai-delegation-and-review.md#independent-review-evidence). It never substitutes for a required Hosted review and earns no provider-round or taper credit.
+- Model-based (subagent) review is not part of normal PR polishing. Use it only for the cases listed in [AI delegation and review](./ai-delegation-and-review.md#independent-review-evidence). It never substitutes for a required Hosted review and earns no provider-round or taper credit.
 
 ## Review Completion Criteria
 
