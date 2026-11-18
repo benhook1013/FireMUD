@@ -148,6 +148,11 @@ ensure_compose_mtls_certs() {
         "$GENERATOR" --workload \
           "$authority_dir/ca.crt" "$authority_dir/ca.key" \
           "$service_dir/client.crt" "$service_dir/client.key" dev "$service"
+      elif [[ "$service" == gateway ]]; then
+        # The authenticated Game Session gameplay listener admits only the Gateway identity.
+        "$GENERATOR" --workload \
+          "$authority_dir/ca.crt" "$authority_dir/ca.key" \
+          "$service_dir/client.crt" "$service_dir/client.key" dev spring-cloud-gateway
       else
         cp -- "$authority_dir/client.crt" "$service_dir/client.crt"
         cp -- "$authority_dir/client.key" "$service_dir/client.key"
@@ -206,6 +211,10 @@ ensure_compose_mtls_certs() {
     done
     if ((found_service_count != ${#services[@]})); then
       echo "Compose mTLS workload fixture contains an unexpected service directory." >&2
+      return 1
+    fi
+    if [[ "$(openssl x509 -in "$workloads_dir/gateway/client.crt" -noout -ext subjectAltName)" != *"URI:spiffe://firemud/ns/dev/sa/spring-cloud-gateway"* ]]; then
+      echo "Compose mTLS workload has the wrong SPIFFE identity: gateway" >&2
       return 1
     fi
     for service in account-service game-session-service entity-management-service world-management-service game-design-service; do

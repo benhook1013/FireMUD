@@ -23,6 +23,11 @@ services:
   gateway:
     environment:
       <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_AUTHENTICATED_UPSTREAM_URL: wss://game-session-service:8444/ws/game/tcp
+      FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH: /app/certs/client.crt
+      FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH: /app/certs/client.key
+      FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH: /app/certs/ca.crt
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/gateway:/app/certs:ro
 
@@ -95,6 +100,8 @@ services:
       FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
       FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: /app/run-owned-initial-admission-capability.json
       FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH: /app/run-owned-authored-world-source/source-receipt.json
+      FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_ENABLED: "true"
+      FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_PORT: "8444"
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-session-service:/app/certs:ro
       - type: bind
