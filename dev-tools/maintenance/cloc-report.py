@@ -47,7 +47,7 @@ DEFAULT_BAR_WIDTH = 16
 REMOTE_COMMAND_TIMEOUT_SECONDS = 120
 PR_COMMAND_DESCRIPTION = "compare merge-base and immutable head snapshots for a GitHub PR"
 PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid"
-PR_UPDATE_FIELDS = "baseRefOid,headRefOid,body"
+PR_UPDATE_FIELDS = "state,baseRefName,baseRefOid,headRefName,headRefOid,body"
 CODERABBIT_LOGIN = "coderabbitai[bot]"
 CODERABBIT_PROCESSING_MARKER = "<!-- This is an auto-generated comment: review in progress by coderabbit.ai -->"
 PR_REPORT_START = "<!-- firemud:cloc-report:start -->"
@@ -1056,7 +1056,10 @@ def replace_pr_report_block(body: str, snippet: str) -> str:
     return validated_pr_body(f"{body[:start]}{snippet}{body[end:]}")
 
 
-def pull_request_update_state(root: Path, number: int, repository: str) -> tuple[str, str, str]:
+def pull_request_update_state(
+    root: Path, number: int, repository: str, base_ref: str, head_ref: str
+) -> tuple[str, str, str]:
+    """Read the PR's body, base and head, refusing unless it is still open on the counted refs."""
     require_tool("gh")
     result = run_command(
         (
@@ -1083,6 +1086,10 @@ def pull_request_update_state(root: Path, number: int, repository: str) -> tuple
         body = ""
     if not isinstance(body, str):
         raise ReportError("GitHub PR body was not text")
+    if payload.get("state") != "OPEN":
+        raise ReportError("PR is no longer open; refusing body update")
+    if payload.get("baseRefName") != base_ref or payload.get("headRefName") != head_ref:
+        raise ReportError("PR base or head branch changed while the LOC report was being generated; refusing body update")
     return body, valid_object_id(payload.get("baseRefOid"), "base"), valid_object_id(payload.get("headRefOid"), "head")
 
 
@@ -1140,7 +1147,7 @@ def update_pull_request_body(
     counted_merge_base = valid_object_id(base.get("merge_base"), "merge-base")
     counted_head = valid_object_id(head.get("oid"), "head")
 
-    remote_body, current_base, current_head = pull_request_update_state(root, number, repository)
+    remote_body, current_base, current_head = pull_request_update_state(root, number, repository, base_ref, head_ref)
     if current_head != counted_head:
         raise ReportError("PR head changed while the LOC report was being generated; refusing body update")
     if expect_base is not None and current_base != expect_base:
@@ -1167,10 +1174,11 @@ def update_pull_request_body(
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as body_file:
             body_path = Path(body_file.name)
             body_file.write(updated_body)
-        # Checked last so the window between these reads and the edit stays small.
+        # Checked last so the window between these reads and the edit stays small. GitHub's
+        # body update has no atomic precondition, so the edit remains best effort.
         if skip_while_hosted_review and hosted_review_in_progress(root, number, repository, current_head):
             raise HostedReviewActive(f"CodeRabbit review in progress on PR #{number}; LOC section not updated")
-        latest_state = pull_request_update_state(root, number, repository)
+        latest_state = pull_request_update_state(root, number, repository, base_ref, head_ref)
         if latest_state != (remote_body, current_base, current_head):
             raise ReportError("PR body, base, or head changed before the LOC report update; refusing body update")
         run_command(

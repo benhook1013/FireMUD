@@ -581,6 +581,7 @@ deletion_nodes = nodes_by_name(json.loads(deletion_diff.stdout))
 assert all(row["files"] == 0 and row["lines"] == 0 for row in deletion_nodes.values())
 assert "omitted 1 tracked path(s) that are deleted or missing" in deletion_diff.stderr
 
+OPEN_REFS = {"state": "OPEN", "baseRefName": "stack/base", "headRefName": "feature/forked"}
 mock_metadata = cloc_report.PullRequestMetadata(
     number=2736,
     repository="example/example",
@@ -859,7 +860,7 @@ def fake_changed_head_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}
         ).encode(),
         stderr=b"",
     )
@@ -886,7 +887,7 @@ def fake_changed_base_command(args, _root, *, timeout=None):
             args,
             0,
             stdout=json.dumps(
-                {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
+                {**OPEN_REFS, "baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
             ).encode(),
             stderr=b"",
         )
@@ -921,7 +922,7 @@ def fake_changed_merge_base_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
         ).encode(),
         stderr=b"",
     )
@@ -952,6 +953,7 @@ def fake_oversized_body_command(args, _root, *, timeout=None):
         0,
         stdout=json.dumps(
             {
+                **OPEN_REFS,
                 "baseRefOid": "a" * 40,
                 "headRefOid": "b" * 40,
                 "body": "x" * cloc_report.GITHUB_PR_BODY_MAX_CHARACTERS,
@@ -982,7 +984,7 @@ def fake_stable_update_command(args, _root, *, timeout=None):
             args,
             0,
             stdout=json.dumps(
-                {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
+                {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
             ).encode(),
             stderr=b"",
         )
@@ -1014,14 +1016,16 @@ finally:
     cloc_report.run_command = original_run_command
 
 for changed_state, change_name in (
-    ({"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "concurrent"}, "body"),
-    ({"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}, "base"),
-    ({"baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}, "revision"),
+    ({**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "concurrent"}, "body"),
+    ({**OPEN_REFS, "baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}, "base"),
+    ({**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}, "revision"),
+    ({**OPEN_REFS, "state": "CLOSED", "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}, "close"),
+    ({**OPEN_REFS, "baseRefName": "other/base", "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}, "same-SHA retarget"),
 ):
     conflict_calls = []
     update_states = iter(
         (
-            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"},
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"},
             changed_state,
         )
     )
@@ -1042,7 +1046,9 @@ for changed_state, change_name in (
         try:
             cloc_report.update_pull_request_body(repo, 2736, impact)
         except cloc_report.ReportError as error:
-            assert "body, base, or head changed" in str(error)
+            assert any(
+                text in str(error) for text in ("body, base, or head changed", "no longer open", "branch changed")
+            ), str(error)
         else:
             raise AssertionError(f"second-read {change_name} change must block body update")
         assert len(conflict_calls) == 2
@@ -1061,7 +1067,7 @@ def fake_unchanged_body_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": impact_snippet}
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": impact_snippet}
         ).encode(),
         stderr=b"",
     )
@@ -1085,7 +1091,7 @@ def fake_crlf_unchanged_body_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": crlf_body}
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": crlf_body}
         ).encode(),
         stderr=b"",
     )
@@ -1102,7 +1108,7 @@ def guarded_update_command(calls, *, base="a" * 40, statuses="", running="", pro
         calls.append(args)
         assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
         if args[:3] == ("gh", "pr", "view"):
-            payload = {"baseRefOid": base, "headRefOid": "b" * 40, "body": "existing"}
+            payload = {**OPEN_REFS, "baseRefOid": base, "headRefOid": "b" * 40, "body": "existing"}
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload).encode(), stderr=b"")
         if args[:2] == ("gh", "api"):
             endpoint = args[3]
@@ -1305,6 +1311,9 @@ native_gh.write_text(
                 state["body"] = state["changed_body"]
             state_path.write_text(json.dumps(state), encoding="utf-8")
             print(json.dumps({
+                "state": "OPEN",
+                "baseRefName": "stack/base",
+                "headRefName": "feature/forked",
                 "baseRefOid": state["baseRefOid"],
                 "headRefOid": state["headRefOid"],
                 "body": state["body"],
@@ -1603,3 +1612,66 @@ for pr_argument in (
 
 print("cloc report contract checks passed")
 PY
+
+# PR LOC Report callback: run its "Decide whether to update" step against fake
+# source runs to prove PR selection and edit-only eligibility.
+WORKFLOW_DIR="$TMP_DIR/loc-workflow"
+mkdir -p "$WORKFLOW_DIR/bin"
+python3 - "$ROOT_DIR/.github/workflows/pr-loc-report.yml" "$WORKFLOW_DIR/decide.sh" <<'PY'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+start = lines.index("      - name: Decide whether to update")
+run = next(i for i in range(start, len(lines)) if lines[i] == "        run: |")
+body = []
+for line in lines[run + 1:]:
+    if line and not line.startswith("          "):
+        break
+    body.append(line[10:])
+open(sys.argv[2], "w", encoding="utf-8").write("\n".join(body) + "\n")
+PY
+cat >"$WORKFLOW_DIR/bin/gh" <<'GH'
+#!/usr/bin/env bash
+echo "$*" >>"$FAKE_GH_LOG"
+case "$*" in
+  *"/jobs?per_page=100"*) printf '%s\n' "$FAKE_DETECTOR" ;;
+  *"/pulls/42"*) printf '%s\n' "$FAKE_PR" ;;
+  *) echo "unexpected fake gh call: $*" >&2; exit 1 ;;
+esac
+GH
+chmod +x "$WORKFLOW_DIR/bin/gh"
+
+loc_base="$(printf 'a%.0s' {1..40})"
+loc_head="$(printf 'b%.0s' {1..40})"
+run_decide() {
+  : >"$WORKFLOW_DIR/out"
+  : >"$WORKFLOW_DIR/gh.log"
+  PATH="$WORKFLOW_DIR/bin:$PATH" GITHUB_OUTPUT="$WORKFLOW_DIR/out" FAKE_GH_LOG="$WORKFLOW_DIR/gh.log" \
+    REPOSITORY="example/example" CI_RUN_ID=7 CI_RUN_ATTEMPT=1 \
+    CI_TITLE="CI — Validation pr-42 base-${loc_base} head-${loc_head}" CI_HEAD_SHA="$loc_head" \
+    CI_PATH="${CI_PATH:-.github/workflows/ci.yml}" CI_PULL_REQUESTS="${CI_PULL_REQUESTS:-[]}" \
+    FAKE_DETECTOR="${FAKE_DETECTOR:-success}" \
+    FAKE_PR="{\"state\":\"open\",\"head\":\"${loc_head}\",\"base\":\"${loc_base}\",\"head_repo\":\"example/example\",\"base_repo\":\"example/example\",\"author\":\"someone\",\"body\":\"\"}" \
+    bash "$WORKFLOW_DIR/decide.sh" >"$WORKFLOW_DIR/stdout"
+}
+expect_skip() {
+  if ! { grep -qx 'update=false' "$WORKFLOW_DIR/out" && grep -qF "$1" "$WORKFLOW_DIR/stdout"; }; then
+    echo "PR LOC Report must skip: $1" >&2; cat "$WORKFLOW_DIR/stdout" >&2; exit 1
+  fi
+}
+
+CI_PULL_REQUESTS="[{\"number\":41,\"base\":{\"sha\":\"${loc_base}\"},\"head\":{\"sha\":\"${loc_head}\"}}]" run_decide
+expect_skip "native PR association does not match"
+[[ ! -s "$WORKFLOW_DIR/gh.log" ]] || { echo "a mismatched association must skip before any API call" >&2; exit 1; }
+
+CI_PATH=".github/workflows/other.yml" run_decide
+expect_skip "source run is not ci.yml"
+
+FAKE_DETECTOR="skipped" run_decide
+expect_skip "metadata-only CI run"
+
+CI_PULL_REQUESTS="[{\"number\":42,\"base\":{\"sha\":\"${loc_base}\"},\"head\":{\"sha\":\"${loc_head}\"}}]" run_decide
+if ! { grep -qx 'update=true' "$WORKFLOW_DIR/out" && grep -qx 'number=42' "$WORKFLOW_DIR/out" \
+  && grep -qx "base=${loc_base}" "$WORKFLOW_DIR/out" && grep -qx "head=${loc_head}" "$WORKFLOW_DIR/out"; }; then
+  echo "PR LOC Report must target the run's exact PR, base, and head" >&2; cat "$WORKFLOW_DIR/stdout" "$WORKFLOW_DIR/out" >&2; exit 1
+fi
+echo "PR LOC Report callback contract checks passed"

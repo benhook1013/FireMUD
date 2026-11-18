@@ -6,7 +6,8 @@ name: PR LOC Report
 # the script. The target PR, base, and head come from the CI run's canonical
 # title, as in Validation Summary, and are rechecked before the edit. Body edits
 # made with GITHUB_TOKEN start no other workflow runs. The edit is skipped while
-# a CodeRabbit review is in progress. The section is informational.
+# a CodeRabbit review is in progress. GitHub's body update has no atomic
+# precondition, so the edit is best effort. The section is informational.
 on:
   workflow_run:
     workflows: ['CI — Validation']
@@ -40,6 +41,8 @@ jobs:
       CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
       CI_TITLE: ${{ github.event.workflow_run.display_title }}
       CI_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      CI_PATH: ${{ github.event.workflow_run.path }}
+      CI_PULL_REQUESTS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
@@ -68,6 +71,11 @@ jobs:
           [[ "$CI_TITLE" =~ $title_re ]] || skip "CI run has no canonical PR identity"
           number="${BASH_REMATCH[1]}"; base="${BASH_REMATCH[2]}"; head="${BASH_REMATCH[3]}"
           [[ "$head" == "$CI_HEAD_SHA" ]] || skip "CI run title and head disagree"
+          [[ "$CI_PATH" == .github/workflows/ci.yml || "$CI_PATH" == .github/workflows/ci.yml@?* ]] || skip "source run is not ci.yml"
+          # GitHub's native association may be empty; when present it must name this exact PR, base, and head.
+          [[ "$(jq --argjson n "$number" --arg b "$base" --arg h "$head" \
+            'length == 0 or (length == 1 and .[0].number == $n and .[0].base.sha == $b and .[0].head.sha == $h)' \
+            <<<"$CI_PULL_REQUESTS")" == true ]] || skip "CI run's native PR association does not match its title"
           # Edit-only (metadata) CI runs skip change detection; they have nothing new to count.
           detector="$(gh api --paginate "repos/${REPOSITORY}/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?per_page=100" \
             --jq '.jobs[] | select(.name == "Detect CI-Relevant Changes") | .conclusion' | jq -R . | jq -s .)"
@@ -81,10 +89,12 @@ jobs:
           [[ "$(jq -r '.head' <<<"$pr")" == "$head" && "$(jq -r '.base' <<<"$pr")" == "$base" ]] \
             || skip "PR #${number} head or base moved past this CI run; the next CI run refreshes it"
           [[ "$(jq -r '.author' <<<"$pr")" != "renovate[bot]" ]] || skip "Renovate PR #${number}"
-          # Skip when the existing section already counts this exact head and base.
-          recorded="$(jq -r '.body' <<<"$pr" | tr -d '\r' \
-            | sed -n 's/^<!-- firemud:cloc-report:metadata \(.*\) -->$/\1/p' | head -n 1)"
+          # Skip when a complete marked section already counts this exact head and base.
+          body="$(jq -r '.body' <<<"$pr" | tr -d '\r')"
+          recorded="$(sed -n 's/^<!-- firemud:cloc-report:metadata \(.*\) -->$/\1/p' <<<"$body" | head -n 1)"
           if [[ -n "$recorded" ]] \
+            && grep -qxF '<!-- firemud:cloc-report:start -->' <<<"$body" \
+            && grep -qxF '<!-- firemud:cloc-report:end -->' <<<"$body" \
             && [[ "$(jq -r '.head_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$head" ]] \
             && [[ "$(jq -r '.base_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$base" ]]; then
             skip "PR #${number} LOC section already matches this head and base"
