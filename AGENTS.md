@@ -25,7 +25,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 
 ## How Work Flows
 
-- FireMUD is pre-v1. Converge on one canonical state: when a contract changes, update its call sites, tests, and docs together and remove the old path. Keep compatibility only where the owning architecture requires it for live data, security, or protocol reasons.
+- FireMUD is pre-v1. Converge on one canonical state: when a contract changes, update its call sites, tests, and docs together and remove the old path. Keep compatibility only where the owning architecture requires it for live data (none before v1 once [ADR 0185](design/architecture/decisions/adr-0185-no-data-carry-over-before-v1.md) is accepted), security, or protocol reasons.
 - **Group work into as few PRs as stay reviewable.** Fewer PRs mean less review overhead, and touching several domains is not by itself a reason to split. Split only when a combined PR would be hard to review or would mix unrelated risk.
 - **Design first.** A PR that changes behavior updates the design doc that owns that behavior in the same PR.
 - Update an implementation tracker when capability status actually changes, not on every PR. Read the owning tracker before interpreting branch names, commits, or raw diffs during implementation or branch reconciliation.
