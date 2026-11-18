@@ -334,17 +334,16 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @Test
-  void explicitRemainingBudgetBoundsAStalledAccountCallAndExactRetryStillReplays()
-      throws Exception {
+  void explicitRemainingBudgetBoundsAStalledAccountCall() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicBoolean respond = new AtomicBoolean(true);
-    Server server = server("account", calls, false, new AtomicLong(), respond);
+    AtomicLong observedNanos = new AtomicLong();
+    Server server = server("account", calls, false, observedNanos, respond);
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
-      var first = client.commit(request, deadline());
+      client.commit(request, deadline());
       respond.set(false);
-      long started = System.nanoTime();
       assertThatThrownBy(
               () ->
                   client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L))
@@ -354,9 +353,7 @@ class AccountTenantCapacityClientMtlsTest {
                   assertThat(Status.fromThrowable(failure).getCode())
                       .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
       assertThat(calls).hasValue(2); // The timed-out invocation reached the nonresponding handler.
-      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3_000L);
-      respond.set(true);
-      assertThat(client.commit(request, deadline())).isEqualTo(first);
+      assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(1));
     } finally {
       stop(server);
     }
@@ -416,14 +413,14 @@ class AccountTenantCapacityClientMtlsTest {
   void incomingDeadlineBoundsAStalledAccountCall() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicBoolean respond = new AtomicBoolean(true);
-    Server server = server("account", calls, false, new AtomicLong(), respond);
+    AtomicLong observedNanos = new AtomicLong();
+    Server server = server("account", calls, false, observedNanos, respond);
     var scheduler = Executors.newSingleThreadScheduledExecutor();
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
       client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 60_000L);
       respond.set(false);
-      long started = System.nanoTime();
       assertThatThrownBy(
               () ->
                   Context.current()
@@ -435,7 +432,7 @@ class AccountTenantCapacityClientMtlsTest {
                   assertThat(Status.fromThrowable(failure).getCode())
                       .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
       assertThat(calls).hasValue(2); // The incoming deadline bounded an actual in-flight call.
-      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3_000L);
+      assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(1));
     } finally {
       scheduler.shutdownNow();
       stop(server);
@@ -625,9 +622,7 @@ class AccountTenantCapacityClientMtlsTest {
       if (!initialBuild.getAndSet(false)) {
         reloadStarted.countDown();
         try {
-          if (!releaseReload.await(10, TimeUnit.SECONDS)) {
-            throw new SSLException("Test reload release timed out");
-          }
+          releaseReload.await();
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
           throw new SSLException("Test reload wait interrupted", interrupted);

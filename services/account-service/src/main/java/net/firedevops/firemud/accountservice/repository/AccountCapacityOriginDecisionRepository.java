@@ -90,7 +90,7 @@ public final class AccountCapacityOriginDecisionRepository {
   }
 
   /** SERIALIZABLE caller: include pre-origin reservations and retained rearm history. */
-  private void requireFreshAttemptBinding(Request request) {
+  public void requireFreshAttemptBinding(Request request) {
     Record conflict =
         dsl.fetchOne(
             "SELECT 1 FROM ("

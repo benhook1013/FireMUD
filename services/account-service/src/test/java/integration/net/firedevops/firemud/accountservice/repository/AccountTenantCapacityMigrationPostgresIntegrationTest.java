@@ -169,7 +169,31 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                       status -> budgets.provision(tenant.canonicalTenantId(), 2)))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
+      assertThatThrownBy(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> {
+                        budgets.provision(tenant.canonicalTenantId(), 4);
+                        budgets.requireReady(tenant.canonicalTenantId(), 4, 2);
+                      }))
+          .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
+      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
       transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
+      assertThat(
+              transaction.<Long>execute(
+                  status -> budgets.requireReady(tenant.canonicalTenantId(), 4, 1)))
+          .isEqualTo(1);
+      assertThatThrownBy(
+              () ->
+                  transaction.execute(
+                      status -> budgets.requireReady(tenant.canonicalTenantId(), 4, 2)))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityRepository.CapacityException.class,
+              failure ->
+                  assertThat(failure.code())
+                      .isEqualTo(
+                          net.firedevops.firemud.common.account.capacity
+                              .TenantCapacityAdmissionGrpcCodec.Failure.ENTITLEMENT_UNAVAILABLE));
       var original =
           Objects.requireNonNull(
                   dsl.fetchOne(

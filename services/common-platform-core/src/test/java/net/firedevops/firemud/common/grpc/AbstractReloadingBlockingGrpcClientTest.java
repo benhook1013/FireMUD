@@ -448,7 +448,8 @@ class AbstractReloadingBlockingGrpcClientTest {
     }
 
     private GameDesignServiceGrpc.GameDesignServiceBlockingStub requirePublishedExplicitStub() {
-      return requirePublishedInitializedStub("test client is not initialized and available");
+      return withPublishedInitializedStub(
+          "test client is not initialized and available", selected -> selected);
     }
 
     private GameDesignServiceGrpc.GameDesignServiceBlockingStub currentStub() {

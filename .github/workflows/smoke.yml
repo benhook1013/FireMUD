@@ -942,7 +942,7 @@ jobs:
               const title = `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
                 `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
               const replacement = await findMatchingRuntimeImagesRun("repository_dispatch", title, identity);
-              if (!replacement) return "pending";
+              if (!replacement) return "absent";
               if (!positiveInteger(replacement.id) || !positiveInteger(replacement.run_attempt) || replacement.id <= run.id ||
                   replacement.event !== "repository_dispatch") return false;
               // Pending exact refreshes are not proof, but must not fail the caller
@@ -950,7 +950,7 @@ jobs:
               if (["queued", "in_progress", "waiting", "pending", "requested"].includes(replacement.status)) {
                 return "pending";
               }
-              if (replacement.status !== "completed" || replacement.conclusion !== "success") return false;
+              if (replacement.status !== "completed" || !["success", "failure"].includes(replacement.conclusion)) return false;
               const jobs = await withTransientGitHubRetry("canonical transition refresh jobs lookup", () =>
                 github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
                   owner, repo, run_id: replacement.id, attempt_number: replacement.run_attempt, per_page: 100,
@@ -958,7 +958,15 @@ jobs:
               );
               const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
               if (!candidate || candidate.status !== "completed") return "pending";
-              return await verifyKnownPlayFailure(replacement, candidate, identity);
+              if (await verifyKnownPlayFailure(replacement, candidate, identity)) return true;
+              // A new attempt can start between list/proof reads. Invalid current proof
+              // is terminal; only a verified newer attempt warrants bounded reselection.
+              const { data: latest } = await withTransientGitHubRetry(
+                "superseding canonical refresh attempt lookup",
+                () => github.rest.actions.getWorkflowRun({owner, repo, run_id: replacement.id})
+              );
+              return latest.id === replacement.id && positiveInteger(latest.run_attempt) &&
+                latest.run_attempt > replacement.run_attempt ? "pending" : false;
             }
 
             // Commit objects are immutable; mutable PR/base reads stay fresh.
@@ -1186,6 +1194,9 @@ jobs:
             }
 
             let currentIdentity = null;
+            let absentRefreshKey = null;
+            let discoveredRefreshKey = null;
+            let absentRefreshObservedAt = null;
             let requireCurrentIdentity = false;
             let cancelledRunId = null;
             let cancelledRunObservedAt = null;
@@ -1313,7 +1324,24 @@ jobs:
                           }
                         }
                         const refreshProof = await verifyFailedPullCanonicalRefresh(matching, currentIdentity);
-                        if (refreshProof === "pending") {
+                        const refreshKey = `${matching.id}:${identityKey(currentIdentity)}`;
+                        if (refreshProof === "absent" && discoveredRefreshKey !== refreshKey) {
+                          const missingKey = refreshKey;
+                          if (absentRefreshKey !== missingKey) {
+                            absentRefreshKey = missingKey;
+                            absentRefreshObservedAt = Date.now();
+                          }
+                          if (Date.now() - absentRefreshObservedAt >= cancelledReplacementTimeoutMs) {
+                            core.setFailed(`Failed runtime-images run ${matching.id} has no exact canonical refresh ` +
+                              `after ${cancelledReplacementTimeoutMs / 60000} minutes`);
+                            return;
+                          }
+                        } else {
+                          if (refreshProof !== "absent") discoveredRefreshKey = refreshKey;
+                          absentRefreshKey = null;
+                          absentRefreshObservedAt = null;
+                        }
+                        if (refreshProof === "pending" || refreshProof === "absent") {
                           core.info("Exact canonical refresh is pending; continuing within the existing smoke-gate deadline.");
                           await new Promise((resolve) => setTimeout(resolve, sleepMs));
                           continue smokeGatePolling;

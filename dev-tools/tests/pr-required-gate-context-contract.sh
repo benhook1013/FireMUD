@@ -3579,10 +3579,14 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
 const refreshStart = script.indexOf("async function verifyFailedPullCanonicalRefresh(");
 const refreshEnd = script.indexOf("// Commit objects", refreshStart);
 const refreshFunction = script.slice(refreshStart, refreshEnd);
-async function recoveredFailure(options = {}) {
-  const original = {id: 98, event: "pull_request", status: "completed", conclusion: "failure", ...options.original};
-  const replacement = options.absent ? null : {id: 99, run_attempt: 2, event: "repository_dispatch",
+async function recoveredFailure(options = {}, selectedRun = null, selectedIdentity = identity) {
+  const original = selectedRun ?? {id: 98, event: "pull_request", status: "completed", conclusion: "failure", ...options.original};
+  const replacement = options.absent ? null : {id: original.id + 1, run_attempt: 2, event: "repository_dispatch",
     status: "completed", conclusion: "success", ...options.replacement};
+  const selectedTitle = `Build Runtime Images secure-pr-artifact pr-3390 base-${selectedIdentity.baseSha} ` +
+    `head-${selectedIdentity.headSha} merge-${selectedIdentity.mergeSha} mode-required`;
+  const selectedCandidate = {...candidate, run_id: replacement?.id, run_attempt: replacement?.run_attempt,
+    head_sha: workflowSha, conclusion: replacement?.conclusion, ...options.candidate};
   let verified = 0, queries = 0;
   const execute = new Function("repositoryName", "prNumber", "positiveInteger", "findMatchingRuntimeImagesRun",
     "withTransientGitHubRetry", "github", "owner", "repo", "canonicalSmokeJobName", "verifyKnownPlayFailure", "context",
@@ -3591,20 +3595,43 @@ async function recoveredFailure(options = {}) {
     async (event, title, selected) => {
       queries++;
       assert.equal(event, "repository_dispatch");
-      assert.deepEqual(selected, identity);
-      assert.equal(title, source.display_title);
+      assert.deepEqual(selected, selectedIdentity);
+      assert.equal(title, selectedTitle);
       if (options.lookupError) throw options.lookupError;
       return replacement;
     }, (_label, call) => call(), {paginate: async (route, input) => {
       assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
-      assert.equal(input.run_id, 99); assert.equal(input.attempt_number, 2);
-      return options.noProducer ? [] : [{...candidate, ...options.candidate}];
-    }}, "benhook1013", "FireMUD", canonicalSmokeJobName, async (selected, job, selectedIdentity) => {
+      assert.equal(input.run_id, replacement.id); assert.equal(input.attempt_number, replacement.run_attempt);
+      return options.noProducer ? [] : [selectedCandidate];
+    }, rest: {actions: {getWorkflowRun: async ({run_id}) => {
+      assert.equal(run_id, replacement.id);
+      return {data: {...replacement, ...options.latest}};
+    }}}}, "benhook1013", "FireMUD", canonicalSmokeJobName, async (selected, job, proofIdentity) => {
       verified++;
-      assert.equal(selected, replacement); assert.deepEqual(job, {...candidate, ...options.candidate}); assert.deepEqual(selectedIdentity, identity);
-      return verify(options.mutateProof, "repository_dispatch");
+      assert.deepEqual(proofIdentity, selectedIdentity);
+      assert.equal(selected, replacement); assert.deepEqual(job, selectedCandidate);
+      return verify(data => {
+        data.identity = structuredClone(selectedIdentity);
+        Object.assign(data.run, replacement);
+        for (const native of [data.source, data.latest]) Object.assign(native, replacement, {
+          display_title: selectedTitle, head_sha: workflowSha,
+        });
+        Object.assign(data.candidate, structuredClone(selectedCandidate));
+        Object.assign(data.jobs[0], structuredClone(selectedCandidate));
+        data.currentPullRequest.head.sha = selectedIdentity.headSha;
+        data.currentPullRequest.base.ref = selectedIdentity.baseRef;
+        data.currentPullRequest.merge_commit_sha = selectedIdentity.mergeSha;
+        data.currentBase = {ref: `refs/heads/${selectedIdentity.baseRef}`, object: {sha: selectedIdentity.baseSha}};
+        if (options.legacyProof) {
+          data.legacyDefinition = true;
+          for (const job of [data.candidate, data.jobs[0]]) {
+            for (const step of job.steps) if (failures.includes(step.name)) step.conclusion = "failure";
+          }
+        }
+        if (options.mutateProof) options.mutateProof(data);
+      }, "repository_dispatch");
     }, {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}});
-  return {accepted: await recover(original, identity), verified, queries};
+  return {accepted: await recover(original, selectedIdentity), verified, queries};
 }
 // Proof errors in a successful exception attempt must fail closed.
 const failedStart = script.indexOf('// A continued probe');
@@ -3640,7 +3667,8 @@ async function failedLegacyProof(stage, error, event = "pull_request") {
   const execute = new Function("matching", "repositoryName", "github", "owner", "repo",
     "canonicalSmokeJobName", "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure",
     "isCurrentPullRequestObsolete", "TerminalGitHubRequestError", "core", "verifyFailedPullCanonicalRefresh", "context", "resolveCurrentIdentity", "identityKey",
-    `return (async () => { smokeGatePolling: while (true) { ${legacyFailedBranch} break; } })();`);
+    `return (async () => { let absentRefreshKey = null, discoveredRefreshKey = null, absentRefreshObservedAt = null;
+      smokeGatePolling: while (true) { ${legacyFailedBranch} break; } })();`);
   await execute({...source, conclusion: "failure", event}, repositoryName, github, "benhook1013", "FireMUD", canonicalSmokeJobName,
     identity, (_label, call) => call(), async () => {throw error;}, async () => false,
     TerminalGitHubRequestError, core, async () => false,
@@ -3685,22 +3713,29 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     }
     return Boolean(options.directProof || (options.recoverDrift && run.event === "repository_dispatch"));
   },
-    async () => {
+    async (selectedRun, selectedIdentity) => {
+      assert.equal(selectedRun.id, original.id);
+      assert.equal(selectedIdentity.headSha, identity.headSha);
+      assert.equal(selectedIdentity.baseSha, identity.baseSha);
+      assert.equal(selectedIdentity.mergeSha, identity.mergeSha);
       const status = statuses[Math.min(polls++, statuses.length - 1)];
       if (options.proofDrift) {
         const result = await recoveredFailure({mutateProof(data) {
           Object.assign(proofLive, options.finalIdentity);
           data.currentBase.object.sha = proofLive.baseSha;
           data.currentPullRequest.merge_commit_sha = proofLive.mergeSha;
-        }});
+        }}, selectedRun, selectedIdentity);
         assert.equal(result.accepted, false, "the old refresh must fail its live tuple proof");
         return false;
       }
       return (await recoveredFailure(options.headRepository ? {headRepository: options.headRepository}
         : status === "absent" ? {absent: true}
+        : status === "superseded" ? {latest: {run_attempt: 3}, mutateProof: data => {data.latest.run_attempt = 3;}}
         : status === "missing-job" ? {noProducer: true}
         : status === "pending-job" ? {candidate: {status: "in_progress"}}
-        : {replacement: {status, conclusion: status === "completed" ? "success" : null}})).accepted;
+        : {replacement: {status, conclusion: status === "completed" ? "success" : null,
+          run_attempt: statuses[0] === "superseded" && polls > 1 ? 3 : 2}},
+        selectedRun, selectedIdentity)).accepted;
     }, async () => false, TerminalGitHubRequestError, core, async (_label, requireCurrent) => {
       if (requireCurrent) {
         currentChecks++;
@@ -3728,6 +3763,10 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     assert.deepEqual(failures, ["Canonical PLAY transition exception label is absent or no longer eligible."]);
     assert.deepEqual(outputs, []);
     assert.equal(writes, 0);
+  } else if (options.absentExpires) {
+    assert.deepEqual(failures, ["Failed runtime-images run 98 has no exact canonical refresh after 0.001 minutes"]);
+    assert.deepEqual(outputs, []);
+    assert.equal(writes, 0);
   } else if (expires) {
     assert.equal(failures.length, 1);
     assert.match(failures[0], /^Timed out waiting for the exact runtime-images\/full-smoke run/);
@@ -3739,8 +3778,8 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     assert.equal(writes, 1);
     assert.ok(options.directProof || currentChecks >= 1);
   }
-  assert.equal(polls, options.directProof || options.labelRemoved ? 0 : options.recoverDrift ? 1 : statuses.length);
-  assert.equal(sleeps, options.labelRemoved ? 0 : options.finalIdentity ? (statuses[0] === "absent" ? 1 : 0)
+  assert.equal(polls, options.directProof || options.labelRemoved ? 0 : options.absentExpires ? 3 : options.recoverDrift ? 1 : statuses.length);
+  assert.equal(sleeps, options.labelRemoved ? 0 : options.absentExpires ? 2 : options.finalIdentity ? (statuses[0] === "absent" ? 1 : 0)
     : expires ? statuses.length : statuses.length - 1);
 }
 // Exercise the real resolver, not merely a stub that honors requireCurrent.
@@ -3806,6 +3845,24 @@ function markerAccepted(overrides = {}) {
     await assert.rejects(failedProof(terminal), error => error === terminal);
   }
   assert.deepEqual(await recoveredFailure(), {accepted: true, verified: 1, queries: 1});
+  const alternateIdentity = {...identity, baseSha: "e".repeat(40), mergeSha: "f".repeat(40)};
+  assert.equal((await recoveredFailure({}, {...source, id: 199, conclusion: "failure"}, alternateIdentity)).accepted, true);
+  assert.equal((await recoveredFailure({replacement: {conclusion: "failure"}, legacyProof: true})).accepted, true);
+  assert.equal((await recoveredFailure({replacement: {conclusion: "failure"}})).accepted, false);
+  assert.equal((await recoveredFailure({mutateProof: data => {
+    data.jobs[0].steps.push(step("Start database", "failure"));
+  }})).accepted, false, "a latest refresh with unrelated failure never supplies exception proof");
+  assert.equal((await recoveredFailure({latest: {run_attempt: 3}, mutateProof: data => {
+    data.latest.run_attempt = 3;
+  }})).accepted, "pending");
+  assert.equal((await recoveredFailure({mutateProof: data => {
+    data.jobs[0].steps.push(step("Start database", "failure"));
+  }, latest: {run_attempt: 2}})).accepted, false);
+  await pendingRefreshCaller(["absent", "absent", "absent", "completed"], false, {absentExpires: true});
+  await pendingRefreshCaller(["absent", "queued", "in_progress", "in_progress", "completed"]);
+  await pendingRefreshCaller(["absent", "queued", "absent", "absent", "absent", "completed"]);
+  await pendingRefreshCaller(["superseded", "queued", "completed"]);
+
   for (const status of ["queued", "in_progress", "waiting", "pending", "requested"]) {
     assert.deepEqual(await recoveredFailure({replacement: {status, conclusion: null}}),
       {accepted: "pending", verified: 0, queries: 1});
@@ -3827,7 +3884,7 @@ function markerAccepted(overrides = {}) {
   });
   await pendingRefreshCaller(["queued", "in_progress", "completed"]);
   await pendingRefreshCaller(["queued", "in_progress"], true);
-  assert.equal((await recoveredFailure({absent: true})).accepted, "pending");
+  assert.equal((await recoveredFailure({absent: true})).accepted, "absent");
   assert.equal((await recoveredFailure({noProducer: true})).accepted, "pending");
   assert.equal((await recoveredFailure({candidate: {status: "in_progress"}})).accepted, "pending");
   await pendingRefreshCaller(["absent", "queued", "completed"]);
@@ -3851,7 +3908,7 @@ function markerAccepted(overrides = {}) {
     {original: {status: "in_progress"}}, {original: {conclusion: "success"}},
     {original: {id: 0}}, {replacement: {id: 98}}, {replacement: {id: 97}},
     {replacement: {run_attempt: 0}}, {replacement: {event: "pull_request"}},
-    {replacement: {status: "unknown"}}, {replacement: {conclusion: "failure"}},
+    {replacement: {status: "unknown"}},
     {replacement: {conclusion: "cancelled"}},
   ]) {
     const result = await recoveredFailure(options);

@@ -139,7 +139,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   }
 
   /** Takes the last published stub without waiting for a TLS reload. */
-  protected final TStub requirePublishedInitializedStub(String unavailableMessage) {
+  private TStub requirePublishedInitializedStub(String unavailableMessage) {
     TStub current = stub;
     if (closed || !explicitlyInitialized || current == null) {
       throw new IllegalStateException(unavailableMessage);

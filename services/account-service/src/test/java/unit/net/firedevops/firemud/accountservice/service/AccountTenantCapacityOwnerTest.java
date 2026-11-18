@@ -558,14 +558,46 @@ class AccountTenantCapacityOwnerTest {
   }
 
   @Test
+  void globalAttemptConflictPrecedesFreshOrExpiredNonCreatingEvidence() throws Exception {
+    for (boolean expired : new boolean[] {false, true}) {
+      var f = new Fixture(false, qualifiedRequest(false));
+      f.existing = false;
+      f.retained = true;
+      when(f.clock.instant())
+          .thenReturn(
+              expired
+                  ? f.request.evidence().expiresAt()
+                  : CapacityAdmissionTestFixture.NOW.plusSeconds(1));
+      org.mockito.Mockito.doReturn(mock(Record.class))
+          .when(f.dsl)
+          .fetchOne(startsWith("SELECT 1 FROM (SELECT tenant_uuid"), any(Object[].class));
+      assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityRepository.CapacityException.class,
+              failure -> assertThat(failure.code()).isEqualTo(Failure.IDEMPOTENCY_CONFLICT));
+      verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+      verify(f.scopes, never()).findCanonicalEvidenceByTokenHash(anyString());
+    }
+  }
+
+  @Test
   void expiryDuringSourceQualificationCannotBecomeBillingRefusal() throws Exception {
     var f = new Fixture(false, qualifiedRequest(false));
     f.existing = false;
     f.retained = true;
     qualifySources(f);
-    when(f.clock.instant())
-        .thenReturn(
-            CapacityAdmissionTestFixture.NOW.plusSeconds(1), f.request.evidence().expiresAt());
+    var now =
+        new java.util.concurrent.atomic.AtomicReference<>(
+            CapacityAdmissionTestFixture.NOW.plusSeconds(1));
+    when(f.clock.instant()).thenAnswer(ignored -> now.get());
+    var scope = f.scopes.findCanonicalEvidenceByTokenHash("fixture");
+    org.mockito.Mockito.clearInvocations(f.scopes);
+    when(f.scopes.findCanonicalEvidenceByTokenHash(anyString()))
+        .thenAnswer(
+            ignored -> {
+              now.set(f.request.evidence().expiresAt());
+              return scope;
+            });
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,

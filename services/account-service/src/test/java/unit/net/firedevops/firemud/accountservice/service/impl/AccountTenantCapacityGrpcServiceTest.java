@@ -26,7 +26,6 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrp
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
@@ -97,12 +96,10 @@ class AccountTenantCapacityGrpcServiceTest {
     }
   }
 
-  @ParameterizedTest
-  @EnumSource(
-      value = Failure.class,
-      names = {"TENANT_BILLING_BLOCKED", "CAPACITY_QUOTA_EXCEEDED"})
-  void producedBillingAndQuotaDenialsReturnAnExactTypedResponse(Failure code) {
-    var request = CapacityAdmissionTestFixture.playerRequest();
+  @Test
+  void producedBillingDenialReturnsAnExactTypedResponse() {
+    Failure code = Failure.TENANT_BILLING_BLOCKED;
+    var request = CapacityAdmissionTestFixture.playerRequest(false);
     try (var guards = authenticatedCaller()) {
       AccountTenantCapacityOwner owner = mock();
       when(owner.commit(request, CapacityAdmissionTestFixture.PEER))

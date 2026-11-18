@@ -110,6 +110,7 @@ public final class AccountTenantCapacityOwner {
               if (request.capacityRearmFence() != 1) throw conflict();
               UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
               if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
+              originDecisions.requireFreshAttemptBinding(request);
               lockPlayerAccount(request);
               current(request);
               requireSupportedShape(request);
