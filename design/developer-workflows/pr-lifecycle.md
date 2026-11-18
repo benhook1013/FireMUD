@@ -71,6 +71,7 @@ Merge authority:
 ## Branch And PR Hygiene
 
 - Open or update a PR when a branch reaches a coherent checkpoint so CI can run. Draft PRs may expose work in progress. Do not open placeholder PRs.
+- Every PR body, draft included, follows the [PR template](../../.github/pull_request_template.md) headings and checklist and carries the generated LOC section from `python3 dev-tools/maintenance/cloc-report.py pr <number> --update-pr`. Refresh the LOC section when the head changes materially and before readiness. The tool needs `gh` and the pinned `cloc`; if either is unavailable, say so in the body rather than inventing counts.
 - Stacked PRs are fine when the base dependency is explicit. After a parent merges, retarget the child to `develop` before rebasing or pushing it.
 - When active work moves to another worktree, report its absolute path and branch.
 - CI coverage for stacked bases, required gate names, and preview restrictions are owned by [CI/CD](../architecture/system-architecture-cicd.md#pull-request-runtime-and-preview-chain).
