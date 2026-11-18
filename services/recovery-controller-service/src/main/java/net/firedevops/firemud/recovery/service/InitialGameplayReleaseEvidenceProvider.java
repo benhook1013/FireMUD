@@ -1,5 +1,6 @@
 package net.firedevops.firemud.recovery.service;
 
+import java.util.Objects;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
 
@@ -11,6 +12,7 @@ public interface InitialGameplayReleaseEvidenceProvider {
 
   record EvidenceResolution(ResolutionStatus status, InitialGameplayReleaseEvidence evidence) {
     public EvidenceResolution {
+      Objects.requireNonNull(status, "status");
       if ((status == ResolutionStatus.AVAILABLE) != (evidence != null)) {
         throw new IllegalArgumentException("evidence must be present exactly for AVAILABLE");
       }

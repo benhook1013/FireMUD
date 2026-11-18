@@ -408,6 +408,15 @@ class InitialGameplayReleaseModelTest {
     assertThat(credential.protectedTransportValue()).isEqualTo(lockIdentity.toString());
   }
 
+  @Test
+  void invalidMaintenanceCredentialDoesNotLeakThroughExceptionCause() {
+    assertThatThrownBy(
+            () -> MaintenanceLockCredential.fromProtectedTransport("secret-invalid-credential"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("maintenance-lock credential is invalid")
+        .hasNoCause();
+  }
+
   private static Scope scope(UUID playableNamespace) {
     return new Scope(
         UUID.randomUUID(),

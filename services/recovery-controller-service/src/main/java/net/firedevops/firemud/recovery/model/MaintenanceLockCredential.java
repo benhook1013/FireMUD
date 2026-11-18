@@ -24,7 +24,7 @@ public final class MaintenanceLockCredential {
       }
       return new MaintenanceLockCredential(identity);
     } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException("maintenance-lock credential is invalid", exception);
+      throw new IllegalArgumentException("maintenance-lock credential is invalid");
     }
   }
 

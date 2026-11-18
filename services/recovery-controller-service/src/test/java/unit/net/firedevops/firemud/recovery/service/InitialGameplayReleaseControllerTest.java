@@ -26,6 +26,22 @@ class InitialGameplayReleaseControllerTest {
   private static final String DIGEST = "c".repeat(64);
 
   @Test
+  void ownerResultsRejectMissingStatus() {
+    assertThatThrownBy(
+            () -> new InitialGameplayReleaseEvidenceProvider.EvidenceResolution(null, null))
+        .isInstanceOf(NullPointerException.class);
+    assertThatThrownBy(() -> new InitialGameplayReleaseEffectPort.EffectApplyResult(null, null))
+        .isInstanceOf(NullPointerException.class);
+    assertThatThrownBy(
+            () -> new InitialGameplayReleaseEffectPort.EffectReadbackResolution(null, null, null))
+        .isInstanceOf(NullPointerException.class);
+    assertThat(InitialGameplayReleaseEvidenceProvider.EvidenceResolution.unavailable().status())
+        .isEqualTo(ResolutionStatus.UNAVAILABLE);
+    assertThat(InitialGameplayReleaseEffectPort.EffectApplyResult.applied().status())
+        .isEqualTo(InitialGameplayReleaseEffectPort.ApplyStatus.APPLIED);
+  }
+
+  @Test
   void validTypedRecoverDeniesBeforeAnyJournalEvidenceOrEffectInteraction() {
     InitialGameplayReleaseJournal journal = mock(InitialGameplayReleaseJournal.class);
     InitialGameplayReleaseEvidenceProvider evidenceProvider =

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.recovery.service;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEffect;
@@ -15,6 +16,7 @@ public interface InitialGameplayReleaseEffectPort {
 
   record EffectApplyResult(ApplyStatus status, String outcomeCode) {
     public EffectApplyResult {
+      Objects.requireNonNull(status, "status");
       if (status == ApplyStatus.RETRYABLE_NO_EFFECT || status == ApplyStatus.AMBIGUOUS) {
         if (outcomeCode == null || outcomeCode.isBlank()) {
           throw new IllegalArgumentException(
@@ -45,6 +47,7 @@ public interface InitialGameplayReleaseEffectPort {
   record EffectReadbackResolution(
       ReadbackStatus status, EffectReadback readback, Instant observedAt) {
     public EffectReadbackResolution {
+      Objects.requireNonNull(status, "status");
       if ((status == ReadbackStatus.AVAILABLE) != (readback != null)) {
         throw new IllegalArgumentException("readback must be present exactly for AVAILABLE");
       }
