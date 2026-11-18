@@ -70,14 +70,18 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @BeforeAll
   static void setUp() throws Exception {
-    Flyway.configure()
-        .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
-        .schemas(SCHEMA)
-        .defaultSchema(SCHEMA)
-        .placeholders(Map.of("serviceSchema", SCHEMA))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    Flyway flyway =
+        Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(SCHEMA)
+            .defaultSchema(SCHEMA)
+            .placeholders(Map.of("serviceSchema", SCHEMA))
+            .locations("classpath:db/recovery-control-migration")
+            .load();
+    assertThat(flyway.info().all())
+        .extracting(info -> info.getScript())
+        .containsExactly("V1__initial_gameplay_release_journal.sql");
+    flyway.migrate();
     connection =
         DriverManager.getConnection(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());

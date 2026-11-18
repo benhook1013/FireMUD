@@ -335,6 +335,22 @@ class InitialGameplayReleaseModelTest {
     Scope scope = scope(UUID.randomUUID());
     InitialGameplayReleaseEvidence original = evidence(scope);
     IssuerLayoutProof layout = original.issuerLayout();
+    Map<Integer, Integer> forward = new java.util.LinkedHashMap<>();
+    forward.put(0, 10);
+    forward.put(1, 12);
+    original =
+        withLayout(
+            original,
+            new IssuerLayoutProof(
+                layout.layoutOperationId(),
+                layout.descriptor(),
+                layout.accountIssuerSourceIdentity(),
+                layout.operationFence(),
+                layout.coverageFence(),
+                layout.inventoryRevision(),
+                layout.inventoryDigest(),
+                layout.acknowledgements(),
+                forward));
     Map<Integer, Integer> reversed = new java.util.LinkedHashMap<>();
     reversed.put(1, 12);
     reversed.put(0, 10);

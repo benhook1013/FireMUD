@@ -10,6 +10,10 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEf
  * Game Session owner boundary for exact typed effects and owner-produced durable/current readbacks.
  */
 public interface InitialGameplayReleaseEffectPort {
+  /**
+   * RETRYABLE_NO_EFFECT is a definitive owner rejection for this exact attempt, never a timeout or
+   * absence observation. The owner must not apply the rejected attempt later.
+   */
   EffectApplyResult apply(TypedEffect effect, UUID attemptId);
 
   /**

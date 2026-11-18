@@ -107,6 +107,24 @@ class InitialGameplayReleaseControllerTest {
 
     assertThat(provider.read(scope).status()).isEqualTo(ResolutionStatus.UNAVAILABLE);
     assertThat(provider.read(scope).evidence()).isNull();
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var operation =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
+    var lock =
+        net.firedevops.firemud.recovery.model.MaintenanceLockCredential.issue(UUID.randomUUID());
+    when(operation.scope()).thenReturn(scope);
+    when(operation.maintenanceLockIdentity()).thenReturn(lock.identity());
+    when(journal.find(scope.operationId())).thenReturn(java.util.Optional.of(operation));
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            provider,
+            new DeniedInitialGameplayReleaseEffectPort());
+    assertThatThrownBy(() -> controller.refreshReadiness(scope.operationId(), lock))
+        .isInstanceOf(OwnerBoundaryUnavailableException.class)
+        .hasMessage("INITIAL_GAMEPLAY_RELEASE_EVIDENCE_UNAVAILABLE");
+    verify(journal, never()).bindVerifiedEvidence(any(), any(), any(), any(), any());
   }
 
   @Test

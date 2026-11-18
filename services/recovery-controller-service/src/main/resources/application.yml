@@ -1,4 +1,7 @@
 spring:
+  autoconfigure:
+    exclude:
+      - net.firedevops.firemud.common.config.DatabaseAutoConfiguration
   application:
     name: recovery-controller-service
   datasource:
@@ -13,7 +16,7 @@ spring:
     schemas: recovery_control
     defaultSchema: recovery_control
     table: flyway_schema_history_recovery_control
-    locations: classpath:db/migration
+    locations: classpath:db/recovery-control-migration
     placeholders:
       serviceSchema: recovery_control
   ssl:
