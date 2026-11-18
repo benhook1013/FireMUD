@@ -68,3 +68,5 @@ A small inbox for unresolved agent, tooling, environment, and workflow issues; s
 
 - `2026-11-04` (Pacific/Auckland): Game Session mapped PostgreSQL connection refused despite healthy container.
   - Local #3386 proof423 passed 100 actual cases but failed `CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest` in its existing 60-second JDBC-readiness guard before migration. The captured container was running, not OOM-killed, listening on 5432, and returned `1` from internal `SELECT 1`; Docker reported the expected IPv4/IPv6 port bindings, while JDBC to resolved `127.0.0.1:49634` refused connections. Full failure, container diagnostics and XML are retained. This does not identify the daemon or host forwarding cause. Next: on recurrence capture host-side mapped-port listeners and routing beside the existing bounded container diagnostics before teardown; preserve the original failure and qualify the affected fixture independently. Do not weaken readiness, skip Docker proof or add production retries.
+
+<!-- Disposable proof marker for PR #3466; never merge. -->
