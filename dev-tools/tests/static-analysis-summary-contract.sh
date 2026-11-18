@@ -197,7 +197,8 @@ const github = {
         },
         {
           id: 2701,
-          name: "PR Metadata Edit (CodeQL Gate)",
+          // Native skipped-job name: GitHub leaves the expression unevaluated.
+          name: "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (CodeQL Gate)' || 'CodeQL Gate'",
           status: "completed",
           conclusion: "skipped",
           created_at: "2026-09-20T12:00:01Z",

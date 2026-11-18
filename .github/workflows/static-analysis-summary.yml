@@ -133,10 +133,12 @@ jobs:
 
             // Metadata-only edits skip their gate under a non-required name; the
             // earlier substantive run for the same title remains the result.
+            // GitHub leaves a skipped job's name expression unevaluated, so match
+            // the metadata label inside it.
             const workflowRunFor = async (workflowId, gateName, checkRuns) => {
               const workflowName = workflowId === "codeql.yml" ? "CodeQL Analysis" : "License Gate";
               const metadataRunIds = new Set((Array.isArray(checkRuns) ? checkRuns : [])
-                .filter((checkRun) => checkRun?.name === `PR Metadata Edit (${gateName})`)
+                .filter((checkRun) => String(checkRun?.name || "").includes(`'PR Metadata Edit (${gateName})'`))
                 .map(checkRunWorkflowId)
                 .filter(Boolean));
               const expectedTitle = `${workflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
