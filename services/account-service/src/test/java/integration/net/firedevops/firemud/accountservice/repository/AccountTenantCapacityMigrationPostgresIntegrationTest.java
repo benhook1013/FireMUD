@@ -97,8 +97,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
       transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
       var original =
-          dsl.fetchOne(
-                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget")
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"))
               .intoMap();
       transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
       assertThatThrownBy(
@@ -113,8 +114,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                           net.firedevops.firemud.common.account.capacity
                               .TenantCapacityAdmissionGrpcCodec.Failure.IDEMPOTENCY_CONFLICT));
       assertThat(
-              dsl.fetchOne(
-                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget")
+              Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"))
                   .intoMap())
           .isEqualTo(original);
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(3);
