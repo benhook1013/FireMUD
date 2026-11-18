@@ -154,6 +154,25 @@ public final class GameDesignClient
     }
   }
 
+  /** Canonical tenant UUID for a Game Design tenant key, or empty when Game Design has none. */
+  public java.util.Optional<java.util.UUID> resolveCanonicalTenantId(long tenantId) {
+    var response =
+        callStub()
+            .resolveCanonicalTenant(
+                net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantRequest.newBuilder()
+                    .setTenantId(Long.toString(tenantId))
+                    .build());
+    if (response.hasError() || response.getCanonicalTenantId().isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    var parsed = java.util.UUID.fromString(response.getCanonicalTenantId());
+    if (!parsed.toString().equals(response.getCanonicalTenantId())
+        || parsed.equals(new java.util.UUID(0L, 0L))) {
+      return java.util.Optional.empty();
+    }
+    return java.util.Optional.of(parsed);
+  }
+
   public GetVersionStateResponse getVersionState(long tenantId, long versionId) {
     return callStub()
         .getVersionState(

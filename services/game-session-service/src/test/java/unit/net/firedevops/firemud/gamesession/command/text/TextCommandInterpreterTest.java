@@ -195,7 +195,7 @@ class TextCommandInterpreterTest {
         .thenAnswer(
             invocation ->
                 GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                    .setTenantId("22")
+                    .setTenantId(canonicalTenantFor(22L).toString())
                     .setGameplayAvailable(true)
                     .setAllowPublicJoin(true)
                     .setEntitlementVersion(1L)
@@ -385,6 +385,7 @@ class TextCommandInterpreterTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry);
+    playHandler.setGameDesignClient(tenantIdentity());
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     WhoCommandHandler whoHandler =
@@ -1207,5 +1208,21 @@ class TextCommandInterpreterTest {
     private boolean hasGameplayIdentity(SessionContext context) {
       return context.gameInstanceId() > 0 && context.characterId() > 0;
     }
+  }
+
+  private static java.util.UUID canonicalTenantFor(long tenantId) {
+    return java.util.UUID.nameUUIDFromBytes(
+        ("tenant-" + tenantId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  private static net.firedevops.firemud.gamesession.client.GameDesignClient tenantIdentity() {
+    var client =
+        org.mockito.Mockito.mock(net.firedevops.firemud.gamesession.client.GameDesignClient.class);
+    org.mockito.Mockito.when(
+            client.resolveCanonicalTenantId(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            invocation ->
+                java.util.Optional.of(canonicalTenantFor(invocation.getArgument(0, Long.class))));
+    return client;
   }
 }

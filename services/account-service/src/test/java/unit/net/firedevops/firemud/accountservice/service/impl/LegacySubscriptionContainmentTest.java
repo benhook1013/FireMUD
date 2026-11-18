@@ -73,7 +73,10 @@ class LegacySubscriptionContainmentTest {
     AuthenticationException denied =
         assertThrows(
             AuthenticationException.class,
-            () -> service.getTenantEntitlementsForRuntime(7L, "retained-is-not-authority"));
+            () ->
+                service.getTenantEntitlementsForRuntime(
+                    java.util.UUID.fromString("5b8d4c0e-3a1f-4f6e-9b2d-7c1e0a9f3d21"),
+                    "retained-is-not-authority"));
     assertThat(denied.getCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
 
     AccountGrpcService rpc = new AccountGrpcService(null, service, null, "test");
@@ -104,7 +107,7 @@ class LegacySubscriptionContainmentTest {
           () ->
               rpc.getTenantEntitlementsForRuntime(
                   GetTenantEntitlementsForRuntimeRequest.newBuilder()
-                      .setTenantId("7")
+                      .setTenantId("5b8d4c0e-3a1f-4f6e-9b2d-7c1e0a9f3d21")
                       .setRequestId("retained-is-not-authority")
                       .build(),
                   observer));
