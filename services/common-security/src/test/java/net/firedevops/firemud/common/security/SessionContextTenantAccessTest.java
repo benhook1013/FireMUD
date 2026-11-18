@@ -39,32 +39,44 @@ class SessionContextTenantAccessTest {
 
   @Test
   void allowsCurrentAccountWithoutTenantRole() {
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext("11111111-1111-1111-1111-111111111111", List.of(), Map.of());
 
-    assertTrue(SessionContext.hasAccountAccess(7L, 42L));
-    assertTrue(SessionContext.isCurrentAccount(42L));
-    assertDoesNotThrow(() -> SessionContext.requireAccountAccess(7L, 42L));
-    assertFalse(SessionContext.hasAccountAccess(7L, 43L));
-    assertFalse(SessionContext.isCurrentAccount(43L));
-    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 43L));
+    assertTrue(SessionContext.hasAccountAccess(7L, "11111111-1111-1111-1111-111111111111"));
+    assertTrue(SessionContext.isCurrentAccount("11111111-1111-1111-1111-111111111111"));
+    assertDoesNotThrow(() -> SessionContext.requireAccountAccess(7L, "11111111-1111-1111-1111-111111111111"));
+    assertFalse(SessionContext.hasAccountAccess(7L, "22222222-2222-2222-2222-222222222222"));
+    assertFalse(SessionContext.isCurrentAccount("22222222-2222-2222-2222-222222222222"));
+    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, "22222222-2222-2222-2222-222222222222"));
   }
 
   @Test
-  void currentAccountAccessRejectsNonPositiveAccountIds() {
+  void currentAccountAccessRejectsNumericAccountIds() {
     SessionContext.setContext("0", List.of(), Map.of());
 
-    assertFalse(SessionContext.isCurrentAccount(0L));
-    assertFalse(SessionContext.hasAccountAccess(7L, 0L));
-    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 0L));
+    assertFalse(SessionContext.isCurrentAccount("42"));
+    assertFalse(SessionContext.hasAccountAccess(7L, "42"));
+    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, "42"));
   }
 
   @Test
-  void currentAccountAccessRejectsNonPositiveCurrentAccountClaim() {
-    SessionContext.setContext("-42", List.of(), Map.of());
+  void currentAccountAccessRejectsNumericCurrentAccountClaim() {
+    SessionContext.setContext("42", List.of(), Map.of());
 
-    assertFalse(SessionContext.isCurrentAccount(42L));
-    assertFalse(SessionContext.hasAccountAccess(7L, 42L));
-    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, 42L));
+    assertFalse(SessionContext.isCurrentAccount("11111111-1111-1111-1111-111111111111"));
+    assertFalse(SessionContext.hasAccountAccess(7L, "11111111-1111-1111-1111-111111111111"));
+    assertThrows(ResponseStatusException.class, () -> SessionContext.requireAccountAccess(7L, "11111111-1111-1111-1111-111111111111"));
+  }
+
+  @Test
+  void tenantRoleAccessRemainsIndependentOfCanonicalSelfIdentity() {
+    String accountUuid = "11111111-1111-1111-1111-111111111111";
+    String otherUuid = "22222222-2222-2222-2222-222222222222";
+    SessionContext.setContext(accountUuid, List.of(), Map.of("7", List.of("tenantAdmin")));
+    assertFalse(SessionContext.isCurrentAccount(otherUuid));
+    assertTrue(SessionContext.hasAccountAccess(7L, otherUuid));
+    assertFalse(SessionContext.hasAccountAccess(8L, otherUuid));
+    assertFalse(SessionContext.isCurrentAccount("00000000-0000-0000-0000-000000000000"));
+    assertFalse(SessionContext.isCurrentAccount("11111111-1111-1111-1111-11111111111A"));
   }
 
   @Test

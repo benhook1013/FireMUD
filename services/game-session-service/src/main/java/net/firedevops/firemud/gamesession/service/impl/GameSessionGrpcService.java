@@ -380,10 +380,9 @@ public final class GameSessionGrpcService
 
   private void requireTenantAndOwnerAccess(long tenantId, long ownerAccountId) {
     requireTenantAccess(tenantId);
-    if (isCurrentAccount(ownerAccountId)) {
-      return;
-    }
-    throw new AuthorizationException("Owner access required");
+    // A private numeric row selector is not an authenticated Account UUID. The retained
+    // capability-bound fixture calls the service owner directly, not this caller RPC.
+    throw new AuthorizationException("Numeric account owner authorization is unavailable");
   }
 
   @Override
@@ -942,7 +941,7 @@ public final class GameSessionGrpcService
         gameInstanceRepository
             .findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-    if (SessionContext.hasTenantAccess(instance.getTenantId()) || isCurrentAccount(instance)) {
+    if (SessionContext.hasTenantAccess(instance.getTenantId())) {
       return;
     }
     throw new AuthorizationException("Session ownership required");
@@ -953,14 +952,6 @@ public final class GameSessionGrpcService
       return;
     }
     throw new AuthorizationException("Admin role required");
-  }
-
-  private boolean isCurrentAccount(GameInstance instance) {
-    return isCurrentAccount(instance.getOwnerAccountId());
-  }
-
-  private boolean isCurrentAccount(long ownerAccountId) {
-    return SessionContext.isCurrentAccount(ownerAccountId);
   }
 
   private net.firedevops.firemud.gamesession.v1.GameplayRealm toGameplayRealm(
