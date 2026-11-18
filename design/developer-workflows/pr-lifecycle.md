@@ -17,8 +17,8 @@ Use this guide for PR status, review, CI, Renovate, merging, and branch or workt
 
 Every review finding gets a decision from the orchestrator, recorded in FireController.
 
-- **Fix now**: a real defect or gap inside this PR's purpose. Fix it in this PR, verify the fix at the current published head, then resolve the thread. A defect this PR introduces (a regression, security or data-integrity issue, or broken documented contract) is always Fix now, whatever the PR's purpose.
-- **Route**: real, but outside this PR's purpose or not needed before v1. Record a route to an existing FireController job or workstream that owns it, reply on the thread with the route link, and resolve the thread. **Before v1, Route is the default** for anything that does not block this PR's purpose.
+- **Fix now**: a real defect or gap that belongs in this PR's purpose, especially when the fix is small and does not grow the PR materially. Fix it in this PR, verify the fix at the current published head, then resolve the thread. A defect this PR introduces (a regression, security or data-integrity issue, or broken documented contract) is always Fix now, whatever the PR's purpose.
+- **Route**: real, but outside this PR's purpose, outside v1 scope, or a fix that would grow this PR materially. Record a route to an existing FireController job or workstream that owns it, reply on the thread with the route link, and resolve the thread. Route is a strong option before v1, but not a way to avoid fixes that belong in this PR.
 - **Reject**: wrong, already handled, or not worth its cost. Record the reason, reply briefly on the thread if a human reader would need context, and resolve it.
 
 Rules for triage:

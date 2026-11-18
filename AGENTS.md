@@ -32,7 +32,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 - Do not ask for approval just because work is cross-service, breaking, or large when the design is clear. Stop for genuine design ambiguity, competing target states, or a change to a consequential accepted decision.
 - Once the human picks a workstream, keep going through its clear next steps (implementation, validation, PR publication, review fixes) without checking in at each step. An explicit pause or stop wins: finish only the in-progress step and start nothing new until resumed.
 - Match process to risk. Do not build ledgers, audit suites, or extra review machinery for small changes.
-- Review findings are triaged as Fix now, Route, or Reject under [PR lifecycle](design/developer-workflows/pr-lifecycle.md). Before v1, routing is the default for anything outside the PR's purpose.
+- Review findings are triaged as Fix now, Route, or Reject under [PR lifecycle](design/developer-workflows/pr-lifecycle.md). Fix what belongs in the PR's purpose, especially small fixes; route what is outside it, outside v1 scope, or would grow the PR materially.
 
 ## Documentation
 
