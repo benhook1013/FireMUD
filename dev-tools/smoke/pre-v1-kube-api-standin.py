@@ -10,7 +10,9 @@ cluster API and its RBAC are owed before v1.
 import argparse
 import hmac
 import json
+import os
 import ssl
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -26,8 +28,20 @@ class State:
         self.cluster_uid = args.cluster_uid
         self.token = open(args.token_file, encoding="ascii").read().strip()
         self.config_map_uid = args.config_map_uid
+        self.projection_dir = args.projection_dir
         self.resource_version = 1
         self.data = {}
+
+    def project(self):
+        """Mirror ConfigMap data into a mounted directory, as kubelet does for a volume."""
+        if not self.projection_dir:
+            return
+        for key, value in self.data.items():
+            fd, tmp = tempfile.mkstemp(dir=self.projection_dir)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(value)
+            os.chmod(tmp, 0o444)
+            os.replace(tmp, os.path.join(self.projection_dir, key))
 
     def config_map(self):
         return {
@@ -126,6 +140,7 @@ def make_handler(state):
                     else:
                         state.data[key] = value
                 state.resource_version += 1
+                state.project()
                 return self.reply(200, state.config_map())
 
     return Handler
@@ -142,6 +157,7 @@ def main():
     parser.add_argument("--namespace-uid", required=True)
     parser.add_argument("--cluster-uid", required=True)
     parser.add_argument("--config-map-uid", required=True)
+    parser.add_argument("--projection-dir", help="directory mirroring jwt-jwks ConfigMap data")
     args = parser.parse_args()
     state = State(args)
     server = ThreadingHTTPServer(("0.0.0.0", args.port), make_handler(state))
