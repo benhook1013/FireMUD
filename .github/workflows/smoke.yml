@@ -622,13 +622,13 @@ jobs:
               "dev-tools/smoke/held-admission-qualification.sh": "b548a773f1786b72d40a3728052a336cb249257a3f40735f005b060812184ed3",
               "dev-tools/smoke/held_admission_qualification.py": "2d118d7ba6a19dac7d8c717dbbbe25df6f04a3c186a3185135d1bdc5fc75b557",
               "dev-tools/smoke/run-owned-compose.sh": "c2a0590c98d39a8c8ec22c20e692948136a5ec53ca2dfc0b29db7323a3e1b6be",
-              "dev-tools/certs/ensure-dev-certs.sh": "30f4ab5c9cb7af7f9d4a477ce923cfad19a319a85b6e05957f7d24eae9baddd2",
+              "dev-tools/certs/ensure-dev-certs.sh": "e5de4c1cd0a026c2b8bf60617ab3cfd5d968e04d8a59d6b86c1f46c44df69694",
               ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
               "docker/docker-compose.yml": "f43581c67747dfb732742ecc1c4de631a71a2a41ae535663fb3872a90b68e2f1",
               "docker/docker-compose.override.yml": "2e720be03f942fd4456d46cea5a127f16106a1056aec6ddaaf52b2bb31b51d75",
               "docker/docker-compose.smoke-images.override.yml": "7717be8b49a1dc548a47fba852c181feeb4dbe9a21fc201a7f8e74b992801fd6",
               "docker/docker-compose.pr-local-minio.override.yml": "d975ce211afcb73079a21c70fda358e3a8f3366b83fe0302907c9d7149ce965e",
-              "docker/docker-compose.grpc-mtls.override.yml": "dcee047f1492392035d57153ba8dfd6d38de33ca932d327f377440d5813577f0"
+              "docker/docker-compose.grpc-mtls.override.yml": "1f0ac0284d816e46d48d92c4e9a2a53bbefd24c683c22bddc5a891b78baecc39"
             };
             const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
             const workflowPath = ".github/workflows/runtime-images.yml";
