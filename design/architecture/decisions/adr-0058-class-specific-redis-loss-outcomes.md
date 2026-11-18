@@ -45,6 +45,7 @@ Loss guarantees are class-specific:
 | Staged effect or retry | Durable intent and owner guards converge to `APPLIED` (with `REPLAY_NOOP` only as an outcome/reason) or evidence-qualified `ABANDONED`; inconclusive work remains nonterminal and reconciliation-required. |
 | Correctness-bearing timer | Durable timer intent exists outside Redis and its scheduling projection is rebuilt. |
 | Explicitly lossy timer or advisory hint | Delay/drop is allowed only under its feature-declared budget and player semantics. |
+| Volatile combat bookkeeping ([ADR 0186](./adr-0186-volatile-combat-bookkeeping-and-per-tick-hp.md), once accepted) | Total loss is allowed; NPCs pick targets again and rounds restart. Never HP, outcome, or ownership loss. |
 | Session, lease, cache, or wake-up key | Total Redis loss is allowed; consequence is pause, reconnect/reauthentication, cache miss, or latency—never canonical-state loss or resurrection. |
 | Premium, financial, cross-tenant, or unique external effect | RPO zero after acknowledgement through the owning transaction/outbox; Redis is optional coordination only. |
 | Empty-Redis cold start or reset | Uses the fenced reset/rebuild contract and is outside normal-failover loss SLOs. |

@@ -280,6 +280,7 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0183](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) | Accepted | `GR-1.2` | `GR-1.4`, `GR-4.1`, `AS-1.2`, `AS-1.4`, `SF-1.4`, `SF-2.3`, `PO-4.2` | Deterministic command-plan and persisted opaque UUIDv7 root, child, and fan-out allocation with manifest-bound replay |
 | [ADR 0184](./adr-0184-emergency-tcp-proxy-identity-withdrawal.md) | Accepted | `SF-1.3` | `PO-2.1`, `PO-2.2`, `PO-3.2`, `PO-4.4` | Emergency trust cutoff for a withdrawn TCP Proxy bridge identity |
 | [ADR 0185](./adr-0185-no-data-carry-over-before-v1.md) | Proposed - Pending Human Review | `SF-2.3` | `SF-2.1`, `AR-1.5`, `PO-4.4` | Disposable pre-v1 data with direct replacement and reset instead of migration |
+| [ADR 0186](./adr-0186-volatile-combat-bookkeeping-and-per-tick-hp.md) | Proposed - Pending Human Review | `GR-4.2` | `GR-1.2`, `GR-1.3`, `GR-3`, `SF-2.2`, `SF-2.4` | Volatile combat AI bookkeeping with one durable net HP effect per entity per tick |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
 
