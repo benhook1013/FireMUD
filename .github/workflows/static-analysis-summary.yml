@@ -13,21 +13,53 @@ permissions:
   actions: read
   pull-requests: write
 
-concurrency:
-  group: static-analysis-summary-source-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
-  # Serialize by native source repository and branch, independent of association
-  # ordering or the producer workflow. Shared-branch PRs conservatively serialize.
-  # Publication below requires this identity still matches the live PR.
-  # Serialize the CodeQL and license completion events so a pending summary
-  # cannot race a terminal summary into creating two comments. Every validated
-  # callback snapshots the live tuple, so an older-head wake can replace pending
-  # work without losing current-head reconciliation. Never cancel active writes.
-  cancel-in-progress: false
-
 jobs:
+  resolve-summary-target:
+    name: Resolve Summary Target
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      pull-number: ${{ steps.target.outputs.pull-number }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - name: Resolve validated summary target
+        id: target
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const source = context.payload.workflow_run;
+            if (source?.event !== "pull_request") return;
+            const workflowName = ({
+              ".github/workflows/codeql.yml": "CodeQL Analysis",
+              ".github/workflows/license-scan.yml": "License Gate",
+            })[source.path];
+            const title = String(source.display_title || "").match(
+              /^(CodeQL Analysis|License Gate) pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40})$/
+            );
+            if (!title || title[1] !== workflowName || title[4] !== source.head_sha ||
+                ![workflowName, source.display_title].includes(source.name) ||
+                !Number.isSafeInteger(source.head_repository?.id) || source.head_repository.id <= 0 ||
+                typeof source.head_branch !== "string" || !source.head_branch.trim()) return;
+            const number = Number(title[2]);
+            if (!Number.isSafeInteger(number) || !Array.isArray(source.pull_requests) ||
+                source.pull_requests.filter(pr => pr?.number === number).length !== 1) return;
+            core.setOutput("pull-number", String(number));
+
   publish-summary:
     name: Static Analysis Summary
-    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    needs: [resolve-summary-target]
+    if: ${{ needs.resolve-summary-target.outputs.pull-number != '' }}
+    # Only validated PR callbacks enter this queue. Old heads refresh the same
+    # live PR; other PRs and skipped push callbacks cannot replace its pending work.
+    concurrency:
+      group: static-analysis-summary-pr-${{ needs.resolve-summary-target.outputs.pull-number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -12,7 +12,9 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEf
 public interface InitialGameplayReleaseEffectPort {
   /**
    * RETRYABLE_NO_EFFECT is a definitive owner rejection for this exact attempt, never a timeout or
-   * absence observation. The owner must not apply the rejected attempt later.
+   * absence observation. The owner must not apply the rejected attempt later. NOT_DISPATCHED means
+   * the local adapter can prove it never sent this attempt; it is retryable without owner evidence.
+   * A possibly transmitted request must not be classified as NOT_DISPATCHED.
    */
   EffectApplyResult apply(TypedEffect effect, UUID attemptId);
 
@@ -26,7 +28,7 @@ public interface InitialGameplayReleaseEffectPort {
   record EffectApplyResult(ApplyStatus status, String outcomeCode) {
     public EffectApplyResult {
       Objects.requireNonNull(status, "status");
-      if (status == ApplyStatus.RETRYABLE_NO_EFFECT || status == ApplyStatus.AMBIGUOUS) {
+      if (status != ApplyStatus.APPLIED) {
         net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.requiredOutcomeCode(
             outcomeCode);
       }
@@ -34,6 +36,10 @@ public interface InitialGameplayReleaseEffectPort {
 
     public static EffectApplyResult applied() {
       return new EffectApplyResult(ApplyStatus.APPLIED, null);
+    }
+
+    public static EffectApplyResult notDispatched(String outcomeCode) {
+      return new EffectApplyResult(ApplyStatus.NOT_DISPATCHED, outcomeCode);
     }
 
     public static EffectApplyResult retryableNoEffect(String outcomeCode) {
@@ -47,6 +53,7 @@ public interface InitialGameplayReleaseEffectPort {
 
   enum ApplyStatus {
     APPLIED,
+    NOT_DISPATCHED,
     RETRYABLE_NO_EFFECT,
     AMBIGUOUS
   }

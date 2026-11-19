@@ -19,9 +19,16 @@ import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.Muta
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.Target;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PeerStorageBinding;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PreparePlayableStateFencedEffect;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionTuple;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TransitionVerb;
+import net.firedevops.firemud.recovery.model.MaintenanceLockCredential;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.ResolutionStatus;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
@@ -148,8 +155,10 @@ class InitialGameplayReleaseControllerTest {
             DIGEST,
             "proof-identity-1");
 
-    assertThat(port.apply(effect, UUID.randomUUID()).status())
-        .isEqualTo(InitialGameplayReleaseEffectPort.ApplyStatus.RETRYABLE_NO_EFFECT);
+    var result = port.apply(effect, UUID.randomUUID());
+    assertThat(result.status())
+        .isEqualTo(InitialGameplayReleaseEffectPort.ApplyStatus.NOT_DISPATCHED);
+    assertThat(result.outcomeCode()).isEqualTo("GAME_SESSION_EFFECT_OWNER_UNAVAILABLE");
     assertThat(port.readback(effect, UUID.randomUUID()).status())
         .isEqualTo(InitialGameplayReleaseEffectPort.ReadbackStatus.UNAVAILABLE);
   }
@@ -162,6 +171,9 @@ class InitialGameplayReleaseControllerTest {
               () -> InitialGameplayReleaseEffectPort.EffectApplyResult.retryableNoEffect(invalid))
           .isInstanceOf(IllegalArgumentException.class);
       assertThatThrownBy(
+              () -> InitialGameplayReleaseEffectPort.EffectApplyResult.notDispatched(invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
               () -> InitialGameplayReleaseEffectPort.EffectApplyResult.ambiguous(invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
@@ -169,6 +181,72 @@ class InitialGameplayReleaseControllerTest {
             InitialGameplayReleaseEffectPort.EffectApplyResult.retryableNoEffect("OWNER_BUSY")
                 .outcomeCode())
         .isEqualTo("OWNER_BUSY");
+  }
+
+  @Test
+  void unavailableOwnerEvidenceReturnsConcurrentExactCommittedTransition() {
+    assertUnavailableTransition(true);
+  }
+
+  @Test
+  void unavailableOwnerEvidenceWithoutCommittedTransitionStillFailsClosed() {
+    assertUnavailableTransition(false);
+  }
+
+  private void assertUnavailableTransition(boolean committed) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var provider = mock(InitialGameplayReleaseEvidenceProvider.class);
+    var scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "evidence");
+    var before = mock(Operation.class);
+    var after = mock(Operation.class);
+    var evidence = mock(InitialGameplayReleaseEvidence.class);
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
+    when(before.scope()).thenReturn(scope);
+    when(before.maintenanceLockIdentity()).thenReturn(lock.identity());
+    when(before.evidence()).thenReturn(evidence);
+    when(evidence.evidenceIdentity()).thenReturn("proof");
+    when(codec.digest(scope)).thenReturn(DIGEST);
+    when(codec.digest(evidence)).thenReturn(DIGEST);
+    when(journal.find(scope.operationId())).thenReturn(java.util.Optional.of(before));
+    var tuple =
+        new PublicTransitionTuple(
+            scope.operationId(),
+            DIGEST,
+            TransitionVerb.RESUME,
+            Phase.AWAITING_RESUME,
+            lock.identity(),
+            scope.evidenceRef(),
+            "proof",
+            DIGEST);
+    when(journal.findTransition(tuple))
+        .thenReturn(
+            java.util.Optional.empty(),
+            committed ? java.util.Optional.of(after) : java.util.Optional.empty());
+    when(provider.read(scope))
+        .thenReturn(InitialGameplayReleaseEvidenceProvider.EvidenceResolution.unavailable());
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, provider, mock(InitialGameplayReleaseEffectPort.class));
+    var command = new Resume(scope.operationId(), Phase.AWAITING_RESUME, lock, scope.evidenceRef());
+
+    if (committed) {
+      assertThat(controller.resume(command)).isSameAs(after);
+    } else {
+      assertThatThrownBy(() -> controller.resume(command))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_EVIDENCE_UNAVAILABLE");
+    }
+    verify(journal, org.mockito.Mockito.times(2)).findTransition(tuple);
+    verify(journal, never()).transition(any(), any());
   }
 
   @Test

@@ -90,7 +90,7 @@ abstract class AccountGameSessionAbortCompositionFixture {
   final class Session implements AutoCloseable {
     private long phaseStartedAt = System.nanoTime();
     private boolean setupComplete;
-    private final PhysicalRedisFixture redis = PhysicalRedisFixture.start();
+    private final PhysicalRedisFixture redis;
     final AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.Fixture accountFixture;
     final CanonicalGameplayAdmissionAbortCompositionFixture gs;
     final LoopbackMtlsTestPki.Pki pki;
@@ -123,8 +123,8 @@ abstract class AccountGameSessionAbortCompositionFixture {
         boolean installedBootstrap,
         boolean includeWrongPeerIdentity)
         throws Exception {
+      redis = startRedis();
       try {
-        markPhase("redis_start");
         accountFixture = accountFixtures.newFixture(redis.client());
         markPhase("account_fixture");
         var issuance = accountFixture.committedCandidate.identity();
@@ -420,6 +420,19 @@ abstract class AccountGameSessionAbortCompositionFixture {
     CanonicalGameplayAdmissionAbortOutcome abortWith(String callerToken) {
       return CanonicalGameplayAdmissionAbortManualFactory.createUnregisteredOwner(gs.dsl(), client)
           .abortFirstNew(gs.transitionId(), callerToken);
+    }
+
+    private PhysicalRedisFixture startRedis() throws Exception {
+      try {
+        try {
+          return PhysicalRedisFixture.start();
+        } finally {
+          markPhase("redis_start");
+        }
+      } catch (Exception | Error setupFailure) {
+        markPhase("setup_failed");
+        throw setupFailure;
+      }
     }
 
     private void markPhase(String phase) {

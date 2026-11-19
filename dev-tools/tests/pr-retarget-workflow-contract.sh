@@ -705,7 +705,7 @@ if "github.sha" in concurrency_group.split("github.event_name == 'repository_dis
     raise SystemExit("repository_dispatch concurrency must not use the default-branch github.sha")
 # Execute the workflow-level selector before its dispatcher can classify a CI
 # callback. A title/body CI completion must not evict substantive reconciliation.
-assert runtime["concurrency"]["cancel-in-progress"] == "false", "duplicate requests must not cancel a useful running producer"
+assert runtime["concurrency"]["cancel-in-progress"] == "${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') }}"
 
 def callback_group(branch, source_id, source_attempt, source_event="pull_request", head="a" * 40):
     values = {
@@ -1562,7 +1562,7 @@ require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, 
 require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
 require_contains "$runtime_images_path" 'repository_dispatch:'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
-require_contains "$runtime_images_path" '  cancel-in-progress: false'
+require_contains "$runtime_images_path" "  cancel-in-progress: \${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') }}"
 require_contains "$runtime_images_path" 'run-name: Build Runtime Images '
 require_contains "$runtime_images_path" "format('secure-pr-artifact pr-{0}"
 require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'

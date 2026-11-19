@@ -19,7 +19,7 @@ from pathlib import Path
 
 source = Path(sys.argv[1]).read_text()
 group = re.search(r"^  group: (runtime-images-.*)$", source, re.MULTILINE).group(1)
-assert re.search(r"^  cancel-in-progress: false$", source, re.MULTILINE)
+cancel = re.search(r"^  cancel-in-progress: (.*)$", source, re.MULTILINE).group(1)
 
 class Context:
     def __init__(self, value=None):
@@ -53,14 +53,14 @@ base = {
         "head": {"sha": "head1", "repo": {"full_name": "owner/repo"}}}},
 }
 
-def evaluate(event):
+def evaluate(event, expression_source=group):
     def expression(match):
         code = match.group(1).replace("&&", " and ").replace("||", " or ")
         code = re.sub(r"\bnull\b", "None", code)
         # Only the checked-in expression is code; event values remain data.
         return str(eval(code, {"__builtins__": {}}, {
             "github": Context(event), "format": lambda template, *args: template.format(*args)}))
-    return re.sub(r"\$\{\{(.*?)\}\}", expression, group)
+    return re.sub(r"\$\{\{(.*?)\}\}", expression, expression_source)
 
 def check(event, suffix):
     expected = "runtime-images-Build Runtime Images-" + suffix
@@ -93,6 +93,13 @@ dispatch = {**base, "event_name": "repository_dispatch", "event": {
     "action": "pr-runtime-base-refresh", "client_payload": {
         "pr_number": 7, "base_sha": "base1", "head_sha": "head1", "merge_sha": "merge1"}}}
 check(dispatch, "pr-7-base-base1-head-head1-merge-merge1-required")
+for event in [base, dispatch, {"event_name": "workflow_dispatch"},
+              {"event_name": "workflow_run", "event": {"workflow_run": {"event": "pull_request", "head_branch": "develop"}}}]:
+    assert evaluate(event, cancel) == "False", event
+for branch in ["main", "develop", "feature/x"]:
+    event = {"event_name": "workflow_run", "event": {"workflow_run": {"event": "push", "head_branch": branch}}}
+    assert evaluate(event, cancel) == str(branch in ["main", "develop"]), event
+
 for value in [0, False, "", None]:
     invalid = copy.deepcopy(dispatch)
     invalid["event"]["client_payload"]["pr_number"] = value

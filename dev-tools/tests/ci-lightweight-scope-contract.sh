@@ -11,6 +11,44 @@ MODULE_CHECK_WRAPPER="$ROOT_DIR/.github/scripts/run-gradle-module-checks.sh"
 
 node --test "$ROOT_DIR/.github/scripts/classify-change-scope.test.cjs"
 
+node - "$CI_WORKFLOW" "$CLASSIFIER" <<'JS_SCOPE'
+const assert = require("node:assert/strict");
+const {execFileSync} = require("node:child_process");
+const workflow = JSON.parse(execFileSync("python3", ["-c",
+  "import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))",
+  process.argv[2]], {encoding: "utf8"}));
+const compute = workflow.jobs.changes.steps.find(step => step.id === "compute").with.script;
+const {ALL_MODULES, BOOTABLE_MODULES, classifyChangeScope} = require(process.argv[3]);
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const execute = new AsyncFunction("require", "github", "context", "core", compute);
+(async () => {
+  for (const [available, modules, compatible] of [
+    [false, undefined, false],
+    [true, undefined, false],
+    [true, ALL_MODULES.filter(module => module !== "recovery-controller-service"), false],
+    [true, ALL_MODULES.filter(module => module !== "common-redis-contracts"), false],
+    [true, ALL_MODULES, true],
+  ]) {
+    const outputs = {};
+    await execute(name => name === "node:fs" ? {existsSync: () => available} : {
+      ALL_MODULES: modules,
+      classifyGithubChangeScope: async () => ({
+        runAll: false, affectedModules: ["account-service"], bootableModules: ["account-service"],
+        affectedServices: ["account-service"], lightweightOnly: true,
+      }),
+    }, {}, {}, {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    assert.equal(outputs.run_all, String(!compatible));
+    assert.equal(outputs.lightweight_only, String(compatible));
+    assert.deepEqual(JSON.parse(outputs.affected_modules), compatible ? ["account-service"] : ALL_MODULES);
+    assert.deepEqual(JSON.parse(outputs.bootable_modules),
+      compatible ? ["account-service"] : [...BOOTABLE_MODULES]);
+  }
+  const shared = classifyChangeScope(["services/common-redis-contracts/src/main/java/Example.java"]);
+  assert.deepEqual(shared.affectedModules, ALL_MODULES);
+  assert.ok(!shared.bootableModules.includes("common-redis-contracts"));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+JS_SCOPE
+
 require_contains() {
   local path="$1"
   local expected="$2"
@@ -381,6 +419,7 @@ DEV_TOOLS_TEST_DISCOVERY_COMMAND = "python3 -m unittest discover -s dev-tools/te
 REMAINING_FULL_RUN_COMMANDS = (
     'bash ./dev-tools/tests/cloc-report-contract.sh',
     'bash ./dev-tools/tests/ci-lightweight-scope-contract.sh',
+    'bash ./dev-tools/tests/protected-pod-admission-workflow-contract.sh',
     'bash ./dev-tools/tests/gradle-dependency-recovery-contract.sh',
     'bash ./dev-tools/tests/workflow-version-authority-contract.sh',
     'bash ./dev-tools/tests/workflow-tool-updater-contract.sh',
@@ -1469,32 +1508,6 @@ require_equal(
     "ci workflow",
 )
 ci_compute_step = find_step(ci, "changes", "Compute affected jobs", "ci workflow")
-for guard in (
-    "completeModules.every(module => ALL_MODULES.includes(module))",
-    "run_all: scope.runAll || !moduleScopeAvailable",
-    "affected_modules: moduleScopeAvailable ? scope.affectedModules : completeModules",
-    "bootable_modules: moduleScopeAvailable ? scope.bootableModules : completeBootableModules",
-    "lightweight_only: moduleScopeAvailable && scope.lightweightOnly",
-):
-    require_contains(ci_compute_step, ("with", "script"), guard, "ci workflow")
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
-    "const { classifyGithubChangeScope, ALL_MODULES } = require(classifierPath)",
-    "ci workflow",
-)
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
-    "await classifyGithubChangeScope(github, context)",
-    "ci workflow",
-)
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
-    "Base revision predates the change classifier; using complete validation scope.",
-    "ci workflow",
-)
 classifier_inventories = load_classifier_module_inventories(sys.argv[5])
 for output_key, constant_name, inventory_key in (
     ("affected_modules", "completeModules", "allModules"),

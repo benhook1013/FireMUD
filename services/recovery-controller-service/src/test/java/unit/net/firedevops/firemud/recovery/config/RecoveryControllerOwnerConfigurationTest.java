@@ -27,9 +27,10 @@ import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
 import org.springframework.boot.flyway.autoconfigure.FlywayMigrationStrategy;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.boot.jooq.autoconfigure.JooqAutoConfiguration;
+import org.springframework.boot.test.context.TestComponent;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import tools.jackson.databind.json.JsonMapper;
@@ -127,7 +128,7 @@ class RecoveryControllerOwnerConfigurationTest {
             });
   }
 
-  @Configuration(proxyBeanMethods = false)
+  @TestConfiguration(proxyBeanMethods = false)
   @ImportAutoConfiguration({
     DatabaseAutoConfiguration.class,
     DataSourceAutoConfiguration.class,
@@ -136,6 +137,7 @@ class RecoveryControllerOwnerConfigurationTest {
   })
   static class DatabaseWiring {}
 
+  @TestComponent
   @AutoConfiguration
   static class Replacements {
     @Bean

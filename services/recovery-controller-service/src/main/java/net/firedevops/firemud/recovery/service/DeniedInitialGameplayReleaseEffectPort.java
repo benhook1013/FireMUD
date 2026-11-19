@@ -9,7 +9,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEf
 public class DeniedInitialGameplayReleaseEffectPort implements InitialGameplayReleaseEffectPort {
   @Override
   public EffectApplyResult apply(TypedEffect effect, UUID attemptId) {
-    return EffectApplyResult.retryableNoEffect("GAME_SESSION_EFFECT_OWNER_UNAVAILABLE");
+    return EffectApplyResult.notDispatched("GAME_SESSION_EFFECT_OWNER_UNAVAILABLE");
   }
 
   @Override

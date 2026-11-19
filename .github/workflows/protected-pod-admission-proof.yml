@@ -122,12 +122,12 @@ jobs:
             elif ! actual_claim="$(cat "$claim")" || [[ "$actual_claim" != "$expected_claim" ]]; then
               printf 'cleanup=refused_invalid_ownership_claim\n'
               status=1
-            elif ! node_names="$(docker ps -a --format '{{.Names}}')"; then
+            elif ! node_names="$(timeout --signal=TERM --kill-after=5s 15s docker ps -a --format '{{.Names}}')"; then
               printf 'cleanup=failed_node_lookup\n'
               status=1
             elif grep -Fxq "$node" <<<"$node_names"; then
               local owner_label
-              owner_label="$(docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' "$node" 2>/dev/null || true)"
+              owner_label="$(timeout --signal=TERM --kill-after=5s 15s docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' "$node" 2>/dev/null)" || owner_label=""
               if [[ "$owner_label" == "$KIND_CLUSTER_NAME" ]]; then
                 kind delete cluster --name "$KIND_CLUSTER_NAME" --kubeconfig "$KUBECONFIG" || status=$?
               else
@@ -176,7 +176,7 @@ jobs:
               echo "created kubeconfig did not select the exact run-owned context" >&2
               exit 1
             }
-            node_label="$(docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' \
+            node_label="$(timeout --signal=TERM --kill-after=5s 15s docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' \
               "${KIND_CLUSTER_NAME}-control-plane")"
             [[ "$node_label" == "$KIND_CLUSTER_NAME" ]] || {
               echo "kind node ownership label did not match this run" >&2
@@ -211,6 +211,30 @@ jobs:
               dev-tools/hosted/trust-bootstrap/fixtures/protected-pod-admission-proof.yaml \
               | kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" create -f -
             elapsed policy_and_fixture_creation "$phase_started"
+
+            # Policy admission status is asynchronous; readiness is not proof of
+            # current-generation type checking. The pinned probe still verifies
+            # exact policy/binding contents after this bounded readiness wait.
+            policy_deadline="$(( $(date +%s) + 90 ))"
+            for policy in firemud-trust-runtime-namespace-boundary firemud-trust-runtime-binding-boundary firemud-trust-runtime-pod-boundary firemud-trust-runtime-pod-identity; do
+              while true; do
+                policy_json="$(kubectl --request-timeout=5s --kubeconfig "$KUBECONFIG" --context "$expected_context" get validatingadmissionpolicy "$policy" -o json)" || policy_json='{}'
+                if jq -e '
+                  (.metadata.generation | type) == "number" and
+                  .status.observedGeneration == .metadata.generation and
+                  (.status.typeChecking | type) == "object" and
+                  (.status.typeChecking.expressionWarnings // []) == [] and
+                  .spec.failurePolicy == "Fail"
+                ' <<<"$policy_json" >/dev/null; then
+                  break
+                fi
+                if (( $(date +%s) >= policy_deadline )); then
+                  printf 'policy_readiness=timeout policy=%s\n' "$policy" >&2
+                  return 1
+                fi
+                sleep 2
+              done
+            done
 
             phase_started="$(date +%s)"
             for app in account-service game-session-service; do
@@ -260,11 +284,11 @@ jobs:
             printf 'cleanup=refused_invalid_ownership_claim\n' | tee -a "$evidence"
             exit 1
           fi
-          if ! node_names="$(docker ps -a --format '{{.Names}}')"; then
+          if ! node_names="$(timeout --signal=TERM --kill-after=5s 15s docker ps -a --format '{{.Names}}')"; then
             printf 'cleanup=failed_node_lookup\n' | tee -a "$evidence"
             exit 1
           elif grep -Fxq "$node" <<<"$node_names"; then
-            owner_label="$(docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' "$node" 2>/dev/null || true)"
+            owner_label="$(timeout --signal=TERM --kill-after=5s 15s docker inspect --format '{{ index .Config.Labels "io.x-k8s.kind.cluster" }}' "$node" 2>/dev/null)" || owner_label=""
             if [[ "$owner_label" != "$KIND_CLUSTER_NAME" ]]; then
               printf 'cleanup=refused_unverified_node_identity node=%s label=%s\n' "$node" "$owner_label" \
                 | tee -a "$evidence"

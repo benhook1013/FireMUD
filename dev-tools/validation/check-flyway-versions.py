@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
-MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/migration/")
+MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
     r'|dependencies\.add\(\s*"(?:implementation|api|runtimeOnly)"\s*,\s*project\.project\(\s*":([^\"]+)"'
@@ -52,6 +52,8 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob("services/*/src/main/resources/application*.y*ml"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
+             *repo_root.glob("services/*/src/main/resources/db/recovery-control-migration/**/*"),
+             *repo_root.glob("services/*/src/main/java/db/recovery-control-migration/**/*"),
              *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
     return {path.relative_to(repo_root).as_posix(): path.read_bytes() for path in paths if path.is_file()}
 
@@ -261,6 +263,20 @@ def run_self_test() -> None:
     check("changed history", {**history, local + "V1__init.sql": b"-- rewritten"}, history, "content changed")
     check("removed history", {path: data for path, data in history.items() if path != local + "V1__init.sql"}, history, "removed or renamed")
     check("java/sql duplicate", {**history, "services/example-service/src/main/java/db/migration/V1__dup.java": b"// dup"}, history, "duplicate version V1")
+
+    recovery = "services/recovery-controller-service/src/main/resources/db/recovery-control-migration/"
+    recovery_history = {recovery + "V1__journal.sql": b"-- journal"}
+    check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    check("duplicate recovery version", {**recovery_history, recovery + "V1__duplicate.sql": b"-- duplicate"},
+          recovery_history, "duplicate version V1")
+    check("changed recovery history", {recovery + "V1__journal.sql": b"-- rewritten"},
+          recovery_history, "content changed")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / recovery).mkdir(parents=True)
+        (root / recovery / "V1__journal.sql").write_bytes(b"-- journal")
+        if current_snapshot(root) != recovery_history or not all(map(relevant_path, recovery_history)):
+            raise AssertionError("isolated recovery history is not selected for both snapshots")
 
     # Exercise the actual composed convention wiring and exclude test-only dependencies.
     conventions = {

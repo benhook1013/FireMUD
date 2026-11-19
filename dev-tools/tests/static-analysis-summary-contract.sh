@@ -27,7 +27,7 @@ grep -Fq 'per_page: 100' "$workflow"
 grep -Fq 'cancel-in-progress: false' "$workflow"
 # GitHub expressions are literal workflow text, not shell expansions.
 # shellcheck disable=SC2016
-grep -Fq 'group: static-analysis-summary-source-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}' "$workflow"
+grep -Fq 'group: static-analysis-summary-pr-${{ needs.resolve-summary-target.outputs.pull-number }}' "$workflow"
 grep -Fq 'const headSha = currentPullRequest.head?.sha;' "$workflow"
 grep -Fq 'context.payload.workflow_run.display_title !== expectedSourceTitle' "$workflow"
 grep -Fq 'finalPullRequest.base?.sha !== baseSha' "$workflow"
@@ -76,6 +76,69 @@ for line in lines[start + 1 :]:
     body.append(line)
 script_path.write_text(textwrap.dedent("\n".join(body)) + "\n", encoding="utf-8")
 PY
+
+# Execute the actual pre-queue resolver and verify the job-level lock boundary.
+python3 - "$workflow" "$test_root/summary-target.js" <<'PY_TARGET'
+import sys
+from pathlib import Path
+import yaml
+workflow = yaml.load(Path(sys.argv[1]).read_text(), Loader=yaml.BaseLoader)
+assert "concurrency" not in workflow, "unvalidated callbacks must not share a workflow queue"
+resolver = workflow["jobs"]["resolve-summary-target"]
+publisher = workflow["jobs"]["publish-summary"]
+assert resolver["permissions"] == {}, "resolver must not receive write authority"
+assert resolver["if"] == "${{ github.event.workflow_run.event == 'pull_request' }}"
+assert publisher["needs"] == ["resolve-summary-target"]
+assert publisher["if"] == "${{ needs.resolve-summary-target.outputs.pull-number != '' }}"
+assert publisher["concurrency"] == {
+    "group": "static-analysis-summary-pr-${{ needs.resolve-summary-target.outputs.pull-number }}",
+    "cancel-in-progress": "false",
+}
+step = next(step for step in resolver["steps"] if step.get("id") == "target")
+assert resolver["outputs"]["pull-number"] == "${{ steps.target.outputs.pull-number }}"
+Path(sys.argv[2]).write_text(step["with"]["script"])
+PY_TARGET
+node - "$test_root/summary-target.js" <<'NODE_TARGET'
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const resolve = new Function("context", "core", fs.readFileSync(process.argv[2], "utf8"));
+const head = "a".repeat(40), base = "b".repeat(40);
+function source(number = 42, workflow = "CodeQL Analysis", sha = head) {
+  return {event: "pull_request", name: workflow,
+    path: workflow === "CodeQL Analysis" ? ".github/workflows/codeql.yml" : ".github/workflows/license-scan.yml",
+    display_title: `${workflow} pr-${number} base-${base} head-${sha}`, head_sha: sha,
+    head_repository: {id: 123}, head_branch: "shared", pull_requests: [{number}]};
+}
+function group(run) {
+  const outputs = {};
+  resolve({payload: {workflow_run: run}}, {setOutput: (key, value) => { outputs[key] = value; }});
+  return outputs["pull-number"] ? `static-analysis-summary-pr-${outputs["pull-number"]}` : null;
+}
+const a = group(source()), b = group(source(99));
+assert.notEqual(a, b, "same source branch must not couple different PR queues");
+assert.equal(a, group(source(42, "License Gate")), "producer channels must serialize per PR");
+assert.equal(a, group(source(42, "CodeQL Analysis", "c".repeat(40))), "head advance must keep the PR queue");
+for (const pull_requests of [[{number: 99}, {number: 42}], [{number: 42}, {number: 99}]]) {
+  assert.equal(group({...source(), pull_requests}), a, "association order must not select another PR");
+}
+for (const override of [
+  {event: "push"}, {event: "schedule"}, {display_title: "malformed"},
+  {head_sha: "d".repeat(40)}, {path: ".github/workflows/unrelated.yml"}, {name: "forged"},
+  {head_repository: {id: 0}}, {head_repository: null}, {head_branch: ""},
+  {pull_requests: null}, {pull_requests: [{number: 99}]},
+  {pull_requests: [{number: 42}, {number: 42}]},
+]) assert.equal(group({...source(), ...override}), null, JSON.stringify(override));
+// Fork identity is not authority: keep a valid association routable; the existing
+// publisher independently verifies the live PR repository/branch before any write.
+assert.equal(group({...source(), head_repository: {id: 456}}), a);
+const pending = new Map();
+pending.set(a, "42-final"); pending.set(b, "99-old");
+const push = group({...source(), event: "push"});
+if (push) pending.set(push, "push");
+assert.equal(pending.get(a), "42-final", "other PR and push cannot replace PR42 pending work");
+assert.equal(pending.get(b), "99-old");
+console.log("static summary target and queue isolation contract passed");
+NODE_TARGET
 
 node - "$script_path" <<'NODE'
 const fs = require("node:fs");

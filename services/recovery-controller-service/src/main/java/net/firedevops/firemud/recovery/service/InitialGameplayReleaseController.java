@@ -151,7 +151,8 @@ public final class InitialGameplayReleaseController {
           clock.instant());
       return requireOperation(operation.scope().operationId());
     }
-    if (applyResult.status() == ApplyStatus.RETRYABLE_NO_EFFECT) {
+    if (applyResult.status() == ApplyStatus.RETRYABLE_NO_EFFECT
+        || applyResult.status() == ApplyStatus.NOT_DISPATCHED) {
       journal.recordRetryableEffect(
           operation.scope().operationId(),
           dispatched.effect().effectId(),
@@ -227,12 +228,18 @@ public final class InitialGameplayReleaseController {
     if (prior.isPresent()) {
       return prior.orElseThrow();
     }
-    verifyFreshEvidence(operation);
+    EvidenceResolution resolution = evidenceProvider.read(operation.scope());
+    if (resolution.status() == ResolutionStatus.UNAVAILABLE) {
+      Optional<Operation> committedWhileReading = journal.findTransition(tuple);
+      if (committedWhileReading.isPresent()) {
+        return committedWhileReading.orElseThrow();
+      }
+    }
+    verifyFreshEvidence(operation, resolution);
     return journal.transition(tuple, clock.instant());
   }
 
-  private void verifyFreshEvidence(Operation operation) {
-    EvidenceResolution resolution = evidenceProvider.read(operation.scope());
+  private void verifyFreshEvidence(Operation operation, EvidenceResolution resolution) {
     if (resolution.status() != ResolutionStatus.AVAILABLE) {
       throw unavailable("INITIAL_GAMEPLAY_RELEASE_EVIDENCE_" + resolution.status().name());
     }
