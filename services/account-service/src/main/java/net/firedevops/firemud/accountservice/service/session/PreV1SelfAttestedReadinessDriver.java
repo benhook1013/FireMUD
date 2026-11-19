@@ -72,6 +72,10 @@ public final class PreV1SelfAttestedReadinessDriver {
     }
     try {
       return drive();
+    } catch (AccountJwtSignerDesiredStateRepository.MissingDesiredStateException
+        | AccountJwtSignerDesiredStateRepository.MissingGenerationOperationException idle) {
+      // Not enrolled yet, or no generation is selected (for example after promotion).
+      return false;
     } catch (RuntimeException notYet) {
       LOG.info(
           "Pre-v1 self-attested readiness not complete yet: {}: {}",
