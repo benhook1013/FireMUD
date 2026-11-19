@@ -3669,6 +3669,28 @@ async function failedProof(error, event = "pull_request") {
   assert.match(warnings[0], /^Canonical PLAY transition exception proof is unavailable:/);
   assert.deepEqual(outputs, []);
 }
+async function selectedProducerFinalFence(event, moved = false) {
+  const outputs = [], failures = [], required = [];
+  const core = {warning: () => {}, setFailed: x => failures.push(x), setOutput: (...x) => outputs.push(x)};
+  core.summary = {addHeading() {return this;}, addRaw() {return this;}, async write() {}};
+  const execute = new Function("fullSmokeJob", "matching", "canonicalSmokeJobName", "currentIdentity",
+    "verifyKnownPlayFailure", "TerminalGitHubRequestError", "core", "resolveCurrentIdentity",
+    "identityKey", "isCurrentCanonicalAttempt", "setTimeout", "sleepMs",
+    `return (async () => { let requireCurrentIdentity = false, iterations = 0;
+      smokeGatePolling: while (iterations++ < 1) { ${failedBranch} break; } })();`);
+  await execute(candidate, {...source, event}, canonicalSmokeJobName, identity, async () => true,
+    TerminalGitHubRequestError, core, async (_label, current) => {
+      required.push(current);
+      return {...identity, canonicalPlayEligible: true,
+        ...(current ? {sourceEvent: "repository_dispatch"} : {}),
+        ...(current && moved ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
+    }, selected => { const {canonicalPlayEligible, ...tuple} = selected; return JSON.stringify(tuple); },
+    async () => true, resolve => resolve(), 0);
+  assert.deepEqual(required, [event === "repository_dispatch"]);
+  assert.deepEqual(failures, []);
+  assert.equal(outputs.length, event === "repository_dispatch" && moved ? 0 : 1,
+    "selected typed producer must reject base movement after proof, original retains immutable event semantics");
+}
 // Execute the failed-run branch so proof errors retain the deterministic failure diagnostic.
 const legacyFailedStart = script.indexOf('if (matching.conclusion !== "success")');
 const legacyFailedEnd = script.indexOf("const latestIdentity", legacyFailedStart);
@@ -3841,7 +3863,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     : expires ? statuses.length : statuses.length - 1);
 }
 // Exercise the real resolver, not merely a stub that honors requireCurrent.
-async function refreshFinalIdentity() {
+async function refreshFinalIdentity(eventUnavailable = false) {
   const start = script.indexOf("async function resolveCurrentIdentity(");
   const end = script.indexOf("async function isCurrentPullRequestObsolete", start);
   const resolver = script.slice(start, end);
@@ -3857,16 +3879,18 @@ async function refreshFinalIdentity() {
     git: {getRef: async () => ({data: {object: {sha: movedBase}}})},
   }}, "benhook1013", "FireMUD", "3390", () => false, () => {}, TerminalGitHubRequestError,
     {info: () => {}, warning: () => {}}, identity.baseSha, identity.mergeSha, identity.headSha,
-    identity.baseRef, async sha => ({sha, parents: [{sha: sha === movedMerge ? movedBase : identity.baseSha},
-      {sha: identity.headSha}]}), repositoryName);
-  assert.equal((await resolve("original")).mergeSha, identity.mergeSha);
+    identity.baseRef, async sha => {
+      if (eventUnavailable && sha === identity.mergeSha) throw new Error("old event commit unavailable");
+      return {sha, parents: [{sha: sha === movedMerge ? movedBase : identity.baseSha}, {sha: identity.headSha}]};
+    }, repositoryName);
+  if (!eventUnavailable) assert.equal((await resolve("original")).mergeSha, identity.mergeSha);
   const fresh = await resolve("refresh", true);
   assert.equal(fresh.baseSha, movedBase);
   assert.equal(fresh.mergeSha, movedMerge);
   assert.equal(fresh.canonicalPlayEligible, true);
   livePull.labels = [];
   assert.equal((await resolve("withdrawn refresh", true)).canonicalPlayEligible, false);
-  assert.equal((await resolve("withdrawn direct event")).canonicalPlayEligible, false);
+  if (!eventUnavailable) assert.equal((await resolve("withdrawn direct event")).canonicalPlayEligible, false);
 }
 const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
 const markerValues = {
@@ -4006,6 +4030,11 @@ function markerAccepted(overrides = {}) {
   await pendingRefreshCaller(["absent", "absent"], true);
   await pendingRefreshCaller(["completed"], false, {originalError: Object.assign(new Error("missing"), {status: 404})});
   await refreshFinalIdentity();
+  await refreshFinalIdentity(true);
+  for (const event of ["pull_request", "repository_dispatch"]) {
+    await selectedProducerFinalFence(event);
+    await selectedProducerFinalFence(event, true);
+  }
   await pendingRefreshCaller(["completed"], true, {finalIdentity: {baseSha: "d".repeat(40)}});
   await pendingRefreshCaller(["completed"], true, {finalIdentity: {mergeSha: "e".repeat(40)}});
   await pendingRefreshCaller(["completed", "completed"], false, {

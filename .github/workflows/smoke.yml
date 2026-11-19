@@ -1146,7 +1146,7 @@ jobs:
                 // independently verified current tuple's trusted refresh.
                 const validEventTuple = /^[0-9a-f]{40}$/.test(eventBaseSha ?? "") &&
                   /^[0-9a-f]{40}$/.test(eventMergeSha ?? "");
-                const mergeCommit = validEventTuple
+                const mergeCommit = !requireCurrent && validEventTuple
                   ? await immutableCommit(eventMergeSha, "event test-merge lookup")
                   : null;
                 const parents = mergeCommit?.parents ?? [];
@@ -1450,11 +1450,13 @@ jobs:
                       core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
                     }
                     if (knownPlayVerified) {
+                      const selectedProofRun = verifiedRefreshRun ?? matching;
+                      const needsLiveTuple = refreshVerified || matching.event === "repository_dispatch";
                       const freshIdentity = await resolveCurrentIdentity(
-                        "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || refreshVerified);
+                        "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
                       // Original event proof keeps its immutable tuple semantics. Refreshed
                       // proof additionally requires the live base and test merge right now.
-                      const comparableFreshIdentity = refreshVerified && freshIdentity
+                      const comparableFreshIdentity = needsLiveTuple && freshIdentity
                         ? {...freshIdentity, sourceEvent: currentIdentity.sourceEvent}
                         : freshIdentity;
                       if (freshIdentity?.obsolete) return;
@@ -1464,7 +1466,7 @@ jobs:
                         continue smokeGatePolling;
                       }
                       if (identityKey(comparableFreshIdentity) !== identityKey(currentIdentity)) {
-                        if (refreshVerified) requireCurrentIdentity = true;
+                        if (needsLiveTuple) requireCurrentIdentity = true;
                         currentIdentity = freshIdentity;
                         continue smokeGatePolling;
                       }
@@ -1472,7 +1474,7 @@ jobs:
                         core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                         return;
                       }
-                      if (!await isCurrentCanonicalAttempt(verifiedRefreshRun ?? matching)) {
+                      if (!await isCurrentCanonicalAttempt(selectedProofRun)) {
                         await new Promise((resolve) => setTimeout(resolve, sleepMs));
                         continue smokeGatePolling;
                       }
@@ -1617,9 +1619,14 @@ jobs:
                       core.setFailed("Canonical PLAY transition exception could not be verified; runtime qualification remains blocked.");
                       return;
                     }
-                    const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception", requireCurrentIdentity);
+                    const needsLiveTuple = matching.event === "repository_dispatch";
+                    const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
+                    const comparableFreshIdentity = needsLiveTuple && freshIdentity
+                      ? {...freshIdentity, sourceEvent: currentIdentity.sourceEvent}
+                      : freshIdentity;
                     if (freshIdentity?.obsolete) return;
-                    if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
+                    if (!freshIdentity || identityKey(comparableFreshIdentity) !== identityKey(currentIdentity)) {
+                      if (needsLiveTuple) requireCurrentIdentity = true;
                       currentIdentity = freshIdentity;
                       continue smokeGatePolling;
                     }
