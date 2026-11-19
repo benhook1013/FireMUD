@@ -93,12 +93,20 @@ jobs:
           [[ "$(jq -r '.author' <<<"$pr")" != "renovate[bot]" ]] || skip "Renovate PR #${number}"
           # Skip when a complete marked section already counts this exact head and base.
           body="$(jq -r '.body' <<<"$pr" | tr -d '\r')"
-          # Read metadata only from inside the first complete start/end marker pair.
-          recorded="$(awk '$0 == "<!-- firemud:cloc-report:start -->" && !done { inside = 1; next }
-            inside && $0 == "<!-- firemud:cloc-report:end -->" { done = 1; inside = 0; next }
+          # Use only the canonical table core inside a single, non-nested marker pair.
+          recorded="$(awk '$0 == "<!-- firemud:cloc-report:start -->" { starts++; if (starts == 1 && !ends) inside = 1; next }
+            $0 == "<!-- firemud:cloc-report:end -->" { ends++; if (inside) done = 1; inside = 0; next }
             inside && sub(/^<!-- firemud:cloc-report:metadata /, "") && sub(/ -->$/, "") && !found { found = 1; meta = $0 }
-            inside && $0 == "### FireMUD LOC impact" { table = 1 }
-            END { if (done && found && table) print meta }' <<<"$body")"
+            inside && $0 == "### FireMUD LOC impact" { heading = 1 }
+            inside && heading && $0 == "| Section | Base LOC | Head LOC | Δ LOC | Change |" {
+              header = NR
+            }
+            inside && header && NR == header + 1 && $0 == "|---|---:|---:|---:|---:|" { divider = NR }
+            inside && divider && NR == divider + 1 &&
+              $0 ~ /^\| \*\*Overall\*\* \| [0-9]+(,[0-9][0-9][0-9])* \| [0-9]+(,[0-9][0-9][0-9])* \| (0|[-+][0-9]+(,[0-9][0-9][0-9])*) \| (new|n\/a|0\.0%|[-+](<0\.1|[0-9]+\.[0-9])%) \|$/ {
+              counts = 1
+            }
+            END { if (starts == 1 && ends == 1 && done && found && counts) print meta }' <<<"$body")"
           if [[ -n "$recorded" ]] \
             && [[ "$(jq -r '.head_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$head" ]] \
             && [[ "$(jq -r '.base_oid // ""' <<<"$recorded" 2>/dev/null || true)" == "$base" ]]; then

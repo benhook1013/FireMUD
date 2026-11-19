@@ -1685,5 +1685,41 @@ grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "metadata outside an empty 
 FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n<!-- firemud:cloc-report:end -->\"" run_decide
 grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "metadata without a rendered report must be regenerated" >&2; exit 1; }
 FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n### FireMUD LOC impact\\n<!-- firemud:cloc-report:end -->\"" run_decide
-expect_skip "LOC section already matches this head and base"
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "a heading without LOC counts must be regenerated" >&2; exit 1; }
+loc_table='| Section | Base LOC | Head LOC | Δ LOC | Change |\n|---|---:|---:|---:|---:|'
+loc_block_start="<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n### FireMUD LOC impact\\n\\n${loc_table}"
+loc_block_end='<!-- firemud:cloc-report:end -->'
+FAKE_BODY="\"${loc_block_start}\\n| **Overall** | — | 0 | 0 | n/a |\\n${loc_block_end}\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "non-numeric LOC counts must be regenerated" >&2; exit 1; }
+FAKE_BODY="\"${loc_block_start}\\n${loc_block_end}\\n| **Overall** | 0 | 0 | 0 | n/a |\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "LOC counts outside the marker block must be regenerated" >&2; exit 1; }
+FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n<!-- firemud:cloc-report:start -->\\n### FireMUD LOC impact\\n\\n${loc_table}\\n| **Overall** | 0 | 0 | 0 | n/a |\\n${loc_block_end}\\n${loc_block_end}\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "nested LOC marker blocks must not count as current" >&2; exit 1; }
+for loc_counts in '0 0' '1000 998'; do
+  read -r loc_before loc_after <<<"$loc_counts"
+  loc_body="$(python3 - "$SCRIPT_SOURCE" "$loc_base" "$loc_head" "$loc_before" "$loc_after" <<'PYLOC'
+import json
+import runpy
+import sys
+
+script, base, head, before, after = sys.argv[1:]
+before, after = int(before), int(after)
+report = {
+    "classifier_sha256": "d" * 64,
+    "base": {"oid": base, "merge_base": base},
+    "head": {"oid": head},
+    "sections": [{
+        "name": "repo",
+        "base": {"lines": before},
+        "head": {"lines": after},
+        "delta": {"lines": after - before},
+        "change_percent": (after - before) * 100 / before if before else None,
+    }],
+}
+print(json.dumps(runpy.run_path(script)["render_pr_report"](report)))
+PYLOC
+)"
+  FAKE_BODY="$loc_body" run_decide
+  expect_skip "LOC section already matches this head and base"
+done
 echo "PR LOC Report callback contract checks passed"
