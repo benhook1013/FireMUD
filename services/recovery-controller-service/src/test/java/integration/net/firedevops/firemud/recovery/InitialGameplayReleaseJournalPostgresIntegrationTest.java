@@ -404,6 +404,54 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void delayedSameAttemptPreparationCannotOverrideNewerAmbiguity() {
+    Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(60);
+    OutboxEntry dispatched = authorizedDispatch(base);
+    UUID operationId = dispatched.effect().operationId();
+    UUID effectId = dispatched.effect().effectId();
+    UUID attemptId = dispatched.lastAttemptId();
+    Operation before = journal.find(operationId).orElseThrow();
+    EffectReadback unknown =
+        readbackFor(
+            dispatched,
+            attemptId,
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "latest-unknown",
+            base.plusSeconds(6));
+    journal.recordEffectReadback(operationId, effectId, attemptId, unknown, base.plusSeconds(6));
+    String retained = storedOutbox(operationId, effectId);
+
+    for (EffectReadbackState delayedState :
+        List.of(EffectReadbackState.UNKNOWN_OR_PARTIAL, EffectReadbackState.PREPARED_FENCED)) {
+      EffectReadback delayed =
+          readbackFor(dispatched, attemptId, delayedState, "delayed", base.plusSeconds(5));
+      assertThatThrownBy(
+              () ->
+                  journal.recordEffectReadback(
+                      operationId, effectId, attemptId, delayed, base.plusSeconds(7)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("predates the retained same-attempt observation");
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+      assertThat(journal.find(operationId)).contains(before);
+      assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+          .isEmpty();
+    }
+
+    EffectReadback fresh =
+        readbackFor(
+            dispatched,
+            attemptId,
+            EffectReadbackState.PREPARED_FENCED,
+            "fresh-owner-proof",
+            base.plusSeconds(8));
+    Operation advanced =
+        journal.recordEffectReadback(operationId, effectId, attemptId, fresh, base.plusSeconds(8));
+    assertThat(advanced.phase()).isEqualTo(Phase.RELEASING);
+    assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+        .isPresent();
+  }
+
+  @Test
   void definitiveAttemptClosureIsReplayableAndCannotBeOverwritten() {
     Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(60);
     Scope scope = scope();

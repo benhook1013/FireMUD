@@ -401,7 +401,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           }
           Record timestamps =
               tx.fetchOne(
-                  "SELECT last_dispatched_at FROM "
+                  "SELECT last_dispatched_at, readback_payload, readback_digest FROM "
                       + OUTBOX_TABLE
                       + " WHERE operation_id = ? AND effect_id = ?",
                   operationId,
@@ -417,6 +417,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           if (readback.observedAt().isBefore(dispatchedAt)) {
             throw conflict("effect readback is stale");
           }
+          requireNonRegressingReadback(readback, timestamps, current);
           if (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
             setReadbackState(
                 tx, current, readback, readbackDigest, EffectOutboxState.AMBIGUOUS, now);
@@ -671,6 +672,27 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || !tuple.evidenceIdentity().equals(operation.evidence().evidenceIdentity())
         || !tuple.evidenceDigest().equals(tupleCodec.digest(operation.evidence()))) {
       throw conflict("public transition tuple does not match the operation-owned tuple");
+    }
+  }
+
+  private void requireNonRegressingReadback(
+      EffectReadback readback, Record stored, OutboxEntry current) {
+    JSONB payload = stored.get("readback_payload", JSONB.class);
+    String digest = stored.get("readback_digest", String.class);
+    if (payload == null && digest == null) {
+      return;
+    }
+    if (payload == null || digest == null) {
+      throw conflict("retained effect readback is incomplete");
+    }
+    EffectReadback previous = tupleCodec.readEffectReadback(payload.data());
+    if (!digest.equals(tupleCodec.digest(previous))) {
+      throw conflict("retained effect readback digest does not match");
+    }
+    requireReadbackMatches(
+        previous, current, current.effect().operationId(), current.effect().effectId());
+    if (readback.observedAt().isBefore(previous.observedAt())) {
+      throw conflict("effect readback predates the retained same-attempt observation");
     }
   }
 
