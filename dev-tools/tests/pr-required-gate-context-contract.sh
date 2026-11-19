@@ -508,7 +508,7 @@ const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), defa
 const repository = "example/firemud";
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
 async function scenario(kind, event = "pull_request") {
-  let now = 1000, snapshots = 0, reads = 0, currentRunReads = 0;
+  let now = 1000, snapshots = 0, reads = 0, currentRunReads = 0, refreshInventoryReads = 0;
   const failures = [], refs = [], info = [];
   const context = {repo: {owner: "example", repo: "firemud"}, sha: merge, payload: {
     repository: {default_branch: "develop"},
@@ -590,13 +590,19 @@ async function scenario(kind, event = "pull_request") {
         status: kind.startsWith("pending-native") ? "queued" : "completed",
         conclusion: kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
     }
+    if (kind.startsWith("pending-native-inventory-") && input.event === "repository_dispatch") {
+      refreshInventoryReads += 1;
+      const forbidden = kind.endsWith("-forbidden");
+      throw Object.assign(new Error(forbidden ? "optional inventory forbidden" : "optional inventory unavailable"),
+        {status: forbidden ? 403 : 503});
+    }
     yield {data: kind.startsWith("duplicate-") && !["duplicate-jobs", "duplicate-attempt-jobs"].includes(kind)
       ? [{...source, id: 43, created_at: "2026-09-01T00:00:01Z", status: "in_progress", conclusion: null}, source] : [source]};
   };
   const clock = {now: () => now, parse: Date.parse};
   await execute(github, context, {info: message => info.push(message), warning: () => {}, setFailed: message => failures.push(message)},
     clock, (callback, duration) => {now += duration; queueMicrotask(callback);}, require);
-  return {failures, refs, snapshots, info};
+  return {failures, refs, snapshots, info, refreshInventoryReads};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -614,6 +620,12 @@ async function scenario(kind, event = "pull_request") {
     assert(!result.info.some(line => line.startsWith("Found runtime-images run 42 with status=")),
       `${kind} must not select the refresh`);
   }
+  const unavailable = await scenario("pending-native-inventory-unavailable", "repository_dispatch");
+  assert(unavailable.refreshInventoryReads >= 4, "temporary inventory errors exhaust the normal retries");
+  assert(unavailable.info.some(line => line.startsWith("Found runtime-images run 43 with status=queued")),
+    "temporary inventory outage must leave the native run selected");
+  assert.equal(unavailable.failures.length, 1, "a native run that never finishes still fails the gate");
+  await assert.rejects(() => scenario("pending-native-inventory-forbidden", "repository_dispatch"), /inventory forbidden/);
   for (const kind of ["duplicate-missing-step", "duplicate-nonterminal-step"]) {
     assert.deepEqual((await scenario(kind)).failures, [], `${kind} preserves canonical fallback`);
   }

@@ -1214,9 +1214,21 @@ jobs:
               // It must not hide already verified smoke proof or cause a second dispatch.
               if (currentIdentity.sourceEvent === "pull_request" && matching?.event === "pull_request" &&
                   matching.status !== "completed") {
-                const replacement = await findMatchingRuntimeImagesRun(
-                  "repository_dispatch", expectedDisplayTitle, currentIdentity
-                );
+                let replacement;
+                try {
+                  replacement = await findMatchingRuntimeImagesRun(
+                    "repository_dispatch", expectedDisplayTitle, currentIdentity
+                  );
+                } catch (error) {
+                  const status = error?.status ?? error?.response?.status;
+                  const code = error?.code ?? error?.cause?.code;
+                  const networkFailure = status == null && [
+                    "ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH",
+                    "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET",
+                  ].includes(code);
+                  if (!retryableStatuses.has(status) && !networkFailure) throw error;
+                  core.warning("Trusted refresh inventory is unavailable; retain the native wait.");
+                }
                 try {
                   if (replacement && await verifyCompletedCanonicalRuntime(replacement, currentIdentity)) {
                     core.info("A completed verified exact trusted refresh supersedes the pending native wait.");
