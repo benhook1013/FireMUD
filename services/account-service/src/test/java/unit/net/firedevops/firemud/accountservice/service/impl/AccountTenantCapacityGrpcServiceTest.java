@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import java.util.UUID;
@@ -106,7 +107,10 @@ class AccountTenantCapacityGrpcServiceTest {
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
       var error = ArgumentCaptor.forClass(Throwable.class);
       verify(observer).onError(error.capture());
-      Status status = Status.fromThrowable(error.getValue());
+      Throwable thrown = error.getValue();
+      assertThat(thrown).isInstanceOf(StatusRuntimeException.class);
+      assertThat(thrown.getCause()).isNull();
+      Status status = ((StatusRuntimeException) thrown).getStatus();
       assertThat(status.getCode()).isEqualTo(Status.Code.INTERNAL);
       assertThat(status.getDescription()).isNull();
       assertThat(status.getCause()).isNull();
