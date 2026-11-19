@@ -52,14 +52,13 @@ public class PluginRuntimeRequestHistoryRepository {
             .doNothing()
             .returningResult(PLUGIN_RUNTIME_REQUEST_HISTORY.fields())
             .fetchOptional(this::toEntity)
-            .orElseGet(
-                () ->
-                    find(
-                            entity.getTenantId(),
-                            entity.getGameInstanceId(),
-                            entity.getPluginId(),
-                            entity.getControlPlaneRequestId())
-                        .orElseThrow());
+            .orElseGet(() ->
+                find(
+                        entity.getTenantId(),
+                        entity.getGameInstanceId(),
+                        entity.getPluginId(),
+                        entity.getControlPlaneRequestId())
+                    .orElseThrow());
     if (!normalize(entity.getOperation()).equals(normalize(winner.getOperation()))
         || !normalize(entity.getRequestFingerprint())
             .equals(normalize(winner.getRequestFingerprint()))) {

@@ -132,10 +132,9 @@ public final class SelectedOwnerEmptySourceInputs {
     return snapshot.ownerSourceInventoryDeclarations().stream()
         .filter(declaration -> declaration.owner() == owner)
         .findFirst()
-        .orElseThrow(
-            () ->
-                new IllegalArgumentException(
-                    "Selected template config has no declaration for the authorized owner"));
+        .orElseThrow(() ->
+            new IllegalArgumentException(
+                "Selected template config has no declaration for the authorized owner"));
   }
 
   private static void requireNoOwnerTemplateReferences(

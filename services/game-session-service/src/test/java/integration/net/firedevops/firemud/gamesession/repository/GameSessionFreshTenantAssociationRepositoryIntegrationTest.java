@@ -245,18 +245,16 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     AtomicReference<Future<FreshTenantAssociation>> retry = new AtomicReference<>();
     try {
       FreshGameSessionTenantAssociation first =
-          fixture.transactions.execute(
-              status -> {
-                fixture.dsl.fetch(
-                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", canonicalLockKey);
-                retry.set(
-                    executor.submit(
-                        () ->
-                            fixture.associationRepository.associateFreshTenant(
-                                creation.creationRequestId(), creation.requestDigest())));
-                awaitAdvisoryWait(fixture, canonicalLockKey);
-                return fixture.associateFresh(uuid(640), NAMESPACE, source);
-              });
+          fixture.transactions.execute(status -> {
+            fixture.dsl.fetch(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", canonicalLockKey);
+            retry.set(
+                executor.submit(() ->
+                    fixture.associationRepository.associateFreshTenant(
+                        creation.creationRequestId(), creation.requestDigest())));
+            awaitAdvisoryWait(fixture, canonicalLockKey);
+            return fixture.associateFresh(uuid(640), NAMESPACE, source);
+          });
 
       FreshTenantAssociation actualRetry = retry.get().get(15, TimeUnit.SECONDS);
       assertThat(actualRetry.targetNamespace()).isEqualTo(creation.targetNamespace());
@@ -379,10 +377,9 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
                 original.legacyGameSessionTenantId()),
             "expected original source-bound tenant reservation");
 
-    assertThatThrownBy(
-            () ->
-                fixture.associationRepository.associateFreshTenant(
-                    competingEvidence.creationRequestId(), competingEvidence.requestDigest()))
+    assertThatThrownBy(() ->
+            fixture.associationRepository.associateFreshTenant(
+                competingEvidence.creationRequestId(), competingEvidence.requestDigest()))
         .isExactlyInstanceOf(FreshTenantAssociationConflictException.class)
         .hasMessageContaining("canonical tenant");
     verify(humanFixture.gameDesignClient())
@@ -486,13 +483,12 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
 
     // A complete NEW_GAME_ROW candidate is deliberately paired with the committed retained
     // receipt so the real GS intake reader exercises its provenance refusal before allocation.
-    assertThatThrownBy(
-            () ->
-                fixture.associate(
-                    uuid(622),
-                    NAMESPACE,
-                    retainedSource,
-                    creationEvidence(retainedSource.source(), "NEW_GAME_ROW")))
+    assertThatThrownBy(() ->
+            fixture.associate(
+                uuid(622),
+                NAMESPACE,
+                retainedSource,
+                creationEvidence(retainedSource.source(), "NEW_GAME_ROW")))
         .isInstanceOf(InvalidFreshTenantSourceException.class)
         .hasMessageContaining("NEW_GAME_ROW");
 
@@ -504,11 +500,10 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
                         + "WHERE canonical_tenant_id = ?",
                     retainedSource.source().canonicalTenantId()),
                 "expected retained tenant source binding after denial"))
-        .satisfies(
-            row -> {
-              assertThat(row.get("xmin", String.class)).isEqualTo(bindingXmin);
-              assertThat(row.get("provenance_kind", String.class)).isEqualTo("RETAINED_GAME_V29");
-            });
+        .satisfies(row -> {
+          assertThat(row.get("xmin", String.class)).isEqualTo(bindingXmin);
+          assertThat(row.get("provenance_kind", String.class)).isEqualTo("RETAINED_GAME_V29");
+        });
     assertThat(
             Objects.requireNonNull(
                 fixture.dsl.fetchOne(
@@ -516,12 +511,11 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
                         + "FROM game_session_authored_world_source_intake WHERE operation_id = ?",
                     retainedSource.operationId()),
                 "expected retained source intake after denial"))
-        .satisfies(
-            row -> {
-              assertThat(row.get("xmin", String.class)).isEqualTo(intakeXmin);
-              assertThat(row.get("source_provenance_kind", String.class))
-                  .isEqualTo("RETAINED_GAME_V29");
-            });
+        .satisfies(row -> {
+          assertThat(row.get("xmin", String.class)).isEqualTo(intakeXmin);
+          assertThat(row.get("source_provenance_kind", String.class))
+              .isEqualTo("RETAINED_GAME_V29");
+        });
     assertNoFreshAssociation(fixture);
   }
 
@@ -807,10 +801,9 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
 
     FreshGameSessionTenantAssociation associateFresh(
         UUID associationOperationId, String namespace, IntakeReceipt source) {
-      return transactions.execute(
-          status ->
-              associationRepository.associateFresh(
-                  associationOperationId, namespace, source, creationEvidence(source.source())));
+      return transactions.execute(status ->
+          associationRepository.associateFresh(
+              associationOperationId, namespace, source, creationEvidence(source.source())));
     }
 
     FreshGameSessionTenantAssociation associate(
@@ -825,10 +818,9 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
         IntakeReceipt source,
         FreshTenantCreationEvidence creationEvidence) {
       return Objects.requireNonNull(
-          transactions.execute(
-              status ->
-                  associationRepository.associateFresh(
-                      associationOperationId, namespace, source, creationEvidence)),
+          transactions.execute(status ->
+              associationRepository.associateFresh(
+                  associationOperationId, namespace, source, creationEvidence)),
           "fresh tenant association result");
     }
   }

@@ -70,23 +70,22 @@ public final class GameDesignSelectedOwnerIntakeSourceReadService {
           .asRuntimeException();
     }
 
-    return transaction.execute(
-        ignored -> {
-          var exported = repository.requireSelectedOwnerIntakeSource(scope);
-          if (exported == null
-              || !Arrays.equals(scope.canonicalBytes(), exported.scope().canonicalBytes())
-              || !scope.digest().equals(exported.scope().digest())) {
-            throw Status.FAILED_PRECONDITION
-                .withDescription("Selected owner source scope differs")
-                .asRuntimeException();
-          }
-          byte[] canonicalBytes = exported.canonicalBytes();
-          if (!DraftAuthorizationFenceBinding.digest(canonicalBytes).equals(exported.digest())) {
-            throw Status.FAILED_PRECONDITION
-                .withDescription("Selected owner source export digest differs")
-                .asRuntimeException();
-          }
-          return exported;
-        });
+    return transaction.execute(ignored -> {
+      var exported = repository.requireSelectedOwnerIntakeSource(scope);
+      if (exported == null
+          || !Arrays.equals(scope.canonicalBytes(), exported.scope().canonicalBytes())
+          || !scope.digest().equals(exported.scope().digest())) {
+        throw Status.FAILED_PRECONDITION
+            .withDescription("Selected owner source scope differs")
+            .asRuntimeException();
+      }
+      byte[] canonicalBytes = exported.canonicalBytes();
+      if (!DraftAuthorizationFenceBinding.digest(canonicalBytes).equals(exported.digest())) {
+        throw Status.FAILED_PRECONDITION
+            .withDescription("Selected owner source export digest differs")
+            .asRuntimeException();
+      }
+      return exported;
+    });
   }
 }

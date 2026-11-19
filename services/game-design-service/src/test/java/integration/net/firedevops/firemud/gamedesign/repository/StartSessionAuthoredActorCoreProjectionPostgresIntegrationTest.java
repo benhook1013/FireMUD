@@ -110,28 +110,25 @@ class StartSessionAuthoredActorCoreProjectionPostgresIntegrationTest {
       connection.commit();
     }
 
-    assertThatThrownBy(
-            () ->
-                mutate(
-                    dataSource,
-                    schema,
-                    "UPDATE game_design_start_session_authored_actor_core_projection SET policy_order = 1"))
+    assertThatThrownBy(() ->
+            mutate(
+                dataSource,
+                schema,
+                "UPDATE game_design_start_session_authored_actor_core_projection SET policy_order = 1"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("insert-only");
-    assertThatThrownBy(
-            () ->
-                mutate(
-                    dataSource,
-                    schema,
-                    "DELETE FROM game_design_start_session_authored_actor_core_projection"))
+    assertThatThrownBy(() ->
+            mutate(
+                dataSource,
+                schema,
+                "DELETE FROM game_design_start_session_authored_actor_core_projection"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("insert-only");
-    assertThatThrownBy(
-            () ->
-                mutate(
-                    dataSource,
-                    schema,
-                    "TRUNCATE game_design_start_session_authored_actor_core_projection"))
+    assertThatThrownBy(() ->
+            mutate(
+                dataSource,
+                schema,
+                "TRUNCATE game_design_start_session_authored_actor_core_projection"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("retained");
   }

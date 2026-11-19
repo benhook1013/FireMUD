@@ -189,10 +189,9 @@ class EntityCharacterCreatePostgresIntegrationTest {
       assertThat(retainedRepository.settle(retainedProof, null)).isEqualTo(terminal);
       assertThat(retainedDsl.fetchCount(DSL.table("entity_player_created_runtime_projections")))
           .isZero();
-      assertThatThrownBy(
-              () ->
-                  new EntityPlayerCreatedRuntimeProjectionRepository()
-                      .read(retainedDsl, terminal, retainedProof.action()))
+      assertThatThrownBy(() ->
+              new EntityPlayerCreatedRuntimeProjectionRepository()
+                  .read(retainedDsl, terminal, retainedProof.action()))
           .isInstanceOf(io.grpc.StatusRuntimeException.class)
           .hasMessageContaining("FAILED_PRECONDITION");
       assertThat(retainedRepository.replay(retainedProof.request()).orElseThrow())
@@ -202,14 +201,13 @@ class EntityCharacterCreatePostgresIntegrationTest {
               "original_request = decode('01', 'hex')",
               "terminal_bytes = decode('02', 'hex')",
               "status = 'PENDING'")) {
-        assertThatThrownBy(
-                () ->
-                    retainedDsl.execute(
-                        "UPDATE entity_character_create_operations SET "
-                            + change
-                            + " WHERE target_namespace = ? AND operation_id = ?",
-                        operationNamespace,
-                        operation))
+        assertThatThrownBy(() ->
+                retainedDsl.execute(
+                    "UPDATE entity_character_create_operations SET "
+                        + change
+                        + " WHERE target_namespace = ? AND operation_id = ?",
+                    operationNamespace,
+                    operation))
             .isInstanceOf(org.jooq.exception.DataAccessException.class);
       }
       assertThat(retainedOperationRow(retainedDsl, operationNamespace, operation))
@@ -316,17 +314,14 @@ class EntityCharacterCreatePostgresIntegrationTest {
     assertThat(actor.get("actor_entry_policy", String.class)).isEqualTo("PLAYER_CREATED");
     assertThat(terminal.getEntityIntakeRequestId()).isEqualTo(source.intakeRequestId().toString());
     assertThat(terminal.getEntitySourceReceiptDigest()).isEqualTo(source.receiptDigest());
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE entity_character_create_operations SET terminal_bytes = ?",
-                    new byte[] {1}))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE entity_character_create_operations SET terminal_bytes = ?", new byte[] {1}))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE characters SET name = 'substituted' WHERE character_uuid = ?",
-                    UUID.fromString(terminal.getCharacterId())))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE characters SET name = 'substituted' WHERE character_uuid = ?",
+                UUID.fromString(terminal.getCharacterId())))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
   }
 
@@ -340,12 +335,11 @@ class EntityCharacterCreatePostgresIntegrationTest {
     assertThat(reference.projectionGeneration()).isOne();
     assertThat(reference.projectionFence()).isOne();
     assertThat(reference.creationTerminal()).isEqualTo(terminal);
-    assertRuntimeSelectorUnavailable(
-        () ->
-            projections.read(
-                dsl,
-                terminal.toBuilder().setTerminalId(UUID.randomUUID().toString()).build(),
-                proof.action()));
+    assertRuntimeSelectorUnavailable(() ->
+        projections.read(
+            dsl,
+            terminal.toBuilder().setTerminalId(UUID.randomUUID().toString()).build(),
+            proof.action()));
     assertThat(reference.terminalDigest())
         .isEqualTo(CommandSource.sha256(terminal.toByteArray()).substring("sha256:".length()));
     var restarted = new EntityCharacterCreateRepository(dsl, Clock.fixed(NOW, ZoneOffset.UTC));
@@ -484,17 +478,15 @@ class EntityCharacterCreatePostgresIntegrationTest {
                     selector.getOrigin().toBuilder()
                         .setCreationOperationUuid(UUID.randomUUID().toString()))
                 .build();
-        assertThatThrownBy(
-                () ->
-                    restartedRepository.read(
-                        proof.request().getOriginal().toBuilder()
-                            .setMutationDigest(changedDigest.getOrigin().getMutationDigest())
-                            .build()))
+        assertThatThrownBy(() ->
+                restartedRepository.read(
+                    proof.request().getOriginal().toBuilder()
+                        .setMutationDigest(changedDigest.getOrigin().getMutationDigest())
+                        .build()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.ALREADY_EXISTS));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.ALREADY_EXISTS));
         for (var changed :
             List.of(
                 changedOrigin, changedCharacter, changedTarget, changedDigest, missingOperation)) {
@@ -592,50 +584,47 @@ class EntityCharacterCreatePostgresIntegrationTest {
     // Valid self-assignments bypass CHECK(projection_fence = 1); only the retained-history
     // trigger may reject these, so removal of that guard must fail the test.
     for (String immutableColumn : List.of("game_instance_id", "terminal_digest")) {
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "UPDATE entity_player_created_runtime_projections SET "
-                          + immutableColumn
-                          + " = "
-                          + immutableColumn))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE entity_player_created_runtime_projections SET "
+                      + immutableColumn
+                      + " = "
+                      + immutableColumn))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("Entity assignment evidence cannot be removed");
     }
     for (String mismatch :
         List.of("account_uuid", "tenant_uuid", "canonical_version_id", "character_uuid")) {
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "INSERT INTO entity_player_created_runtime_projections "
-                          + "(tenant_uuid, playable_state_namespace_id, game_instance_id, character_uuid, account_uuid, canonical_version_id, realm_uuid, target_namespace, creation_operation_id, mutation_digest, terminal_id, terminal_digest) "
-                          + "SELECT "
-                          + (mismatch.equals("tenant_uuid") ? "?::uuid" : "tenant_uuid")
-                          + ", playable_state_namespace_id, game_instance_id, "
-                          + (mismatch.equals("character_uuid") ? "?::uuid" : "character_uuid")
-                          + ", "
-                          + (mismatch.equals("account_uuid") ? "?::uuid" : "account_uuid")
-                          + ", "
-                          + (mismatch.equals("canonical_version_id")
-                              ? "?::uuid"
-                              : "canonical_version_id")
-                          + ", realm_uuid, target_namespace, creation_operation_id, mutation_digest, terminal_id, terminal_digest FROM entity_player_created_runtime_projections",
-                      UUID.randomUUID()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "INSERT INTO entity_player_created_runtime_projections "
+                      + "(tenant_uuid, playable_state_namespace_id, game_instance_id, character_uuid, account_uuid, canonical_version_id, realm_uuid, target_namespace, creation_operation_id, mutation_digest, terminal_id, terminal_digest) "
+                      + "SELECT "
+                      + (mismatch.equals("tenant_uuid") ? "?::uuid" : "tenant_uuid")
+                      + ", playable_state_namespace_id, game_instance_id, "
+                      + (mismatch.equals("character_uuid") ? "?::uuid" : "character_uuid")
+                      + ", "
+                      + (mismatch.equals("account_uuid") ? "?::uuid" : "account_uuid")
+                      + ", "
+                      + (mismatch.equals("canonical_version_id")
+                          ? "?::uuid"
+                          : "canonical_version_id")
+                      + ", realm_uuid, target_namespace, creation_operation_id, mutation_digest, terminal_id, terminal_digest FROM entity_player_created_runtime_projections",
+                  UUID.randomUUID()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("exact committed PLAYER_CREATED provenance");
     }
     for (String mismatch : List.of("mutation_digest", "terminal_digest")) {
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "INSERT INTO entity_player_created_runtime_projections "
-                          + "(tenant_uuid, playable_state_namespace_id, game_instance_id, character_uuid, account_uuid, canonical_version_id, realm_uuid, target_namespace, creation_operation_id, mutation_digest, terminal_id, terminal_digest) "
-                          + "SELECT tenant_uuid, playable_state_namespace_id, game_instance_id, character_uuid, account_uuid, canonical_version_id, realm_uuid, target_namespace, creation_operation_id, "
-                          + (mismatch.equals("mutation_digest") ? "?" : "mutation_digest")
-                          + ", terminal_id, "
-                          + (mismatch.equals("terminal_digest") ? "?" : "terminal_digest")
-                          + " FROM entity_player_created_runtime_projections",
-                      "f".repeat(64)))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "INSERT INTO entity_player_created_runtime_projections "
+                      + "(tenant_uuid, playable_state_namespace_id, game_instance_id, character_uuid, account_uuid, canonical_version_id, realm_uuid, target_namespace, creation_operation_id, mutation_digest, terminal_id, terminal_digest) "
+                      + "SELECT tenant_uuid, playable_state_namespace_id, game_instance_id, character_uuid, account_uuid, canonical_version_id, realm_uuid, target_namespace, creation_operation_id, "
+                      + (mismatch.equals("mutation_digest") ? "?" : "mutation_digest")
+                      + ", terminal_id, "
+                      + (mismatch.equals("terminal_digest") ? "?" : "terminal_digest")
+                      + " FROM entity_player_created_runtime_projections",
+                  "f".repeat(64)))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("exact committed PLAYER_CREATED provenance");
     }
@@ -740,21 +729,19 @@ class EntityCharacterCreatePostgresIntegrationTest {
                 UUID.fromString(proof.original().getOperationId())));
     int actorCountBefore = dsl.fetchCount(DSL.table("characters"));
 
-    assertThatThrownBy(
-            () ->
-                repository.readSelectedPlayerCreatedTerminal(
-                    new AuthenticatedAccountSelector(accountId), published(proof), characterId))
+    assertThatThrownBy(() ->
+            repository.readSelectedPlayerCreatedTerminal(
+                new AuthenticatedAccountSelector(accountId), published(proof), characterId))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              var status = (io.grpc.StatusRuntimeException) failure;
-              assertThat(status.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.DATA_LOSS);
-              assertThat(status.getStatus().getDescription())
-                  .isEqualTo("Stored creation terminal is invalid");
-              assertThat(status.getCause())
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessage("Corrupt creation source identity");
-            });
+        .satisfies(failure -> {
+          var status = (io.grpc.StatusRuntimeException) failure;
+          assertThat(status.getStatus().getCode()).isEqualTo(io.grpc.Status.Code.DATA_LOSS);
+          assertThat(status.getStatus().getDescription())
+              .isEqualTo("Stored creation terminal is invalid");
+          assertThat(status.getCause())
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage("Corrupt creation source identity");
+        });
 
     var actorAfter =
         Objects.requireNonNull(
@@ -861,11 +848,10 @@ class EntityCharacterCreatePostgresIntegrationTest {
     UUID characterId = UUID.fromString(terminal.getCharacterId());
     String before = retainedRow(dsl, "characters", "character_uuid", characterId);
     // Even a direct duplicate with retained terminal metadata cannot exceed the scope bound.
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest) SELECT gen_random_uuid(), account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest FROM characters WHERE character_uuid = ?",
-                    characterId))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest) SELECT gen_random_uuid(), account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest FROM characters WHERE character_uuid = ?",
+                characterId))
         .isInstanceOf(org.jooq.exception.IntegrityConstraintViolationException.class)
         .hasMessageContaining("ux_characters_owner_resolved_account_namespace");
     assertThat(dsl.fetchCount(DSL.table("characters"))).isOne();
@@ -1043,22 +1029,19 @@ class EntityCharacterCreatePostgresIntegrationTest {
                 proof.action().scope().targetNamespace(),
                 UUID.fromString(proof.original().getOperationId())));
     int actorCountBefore = dsl.fetchCount(DSL.table("characters"));
-    assertThatThrownBy(
-            () ->
-                repository.readPlayerCreatedRoster(
-                    new AuthenticatedAccountSelector(account), changedPublishedSource))
+    assertThatThrownBy(() ->
+            repository.readPlayerCreatedRoster(
+                new AuthenticatedAccountSelector(account), changedPublishedSource))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
         .hasMessageContaining("FAILED_PRECONDITION");
-    assertThatThrownBy(
-            () ->
-                repository.readSelectedPlayerCreatedTerminal(
-                    new AuthenticatedAccountSelector(account), changedPublishedSource, characterId))
+    assertThatThrownBy(() ->
+            repository.readSelectedPlayerCreatedTerminal(
+                new AuthenticatedAccountSelector(account), changedPublishedSource, characterId))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
         .hasMessageContaining("FAILED_PRECONDITION");
-    assertThatThrownBy(
-            () ->
-                repository.readPlayerCreatedRoster(
-                    new AuthenticatedAccountSelector(account), changedRealm))
+    assertThatThrownBy(() ->
+            repository.readPlayerCreatedRoster(
+                new AuthenticatedAccountSelector(account), changedRealm))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
         .hasMessageContaining("FAILED_PRECONDITION");
     var actorAfter =
@@ -1087,18 +1070,16 @@ class EntityCharacterCreatePostgresIntegrationTest {
       dsl.execute(
           "UPDATE characters SET creation_descriptor_json = '{}' WHERE character_uuid = ?",
           characterId);
-      assertThatThrownBy(
-              () ->
-                  repository.readPlayerCreatedRoster(
-                      new AuthenticatedAccountSelector(account), published))
+      assertThatThrownBy(() ->
+              repository.readPlayerCreatedRoster(
+                  new AuthenticatedAccountSelector(account), published))
           .isInstanceOf(io.grpc.StatusRuntimeException.class)
           .hasMessageContaining("DATA_LOSS");
-      assertThatThrownBy(
-              () ->
-                  repository.readSelectedPlayerCreatedTerminal(
-                      new AuthenticatedAccountSelector(account),
-                      published,
-                      UUID.fromString(terminal.getCharacterId())))
+      assertThatThrownBy(() ->
+              repository.readSelectedPlayerCreatedTerminal(
+                  new AuthenticatedAccountSelector(account),
+                  published,
+                  UUID.fromString(terminal.getCharacterId())))
           .isInstanceOf(io.grpc.StatusRuntimeException.class)
           .hasMessageContaining("DATA_LOSS");
     } finally {
@@ -1126,12 +1107,11 @@ class EntityCharacterCreatePostgresIntegrationTest {
         .containsExactly(terminal.toByteArray());
     assertThat(dsl.fetchCount(DSL.table("characters"))).isZero();
     assertThat(dsl.fetchCount(DSL.table("entity_player_created_runtime_projections"))).isZero();
-    assertThatThrownBy(
-            () ->
-                repository.read(
-                    proof.request().getOriginal().toBuilder()
-                        .setMutationDigest("f".repeat(64))
-                        .build()))
+    assertThatThrownBy(() ->
+            repository.read(
+                proof.request().getOriginal().toBuilder()
+                    .setMutationDigest("f".repeat(64))
+                    .build()))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
         .hasMessageContaining("ALREADY_EXISTS");
     assertThatThrownBy(() -> dsl.execute("DELETE FROM entity_character_create_operations"))
@@ -1200,15 +1180,13 @@ class EntityCharacterCreatePostgresIntegrationTest {
   void legacyRowsKeepTheirConstraintsAndCannotBeRelabelled() {
     dsl.execute(
         "INSERT INTO characters (account_id, tenant_id, name) VALUES (76543, 87654, 'legacy')");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE characters SET actor_entry_policy = 'PLAYER_CREATED' WHERE name = 'legacy'"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE characters SET actor_entry_policy = 'PLAYER_CREATED' WHERE name = 'legacy'"))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO characters (account_id, tenant_id, name, level) VALUES (76544, 87654, 'invalid', NULL)"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO characters (account_id, tenant_id, name, level) VALUES (76544, 87654, 'invalid', NULL)"))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThat(
             Objects.requireNonNull(
@@ -1556,13 +1534,11 @@ class EntityCharacterCreatePostgresIntegrationTest {
                 proof.action().scope().targetNamespace(),
                 UUID.fromString(proof.original().getOperationId())))
         .isEqualTo(operationBefore);
-    assertThatThrownBy(
-            () ->
-                ownerDsl.execute(
-                    "UPDATE characters SET creation_descriptor_digest=? "
-                        + "WHERE character_uuid=?",
-                    "sha256:" + "f".repeat(64),
-                    characterId))
+    assertThatThrownBy(() ->
+            ownerDsl.execute(
+                "UPDATE characters SET creation_descriptor_digest=? " + "WHERE character_uuid=?",
+                "sha256:" + "f".repeat(64),
+                characterId))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining("CHARACTER_CREATE authored identity/provenance is immutable");
     var published = published(proof);
@@ -1592,18 +1568,17 @@ class EntityCharacterCreatePostgresIntegrationTest {
                     .and(DSL.field("character_uuid").eq(characterId))))
         .isZero();
     assertThat(new CharacterRepository(ownerDsl).findById(privateCharacterId)).isEmpty();
-    assertThatThrownBy(
-            () ->
-                ownerDsl.execute(
-                    "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, "
-                        + "playable_state_namespace_id, playable_state_scope, account_id, "
-                        + "tenant_id, name) VALUES (?, ?, ?, ?, "
-                        + "'PLAYABLE_STATE_SCOPE_SHARED', 45, ?, 'unqualified quarantine')",
-                    UUID.randomUUID(),
-                    accountId,
-                    UUID.fromString(proof.action().scope().tenantId()),
-                    UUID.randomUUID(),
-                    privateTenantId))
+    assertThatThrownBy(() ->
+            ownerDsl.execute(
+                "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, "
+                    + "playable_state_namespace_id, playable_state_scope, account_id, "
+                    + "tenant_id, name) VALUES (?, ?, ?, ?, "
+                    + "'PLAYABLE_STATE_SCOPE_SHARED', 45, ?, 'unqualified quarantine')",
+                UUID.randomUUID(),
+                accountId,
+                UUID.fromString(proof.action().scope().tenantId()),
+                UUID.randomUUID(),
+                privateTenantId))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining(
             "Entity numeric source key is reserved by an immutable empty-source receipt");
@@ -1614,9 +1589,8 @@ class EntityCharacterCreatePostgresIntegrationTest {
       AuthenticatedAccountSelector account,
       PublishedIdentity published,
       UUID characterId) {
-    assertThatThrownBy(
-            () ->
-                ownerRepository.readSelectedPlayerCreatedTerminal(account, published, characterId))
+    assertThatThrownBy(() ->
+            ownerRepository.readSelectedPlayerCreatedTerminal(account, published, characterId))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
         .hasMessageContaining("FAILED_PRECONDITION")
         .hasMessageContaining("Selected PLAYER_CREATED character is unavailable");
@@ -1705,13 +1679,12 @@ class EntityCharacterCreatePostgresIntegrationTest {
   private static void assertRuntimeSelectorUnavailable(Runnable call) {
     assertThatThrownBy(call::run)
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              var status = Status.fromThrowable(failure);
-              assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-              assertThat(status.getDescription())
-                  .isEqualTo("Original PLAYER_CREATED runtime evidence is unavailable");
-            });
+        .satisfies(failure -> {
+          var status = Status.fromThrowable(failure);
+          assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+          assertThat(status.getDescription())
+              .isEqualTo("Original PLAYER_CREATED runtime evidence is unavailable");
+        });
   }
 
   /** Controlled historical pre-V1023 storage cohort; this is not the current creation writer. */
@@ -1734,68 +1707,67 @@ class EntityCharacterCreatePostgresIntegrationTest {
             .setTerminalFence(1L)
             .setCompletedAt(NOW.toString())
             .build();
-    ownerDsl.transaction(
-        configuration -> {
-          var tx = DSL.using(configuration);
-          UUID tenant = UUID.fromString(action.scope().tenantId());
-          UUID namespace = UUID.fromString(action.scope().playableStateNamespaceId());
-          UUID account = UUID.fromString(action.target().accountId());
-          UUID operation = UUID.fromString(proof.original().getOperationId());
-          String scope = action.scope().playableStateScope().name();
-          tx.execute(
-              "INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?) ON CONFLICT DO NOTHING",
-              tenant);
-          Long tenantRow =
-              tx.fetchSingle(
-                      "SELECT entity_tenant_row_id FROM entity_tenant_identities WHERE canonical_tenant_uuid = ?",
-                      tenant)
-                  .get(0, Long.class);
-          tx.execute(
-              "INSERT INTO entity_playable_state_namespace_scopes (tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-              tenant,
-              namespace,
-              scope);
-          tx.execute(
-              "INSERT INTO entity_character_create_roster_guards (tenant_uuid, playable_state_namespace_id, account_uuid) VALUES (?, ?, ?)",
-              tenant,
-              namespace,
-              account);
-          tx.execute(
-              "INSERT INTO entity_character_create_operations (target_namespace, operation_id, create_character_request_id, mutation_digest, tenant_uuid, playable_state_namespace_id, playable_state_scope, account_uuid, canonical_version_id, original_request, original_account, original_account_protection, original_game_session_protection, original_world_protection, entity_source_receipt, status, terminal_bytes, character_uuid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMMITTED', ?, ?)",
-              action.scope().targetNamespace(),
-              operation,
-              UUID.fromString(proof.original().getCreateCharacterRequestId()),
-              proof.original().getMutationDigest(),
-              tenant,
-              namespace,
-              scope,
-              account,
-              UUID.fromString(action.target().versionId()),
-              proof.request().toByteArray(),
-              proof.original().toByteArray(),
-              proof.account().toByteArray(),
-              proof.gameSession().originalOwnerReadback().toByteArray(),
-              proof.world().toByteArray(),
-              proof.entitySource().canonicalBytes(),
-              terminal.toByteArray(),
-              character);
-          tx.execute(
-              "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest) VALUES (?, ?, ?, ?, ?, 'OWNER_RESOLVED', NULL, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 'PLAYER_CREATED', ?, ?, ?)",
-              character,
-              account,
-              tenant,
-              namespace,
-              scope,
-              tenantRow,
-              new AuthoredInitialActorCoreProjection.AuthoredCore(
-                      action.mutation().authoredSource().core().canonicalJson())
-                  .displayName(),
-              action.scope().targetNamespace(),
-              operation,
-              action.mutation().authoredSource().core().canonicalJson(),
-              action.mutation().authoredSource().descriptor().canonicalJson(),
-              action.mutation().authoredSource().descriptor().digest());
-        });
+    ownerDsl.transaction(configuration -> {
+      var tx = DSL.using(configuration);
+      UUID tenant = UUID.fromString(action.scope().tenantId());
+      UUID namespace = UUID.fromString(action.scope().playableStateNamespaceId());
+      UUID account = UUID.fromString(action.target().accountId());
+      UUID operation = UUID.fromString(proof.original().getOperationId());
+      String scope = action.scope().playableStateScope().name();
+      tx.execute(
+          "INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?) ON CONFLICT DO NOTHING",
+          tenant);
+      Long tenantRow =
+          tx.fetchSingle(
+                  "SELECT entity_tenant_row_id FROM entity_tenant_identities WHERE canonical_tenant_uuid = ?",
+                  tenant)
+              .get(0, Long.class);
+      tx.execute(
+          "INSERT INTO entity_playable_state_namespace_scopes (tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+          tenant,
+          namespace,
+          scope);
+      tx.execute(
+          "INSERT INTO entity_character_create_roster_guards (tenant_uuid, playable_state_namespace_id, account_uuid) VALUES (?, ?, ?)",
+          tenant,
+          namespace,
+          account);
+      tx.execute(
+          "INSERT INTO entity_character_create_operations (target_namespace, operation_id, create_character_request_id, mutation_digest, tenant_uuid, playable_state_namespace_id, playable_state_scope, account_uuid, canonical_version_id, original_request, original_account, original_account_protection, original_game_session_protection, original_world_protection, entity_source_receipt, status, terminal_bytes, character_uuid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMMITTED', ?, ?)",
+          action.scope().targetNamespace(),
+          operation,
+          UUID.fromString(proof.original().getCreateCharacterRequestId()),
+          proof.original().getMutationDigest(),
+          tenant,
+          namespace,
+          scope,
+          account,
+          UUID.fromString(action.target().versionId()),
+          proof.request().toByteArray(),
+          proof.original().toByteArray(),
+          proof.account().toByteArray(),
+          proof.gameSession().originalOwnerReadback().toByteArray(),
+          proof.world().toByteArray(),
+          proof.entitySource().canonicalBytes(),
+          terminal.toByteArray(),
+          character);
+      tx.execute(
+          "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest) VALUES (?, ?, ?, ?, ?, 'OWNER_RESOLVED', NULL, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 'PLAYER_CREATED', ?, ?, ?)",
+          character,
+          account,
+          tenant,
+          namespace,
+          scope,
+          tenantRow,
+          new AuthoredInitialActorCoreProjection.AuthoredCore(
+                  action.mutation().authoredSource().core().canonicalJson())
+              .displayName(),
+          action.scope().targetNamespace(),
+          operation,
+          action.mutation().authoredSource().core().canonicalJson(),
+          action.mutation().authoredSource().descriptor().canonicalJson(),
+          action.mutation().authoredSource().descriptor().digest());
+    });
     return terminal;
   }
 

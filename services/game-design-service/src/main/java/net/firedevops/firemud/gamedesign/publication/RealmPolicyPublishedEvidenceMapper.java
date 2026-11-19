@@ -13,15 +13,14 @@ final class RealmPolicyPublishedEvidenceMapper {
     Objects.requireNonNull(source, "source");
     var policies =
         source.policies().stream()
-            .map(
-                policy ->
-                    new PublishedRealmEntryPolicyEvidence(
-                        policy.policyId(),
-                        policy.source().commitId(),
-                        policy.source().revisionId(),
-                        policy.source().logicalRevisionId(),
-                        policy.source().policy(),
-                        policy.policyDigest()))
+            .map(policy ->
+                new PublishedRealmEntryPolicyEvidence(
+                    policy.policyId(),
+                    policy.source().commitId(),
+                    policy.source().revisionId(),
+                    policy.source().logicalRevisionId(),
+                    policy.source().policy(),
+                    policy.policyDigest()))
             .toList();
     var candidate =
         new PublishedRealmEntryPolicySetEvidence(

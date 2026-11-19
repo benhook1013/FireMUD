@@ -90,12 +90,11 @@ class WorldCanonicalInitialAdmissionHoldStateTest {
             1L,
             null);
 
-    assertThatThrownBy(
-            () ->
-                new WorldCanonicalInitialAdmissionHoldState(
-                    new HoldIdentity(mismatched, HOLD_ID, HOLD_FENCE),
-                    WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING,
-                    lifecycle))
+    assertThatThrownBy(() ->
+            new WorldCanonicalInitialAdmissionHoldState(
+                new HoldIdentity(mismatched, HOLD_ID, HOLD_FENCE),
+                WorldCanonicalInitialAdmissionHoldState.HoldStatus.PENDING,
+                lifecycle))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("target scope");
 
@@ -156,24 +155,21 @@ class WorldCanonicalInitialAdmissionHoldStateTest {
             java.util.Base64.getEncoder().encodeToString(state.holdIdentity().canonicalBytes()),
             "!"));
     assertInvalid(canonical + " ");
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInitialAdmissionHoldState.fromStored(new byte[] {(byte) 0xc3, 0x28}))
+    assertThatThrownBy(() ->
+            WorldCanonicalInitialAdmissionHoldState.fromStored(new byte[] {(byte) 0xc3, 0x28}))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("strict UTF-8");
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInitialAdmissionHoldState.fromStored(
-                    new byte[WorldCanonicalInitialAdmissionHoldState.MAX_CANONICAL_BYTES + 1]))
+    assertThatThrownBy(() ->
+            WorldCanonicalInitialAdmissionHoldState.fromStored(
+                new byte[WorldCanonicalInitialAdmissionHoldState.MAX_CANONICAL_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("limit");
   }
 
   private static void assertInvalid(String value) {
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInitialAdmissionHoldState.fromStored(
-                    value.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldCanonicalInitialAdmissionHoldState.fromStored(
+                value.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

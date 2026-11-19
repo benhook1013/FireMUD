@@ -76,21 +76,20 @@ class AccountAuthoritySourceEventReadbackTest {
 
   @Test
   void restrictionReceiptRequiresEventSequenceToTrailResultGenerationByOne() {
-    assertThatThrownBy(
-            () ->
-                new AccountPlatformRestrictionOperationRepository.Operation(
-                    restrictionRequest(),
-                    account().getId(),
-                    AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT,
-                    new AccountAuthorityGenerationRepository.IssuanceFence(ACCOUNT_UUID, 1L, 1L),
-                    Optional.of(
-                        new AccountPlatformRestrictionOperationRepository.Receipt(
-                            restrictionEvent(2L, "2", "2"),
-                            accountState(2L, 2L, 2L, 2L),
-                            2L,
-                            2L,
-                            UUID.fromString("33333333-3333-4333-8333-333333333333"),
-                            RestrictionState.RESTRICTED))))
+    assertThatThrownBy(() ->
+            new AccountPlatformRestrictionOperationRepository.Operation(
+                restrictionRequest(),
+                account().getId(),
+                AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT,
+                new AccountAuthorityGenerationRepository.IssuanceFence(ACCOUNT_UUID, 1L, 1L),
+                Optional.of(
+                    new AccountPlatformRestrictionOperationRepository.Receipt(
+                        restrictionEvent(2L, "2", "2"),
+                        accountState(2L, 2L, 2L, 2L),
+                        2L,
+                        2L,
+                        UUID.fromString("33333333-3333-4333-8333-333333333333"),
+                        RestrictionState.RESTRICTED))))
         .isInstanceOf(
             AccountPlatformRestrictionOperationRepository.RestrictionSourceUnavailableException
                 .class);

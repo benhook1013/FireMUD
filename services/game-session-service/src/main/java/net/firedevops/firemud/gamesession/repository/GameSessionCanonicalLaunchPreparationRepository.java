@@ -532,15 +532,14 @@ public class GameSessionCanonicalLaunchPreparationRepository {
       throw new IllegalStateException(
           "Launch preparation persistence requires a writable owner transaction");
     }
-    dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Launch preparation persistence requires the owner READ COMMITTED connection");
-          }
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Launch preparation persistence requires the owner READ COMMITTED connection");
+      }
+      return null;
+    });
     Record isolation = dsl.fetchOne("SHOW transaction_isolation");
     if (isolation == null
         || !"read committed".equalsIgnoreCase(isolation.get(0, String.class).trim())) {

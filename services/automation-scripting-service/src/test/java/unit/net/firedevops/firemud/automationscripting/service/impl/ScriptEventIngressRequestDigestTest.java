@@ -102,23 +102,19 @@ class ScriptEventIngressRequestDigestTest {
             "scriptPatchVersion", original.toBuilder().setScriptPatchVersion("patch-2").build());
 
     assertThat(changedFields)
-        .allSatisfy(
-            (field, changed) ->
-                assertThat(
-                        ScriptEventIngressRequestDigest.compute(
-                            changed, "v1", "game-session-service"))
-                    .as("changing %s", field)
-                    .isNotEqualTo(originalDigest));
+        .allSatisfy((field, changed) ->
+            assertThat(
+                    ScriptEventIngressRequestDigest.compute(changed, "v1", "game-session-service"))
+                .as("changing %s", field)
+                .isNotEqualTo(originalDigest));
   }
 
   @Test
   void rejectsDuplicateJsonObjectKeys() {
     TriggerScriptEventRequest duplicateKeys = request("{\"a\":1,\"a\":2}");
 
-    assertThatThrownBy(
-            () ->
-                ScriptEventIngressRequestDigest.compute(
-                    duplicateKeys, "v1", "game-session-service"))
+    assertThatThrownBy(() ->
+            ScriptEventIngressRequestDigest.compute(duplicateKeys, "v1", "game-session-service"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("JSON payload contains duplicate keys");
   }
@@ -127,10 +123,8 @@ class ScriptEventIngressRequestDigestTest {
   void rejectsDuplicateKeysAfterNfcNormalization() {
     TriggerScriptEventRequest duplicateKeys = request("{\"\\u00e9\":1,\"e\\u0301\":2}");
 
-    assertThatThrownBy(
-            () ->
-                ScriptEventIngressRequestDigest.compute(
-                    duplicateKeys, "v1", "game-session-service"))
+    assertThatThrownBy(() ->
+            ScriptEventIngressRequestDigest.compute(duplicateKeys, "v1", "game-session-service"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate keys after NFC normalization");
   }

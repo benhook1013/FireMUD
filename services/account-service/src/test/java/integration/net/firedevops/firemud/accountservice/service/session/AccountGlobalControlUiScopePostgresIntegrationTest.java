@@ -217,14 +217,13 @@ class AccountGlobalControlUiScopePostgresIntegrationTest {
     var dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     var transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
     return Objects.requireNonNull(
-        transaction.execute(
-            ignored -> {
-              var account = new Account();
-              account.setUsername("scope-" + UUID.randomUUID());
-              account.setEmail(UUID.randomUUID() + "@example.test");
-              account.setPasswordHash("test-only unused verifier");
-              return new AccountRepository(dsl).save(account).getAccountUuid();
-            }));
+        transaction.execute(ignored -> {
+          var account = new Account();
+          account.setUsername("scope-" + UUID.randomUUID());
+          account.setEmail(UUID.randomUUID() + "@example.test");
+          account.setPasswordHash("test-only unused verifier");
+          return new AccountRepository(dsl).save(account).getAccountUuid();
+        }));
   }
 
   private static UUID tenant(JdbcTemplate jdbc) {
@@ -356,16 +355,15 @@ class AccountGlobalControlUiScopePostgresIntegrationTest {
 
   private static void assertSqlState(Runnable action, String state) {
     assertThatThrownBy(action::run)
-        .satisfies(
-            failure -> {
-              for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-                if (cause instanceof PSQLException postgres) {
-                  assertThat(postgres.getSQLState()).isEqualTo(state);
-                  return;
-                }
-              }
-              throw new AssertionError("Expected PostgreSQL failure", failure);
-            });
+        .satisfies(failure -> {
+          for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof PSQLException postgres) {
+              assertThat(postgres.getSQLState()).isEqualTo(state);
+              return;
+            }
+          }
+          throw new AssertionError("Expected PostgreSQL failure", failure);
+        });
   }
 
   private static byte[] bytes(String value) {

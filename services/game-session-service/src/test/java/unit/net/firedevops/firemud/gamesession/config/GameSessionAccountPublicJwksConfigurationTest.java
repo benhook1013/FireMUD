@@ -49,16 +49,15 @@ class GameSessionAccountPublicJwksConfigurationTest {
           new ApplicationContextRunner()
               .withUserConfiguration(GameSessionAccountPublicJwksConfiguration.class);
       if (!enabled.isEmpty()) runner = runner.withPropertyValues(enabled);
-      runner.run(
-          context -> {
-            assertThat(context).hasNotFailed();
-            assertThat(context).doesNotHaveBean(AccountPublicJwksReadClient.class);
-            assertThat(context).doesNotHaveBean(GameSessionAccountPublicJwksSource.class);
-            assertThat(context).doesNotHaveBean(AccountPublicJwksCache.class);
-            assertThat(context).doesNotHaveBean(AccountAsymmetricJwtVerifier.class);
-            assertThat(context)
-                .doesNotHaveBean(GameSessionAccountPublicJwksConfiguration.PublicJwksRefresh.class);
-          });
+      runner.run(context -> {
+        assertThat(context).hasNotFailed();
+        assertThat(context).doesNotHaveBean(AccountPublicJwksReadClient.class);
+        assertThat(context).doesNotHaveBean(GameSessionAccountPublicJwksSource.class);
+        assertThat(context).doesNotHaveBean(AccountPublicJwksCache.class);
+        assertThat(context).doesNotHaveBean(AccountAsymmetricJwtVerifier.class);
+        assertThat(context)
+            .doesNotHaveBean(GameSessionAccountPublicJwksConfiguration.PublicJwksRefresh.class);
+      });
     }
   }
 
@@ -120,10 +119,8 @@ class GameSessionAccountPublicJwksConfigurationTest {
             "a".repeat(64));
     when(source.sourceIdentity()).thenReturn(identity);
     when(source.load()).thenThrow(new SourceUnavailableException());
-    assertThatThrownBy(
-            () ->
-                new GameSessionAccountPublicJwksConfiguration()
-                    .accountPublicJwksCache(source, 2000))
+    assertThatThrownBy(() ->
+            new GameSessionAccountPublicJwksConfiguration().accountPublicJwksCache(source, 2000))
         .isInstanceOf(SourceUnavailableException.class);
     verify(source).sourceIdentity();
     verify(source).load();

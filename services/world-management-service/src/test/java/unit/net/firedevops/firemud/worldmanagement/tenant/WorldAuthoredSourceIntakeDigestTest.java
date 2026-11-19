@@ -70,28 +70,23 @@ class WorldAuthoredSourceIntakeDigestTest {
     assertThatThrownBy(
             () -> WorldAuthoredSourceIntakeDigest.requestDigest(NAMESPACE, new UUID(0L, 0L), fresh))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldAuthoredSourceIntakeDigest.requestDigest(
-                    "other-namespace", INTAKE_REQUEST, fresh))
+    assertThatThrownBy(() ->
+            WorldAuthoredSourceIntakeDigest.requestDigest("other-namespace", INTAKE_REQUEST, fresh))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldAuthoredSourceIntakeDigest.requestDigest(NAMESPACE, INTAKE_REQUEST, retained))
+    assertThatThrownBy(() ->
+            WorldAuthoredSourceIntakeDigest.requestDigest(NAMESPACE, INTAKE_REQUEST, retained))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldAuthoredSourceIntakeDigest.receiptDigest(
-                    NAMESPACE, WORLD_OPERATION, "sha256:bad", fresh, 9001L))
+    assertThatThrownBy(() ->
+            WorldAuthoredSourceIntakeDigest.receiptDigest(
+                NAMESPACE, WORLD_OPERATION, "sha256:bad", fresh, 9001L))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldAuthoredSourceIntakeDigest.receiptDigest(
-                    NAMESPACE,
-                    WORLD_OPERATION,
-                    WorldAuthoredSourceIntakeDigest.requestDigest(NAMESPACE, INTAKE_REQUEST, fresh),
-                    fresh,
-                    0L))
+    assertThatThrownBy(() ->
+            WorldAuthoredSourceIntakeDigest.receiptDigest(
+                NAMESPACE,
+                WORLD_OPERATION,
+                WorldAuthoredSourceIntakeDigest.requestDigest(NAMESPACE, INTAKE_REQUEST, fresh),
+                fresh,
+                0L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

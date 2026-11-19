@@ -324,17 +324,16 @@ public class AutomationScriptingGrpcService
               request.getBaseVersionId(),
               request.getDefinition(),
               request.getEventBindingsList().stream()
-                  .map(
-                      binding ->
-                          new ScriptDefinitionDto.EventBindingDto(
-                              binding.getEventType(),
-                              binding.getEventSchemaVersion(),
-                              binding.getTargetScopeType(),
-                              binding.getTargetScopeId(),
-                              binding.getPriority(),
-                              binding.getPriorityTag(),
-                              binding.getRequiresExclusiveEvent(),
-                              binding.getBindingId()))
+                  .map(binding ->
+                      new ScriptDefinitionDto.EventBindingDto(
+                          binding.getEventType(),
+                          binding.getEventSchemaVersion(),
+                          binding.getTargetScopeType(),
+                          binding.getTargetScopeId(),
+                          binding.getPriority(),
+                          binding.getPriorityTag(),
+                          binding.getRequiresExclusiveEvent(),
+                          binding.getBindingId()))
                   .toList());
       scriptService.updateScript(dto);
       UpdateScriptResponse resp = UpdateScriptResponse.newBuilder().setSuccess(true).build();

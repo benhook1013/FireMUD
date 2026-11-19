@@ -203,27 +203,25 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest
             "admission_lease_evidence = '{}'",
             "inventory_revision = inventory_revision - 1"
           }) {
-        assertThatThrownBy(
-                () ->
-                    session
-                        .gs
-                        .dsl()
-                        .execute(
-                            "UPDATE game_session_canonical_binding_transition SET "
-                                + assignment
-                                + " WHERE transition_id = ?",
-                            session.gs.transitionId()))
+        assertThatThrownBy(() ->
+                session
+                    .gs
+                    .dsl()
+                    .execute(
+                        "UPDATE game_session_canonical_binding_transition SET "
+                            + assignment
+                            + " WHERE transition_id = ?",
+                        session.gs.transitionId()))
             .isInstanceOf(org.jooq.exception.DataAccessException.class);
         assertThat(session.image()).isEqualTo(retainedImage);
       }
-      assertThatThrownBy(
-              () ->
-                  session
-                      .gs
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_issuer_partition_reservation SET lifecycle = 'RELEASED' WHERE transition_id = ?",
-                          session.gs.transitionId()))
+      assertThatThrownBy(() ->
+              session
+                  .gs
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_issuer_partition_reservation SET lifecycle = 'RELEASED' WHERE transition_id = ?",
+                      session.gs.transitionId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       assertThat(session.image()).isEqualTo(retainedImage);
       for (String statement :
@@ -306,26 +304,24 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest
         var executor = Executors.newFixedThreadPool(2)) {
       var start = new CountDownLatch(1);
       var finalize =
-          executor.submit(
-              () -> {
-                start.await();
-                try {
-                  return session.client.finalizeLease(
-                      session.jwt, session.leaseBytes(), session.gs.transitionId());
-                } catch (RuntimeException ambiguous) {
-                  return null;
-                }
-              });
+          executor.submit(() -> {
+            start.await();
+            try {
+              return session.client.finalizeLease(
+                  session.jwt, session.leaseBytes(), session.gs.transitionId());
+            } catch (RuntimeException ambiguous) {
+              return null;
+            }
+          });
       var abort =
-          executor.submit(
-              () -> {
-                start.await();
-                try {
-                  return session.abort();
-                } catch (RuntimeException ambiguous) {
-                  return null;
-                }
-              });
+          executor.submit(() -> {
+            start.await();
+            try {
+              return session.abort();
+            } catch (RuntimeException ambiguous) {
+              return null;
+            }
+          });
       start.countDown();
       var finalized = finalize.get(20, TimeUnit.SECONDS);
       var aborted = abort.get(20, TimeUnit.SECONDS);
@@ -402,51 +398,47 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest
           .isEqualTo(pending.sourceInventoryRevision());
 
       String preparedImage = session.image();
-      assertThatThrownBy(
-              () ->
-                  session
-                      .gs
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_issuer_binding_local_release_operation"
-                              + " SET original_member_value_bytes = ? WHERE operation_id = ?",
-                          new byte[] {1},
-                          pending.operationId()))
+      assertThatThrownBy(() ->
+              session
+                  .gs
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_issuer_binding_local_release_operation"
+                          + " SET original_member_value_bytes = ? WHERE operation_id = ?",
+                      new byte[] {1},
+                      pending.operationId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       assertThat(session.image()).isEqualTo(preparedImage);
-      assertThatThrownBy(
-              () ->
-                  session
-                      .gs
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_issuer_binding_local_release_operation"
-                              + " SET original_reservation_fence = ? WHERE operation_id = ?",
-                          UUID.randomUUID(),
-                          pending.operationId()))
+      assertThatThrownBy(() ->
+              session
+                  .gs
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_issuer_binding_local_release_operation"
+                          + " SET original_reservation_fence = ? WHERE operation_id = ?",
+                      UUID.randomUUID(),
+                      pending.operationId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       assertThat(session.image()).isEqualTo(preparedImage);
-      assertThatThrownBy(
-              () ->
-                  session
-                      .gs
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_issuer_binding_local_release_operation"
-                              + " SET anchor_operation_fence = anchor_operation_fence + 1 WHERE operation_id = ?",
-                          pending.operationId()))
+      assertThatThrownBy(() ->
+              session
+                  .gs
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_issuer_binding_local_release_operation"
+                          + " SET anchor_operation_fence = anchor_operation_fence + 1 WHERE operation_id = ?",
+                      pending.operationId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       assertThat(session.image()).isEqualTo(preparedImage);
-      assertThatThrownBy(
-              () ->
-                  session
-                      .gs
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_issuer_partition_reservation"
-                              + " SET lifecycle = 'RELEASED', inventory_revision = inventory_revision + 1"
-                              + " WHERE reservation_id = ?",
-                          pending.abortSource().reservation().reservationId()))
+      assertThatThrownBy(() ->
+              session
+                  .gs
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_issuer_partition_reservation"
+                          + " SET lifecycle = 'RELEASED', inventory_revision = inventory_revision + 1"
+                          + " WHERE reservation_id = ?",
+                      pending.abortSource().reservation().reservationId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       assertThat(session.image()).isEqualTo(preparedImage);
 
@@ -599,12 +591,11 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest
       var changedLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier);
       assertThatThrownBy(() -> session.reverse.read(session.gs.transitionId(), changedLease))
           .isInstanceOf(RuntimeException.class);
-      assertThatThrownBy(
-              () ->
-                  session.client.abort(
-                      session.jwt,
-                      changedLease.canonicalJson().getBytes(StandardCharsets.UTF_8),
-                      session.gs.transitionId()))
+      assertThatThrownBy(() ->
+              session.client.abort(
+                  session.jwt,
+                  changedLease.canonicalJson().getBytes(StandardCharsets.UTF_8),
+                  session.gs.transitionId()))
           .isInstanceOf(RuntimeException.class);
       var endpoints = new ServiceEndpointsProperties();
       endpoints.setGameSessionService("127.0.0.1:" + session.gsServer.getPort());
@@ -1018,205 +1009,203 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest
     }
 
     private static void seedControlledAcknowledgedAbort(DSLContext dsl) {
-      dsl.transaction(
-          configuration -> {
-            DSLContext tx = DSL.using(configuration);
-            tx.execute("UPDATE " + PREFIX + "binding_inventory_clock SET inventory_revision = 5");
-            insert(
-                tx,
-                "account_coverage_control",
-                Map.of(
-                    "account_id",
-                    ACCOUNT,
-                    "state",
-                    "NO_ACTIVE_ACCOUNT_WIDE_FLOW",
-                    "last_operation_fence",
-                    0));
-            insert(
-                tx,
-                "account_member_repair_control",
-                Map.of(
-                    "account_id", ACCOUNT,
-                    "last_operation_fence", 1,
-                    "last_coverage_generation", 3));
-            Map<String, Object> candidate = new LinkedHashMap<>();
-            candidate.put("binding_ref", BINDING_REF);
-            candidate.put("account_id", ACCOUNT);
-            candidate.put("tenant_id", TENANT);
-            candidate.put("playable_state_namespace_id", NAMESPACE);
-            candidate.put("character_id", CHARACTER);
-            candidate.put("playable_state_scope", "SHARED");
-            candidate.put("game_instance_id", INSTANCE);
-            candidate.put("runtime_game_instance_id", 1L);
-            candidate.put("session_id", UUID.randomUUID().toString());
-            candidate.put("binding_generation", 1);
-            candidate.put("region_id", REGION);
-            candidate.put("region_epoch", 1);
-            candidate.put("issuer_id", "firemud-account-service");
-            candidate.put("issuer_auth_generation", 1);
-            candidate.put("issuer_index_layout_version", 1);
-            candidate.put("issuer_index_partition_count", 1);
-            candidate.put("issuer_index_partition_capacity", 3);
-            candidate.put("issuer_partition_id", 0);
-            candidate.put("account_index_fence", ACCOUNT_FENCE);
-            candidate.put("issuer_reservation_id", RESERVATION);
-            candidate.put("transition_id", TRANSITION);
-            candidate.put("lifecycle", "TERMINAL_UNRESOLVED");
-            candidate.put("account_index_state", "ACKNOWLEDGED");
-            candidate.put("issuer_index_state", "REPAIR_REQUIRED");
-            candidate.put("inventory_revision", 5);
-            insert(tx, "gameplay_binding_inventory", candidate);
+      dsl.transaction(configuration -> {
+        DSLContext tx = DSL.using(configuration);
+        tx.execute("UPDATE " + PREFIX + "binding_inventory_clock SET inventory_revision = 5");
+        insert(
+            tx,
+            "account_coverage_control",
+            Map.of(
+                "account_id",
+                ACCOUNT,
+                "state",
+                "NO_ACTIVE_ACCOUNT_WIDE_FLOW",
+                "last_operation_fence",
+                0));
+        insert(
+            tx,
+            "account_member_repair_control",
+            Map.of(
+                "account_id", ACCOUNT,
+                "last_operation_fence", 1,
+                "last_coverage_generation", 3));
+        Map<String, Object> candidate = new LinkedHashMap<>();
+        candidate.put("binding_ref", BINDING_REF);
+        candidate.put("account_id", ACCOUNT);
+        candidate.put("tenant_id", TENANT);
+        candidate.put("playable_state_namespace_id", NAMESPACE);
+        candidate.put("character_id", CHARACTER);
+        candidate.put("playable_state_scope", "SHARED");
+        candidate.put("game_instance_id", INSTANCE);
+        candidate.put("runtime_game_instance_id", 1L);
+        candidate.put("session_id", UUID.randomUUID().toString());
+        candidate.put("binding_generation", 1);
+        candidate.put("region_id", REGION);
+        candidate.put("region_epoch", 1);
+        candidate.put("issuer_id", "firemud-account-service");
+        candidate.put("issuer_auth_generation", 1);
+        candidate.put("issuer_index_layout_version", 1);
+        candidate.put("issuer_index_partition_count", 1);
+        candidate.put("issuer_index_partition_capacity", 3);
+        candidate.put("issuer_partition_id", 0);
+        candidate.put("account_index_fence", ACCOUNT_FENCE);
+        candidate.put("issuer_reservation_id", RESERVATION);
+        candidate.put("transition_id", TRANSITION);
+        candidate.put("lifecycle", "TERMINAL_UNRESOLVED");
+        candidate.put("account_index_state", "ACKNOWLEDGED");
+        candidate.put("issuer_index_state", "REPAIR_REQUIRED");
+        candidate.put("inventory_revision", 5);
+        insert(tx, "gameplay_binding_inventory", candidate);
 
-            Map<String, Object> transition = new LinkedHashMap<>();
-            transition.put("transition_id", TRANSITION);
-            transition.put("tenant_id", TENANT);
-            transition.put("playable_state_namespace_id", NAMESPACE);
-            transition.put("character_id", CHARACTER);
-            transition.put("candidate_binding_ref", BINDING_REF);
-            transition.put("candidate_binding_generation", 1);
-            transition.put("candidate_account_index_fence", ACCOUNT_FENCE);
-            transition.put("issuer_reservation_id", RESERVATION);
-            transition.put("status", "ABORTED");
-            transition.put("inventory_revision", 5);
-            transition.put("admission_request_id", UUID.randomUUID());
-            transition.put("admission_lease_id", UUID.randomUUID());
-            transition.put("admission_lease_fence", 1);
-            transition.put("admission_lease_kind", "NEW_BINDING");
-            transition.put("admission_lease_digest", RAW_DIGEST);
-            transition.put(
-                "admission_lease_evidence", "{\"controlledHistoricalAccountAbort\":true}");
-            transition.put("admission_lease_expires_at", 1);
-            transition.put("admission_orphan_cleanup_id", UUID.randomUUID());
-            transition.put("admission_target_namespace", "test");
-            transition.put("admission_target_tenant_slug", "historical-tenant");
-            transition.put("admission_target_tenant_id", TENANT);
-            transition.put("admission_target_world_slug", "historical-world");
-            transition.put("admission_target_world_display_name", "Historical world");
-            transition.put("admission_target_realm_id", UUID.randomUUID());
-            transition.put("admission_target_realm_slug", "historical-realm");
-            transition.put("admission_target_realm_display_name", "Historical realm");
-            transition.put("admission_target_game_session_tenant_id", 1L);
-            transition.put("admission_target_game_instance_id", 1L);
-            transition.put("admission_target_playable_state_namespace_id", NAMESPACE);
-            transition.put("admission_target_playable_state_scope", "SHARED");
-            transition.put("admission_target_canonical_game_instance_id", INSTANCE);
-            transition.put("admission_target_canonical_version_id", UUID.randomUUID());
-            transition.put("admission_target_runtime_version_id", 1L);
-            transition.put("admission_target_catalog_revision", 1L);
-            transition.put("admission_target_pointer_version", 1L);
-            transition.put("admission_target_pointer_snapshot_digest", RAW_DIGEST);
-            transition.put("admission_target_active_world_epoch", 1L);
-            transition.put(
-                "admission_target_initial_admission_request_id", "controlled-historical-request");
-            transition.put("admission_target_initial_admission_request_digest", RAW_DIGEST);
-            transition.put("admission_target_origin_kind", "NO_PRIOR_POINTER");
-            transition.put("admission_target_hold_id", UUID.randomUUID());
-            transition.put("admission_target_hold_fence", UUID.randomUUID());
-            transition.put("admission_target_hold_binding_digest", DIGEST);
-            transition.put("admission_target_audit_event_id", 1L);
-            transition.put("admission_target_owner_proof_digest", DIGEST);
-            transition.put("admission_target_owner_proof_outcome", "COMMITTED");
-            transition.put("admission_target_positive_durable_abort", false);
-            transition.put(
-                "admission_target_terminal_at", OffsetDateTime.parse("2026-10-26T00:00:00Z"));
-            transition.put("admission_target_character_creation_policy", "{}");
-            insert(tx, "binding_transition", transition);
+        Map<String, Object> transition = new LinkedHashMap<>();
+        transition.put("transition_id", TRANSITION);
+        transition.put("tenant_id", TENANT);
+        transition.put("playable_state_namespace_id", NAMESPACE);
+        transition.put("character_id", CHARACTER);
+        transition.put("candidate_binding_ref", BINDING_REF);
+        transition.put("candidate_binding_generation", 1);
+        transition.put("candidate_account_index_fence", ACCOUNT_FENCE);
+        transition.put("issuer_reservation_id", RESERVATION);
+        transition.put("status", "ABORTED");
+        transition.put("inventory_revision", 5);
+        transition.put("admission_request_id", UUID.randomUUID());
+        transition.put("admission_lease_id", UUID.randomUUID());
+        transition.put("admission_lease_fence", 1);
+        transition.put("admission_lease_kind", "NEW_BINDING");
+        transition.put("admission_lease_digest", RAW_DIGEST);
+        transition.put("admission_lease_evidence", "{\"controlledHistoricalAccountAbort\":true}");
+        transition.put("admission_lease_expires_at", 1);
+        transition.put("admission_orphan_cleanup_id", UUID.randomUUID());
+        transition.put("admission_target_namespace", "test");
+        transition.put("admission_target_tenant_slug", "historical-tenant");
+        transition.put("admission_target_tenant_id", TENANT);
+        transition.put("admission_target_world_slug", "historical-world");
+        transition.put("admission_target_world_display_name", "Historical world");
+        transition.put("admission_target_realm_id", UUID.randomUUID());
+        transition.put("admission_target_realm_slug", "historical-realm");
+        transition.put("admission_target_realm_display_name", "Historical realm");
+        transition.put("admission_target_game_session_tenant_id", 1L);
+        transition.put("admission_target_game_instance_id", 1L);
+        transition.put("admission_target_playable_state_namespace_id", NAMESPACE);
+        transition.put("admission_target_playable_state_scope", "SHARED");
+        transition.put("admission_target_canonical_game_instance_id", INSTANCE);
+        transition.put("admission_target_canonical_version_id", UUID.randomUUID());
+        transition.put("admission_target_runtime_version_id", 1L);
+        transition.put("admission_target_catalog_revision", 1L);
+        transition.put("admission_target_pointer_version", 1L);
+        transition.put("admission_target_pointer_snapshot_digest", RAW_DIGEST);
+        transition.put("admission_target_active_world_epoch", 1L);
+        transition.put(
+            "admission_target_initial_admission_request_id", "controlled-historical-request");
+        transition.put("admission_target_initial_admission_request_digest", RAW_DIGEST);
+        transition.put("admission_target_origin_kind", "NO_PRIOR_POINTER");
+        transition.put("admission_target_hold_id", UUID.randomUUID());
+        transition.put("admission_target_hold_fence", UUID.randomUUID());
+        transition.put("admission_target_hold_binding_digest", DIGEST);
+        transition.put("admission_target_audit_event_id", 1L);
+        transition.put("admission_target_owner_proof_digest", DIGEST);
+        transition.put("admission_target_owner_proof_outcome", "COMMITTED");
+        transition.put("admission_target_positive_durable_abort", false);
+        transition.put(
+            "admission_target_terminal_at", OffsetDateTime.parse("2026-10-26T00:00:00Z"));
+        transition.put("admission_target_character_creation_policy", "{}");
+        insert(tx, "binding_transition", transition);
 
-            Map<String, Object> reservation = new LinkedHashMap<>(candidate);
-            reservation.remove("issuer_partition_id");
-            reservation.remove("account_index_fence");
-            reservation.remove("issuer_reservation_id");
-            reservation.remove("account_index_state");
-            reservation.remove("issuer_index_state");
-            reservation.put("reservation_id", RESERVATION);
-            reservation.put("partition_id", 0);
-            reservation.put("lifecycle", "RELEASE_PENDING");
-            reservation.put("reservation_fence", UUID.randomUUID());
-            reservation.put("issuer_coverage_operation_id", UUID.randomUUID());
-            reservation.put("issuer_coverage_operation_fence", 1);
-            reservation.put("coverage_fence", 1);
-            reservation.put("inventory_snapshot_revision", 1);
-            insert(tx, "issuer_partition_reservation", reservation);
+        Map<String, Object> reservation = new LinkedHashMap<>(candidate);
+        reservation.remove("issuer_partition_id");
+        reservation.remove("account_index_fence");
+        reservation.remove("issuer_reservation_id");
+        reservation.remove("account_index_state");
+        reservation.remove("issuer_index_state");
+        reservation.put("reservation_id", RESERVATION);
+        reservation.put("partition_id", 0);
+        reservation.put("lifecycle", "RELEASE_PENDING");
+        reservation.put("reservation_fence", UUID.randomUUID());
+        reservation.put("issuer_coverage_operation_id", UUID.randomUUID());
+        reservation.put("issuer_coverage_operation_fence", 1);
+        reservation.put("coverage_fence", 1);
+        reservation.put("inventory_snapshot_revision", 1);
+        insert(tx, "issuer_partition_reservation", reservation);
 
-            Map<String, Object> accountObligation = new LinkedHashMap<>();
-            accountObligation.put("transition_id", TRANSITION);
-            accountObligation.put("obligation_ordinal", 0);
-            accountObligation.put("binding_ref", BINDING_REF);
-            accountObligation.put("account_id", ACCOUNT);
-            accountObligation.put("tenant_id", TENANT);
-            accountObligation.put("action", "ADD_OR_RETAIN");
-            accountObligation.put("binding_generation", 1);
-            accountObligation.put("account_index_fence", ACCOUNT_FENCE);
-            accountObligation.put("execution_phase", "BEFORE_FINAL_CAS");
-            accountObligation.put("status", "ACKNOWLEDGED");
-            accountObligation.put("inventory_revision", 5);
-            accountObligation.put("projection_state", "PRESENT_AWAITING_COVERAGE");
-            accountObligation.put("projection_member", MEMBER);
-            accountObligation.put("projection_inventory_revision", 4);
-            insert(tx, "binding_account_index_obligation", accountObligation);
-            insert(
-                tx,
-                "binding_issuer_index_obligation",
-                Map.of(
-                    "transition_id",
-                    TRANSITION,
-                    "binding_ref",
-                    BINDING_REF,
-                    "binding_generation",
-                    1,
-                    "reservation_id",
-                    RESERVATION,
-                    "status",
-                    "REQUIRED",
-                    "inventory_revision",
-                    5));
-            Map<String, Object> region = new LinkedHashMap<>();
-            for (String key :
-                List.of(
-                    "transition_id",
-                    "binding_ref",
-                    "binding_generation",
-                    "account_id",
-                    "tenant_id",
-                    "game_instance_id",
-                    "runtime_game_instance_id",
-                    "session_id",
-                    "region_id",
-                    "region_epoch",
-                    "inventory_revision")) {
-              region.put(key, candidate.get(key));
-            }
-            region.put("status", "REQUIRED");
-            insert(tx, "binding_region_bridge_obligation", region);
+        Map<String, Object> accountObligation = new LinkedHashMap<>();
+        accountObligation.put("transition_id", TRANSITION);
+        accountObligation.put("obligation_ordinal", 0);
+        accountObligation.put("binding_ref", BINDING_REF);
+        accountObligation.put("account_id", ACCOUNT);
+        accountObligation.put("tenant_id", TENANT);
+        accountObligation.put("action", "ADD_OR_RETAIN");
+        accountObligation.put("binding_generation", 1);
+        accountObligation.put("account_index_fence", ACCOUNT_FENCE);
+        accountObligation.put("execution_phase", "BEFORE_FINAL_CAS");
+        accountObligation.put("status", "ACKNOWLEDGED");
+        accountObligation.put("inventory_revision", 5);
+        accountObligation.put("projection_state", "PRESENT_AWAITING_COVERAGE");
+        accountObligation.put("projection_member", MEMBER);
+        accountObligation.put("projection_inventory_revision", 4);
+        insert(tx, "binding_account_index_obligation", accountObligation);
+        insert(
+            tx,
+            "binding_issuer_index_obligation",
+            Map.of(
+                "transition_id",
+                TRANSITION,
+                "binding_ref",
+                BINDING_REF,
+                "binding_generation",
+                1,
+                "reservation_id",
+                RESERVATION,
+                "status",
+                "REQUIRED",
+                "inventory_revision",
+                5));
+        Map<String, Object> region = new LinkedHashMap<>();
+        for (String key :
+            List.of(
+                "transition_id",
+                "binding_ref",
+                "binding_generation",
+                "account_id",
+                "tenant_id",
+                "game_instance_id",
+                "runtime_game_instance_id",
+                "session_id",
+                "region_id",
+                "region_epoch",
+                "inventory_revision")) {
+          region.put(key, candidate.get(key));
+        }
+        region.put("status", "REQUIRED");
+        insert(tx, "binding_region_bridge_obligation", region);
 
-            Map<String, Object> repair = new LinkedHashMap<>();
-            repair.put("operation_id", UUID.randomUUID());
-            repair.put("transition_id", TRANSITION);
-            repair.put("obligation_ordinal", 0);
-            repair.put("operation_fence", 1);
-            repair.put("coverage_fence", UUID.randomUUID());
-            repair.put("inventory_snapshot_revision", 2);
-            repair.put("binding_ref", BINDING_REF);
-            repair.put("account_id", ACCOUNT);
-            repair.put("tenant_id", TENANT);
-            repair.put("binding_generation", 1);
-            repair.put("account_index_fence", ACCOUNT_FENCE);
-            repair.put("original_action", "ADD_OR_RETAIN");
-            repair.put("original_execution_phase", "BEFORE_FINAL_CAS");
-            repair.put("original_status", "REQUIRED");
-            repair.put("original_inventory_revision", 1);
-            repair.put("original_projection_state", "REQUIRED");
-            repair.put("desired_action", "ADD_OR_RETAIN");
-            repair.put("member", MEMBER);
-            repair.put("account_control_state", "NO_ACTIVE_ACCOUNT_WIDE_FLOW");
-            repair.put("account_control_epoch", 0);
-            repair.put("status", "ACKNOWLEDGED");
-            repair.put("coverage_generation", 3);
-            repair.put("readback_state", "PRESENT");
-            repair.put("readback_member", MEMBER);
-            repair.put("completed_inventory_revision", 4);
-            insert(tx, "account_member_repair_operation", repair);
-          });
+        Map<String, Object> repair = new LinkedHashMap<>();
+        repair.put("operation_id", UUID.randomUUID());
+        repair.put("transition_id", TRANSITION);
+        repair.put("obligation_ordinal", 0);
+        repair.put("operation_fence", 1);
+        repair.put("coverage_fence", UUID.randomUUID());
+        repair.put("inventory_snapshot_revision", 2);
+        repair.put("binding_ref", BINDING_REF);
+        repair.put("account_id", ACCOUNT);
+        repair.put("tenant_id", TENANT);
+        repair.put("binding_generation", 1);
+        repair.put("account_index_fence", ACCOUNT_FENCE);
+        repair.put("original_action", "ADD_OR_RETAIN");
+        repair.put("original_execution_phase", "BEFORE_FINAL_CAS");
+        repair.put("original_status", "REQUIRED");
+        repair.put("original_inventory_revision", 1);
+        repair.put("original_projection_state", "REQUIRED");
+        repair.put("desired_action", "ADD_OR_RETAIN");
+        repair.put("member", MEMBER);
+        repair.put("account_control_state", "NO_ACTIVE_ACCOUNT_WIDE_FLOW");
+        repair.put("account_control_epoch", 0);
+        repair.put("status", "ACKNOWLEDGED");
+        repair.put("coverage_generation", 3);
+        repair.put("readback_state", "PRESENT");
+        repair.put("readback_member", MEMBER);
+        repair.put("completed_inventory_revision", 4);
+        insert(tx, "account_member_repair_operation", repair);
+      });
     }
 
     private static void seedLaterControlledAcquisitionIntent(DSLContext dsl) {
@@ -1255,14 +1244,13 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest
     }
 
     private static void advanceRetainedRevision(DSLContext dsl) {
-      dsl.transaction(
-          configuration -> {
-            DSLContext tx = DSL.using(configuration);
-            tx.execute("UPDATE " + PREFIX + "binding_inventory_clock SET inventory_revision = 6");
-            for (String table : RETAINED_TABLES.subList(0, 6)) {
-              tx.execute("UPDATE " + PREFIX + table + " SET inventory_revision = 6");
-            }
-          });
+      dsl.transaction(configuration -> {
+        DSLContext tx = DSL.using(configuration);
+        tx.execute("UPDATE " + PREFIX + "binding_inventory_clock SET inventory_revision = 6");
+        for (String table : RETAINED_TABLES.subList(0, 6)) {
+          tx.execute("UPDATE " + PREFIX + table + " SET inventory_revision = 6");
+        }
+      });
     }
 
     private static Map<String, List<String>> rows(DSLContext dsl, boolean immutableOnly) {

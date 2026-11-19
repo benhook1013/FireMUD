@@ -100,11 +100,10 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
             "V1001__saga_instance_table.sql",
             "V1002__saga_step_table.sql");
     assertThat(installedParents)
-        .allSatisfy(
-            row -> {
-              assertThat(row.checksum()).isNotNull();
-              assertThat(row.success()).isTrue();
-            });
+        .allSatisfy(row -> {
+          assertThat(row.checksum()).isNotNull();
+          assertThat(row.success()).isTrue();
+        });
     long intakeTablesBeforeUpgrade =
         Objects.requireNonNull(
                 dsl.fetchOne(
@@ -165,14 +164,13 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
             "SELECT installed_rank, version, script, checksum, success FROM "
                 + historyTable
                 + " WHERE version IS NOT NULL ORDER BY installed_rank")
-        .map(
-            row ->
-                new MigrationHistory(
-                    row.get("installed_rank", Integer.class),
-                    row.get("version", String.class),
-                    row.get("script", String.class),
-                    row.get("checksum", Integer.class),
-                    row.get("success", Boolean.class)));
+        .map(row ->
+            new MigrationHistory(
+                row.get("installed_rank", Integer.class),
+                row.get("version", String.class),
+                row.get("script", String.class),
+                row.get("checksum", Integer.class),
+                row.get("success", Boolean.class)));
   }
 
   private static SagaRowSnapshot sagaSnapshot(DSLContext dsl, String schema, long sagaId) {
@@ -199,28 +197,26 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
     var accountReader = mock(GameLogicIntakeAuthorizationReadClient.class);
     var gameDesignReader = mock(GameplayRuleSourceReadClient.class);
     when(accountReader.read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              accountReads.incrementAndGet();
-              return new GameLogicIntakeAuthorizationReadEvidence(invocation.getArgument(0));
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          accountReads.incrementAndGet();
+          return new GameLogicIntakeAuthorizationReadEvidence(invocation.getArgument(0));
+        });
     when(gameDesignReader.read(any(GameplayRuleSourceReadEvidence.Request.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              gameDesignReads.incrementAndGet();
-              var sourceRequest = invocation.<GameplayRuleSourceReadEvidence.Request>getArgument(0);
-              assertThat(sourceRequest.proof())
-                  .isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
-              assertThat(sourceRequest.proof().canonicalBytes())
-                  .containsExactly(authorization.canonicalBytes());
-              bothSourceReads.countDown();
-              if (!bothSourceReads.await(10, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("Concurrent source-read barrier timed out");
-              }
-              return new GameplayRuleSourceReadEvidence(invocation.getArgument(0), source);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          gameDesignReads.incrementAndGet();
+          var sourceRequest = invocation.<GameplayRuleSourceReadEvidence.Request>getArgument(0);
+          assertThat(sourceRequest.proof())
+              .isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
+          assertThat(sourceRequest.proof().canonicalBytes())
+              .containsExactly(authorization.canonicalBytes());
+          bothSourceReads.countDown();
+          if (!bothSourceReads.await(10, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Concurrent source-read barrier timed out");
+          }
+          return new GameplayRuleSourceReadEvidence(invocation.getArgument(0), source);
+        });
     var first = fixture.service(accountReader, gameDesignReader);
     var second = fixture.service(accountReader, gameDesignReader);
     byte[] originalTerminalBytes;
@@ -244,17 +240,15 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
     assertThat(stored.manifestBytes())
         .containsExactly(source.manifest().canonicalJson().getBytes(StandardCharsets.UTF_8));
 
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE game_logic_gameplay_rule_intake_terminal SET outcome = 'ABORTED' WHERE operation_id = ?",
-                    authorization.operationId()))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE game_logic_gameplay_rule_intake_terminal SET outcome = 'ABORTED' WHERE operation_id = ?",
+                authorization.operationId()))
         .isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "DELETE FROM game_logic_gameplay_rule_intake_terminal WHERE operation_id = ?",
-                    authorization.operationId()))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "DELETE FROM game_logic_gameplay_rule_intake_terminal WHERE operation_id = ?",
+                authorization.operationId()))
         .isInstanceOf(RuntimeException.class);
     assertThatThrownBy(
             () -> fixture.dsl.execute("TRUNCATE game_logic_gameplay_rule_intake_terminal"))
@@ -285,15 +279,14 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
         .thenAnswer(
             invocation -> new GameLogicIntakeAuthorizationReadEvidence(invocation.getArgument(0)));
     when(gameDesignReader.read(any(GameplayRuleSourceReadEvidence.Request.class)))
-        .thenAnswer(
-            invocation -> {
-              sourceReadEntered.countDown();
-              if (!allowSourceRead.await(10, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("Source-read barrier timed out");
-              }
-              return new GameplayRuleSourceReadEvidence(
-                  invocation.getArgument(0), authorization.source());
-            });
+        .thenAnswer(invocation -> {
+          sourceReadEntered.countDown();
+          if (!allowSourceRead.await(10, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Source-read barrier timed out");
+          }
+          return new GameplayRuleSourceReadEvidence(
+              invocation.getArgument(0), authorization.source());
+        });
     var service = fixture.service(accountReader, gameDesignReader);
 
     try (var executor = Executors.newSingleThreadExecutor()) {
@@ -327,10 +320,8 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
         .thenAnswer(
             invocation -> new GameLogicIntakeAuthorizationReadEvidence(invocation.getArgument(0)));
     when(gameDesignReader.read(any(GameplayRuleSourceReadEvidence.Request.class)))
-        .thenAnswer(
-            invocation ->
-                new GameplayRuleSourceReadEvidence(
-                    invocation.getArgument(0), authorization.source()));
+        .thenAnswer(invocation ->
+            new GameplayRuleSourceReadEvidence(invocation.getArgument(0), authorization.source()));
 
     var retained =
         asGameDesign(() -> fixture.service(accountReader, gameDesignReader).retain(authorization));

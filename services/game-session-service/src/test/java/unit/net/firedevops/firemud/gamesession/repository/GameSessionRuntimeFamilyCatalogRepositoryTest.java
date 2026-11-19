@@ -56,14 +56,12 @@ class GameSessionRuntimeFamilyCatalogRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     var transactions = mock(PlatformTransactionManager.class);
     for (String schema : new String[] {"", "public;select", "MixedCase", "a".repeat(64)}) {
-      assertThatThrownBy(
-              () ->
-                  new GameSessionRuntimeFamilyCatalogRepository(dsl, transactions, schema, "test"))
+      assertThatThrownBy(() ->
+              new GameSessionRuntimeFamilyCatalogRepository(dsl, transactions, schema, "test"))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                new GameSessionRuntimeFamilyCatalogRepository(dsl, transactions, "gs_owner", "BAD"))
+    assertThatThrownBy(() ->
+            new GameSessionRuntimeFamilyCatalogRepository(dsl, transactions, "gs_owner", "BAD"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(dsl, transactions);
   }

@@ -160,21 +160,19 @@ class AccountSecurityStateAuthorityEventV1CodecTest {
     assertThat(verifiedBan.restriction()).isPresent();
     assertThat(verifiedLock.securityState()).isEmpty();
     assertThat(verifiedBan.securityState()).isEmpty();
-    assertThatThrownBy(
-            () ->
-                AccountSecurityStateAuthorityEventV1Codec.sealRestriction(
-                    restrictionPreimage(
-                        "platform_access_ban", "NONRESTRICTED", "ACCOUNT_SECURITY_RECOVERY")))
+    assertThatThrownBy(() ->
+            AccountSecurityStateAuthorityEventV1Codec.sealRestriction(
+                restrictionPreimage(
+                    "platform_access_ban", "NONRESTRICTED", "ACCOUNT_SECURITY_RECOVERY")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("restrictionSourceKind");
   }
 
   @Test
   void familyDispatchRejectsUnknownVariantAndRestrictionExtraFields() {
-    assertThatThrownBy(
-            () ->
-                AccountSecurityStateAuthorityEventV1Codec.verifyFamily(
-                    "{\"eventType\":\"ACCOUNT_AUTHORITY_CHANGED\"}"))
+    assertThatThrownBy(() ->
+            AccountSecurityStateAuthorityEventV1Codec.verifyFamily(
+                "{\"eventType\":\"ACCOUNT_AUTHORITY_CHANGED\"}"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("variant is unsupported");
 

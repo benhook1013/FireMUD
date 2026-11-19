@@ -84,11 +84,10 @@ class GameDesignFreshTenantIdentityClientTest {
     verify(stub, times(2)).withDeadlineAfter(5L, TimeUnit.SECONDS);
     verify(stub, times(2)).resolveFreshTenantCreation(requestCaptor.capture());
     assertThat(requestCaptor.getAllValues())
-        .allSatisfy(
-            request -> {
-              assertThat(request.getCreationRequestId()).isEqualTo(REQUEST_ID.toString());
-              assertThat(request.getExpectedRequestDigest()).isEqualTo(REQUEST_DIGEST);
-            });
+        .allSatisfy(request -> {
+          assertThat(request.getCreationRequestId()).isEqualTo(REQUEST_ID.toString());
+          assertThat(request.getExpectedRequestDigest()).isEqualTo(REQUEST_DIGEST);
+        });
     verifyNoMoreInteractions(stub);
   }
 
@@ -143,17 +142,15 @@ class GameDesignFreshTenantIdentityClientTest {
     CommonGrpcClientProperties plaintext = mtlsProperties();
     plaintext.setPlaintext(true);
 
-    assertThatThrownBy(
-            () ->
-                new GameDesignFreshTenantIdentityClient(
-                    new ServiceEndpointsProperties(), plaintext, channelFactory, "test"))
+    assertThatThrownBy(() ->
+            new GameDesignFreshTenantIdentityClient(
+                new ServiceEndpointsProperties(), plaintext, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
 
-    assertThatThrownBy(
-            () ->
-                new GameDesignFreshTenantIdentityClient(
-                    new ServiceEndpointsProperties(), null, channelFactory, "test"))
+    assertThatThrownBy(() ->
+            new GameDesignFreshTenantIdentityClient(
+                new ServiceEndpointsProperties(), null, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("TLS configuration is required");
 
@@ -163,20 +160,18 @@ class GameDesignFreshTenantIdentityClientTest {
             incompleteMtlsProperties("certs/account-client.crt", null, "certs/game-design-ca.crt"),
             incompleteMtlsProperties("certs/account-client.crt", "certs/account-client.key", null));
     for (CommonGrpcClientProperties incomplete : incompleteConfigurations) {
-      assertThatThrownBy(
-              () ->
-                  new GameDesignFreshTenantIdentityClient(
-                      new ServiceEndpointsProperties(), incomplete, channelFactory, "test"))
+      assertThatThrownBy(() ->
+              new GameDesignFreshTenantIdentityClient(
+                  new ServiceEndpointsProperties(), incomplete, channelFactory, "test"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("certificate, key, and CA");
     }
 
     CommonGrpcClientProperties classpathMaterial = mtlsProperties();
     classpathMaterial.setCertChain("classpath:certs/account-client.crt");
-    assertThatThrownBy(
-            () ->
-                new GameDesignFreshTenantIdentityClient(
-                    new ServiceEndpointsProperties(), classpathMaterial, channelFactory, "test"))
+    assertThatThrownBy(() ->
+            new GameDesignFreshTenantIdentityClient(
+                new ServiceEndpointsProperties(), classpathMaterial, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("file-backed");
 
@@ -187,25 +182,20 @@ class GameDesignFreshTenantIdentityClientTest {
             mtlsPropertiesWith(
                 "certs/account-client.crt", "account-client.key", "classpath:ca.crt"));
     for (CommonGrpcClientProperties classpathConfiguration : classpathConfigurations) {
-      assertThatThrownBy(
-              () ->
-                  new GameDesignFreshTenantIdentityClient(
-                      new ServiceEndpointsProperties(),
-                      classpathConfiguration,
-                      channelFactory,
-                      "test"))
+      assertThatThrownBy(() ->
+              new GameDesignFreshTenantIdentityClient(
+                  new ServiceEndpointsProperties(), classpathConfiguration, channelFactory, "test"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("file-backed");
     }
 
     for (String invalidNamespace : new String[] {null, "", "Upper", "not/a-label"}) {
-      assertThatThrownBy(
-              () ->
-                  new GameDesignFreshTenantIdentityClient(
-                      new ServiceEndpointsProperties(),
-                      mtlsProperties(),
-                      channelFactory,
-                      invalidNamespace))
+      assertThatThrownBy(() ->
+              new GameDesignFreshTenantIdentityClient(
+                  new ServiceEndpointsProperties(),
+                  mtlsProperties(),
+                  channelFactory,
+                  invalidNamespace))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("namespace");
     }

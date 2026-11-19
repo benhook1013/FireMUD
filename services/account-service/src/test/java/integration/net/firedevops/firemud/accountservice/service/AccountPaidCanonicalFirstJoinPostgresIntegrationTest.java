@@ -154,28 +154,26 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
   void finalCommitFailureRollsBackMembershipRolesPairEventAuditAndTerminalReceipt() {
     Context c = context(false);
     var original = c.operation();
-    assertThatThrownBy(
-            () ->
-                c.hosting
-                    .transaction()
-                    .execute(
-                        status -> {
-                          TransactionSynchronizationManager.registerSynchronization(
-                              new TransactionSynchronization() {
-                                @Override
-                                public void beforeCommit(boolean readOnly) {
-                                  throw new IllegalStateException(
-                                      "controlled final paid JOIN commit refusal");
-                                }
-                              });
-                          return c.coordinator.commitPaidCanonicalFirstJoin(
-                              c.scope,
-                              c.requestId,
-                              CALLER,
-                              c.hosting.lifecycleRepository(),
-                              c.fence,
-                              c.observed);
-                        }))
+    assertThatThrownBy(() ->
+            c.hosting
+                .transaction()
+                .execute(status -> {
+                  TransactionSynchronizationManager.registerSynchronization(
+                      new TransactionSynchronization() {
+                        @Override
+                        public void beforeCommit(boolean readOnly) {
+                          throw new IllegalStateException(
+                              "controlled final paid JOIN commit refusal");
+                        }
+                      });
+                  return c.coordinator.commitPaidCanonicalFirstJoin(
+                      c.scope,
+                      c.requestId,
+                      CALLER,
+                      c.hosting.lifecycleRepository(),
+                      c.fence,
+                      c.observed);
+                }))
         .hasMessageContaining("controlled final paid JOIN commit refusal");
     c.assertRolledBack(original);
   }
@@ -299,43 +297,40 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
               now.plusSeconds(120).toString());
       hosting
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                var source = fresh.read(hosting.tenantId()).orElseThrow();
-                sources.initializeIssuerIfAbsent("firemud-account-service");
-                generations.initialize(
-                    AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                        player.getAccountUuid(), hosting.tenantId()));
-                scopes.insertCanonical(
-                    player.getId(),
-                    scope,
-                    new VerifiedTenantProvenance(
-                        null,
-                        TenantProvenanceKind.FRESH_GAME_DESIGN,
-                        source.operationId(),
-                        source.evidenceDigest()));
-                operations.insertCanonicalIntent(requestId, scope, CALLER);
-              });
+          .executeWithoutResult(status -> {
+            var source = fresh.read(hosting.tenantId()).orElseThrow();
+            sources.initializeIssuerIfAbsent("firemud-account-service");
+            generations.initialize(
+                AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                    player.getAccountUuid(), hosting.tenantId()));
+            scopes.insertCanonical(
+                player.getId(),
+                scope,
+                new VerifiedTenantProvenance(
+                    null,
+                    TenantProvenanceKind.FRESH_GAME_DESIGN,
+                    source.operationId(),
+                    source.evidenceDigest()));
+            operations.insertCanonicalIntent(requestId, scope, CALLER);
+          });
       fence =
           Objects.requireNonNull(
               hosting
                   .transaction()
-                  .execute(
-                      status ->
-                          hosting.lifecycleRepository().prepareCurrentRead(hosting.tenantId())));
+                  .execute(status ->
+                      hosting.lifecycleRepository().prepareCurrentRead(hosting.tenantId())));
       observed = hosting.observer().observe(fence.binding());
       hosting
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                var receipt = hosting.lifecycleRepository().readCurrent(fence, observed);
-                operations.bindCanonicalPolicyEvidence(
-                    requestId,
-                    scope,
-                    CALLER,
-                    receipt.allowPublicJoin(),
-                    receipt.entitlementVersion() + (wrongPolicy ? 1 : 0));
-              });
+          .executeWithoutResult(status -> {
+            var receipt = hosting.lifecycleRepository().readCurrent(fence, observed);
+            operations.bindCanonicalPolicyEvidence(
+                requestId,
+                scope,
+                CALLER,
+                receipt.allowPublicJoin(),
+                receipt.entitlementVersion() + (wrongPolicy ? 1 : 0));
+          });
     }
 
     private AccountJoinOperationRepository.CanonicalJoinTerminalProof commit(
@@ -343,30 +338,28 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       return Objects.requireNonNull(
           hosting
               .transaction()
-              .execute(
-                  status ->
-                      coordinator.commitPaidCanonicalFirstJoin(
-                          scope, requestId, CALLER, hosting.lifecycleRepository(), fence, result)));
+              .execute(status ->
+                  coordinator.commitPaidCanonicalFirstJoin(
+                      scope, requestId, CALLER, hosting.lifecycleRepository(), fence, result)));
     }
 
     private AccountJoinOperationRepository.CanonicalJoinOperationEvidence operation() {
       return Objects.requireNonNull(
           hosting
               .transaction()
-              .execute(
-                  status -> {
-                    operations.lockAccount(
-                        Objects.requireNonNull(
-                                hosting
-                                    .dsl()
-                                    .fetchOne(
-                                        "SELECT id FROM accounts WHERE account_uuid = ?",
-                                        scope.accountId()))
-                            .get(0, Long.class));
-                    return operations
-                        .findCanonicalEvidenceForUpdateByRequestId(requestId)
-                        .orElseThrow();
-                  }));
+              .execute(status -> {
+                operations.lockAccount(
+                    Objects.requireNonNull(
+                            hosting
+                                .dsl()
+                                .fetchOne(
+                                    "SELECT id FROM accounts WHERE account_uuid = ?",
+                                    scope.accountId()))
+                        .get(0, Long.class));
+                return operations
+                    .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                    .orElseThrow();
+              }));
     }
 
     private String stream() {

@@ -233,15 +233,14 @@ public class GameSessionFreshTenantAssociationRepository {
       throw new IllegalStateException(
           "Fresh tenant association requires a writable owner transaction");
     }
-    dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Fresh tenant association requires writable READ COMMITTED isolation");
-          }
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Fresh tenant association requires writable READ COMMITTED isolation");
+      }
+      return null;
+    });
     Record transaction =
         dsl.fetchOne(
             "SELECT current_setting('transaction_isolation') AS isolation, "
@@ -381,11 +380,10 @@ public class GameSessionFreshTenantAssociationRepository {
     }
 
     FreshTenantAssociation independentReadback =
-        readTransaction.execute(
-            status ->
-                readByCanonicalTenantIdInTransaction(
-                        sourceEvidence.targetNamespace(), sourceEvidence.canonicalTenantId())
-                    .orElse(null));
+        readTransaction.execute(status ->
+            readByCanonicalTenantIdInTransaction(
+                    sourceEvidence.targetNamespace(), sourceEvidence.canonicalTenantId())
+                .orElse(null));
     if (independentReadback == null
         || !sourceEvidence.equals(independentReadback.sourceEvidence())
         || !committed.equals(independentReadback)) {
@@ -501,10 +499,9 @@ public class GameSessionFreshTenantAssociationRepository {
     FreshTenantAssociation readback =
         readByCanonicalTenantIdInTransaction(
                 sourceEvidence.targetNamespace(), sourceEvidence.canonicalTenantId())
-            .orElseThrow(
-                () ->
-                    new InvalidFreshTenantAssociationException(
-                        "Game Session fresh tenant association did not read back in its owner transaction"));
+            .orElseThrow(() ->
+                new InvalidFreshTenantAssociationException(
+                    "Game Session fresh tenant association did not read back in its owner transaction"));
     requireExactSource(sourceEvidence, readback.sourceEvidence());
     return readback;
   }

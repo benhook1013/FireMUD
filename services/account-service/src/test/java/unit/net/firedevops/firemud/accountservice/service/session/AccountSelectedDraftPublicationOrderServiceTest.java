@@ -90,25 +90,22 @@ class AccountSelectedDraftPublicationOrderServiceTest {
     var lookup = selection();
     var result = mock(AccountPublicationAuthorizationBinding.class);
     when(client.read(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              var request =
-                  invocation.getArgument(
-                      0, AuthoredDraftPublishSelectionReadEvidence.Request.class);
-              assertThat(request.targetNamespace()).isEqualTo("test");
-              assertThat(request.originalSelection()).containsExactly(lookup.canonicalBytes());
-              assertThat(request.selectionDigest()).isEqualTo(lookup.digest());
-              return fixtureEvidence(request);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          var request =
+              invocation.getArgument(0, AuthoredDraftPublishSelectionReadEvidence.Request.class);
+          assertThat(request.targetNamespace()).isEqualTo("test");
+          assertThat(request.originalSelection()).containsExactly(lookup.canonicalBytes());
+          assertThat(request.selectionDigest()).isEqualTo(lookup.digest());
+          return fixtureEvidence(request);
+        });
     when(owner.authorize(eq(COMPACT_JWT), eq(lookup), same(environment)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return result;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return result;
+        });
     assertThat(authorized(() -> service.authorize(COMPACT_JWT, lookup, environment)))
         .isSameAs(result);
     var request = ArgumentCaptor.forClass(AuthoredDraftPublishSelectionReadEvidence.Request.class);

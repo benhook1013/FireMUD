@@ -234,15 +234,14 @@ public final class RealmPolicyPublishedEvidence {
     RealmPolicySource.ordered(policies.stream().map(Policy::source).toList());
     var shared =
         policies.stream()
-            .map(
-                policy ->
-                    new PublishedRealmEntryPolicyEvidence(
-                        policy.policyId(),
-                        policy.source().commitId(),
-                        policy.source().revisionId(),
-                        policy.source().logicalRevisionId(),
-                        policy.source().policy(),
-                        policy.policyDigest()))
+            .map(policy ->
+                new PublishedRealmEntryPolicyEvidence(
+                    policy.policyId(),
+                    policy.source().commitId(),
+                    policy.source().revisionId(),
+                    policy.source().logicalRevisionId(),
+                    policy.source().policy(),
+                    policy.policyDigest()))
             .toList();
     return PublishedRealmEntryPolicySetEvidence.calculatePolicySetDigest(
         target,

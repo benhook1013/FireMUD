@@ -146,42 +146,35 @@ class SelectedOwnerEmptySourceInputsTest {
         response.toBuilder()
             .setRequest(requestWire.toBuilder().setReadRequestId(UUID.randomUUID().toString()))
             .build();
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request, changedEcho))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(request, changedEcho))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setResult(
-                            AutomationSelectedSourceIntakeTerminalResult
-                                .AUTOMATION_SELECTED_SOURCE_INTAKE_TERMINAL_RESULT_UNSPECIFIED)
-                        .build()))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setResult(
+                        AutomationSelectedSourceIntakeTerminalResult
+                            .AUTOMATION_SELECTED_SOURCE_INTAKE_TERMINAL_RESULT_UNSPECIFIED)
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request, response.toBuilder().clearCommittedEmptyReceipt().build()))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request, response.toBuilder().clearCommittedEmptyReceipt().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder().setReceiptDigest("sha256:" + "0".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request, response.toBuilder().setReceiptDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     byte[] changedReceipt = response.getCommittedEmptyReceipt().toByteArray();
     changedReceipt[changedReceipt.length - 1] ^= 1;
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setCommittedEmptyReceipt(ByteString.copyFrom(changedReceipt))
-                        .build()))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setCommittedEmptyReceipt(ByteString.copyFrom(changedReceipt))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -358,11 +351,10 @@ class SelectedOwnerEmptySourceInputsTest {
             Owner.ENTITY_MANAGEMENT, Options.defaults().withWorldProfile(WorldProfile.LEGACY_V1));
     assertRejected(legacyWorld.authorization(), legacyWorld.worldInventoryReadEvidence());
 
-    assertThatThrownBy(
-            () ->
-                fixture(
-                    Owner.ENTITY_MANAGEMENT,
-                    Options.defaults().withWorldProfile(WorldProfile.MISSING_CLOSURE_V2)))
+    assertThatThrownBy(() ->
+            fixture(
+                Owner.ENTITY_MANAGEMENT,
+                Options.defaults().withWorldProfile(WorldProfile.MISSING_CLOSURE_V2)))
         .isInstanceOf(IllegalArgumentException.class);
 
     Fixture entitySpawn = fixture(Owner.ENTITY_MANAGEMENT, Options.defaults().withSpawnBindings(1));
@@ -695,15 +687,14 @@ class SelectedOwnerEmptySourceInputsTest {
             0,
             spawnBindings,
             selected.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-                .map(
-                    unit ->
-                        new AppliedEpoch(
-                            unit.aggregateType(),
-                            unit.aggregateId(),
-                            unit.scopeType(),
-                            unit.scopeId(),
-                            unit.expectedEpoch(),
-                            new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                .map(unit ->
+                    new AppliedEpoch(
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch(),
+                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
                 .toList(),
             closure);
     var ownerScope =

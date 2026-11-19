@@ -47,13 +47,12 @@ class StartSessionOperatorAuthorizationConfigurationTest {
             StartSessionOperatorAuthorizationConfiguration.class,
             SharedGrpcConfiguration.class,
             ReservationService.class)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).doesNotHaveBean(StartSessionOperatorAuthorizationClient.class);
-              assertThat(context).doesNotHaveBean(StartSessionAuthorizationCoordinator.class);
-              assertThat(context.getBean(ControlledGrpcChannelFactory.class).calls()).isEmpty();
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).doesNotHaveBean(StartSessionOperatorAuthorizationClient.class);
+          assertThat(context).doesNotHaveBean(StartSessionAuthorizationCoordinator.class);
+          assertThat(context.getBean(ControlledGrpcChannelFactory.class).calls()).isEmpty();
+        });
 
     new ApplicationContextRunner()
         .withUserConfiguration(
@@ -61,81 +60,73 @@ class StartSessionOperatorAuthorizationConfigurationTest {
             SharedGrpcConfiguration.class,
             ReservationService.class)
         .withPropertyValues(ENABLED + "=false")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).doesNotHaveBean(StartSessionOperatorAuthorizationClient.class);
-              assertThat(context).doesNotHaveBean(StartSessionAuthorizationCoordinator.class);
-              assertThat(context.getBean(ControlledGrpcChannelFactory.class).calls()).isEmpty();
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).doesNotHaveBean(StartSessionOperatorAuthorizationClient.class);
+          assertThat(context).doesNotHaveBean(StartSessionAuthorizationCoordinator.class);
+          assertThat(context.getBean(ControlledGrpcChannelFactory.class).calls()).isEmpty();
+        });
   }
 
   @Test
   void enabledCompositionRequiresReservationProviderAndFileBackedMtls(@TempDir Path tlsDirectory)
       throws IOException {
     String[] tlsProperties = fileBackedTlsProperties(tlsDirectory);
-    withTlsReloadDisabled(
-        () ->
-            contextRunner()
-                .withUserConfiguration(
-                    StartSessionOperatorAuthorizationConfiguration.class,
-                    SharedGrpcConfiguration.class)
-                .withPropertyValues(
-                    concat(
-                        new String[] {
-                          ENABLED + "=true",
-                          WORKLOAD_NAMESPACE + "=gameplay",
-                          ACCOUNT_ENDPOINT + "=account-service.gameplay.svc:6565"
-                        },
-                        tlsProperties))
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        contextRunner()
+            .withUserConfiguration(
+                StartSessionOperatorAuthorizationConfiguration.class, SharedGrpcConfiguration.class)
+            .withPropertyValues(
+                concat(
+                    new String[] {
+                      ENABLED + "=true",
+                      WORKLOAD_NAMESPACE + "=gameplay",
+                      ACCOUNT_ENDPOINT + "=account-service.gameplay.svc:6565"
+                    },
+                    tlsProperties))
+            .run(context -> assertThat(context).hasFailed()));
 
-    withTlsReloadDisabled(
-        () ->
-            contextRunner()
-                .withUserConfiguration(
-                    StartSessionOperatorAuthorizationConfiguration.class,
-                    SharedGrpcConfiguration.class,
-                    ReservationService.class)
-                .withPropertyValues(ENABLED + "=true", WORKLOAD_NAMESPACE + "=gameplay")
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        contextRunner()
+            .withUserConfiguration(
+                StartSessionOperatorAuthorizationConfiguration.class,
+                SharedGrpcConfiguration.class,
+                ReservationService.class)
+            .withPropertyValues(ENABLED + "=true", WORKLOAD_NAMESPACE + "=gameplay")
+            .run(context -> assertThat(context).hasFailed()));
   }
 
   @Test
   void enabledCompositionRequiresCanonicalWorkloadNamespace(@TempDir Path tlsDirectory)
       throws IOException {
     String[] tlsProperties = fileBackedTlsProperties(tlsDirectory);
-    withTlsReloadDisabled(
-        () ->
-            contextRunner()
-                .withUserConfiguration(
-                    StartSessionOperatorAuthorizationConfiguration.class,
-                    SharedGrpcConfiguration.class,
-                    ReservationService.class)
-                .withPropertyValues(
-                    concat(
-                        new String[] {
-                          ENABLED + "=true", ACCOUNT_ENDPOINT + "=account-service:6565"
-                        },
-                        tlsProperties))
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        contextRunner()
+            .withUserConfiguration(
+                StartSessionOperatorAuthorizationConfiguration.class,
+                SharedGrpcConfiguration.class,
+                ReservationService.class)
+            .withPropertyValues(
+                concat(
+                    new String[] {ENABLED + "=true", ACCOUNT_ENDPOINT + "=account-service:6565"},
+                    tlsProperties))
+            .run(context -> assertThat(context).hasFailed()));
 
-    withTlsReloadDisabled(
-        () ->
-            contextRunner()
-                .withUserConfiguration(
-                    StartSessionOperatorAuthorizationConfiguration.class,
-                    SharedGrpcConfiguration.class,
-                    ReservationService.class)
-                .withPropertyValues(
-                    concat(
-                        new String[] {
-                          ENABLED + "=true",
-                          WORKLOAD_NAMESPACE + "=Gameplay",
-                          ACCOUNT_ENDPOINT + "=account-service:6565"
-                        },
-                        tlsProperties))
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        contextRunner()
+            .withUserConfiguration(
+                StartSessionOperatorAuthorizationConfiguration.class,
+                SharedGrpcConfiguration.class,
+                ReservationService.class)
+            .withPropertyValues(
+                concat(
+                    new String[] {
+                      ENABLED + "=true",
+                      WORKLOAD_NAMESPACE + "=Gameplay",
+                      ACCOUNT_ENDPOINT + "=account-service:6565"
+                    },
+                    tlsProperties))
+            .run(context -> assertThat(context).hasFailed()));
   }
 
   @Test
@@ -144,51 +135,47 @@ class StartSessionOperatorAuthorizationConfigurationTest {
     String[] tlsProperties = fileBackedTlsProperties(tlsDirectory);
     AtomicBoolean channelShutdown = new AtomicBoolean();
 
-    withTlsReloadDisabled(
-        () ->
-            contextRunner()
-                .withUserConfiguration(
-                    StartSessionOperatorAuthorizationConfiguration.class,
-                    SharedGrpcConfiguration.class,
-                    ReservationService.class)
-                .withPropertyValues(
-                    concat(
-                        new String[] {
-                          ENABLED + "=true",
-                          WORKLOAD_NAMESPACE + "=gameplay",
-                          ACCOUNT_ENDPOINT + "=account-service.gameplay.svc:6565"
-                        },
-                        tlsProperties))
-                .run(
-                    context -> {
-                      assertThat(context).hasNotFailed();
-                      assertThat(context)
-                          .hasSingleBean(StartSessionOperatorAuthorizationClient.class);
-                      assertThat(context).hasSingleBean(StartSessionAuthorizationCoordinator.class);
+    withTlsReloadDisabled(() ->
+        contextRunner()
+            .withUserConfiguration(
+                StartSessionOperatorAuthorizationConfiguration.class,
+                SharedGrpcConfiguration.class,
+                ReservationService.class)
+            .withPropertyValues(
+                concat(
+                    new String[] {
+                      ENABLED + "=true",
+                      WORKLOAD_NAMESPACE + "=gameplay",
+                      ACCOUNT_ENDPOINT + "=account-service.gameplay.svc:6565"
+                    },
+                    tlsProperties))
+            .run(context -> {
+              assertThat(context).hasNotFailed();
+              assertThat(context).hasSingleBean(StartSessionOperatorAuthorizationClient.class);
+              assertThat(context).hasSingleBean(StartSessionAuthorizationCoordinator.class);
 
-                      ControlledGrpcChannelFactory channelFactory =
-                          context.getBean(ControlledGrpcChannelFactory.class);
-                      assertThat(channelFactory.calls()).hasSize(1);
-                      ChannelCall call = channelFactory.calls().get(0);
-                      assertThat(call.target()).isEqualTo("account-service.gameplay.svc:6565");
-                      assertThat(call.defaultPort()).isEqualTo(6565);
-                      assertThat(call.keepAlive()).isTrue();
-                      assertThat(call.tlsProperties().isPlaintext()).isFalse();
-                      assertThat(call.tlsProperties().getCertChain())
-                          .isEqualTo(tlsProperties[0].substring((CERT_CHAIN + "=").length()));
+              ControlledGrpcChannelFactory channelFactory =
+                  context.getBean(ControlledGrpcChannelFactory.class);
+              assertThat(channelFactory.calls()).hasSize(1);
+              ChannelCall call = channelFactory.calls().get(0);
+              assertThat(call.target()).isEqualTo("account-service.gameplay.svc:6565");
+              assertThat(call.defaultPort()).isEqualTo(6565);
+              assertThat(call.keepAlive()).isTrue();
+              assertThat(call.tlsProperties().isPlaintext()).isFalse();
+              assertThat(call.tlsProperties().getCertChain())
+                  .isEqualTo(tlsProperties[0].substring((CERT_CHAIN + "=").length()));
 
-                      context.close();
-                      channelShutdown.set(channelFactory.channelWasShutdown());
-                    }));
+              context.close();
+              channelShutdown.set(channelFactory.channelWasShutdown());
+            }));
 
     assertThat(channelShutdown.get()).isTrue();
   }
 
   private static ApplicationContextRunner contextRunner() {
     return new ApplicationContextRunner()
-        .withInitializer(
-            context ->
-                context.getBeanFactory().setConversionService(new ApplicationConversionService()));
+        .withInitializer(context ->
+            context.getBeanFactory().setConversionService(new ApplicationConversionService()));
   }
 
   private static String[] fileBackedTlsProperties(Path tlsDirectory) throws IOException {
@@ -266,11 +253,10 @@ class StartSessionOperatorAuthorizationConfigurationTest {
 
     private ControlledGrpcChannelFactory() {
       when(channel.shutdown())
-          .thenAnswer(
-              invocation -> {
-                channelWasShutdown.set(true);
-                return channel;
-              });
+          .thenAnswer(invocation -> {
+            channelWasShutdown.set(true);
+            return channel;
+          });
     }
 
     @Override

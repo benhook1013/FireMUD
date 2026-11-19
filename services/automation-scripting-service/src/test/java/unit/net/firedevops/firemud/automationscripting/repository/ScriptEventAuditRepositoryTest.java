@@ -176,20 +176,19 @@ class ScriptEventAuditRepositoryTest {
         new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findTimerAuditEvents(
-                    "tenant-1",
-                    "game-1",
-                    "patch-1",
-                    -1L,
-                    null,
-                    "script-1",
-                    "onTimerExpire",
-                    "",
-                    null,
-                    null,
-                    PageRequest.of(0, 25)))
+        .isThrownBy(() ->
+            repository.findTimerAuditEvents(
+                "tenant-1",
+                "game-1",
+                "patch-1",
+                -1L,
+                null,
+                "script-1",
+                "onTimerExpire",
+                "",
+                null,
+                null,
+                PageRequest.of(0, 25)))
         .withMessage("script_pin_epoch must be non-negative");
   }
 
@@ -618,12 +617,11 @@ class ScriptEventAuditRepositoryTest {
                 null,
                 PageRequest.of(0, 25)))
         .singleElement()
-        .satisfies(
-            audit -> {
-              assertThat(audit.getId()).isEqualTo(7L);
-              assertThat(audit.getCreatedAt()).isEqualTo(createdAt);
-              assertThat(audit.getUpdatedAt()).isEqualTo(updatedAt);
-            });
+        .satisfies(audit -> {
+          assertThat(audit.getId()).isEqualTo(7L);
+          assertThat(audit.getCreatedAt()).isEqualTo(createdAt);
+          assertThat(audit.getUpdatedAt()).isEqualTo(updatedAt);
+        });
 
     String whereClause = whereClause(sqlRef.get());
     assertThat(whereClause).contains("updated_at").doesNotContain("created_at");

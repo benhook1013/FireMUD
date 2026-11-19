@@ -79,10 +79,9 @@ public final class AccountGameplayCanonicalLoginOwner {
 
     String normalizedEmail = EmailCanonicalization.normalize(request.email());
     LoginPreparation preparation =
-        accountTransaction.execute(
-            status ->
-                prepareOrReplay(
-                    request, normalizedEmail, verifiedGameSessionWorkload, credentialVerifier));
+        accountTransaction.execute(status ->
+            prepareOrReplay(
+                request, normalizedEmail, verifiedGameSessionWorkload, credentialVerifier));
     if (preparation == null) throw unavailable();
     if (preparation.authenticationFailure() != null) {
       throw preparation.authenticationFailure();

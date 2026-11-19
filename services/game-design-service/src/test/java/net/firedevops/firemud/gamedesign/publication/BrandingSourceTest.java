@@ -29,10 +29,9 @@ class BrandingSourceTest {
       assertThat(reference.role()).isEqualTo(role);
       assertThat(reference.family()).isEqualTo("BRANDING");
       assertThat(reference.sourceBinding()).isSameAs(binding);
-      assertThatThrownBy(
-              () ->
-                  BrandingSource.upsertPayload(
-                      "1", "image.png", role, BrandingSource.Requiredness.OPTIONAL))
+      assertThatThrownBy(() ->
+              BrandingSource.upsertPayload(
+                  "1", "image.png", role, BrandingSource.Requiredness.OPTIONAL))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -52,10 +51,9 @@ class BrandingSourceTest {
     assertThat(replay.references().getFirst().sourceBinding()).isEqualTo(original);
     var items =
         replay.references().stream()
-            .map(
-                r ->
-                    new net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item(
-                        r, "image/png", "sha256:" + "a".repeat(64), 1))
+            .map(r ->
+                new net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item(
+                    r, "image/png", "sha256:" + "a".repeat(64), 1))
             .toList();
     var snapshot =
         new BrandingSourceSnapshot(changed, "2", original.commitId(), UUID.randomUUID(), items);
@@ -63,12 +61,11 @@ class BrandingSourceTest {
         .isEqualTo(
             Map.of("RESOURCE", "EMPTY", "LOGO", "PRESENT", "FAVICON", "EMPTY", "THEME", "PRESENT"));
     assertThat(BrandingSourceSnapshot.fromStored(snapshot.canonicalJson())).isEqualTo(snapshot);
-    assertThatThrownBy(
-            () ->
-                BrandingSourceSnapshot.fromStored(
-                    snapshot
-                        .canonicalJson()
-                        .replace("\"FAVICON\":\"EMPTY\"", "\"FAVICON\":\"PRESENT\"")))
+    assertThatThrownBy(() ->
+            BrandingSourceSnapshot.fromStored(
+                snapshot
+                    .canonicalJson()
+                    .replace("\"FAVICON\":\"EMPTY\"", "\"FAVICON\":\"PRESENT\"")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -88,21 +85,17 @@ class BrandingSourceTest {
       assertThatThrownBy(() -> BrandingSource.mutations(binding(invalid)))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                BrandingSource.replay(
-                    List.of(),
-                    binding(
-                        BrandingSource.upsertPayload(
-                            "1",
-                            "a",
-                            BrandingSource.Role.LOGO,
-                            BrandingSource.Requiredness.REQUIRED),
-                        BrandingSource.upsertPayload(
-                            "1",
-                            "b",
-                            BrandingSource.Role.THEME,
-                            BrandingSource.Requiredness.REQUIRED))))
+    assertThatThrownBy(() ->
+            BrandingSource.replay(
+                List.of(),
+                binding(
+                    BrandingSource.upsertPayload(
+                        "1", "a", BrandingSource.Role.LOGO, BrandingSource.Requiredness.REQUIRED),
+                    BrandingSource.upsertPayload(
+                        "1",
+                        "b",
+                        BrandingSource.Role.THEME,
+                        BrandingSource.Requiredness.REQUIRED))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

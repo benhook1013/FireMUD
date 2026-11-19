@@ -89,15 +89,14 @@ final class CanonicalGameplayLegacyRedisSource
     }
 
     List<CanonicalGameplayLegacyMigrationSourceSnapshot.Entry> entries = new ArrayList<>();
-    first.forEach(
-        (key, family) ->
-            entries.add(
-                new CanonicalGameplayLegacyMigrationSourceSnapshot.Entry(
-                    family,
-                    digestKey(key),
-                    family == CanonicalGameplayLegacyMigrationSourceSnapshot.Family.UNCLASSIFIED
-                        ? CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.UNKNOWN
-                        : CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.UNMAPPABLE)));
+    first.forEach((key, family) ->
+        entries.add(
+            new CanonicalGameplayLegacyMigrationSourceSnapshot.Entry(
+                family,
+                digestKey(key),
+                family == CanonicalGameplayLegacyMigrationSourceSnapshot.Family.UNCLASSIFIED
+                    ? CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.UNKNOWN
+                    : CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.UNMAPPABLE)));
     return new CanonicalGameplayLegacyMigrationSourceSnapshot(KNOWN_FAMILIES, entries);
   }
 

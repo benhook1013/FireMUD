@@ -123,35 +123,32 @@ class GameDesignWorldPublicationTerminalProducerTest {
   @Test
   void wrongNamespaceScopeExpectedOutcomeOrReturnedEvidenceRemainUnresolved() {
     var wrongNamespace = new GameDesignWorldPublicationTerminalProducer(owner, client, "other");
-    assertThatThrownBy(
-            () ->
-                wrongNamespace.reconcile(
-                    operation.tenantKey(),
-                    operation.workflowId(),
-                    operation.versionId(),
-                    operation.selectionDigest(),
-                    Outcome.NO_PUBLICATION))
+    assertThatThrownBy(() ->
+            wrongNamespace.reconcile(
+                operation.tenantKey(),
+                operation.workflowId(),
+                operation.versionId(),
+                operation.selectionDigest(),
+                Outcome.NO_PUBLICATION))
         .isInstanceOf(IllegalStateException.class);
     when(owner.readExact(
             "other", operation.workflowId(), operation.versionId(), operation.selectionDigest()))
         .thenReturn(Optional.of(readback("NO_PUBLICATION", terminal.canonicalBytes())));
-    assertThatThrownBy(
-            () ->
-                producer.reconcile(
-                    "other",
-                    operation.workflowId(),
-                    operation.versionId(),
-                    operation.selectionDigest(),
-                    Outcome.NO_PUBLICATION))
+    assertThatThrownBy(() ->
+            producer.reconcile(
+                "other",
+                operation.workflowId(),
+                operation.versionId(),
+                operation.selectionDigest(),
+                Outcome.NO_PUBLICATION))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                producer.reconcile(
-                    operation.tenantKey(),
-                    operation.workflowId(),
-                    operation.versionId(),
-                    operation.selectionDigest(),
-                    Outcome.PUBLISHED))
+    assertThatThrownBy(() ->
+            producer.reconcile(
+                operation.tenantKey(),
+                operation.workflowId(),
+                operation.versionId(),
+                operation.selectionDigest(),
+                Outcome.PUBLISHED))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(client);
     var changed = mock(GameDesignPublicationTerminalEvidence.class);
@@ -184,13 +181,12 @@ class GameDesignWorldPublicationTerminalProducerTest {
             operation.workflowId(),
             operation.versionId(),
             operation.selectionDigest()))
-        .thenAnswer(
-            ignored -> {
-              readsEntered.countDown();
-              if (!releaseReads.await(5, TimeUnit.SECONDS))
-                throw new IllegalStateException("Timed out waiting to release owner read");
-              return Optional.of(readback("NO_PUBLICATION", terminal.canonicalBytes()));
-            });
+        .thenAnswer(ignored -> {
+          readsEntered.countDown();
+          if (!releaseReads.await(5, TimeUnit.SECONDS))
+            throw new IllegalStateException("Timed out waiting to release owner read");
+          return Optional.of(readback("NO_PUBLICATION", terminal.canonicalBytes()));
+        });
     var workers = daemonPool(2);
     try {
       var first = workers.submit(this::reconcile);
@@ -223,29 +219,27 @@ class GameDesignWorldPublicationTerminalProducerTest {
             operation.workflowId(),
             operation.versionId(),
             operation.selectionDigest()))
-        .thenAnswer(
-            ignored -> {
-              readEntered.countDown();
-              if (!releaseRead.await(5, TimeUnit.SECONDS))
-                throw new IllegalStateException("Timed out waiting to release owner read");
-              return Optional.of(readback("NO_PUBLICATION", terminal.canonicalBytes()));
-            });
+        .thenAnswer(ignored -> {
+          readEntered.countDown();
+          if (!releaseRead.await(5, TimeUnit.SECONDS))
+            throw new IllegalStateException("Timed out waiting to release owner read");
+          return Optional.of(readback("NO_PUBLICATION", terminal.canonicalBytes()));
+        });
     var workers = daemonPool(1);
     var closeStarted = new CountDownLatch(1);
     var closeFailure = new AtomicReference<Throwable>();
     var interruptRestored = new AtomicBoolean();
     var closer =
-        daemonThread(
-            () -> {
-              closeStarted.countDown();
-              try {
-                producer.close();
-              } catch (Throwable failure) {
-                closeFailure.set(failure);
-              } finally {
-                interruptRestored.set(Thread.currentThread().isInterrupted());
-              }
-            });
+        daemonThread(() -> {
+          closeStarted.countDown();
+          try {
+            producer.close();
+          } catch (Throwable failure) {
+            closeFailure.set(failure);
+          } finally {
+            interruptRestored.set(Thread.currentThread().isInterrupted());
+          }
+        });
     try {
       var activeReconciliation = workers.submit(this::reconcile);
       assertThat(readEntered.await(5, TimeUnit.SECONDS)).isTrue();
@@ -308,11 +302,10 @@ class GameDesignWorldPublicationTerminalProducerTest {
     var workers = daemonPool(1);
     try {
       var close =
-          workers.submit(
-              () -> {
-                producer.close();
-                return null;
-              });
+          workers.submit(() -> {
+            producer.close();
+            return null;
+          });
       close.get(5, TimeUnit.SECONDS);
       verify(client).close();
     } finally {

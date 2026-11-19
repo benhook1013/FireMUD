@@ -160,10 +160,9 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
     var channelFactory = mock(GrpcChannelFactory.class);
     var invalidTls = mtlsProperties();
     invalidTls.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GameSessionCanonicalGameplayRosterOwnerReadClient(
-                    new ServiceEndpointsProperties(), invalidTls, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new GameSessionCanonicalGameplayRosterOwnerReadClient(
+                new ServiceEndpointsProperties(), invalidTls, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
 
@@ -253,15 +252,13 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
     verify(stub).getCanonicalGameplayRosterReference(request);
     var guardedStub = mockStub();
     var guardedClient = newClient(guardedStub);
-    assertThatThrownBy(
-            () ->
-                guardedClient.getCanonicalGameplayRosterReference(
-                    request.toBuilder().setSchemaVersion(0).build()))
+    assertThatThrownBy(() ->
+            guardedClient.getCanonicalGameplayRosterReference(
+                request.toBuilder().setSchemaVersion(0).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                guardedClient.getCanonicalGameplayRosterReference(
-                    retirementRequest("other").getOriginalSelection()))
+    assertThatThrownBy(() ->
+            guardedClient.getCanonicalGameplayRosterReference(
+                retirementRequest("other").getOriginalSelection()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("namespace");
     verifyNoInteractions(guardedStub);
@@ -377,16 +374,14 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
     assertThatThrownBy(() -> client.acknowledgeCanonicalGameplayRosterRetirement(foreign))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("namespace");
-    assertThatThrownBy(
-            () ->
-                client.confirmCanonicalGameplayRosterRetirementAcknowledgement(foreignConfirmation))
+    assertThatThrownBy(() ->
+            client.confirmCanonicalGameplayRosterRetirementAcknowledgement(foreignConfirmation))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("namespace");
     var request = retirementRequest(NAMESPACE);
-    assertThatThrownBy(
-            () ->
-                client.acknowledgeCanonicalGameplayRosterRetirement(
-                    request.toBuilder().setSchemaVersion(0).build()))
+    assertThatThrownBy(() ->
+            client.acknowledgeCanonicalGameplayRosterRetirement(
+                request.toBuilder().setSchemaVersion(0).build()))
         .isInstanceOf(IllegalArgumentException.class);
     var confirmation =
         CanonicalGameplayRosterRetirementEvidence.confirmation(
@@ -416,9 +411,8 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientTest {
     assertThatThrownBy(() -> uninitialized.acknowledgeCanonicalGameplayRosterRetirement(request))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
-    assertThatThrownBy(
-            () ->
-                uninitialized.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+    assertThatThrownBy(() ->
+            uninitialized.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
   }

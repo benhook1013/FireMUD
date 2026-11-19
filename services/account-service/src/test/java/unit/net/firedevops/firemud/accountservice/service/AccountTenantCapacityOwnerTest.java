@@ -105,17 +105,15 @@ class AccountTenantCapacityOwnerTest {
     Clock clock = mock(Clock.class);
     when(clock.instant()).thenThrow(new AssertionError("read before acquiring usage row"));
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              org.mockito.Mockito.doReturn(request.evidence().expiresAt()).when(clock).instant();
-              return mock(Record.class);
-            });
+        .thenAnswer(invocation -> {
+          org.mockito.Mockito.doReturn(request.evidence().expiresAt()).when(clock).instant();
+          return mock(Record.class);
+        });
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    assertThatThrownBy(
-            () ->
-                new AccountTenantCapacityRepository(dsl)
-                    .createIfQuotaAvailable(request, request.evidence().expiresAt(), clock))
+    assertThatThrownBy(() ->
+            new AccountTenantCapacityRepository(dsl)
+                .createIfQuotaAvailable(request, request.evidence().expiresAt(), clock))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
             failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
@@ -189,15 +187,14 @@ class AccountTenantCapacityOwnerTest {
         .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
     when(f.dsl.execute(
             startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              Object[] arguments = (Object[]) invocation.getRawArguments()[1];
-              assertThat(arguments[7]).isEqualTo("NO_ACCEPT");
-              assertThat(arguments[9]).isEqualTo("CAPACITY_QUOTA_EXCEEDED");
-              when(genericRefusal.get("decision_id", UUID.class)).thenReturn((UUID) arguments[8]);
-              f.pendingOriginDecision = genericRefusal;
-              return 1;
-            });
+        .thenAnswer(invocation -> {
+          Object[] arguments = (Object[]) invocation.getRawArguments()[1];
+          assertThat(arguments[7]).isEqualTo("NO_ACCEPT");
+          assertThat(arguments[9]).isEqualTo("CAPACITY_QUOTA_EXCEEDED");
+          when(genericRefusal.get("decision_id", UUID.class)).thenReturn((UUID) arguments[8]);
+          f.pendingOriginDecision = genericRefusal;
+          return 1;
+        });
     f.retained = true;
     qualifySources(f);
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
@@ -329,12 +326,11 @@ class AccountTenantCapacityOwnerTest {
         .thenReturn("NO_ACCEPT".equals(decision) ? "CAPACITY_QUOTA_EXCEEDED" : null);
     when(f.dsl.execute(
             startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              f.pendingOriginDecision = retained;
-              when(f.clock.instant()).thenReturn(afterWrite);
-              return 1;
-            });
+        .thenAnswer(invocation -> {
+          f.pendingOriginDecision = retained;
+          when(f.clock.instant()).thenReturn(afterWrite);
+          return 1;
+        });
   }
 
   @Test
@@ -357,14 +353,13 @@ class AccountTenantCapacityOwnerTest {
     var aborted = serializationFailure();
     var lookups = new AtomicInteger();
     when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
-        .thenAnswer(
-            invocation -> {
-              f.transactionEvents.add("lookup");
-              if (lookups.incrementAndGet() == 1) {
-                throw aborted;
-              }
-              return Optional.empty();
-            });
+        .thenAnswer(invocation -> {
+          f.transactionEvents.add("lookup");
+          if (lookups.incrementAndGet() == 1) {
+            throw aborted;
+          }
+          return Optional.empty();
+        });
     var rearm =
         AccountTenantCapacityOwner.class.getDeclaredMethod(
             "rearm", Request.class, Request.class, UUID.class, long.class);
@@ -384,11 +379,10 @@ class AccountTenantCapacityOwnerTest {
     var aborted = serializationFailure();
     var abortedAttempts = new AtomicInteger();
     when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
-        .thenAnswer(
-            invocation -> {
-              if (abortedAttempts.incrementAndGet() == 2) f.existing = true;
-              throw aborted;
-            });
+        .thenAnswer(invocation -> {
+          if (abortedAttempts.incrementAndGet() == 2) f.existing = true;
+          throw aborted;
+        });
 
     assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload()).reservationId())
         .isEqualTo(f.reservation);
@@ -421,17 +415,14 @@ class AccountTenantCapacityOwnerTest {
     var aborted = serializationFailure();
     try (var caller = Context.current().withCancellation()) {
       when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
-          .thenAnswer(
-              invocation -> {
-                caller.cancel(null);
-                throw aborted;
-              });
+          .thenAnswer(invocation -> {
+            caller.cancel(null);
+            throw aborted;
+          });
 
-      caller.run(
-          () ->
-              assertThatThrownBy(
-                      () -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
-                  .isSameAs(aborted));
+      caller.run(() ->
+          assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+              .isSameAs(aborted));
     }
     verify(f.accounts).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
@@ -672,12 +663,11 @@ class AccountTenantCapacityOwnerTest {
             .withDigest();
     assertThatThrownBy(() -> recovery.rearm(f.request, next))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                recovery.reconcile(
-                    denied,
-                    net.firedevops.firemud.accountservice.service
-                        .AccountTenantCapacityRecoveryWorker.NoCommitAction.RETAIN_FOR_REARM))
+    assertThatThrownBy(() ->
+            recovery.reconcile(
+                denied,
+                net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                    .NoCommitAction.RETAIN_FOR_REARM))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes, source);
   }
@@ -741,11 +731,10 @@ class AccountTenantCapacityOwnerTest {
     var scope = f.scopes.findCanonicalEvidenceByTokenHash("fixture");
     org.mockito.Mockito.clearInvocations(f.scopes);
     when(f.scopes.findCanonicalEvidenceByTokenHash(anyString()))
-        .thenAnswer(
-            ignored -> {
-              now.set(f.request.evidence().expiresAt());
-              return scope;
-            });
+        .thenAnswer(ignored -> {
+          now.set(f.request.evidence().expiresAt());
+          return scope;
+        });
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
@@ -929,21 +918,20 @@ class AccountTenantCapacityOwnerTest {
       when(evaluation.get("expires_at", java.time.OffsetDateTime.class))
           .thenReturn(AccountTenantCapacityRepository.at(evidence.expiresAt()));
       when(dsl.fetchOne(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                String sql = invocation.getArgument(0, String.class);
-                if (sql.startsWith("SELECT * FROM account_tenant_capacity_reservations "))
-                  return existing ? row : null;
-                if (sql.startsWith("SELECT 1 FROM (SELECT tenant_uuid")) return null;
-                if (sql.startsWith("SELECT * FROM account_capacity_origin_decisions "))
-                  return pendingOriginDecision != null ? pendingOriginDecision : originDecision;
-                if (sql.startsWith(
-                    "SELECT snapshot_identity FROM account_tenant_capacity_evaluations "))
-                  return evaluation;
-                if (sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
-                  return retained ? evaluation : null;
-                throw new AssertionError(sql);
-              });
+          .thenAnswer(invocation -> {
+            String sql = invocation.getArgument(0, String.class);
+            if (sql.startsWith("SELECT * FROM account_tenant_capacity_reservations "))
+              return existing ? row : null;
+            if (sql.startsWith("SELECT 1 FROM (SELECT tenant_uuid")) return null;
+            if (sql.startsWith("SELECT * FROM account_capacity_origin_decisions "))
+              return pendingOriginDecision != null ? pendingOriginDecision : originDecision;
+            if (sql.startsWith(
+                "SELECT snapshot_identity FROM account_tenant_capacity_evaluations "))
+              return evaluation;
+            if (sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
+              return retained ? evaluation : null;
+            throw new AssertionError(sql);
+          });
       owner =
           new AccountTenantCapacityOwner(
               dsl,

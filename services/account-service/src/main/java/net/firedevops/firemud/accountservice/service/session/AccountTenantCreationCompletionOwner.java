@@ -103,26 +103,24 @@ public final class AccountTenantCreationCompletionOwner {
     Objects.requireNonNull(recent);
     Initial first =
         Objects.requireNonNull(
-            transactions.execute(
-                status -> {
-                  Original original = readOriginal(operationId, terminal);
-                  Result result = readRetainedOrExpiredResult(original, terminal);
-                  return new Initial(original, result);
-                }));
+            transactions.execute(status -> {
+              Original original = readOriginal(operationId, terminal);
+              Result result = readRetainedOrExpiredResult(original, terminal);
+              return new Initial(original, result);
+            }));
     if (first.result != null) {
       if (first.result.state == State.COMPLETED) return first.result;
       // Expose terminal-only recovery only after independent committed original/settlement reads.
       return Objects.requireNonNull(
-          transactions.execute(
-              status -> {
-                Original original = readOriginal(operationId, terminal);
-                requireSame(first.original, original);
-                Result success = readResult(original, terminal);
-                if (success != null) return success;
-                Result historical = readHistoricalResult(original, terminal);
-                if (historical == null) throw denied();
-                return historical;
-              }));
+          transactions.execute(status -> {
+            Original original = readOriginal(operationId, terminal);
+            requireSame(first.original, original);
+            Result success = readResult(original, terminal);
+            if (success != null) return success;
+            Result historical = readHistoricalResult(original, terminal);
+            if (historical == null) throw denied();
+            return historical;
+          }));
     }
 
     String kid =
@@ -132,144 +130,140 @@ public final class AccountTenantCreationCompletionOwner {
     AccountControlUiActorService.requireAcceptedSignerKey(first.original.issuance, accepted);
     Result committed =
         Objects.requireNonNull(
-            transactions.execute(
-                status -> {
-                  Original original = readOriginal(operationId, terminal);
-                  requireSame(first.original, original);
-                  Result replay = readRetainedOrExpiredResult(original, terminal);
-                  if (replay != null) return replay;
-                  // Account-first capture serializes concurrent completion before any Account
-                  // creator writes.
-                  current(original, environment, recent, accepted);
-                  if (dsl.fetchOne(
-                          "SELECT request_id FROM account_tenant_creation_bootstrap_operations WHERE request_id = ? OR tenant_uuid = ? FOR UPDATE",
-                          operationId,
-                          terminal.evidence().receipt().orElseThrow().canonicalTenantId())
-                      != null) {
-                    throw denied();
-                  }
-                  var receipt =
-                      terminal
-                          .evidence()
-                          .receipt()
-                          .orElseThrow(AccountTenantCreationCompletionOwner::denied);
-                  var creator = creator(original, receipt);
-                  if (!identities.importVerified(receipt).equals(receipt)
-                      || !identities
-                          .read(receipt.canonicalTenantId())
-                          .filter(receipt::equals)
-                          .isPresent()) throw denied();
-                  var tenant = generations.initializeTenantIfAbsent(receipt.canonicalTenantId());
-                  if (tenant.generation() != 1L || tenant.sourceVersion() != 1L) throw denied();
-                  var source =
-                      new CurrentSource(
-                          this, original, environment, recent, accepted, creator, transactionId());
-                  var bootstrap = bootstraps.bootstrapForCompletion(creator, source);
-                  var party =
-                      parties.readIndividualSource(
-                          original.intent.creatorPartyId(), original.intent.initiatingAccountId());
-                  var associated = parties.associateFresh(operationId, creator, party);
-                  if (!associated.equals(
-                      parties.readInitialAssociation(operationId, creator, party))) throw denied();
-                  var owner =
-                      owners.establishInitial(
-                          new AccountInitialTenantBillingOwnerRepository.InitialRequest(
-                              original.intent.requestId(),
-                              creator,
-                              original.intent.consentOperationId(),
-                              original.intent.consentStatementVersion(),
-                              original.intent.affirmativeConsent()));
-                  // Fresh capture immediately before consumption; all captured source locks remain
-                  // held to commit.
-                  Current current = current(original, environment, recent, accepted);
-                  var consumed =
-                      reauthentication.validateAndConsumeLocked(
-                          recent,
-                          original.intent.initiatingAccountId(),
-                          AccountRecentReauthenticationPolicy.PURPOSE,
-                          operationId);
-                  if (consumed.disposition()
-                      != AccountRecentReauthenticationService.Disposition.CONSUMED) throw denied();
-                  UUID auditId =
-                      UUID.nameUUIDFromBytes(
-                          ("account-tenant-creation-completion/v1:" + operationId)
-                              .getBytes(StandardCharsets.UTF_8));
-                  byte[] payload =
-                      net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority
-                          .canonical(
-                              Map.ofEntries(
-                                  Map.entry("schema", "account-tenant-creation-completion/v1"),
-                                  Map.entry("operationId", operationId.toString()),
-                                  Map.entry("intentDigest", original.intent.requestDigest()),
-                                  Map.entry(
-                                      "authorizationDigest", original.holder.authorizationDigest()),
-                                  Map.entry("terminalDigest", terminal.evidence().evidenceDigest()),
-                                  Map.entry("tenantId", receipt.canonicalTenantId().toString()),
-                                  Map.entry(
-                                      "accountId",
-                                      original.intent.initiatingAccountId().toString()),
-                                  Map.entry(
-                                      "creatorPartyId",
-                                      original.intent.creatorPartyId().toString()),
-                                  Map.entry("creatorEvidenceDigest", creator.evidenceDigest()),
-                                  Map.entry("bootstrapResultDigest", bootstrap.resultDigest()),
-                                  Map.entry("initialOwnerResultDigest", owner.resultDigest()),
-                                  Map.entry("ownerGeneration", owner.ownerGeneration().toString()),
-                                  Map.entry("ownerVersion", owner.ownerVersion()),
-                                  Map.entry(
-                                      "consentOperationId",
-                                      original.intent.consentOperationId().toString()),
-                                  Map.entry(
-                                      "consentStatementVersion",
-                                      original.intent.consentStatementVersion()),
-                                  Map.entry(
-                                      "reauthenticationEvidenceId", recent.evidenceId().toString()),
-                                  Map.entry("auditEventId", auditId.toString())));
-                  String digest = digest(payload);
-                  var audit =
-                      audits.appendCanonicalTenant(
-                          auditId,
-                          receipt.canonicalTenantId().toString(),
-                          EVENT,
-                          new String(payload, StandardCharsets.UTF_8));
-                  if (!digest.equals(audit.payloadDigest())) throw denied();
-                  orders.settleLocked(original.holder, terminal);
-                  Instant validBefore =
-                      AccountTenantCreationOwnerChecks.currentValidBefore(
-                          original.admitted.binding(), current.capture);
-                  dsl.execute(
-                      "INSERT INTO "
-                          + TABLE
-                          + " (creation_operation_id, intent_request_id, tenant_uuid, terminal_payload, terminal_digest,"
-                          + " result_payload, result_digest, audit_event_id, valid_before) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz)",
-                      operationId,
-                      original.intent.requestId(),
-                      receipt.canonicalTenantId(),
-                      terminal.evidence().canonicalBytes(),
-                      terminal.evidence().evidenceDigest(),
-                      payload,
-                      digest,
-                      auditId,
-                      OffsetDateTime.ofInstant(validBefore, ZoneOffset.UTC));
-                  return Objects.requireNonNull(readResult(original, terminal));
-                }));
-    return Objects.requireNonNull(
-        transactions.execute(
-            status -> {
+            transactions.execute(status -> {
               Original original = readOriginal(operationId, terminal);
               requireSame(first.original, original);
-              Result readback = readResult(original, terminal);
-              if (committed.state == State.CREATED_WITHOUT_ACCOUNT_COMPLETION) {
-                // A completed original keeps precedence even if it became visible after settling.
-                if (readback != null) return readback;
-                readback = readHistoricalResult(original, terminal);
+              Result replay = readRetainedOrExpiredResult(original, terminal);
+              if (replay != null) return replay;
+              // Account-first capture serializes concurrent completion before any Account
+              // creator writes.
+              current(original, environment, recent, accepted);
+              if (dsl.fetchOne(
+                      "SELECT request_id FROM account_tenant_creation_bootstrap_operations WHERE request_id = ? OR tenant_uuid = ? FOR UPDATE",
+                      operationId,
+                      terminal.evidence().receipt().orElseThrow().canonicalTenantId())
+                  != null) {
+                throw denied();
               }
-              if (readback == null
-                  || committed.state != readback.state
-                  || !Arrays.equals(committed.payload, readback.payload)
-                  || !committed.digest.equals(readback.digest)) throw denied();
-              return readback;
+              var receipt =
+                  terminal
+                      .evidence()
+                      .receipt()
+                      .orElseThrow(AccountTenantCreationCompletionOwner::denied);
+              var creator = creator(original, receipt);
+              if (!identities.importVerified(receipt).equals(receipt)
+                  || !identities
+                      .read(receipt.canonicalTenantId())
+                      .filter(receipt::equals)
+                      .isPresent()) throw denied();
+              var tenant = generations.initializeTenantIfAbsent(receipt.canonicalTenantId());
+              if (tenant.generation() != 1L || tenant.sourceVersion() != 1L) throw denied();
+              var source =
+                  new CurrentSource(
+                      this, original, environment, recent, accepted, creator, transactionId());
+              var bootstrap = bootstraps.bootstrapForCompletion(creator, source);
+              var party =
+                  parties.readIndividualSource(
+                      original.intent.creatorPartyId(), original.intent.initiatingAccountId());
+              var associated = parties.associateFresh(operationId, creator, party);
+              if (!associated.equals(parties.readInitialAssociation(operationId, creator, party)))
+                throw denied();
+              var owner =
+                  owners.establishInitial(
+                      new AccountInitialTenantBillingOwnerRepository.InitialRequest(
+                          original.intent.requestId(),
+                          creator,
+                          original.intent.consentOperationId(),
+                          original.intent.consentStatementVersion(),
+                          original.intent.affirmativeConsent()));
+              // Fresh capture immediately before consumption; all captured source locks remain
+              // held to commit.
+              Current current = current(original, environment, recent, accepted);
+              var consumed =
+                  reauthentication.validateAndConsumeLocked(
+                      recent,
+                      original.intent.initiatingAccountId(),
+                      AccountRecentReauthenticationPolicy.PURPOSE,
+                      operationId);
+              if (consumed.disposition()
+                  != AccountRecentReauthenticationService.Disposition.CONSUMED) throw denied();
+              UUID auditId =
+                  UUID.nameUUIDFromBytes(
+                      ("account-tenant-creation-completion/v1:" + operationId)
+                          .getBytes(StandardCharsets.UTF_8));
+              byte[] payload =
+                  net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority
+                      .canonical(
+                          Map.ofEntries(
+                              Map.entry("schema", "account-tenant-creation-completion/v1"),
+                              Map.entry("operationId", operationId.toString()),
+                              Map.entry("intentDigest", original.intent.requestDigest()),
+                              Map.entry(
+                                  "authorizationDigest", original.holder.authorizationDigest()),
+                              Map.entry("terminalDigest", terminal.evidence().evidenceDigest()),
+                              Map.entry("tenantId", receipt.canonicalTenantId().toString()),
+                              Map.entry(
+                                  "accountId", original.intent.initiatingAccountId().toString()),
+                              Map.entry(
+                                  "creatorPartyId", original.intent.creatorPartyId().toString()),
+                              Map.entry("creatorEvidenceDigest", creator.evidenceDigest()),
+                              Map.entry("bootstrapResultDigest", bootstrap.resultDigest()),
+                              Map.entry("initialOwnerResultDigest", owner.resultDigest()),
+                              Map.entry("ownerGeneration", owner.ownerGeneration().toString()),
+                              Map.entry("ownerVersion", owner.ownerVersion()),
+                              Map.entry(
+                                  "consentOperationId",
+                                  original.intent.consentOperationId().toString()),
+                              Map.entry(
+                                  "consentStatementVersion",
+                                  original.intent.consentStatementVersion()),
+                              Map.entry(
+                                  "reauthenticationEvidenceId", recent.evidenceId().toString()),
+                              Map.entry("auditEventId", auditId.toString())));
+              String digest = digest(payload);
+              var audit =
+                  audits.appendCanonicalTenant(
+                      auditId,
+                      receipt.canonicalTenantId().toString(),
+                      EVENT,
+                      new String(payload, StandardCharsets.UTF_8));
+              if (!digest.equals(audit.payloadDigest())) throw denied();
+              orders.settleLocked(original.holder, terminal);
+              Instant validBefore =
+                  AccountTenantCreationOwnerChecks.currentValidBefore(
+                      original.admitted.binding(), current.capture);
+              dsl.execute(
+                  "INSERT INTO "
+                      + TABLE
+                      + " (creation_operation_id, intent_request_id, tenant_uuid, terminal_payload, terminal_digest,"
+                      + " result_payload, result_digest, audit_event_id, valid_before) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz)",
+                  operationId,
+                  original.intent.requestId(),
+                  receipt.canonicalTenantId(),
+                  terminal.evidence().canonicalBytes(),
+                  terminal.evidence().evidenceDigest(),
+                  payload,
+                  digest,
+                  auditId,
+                  OffsetDateTime.ofInstant(validBefore, ZoneOffset.UTC));
+              return Objects.requireNonNull(readResult(original, terminal));
             }));
+    return Objects.requireNonNull(
+        transactions.execute(status -> {
+          Original original = readOriginal(operationId, terminal);
+          requireSame(first.original, original);
+          Result readback = readResult(original, terminal);
+          if (committed.state == State.CREATED_WITHOUT_ACCOUNT_COMPLETION) {
+            // A completed original keeps precedence even if it became visible after settling.
+            if (readback != null) return readback;
+            readback = readHistoricalResult(original, terminal);
+          }
+          if (readback == null
+              || committed.state != readback.state
+              || !Arrays.equals(committed.payload, readback.payload)
+              || !committed.digest.equals(readback.digest)) throw denied();
+          return readback;
+        }));
   }
 
   private Result readRetainedOrExpiredResult(Original original, VerifiedTerminal terminal) {
@@ -438,13 +432,12 @@ public final class AccountTenantCreationCompletionOwner {
   private void requireOwnerTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw denied();
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED)
-            throw denied();
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED)
+        throw denied();
+    });
   }
 
   private static void requireSame(Original expected, Original actual) {

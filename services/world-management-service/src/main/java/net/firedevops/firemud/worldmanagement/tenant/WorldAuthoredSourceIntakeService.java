@@ -251,10 +251,9 @@ public class WorldAuthoredSourceIntakeService {
     WorldAuthoredSourceIntakeReceipt readback =
         repository
             .read(workloadNamespace, intakeRequestId)
-            .orElseThrow(
-                () ->
-                    new WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException(
-                        "Run-owned fixture source intake is missing after its owner commit"));
+            .orElseThrow(() ->
+                new WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException(
+                    "Run-owned fixture source intake is missing after its owner commit"));
     requireReceiptForRequest(
         readback,
         intakeRequestId,

@@ -52,10 +52,9 @@ class AccountJoinOperationRepositoryCanonicalTest {
     AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
     var repository = new AccountJoinOperationRepository(dsl, scopes);
 
-    assertThatThrownBy(
-            () ->
-                repository.commitCanonicalFirstJoin(
-                    "request-v2", mock(CanonicalJoinScopeV2.class), "caller", proof(2L, 2L)))
+    assertThatThrownBy(() ->
+            repository.commitCanonicalFirstJoin(
+                "request-v2", mock(CanonicalJoinScopeV2.class), "caller", proof(2L, 2L)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Exact first-JOIN terminal proof required");
     verifyNoInteractions(dsl, scopes);
@@ -67,10 +66,9 @@ class AccountJoinOperationRepositoryCanonicalTest {
     AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
     var repository = new AccountJoinOperationRepository(dsl, scopes);
 
-    assertThatThrownBy(
-            () ->
-                repository.commitCanonicalFirstJoin(
-                    "request-v2", mock(CanonicalJoinScopeV2.class), "caller", proof(1L, 3L)))
+    assertThatThrownBy(() ->
+            repository.commitCanonicalFirstJoin(
+                "request-v2", mock(CanonicalJoinScopeV2.class), "caller", proof(1L, 3L)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Exact first-JOIN terminal proof required");
     verifyNoInteractions(dsl, scopes);
@@ -107,9 +105,8 @@ class AccountJoinOperationRepositoryCanonicalTest {
     assertThat(unavailable.lastAttemptFailureCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
     assertThatThrownBy(() -> evidence(true, "PENDING", null, "UNAVAILABLE", null, null, null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                evidence(true, "PENDING", null, "AVAILABLE", "ENTITLEMENT_UNAVAILABLE", null, null))
+    assertThatThrownBy(() ->
+            evidence(true, "PENDING", null, "AVAILABLE", "ENTITLEMENT_UNAVAILABLE", null, null))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -126,21 +123,18 @@ class AccountJoinOperationRepositoryCanonicalTest {
     assertThatThrownBy(
             () -> evidence(true, "FAILED", "AUTH_UNAVAILABLE", "AVAILABLE", null, null, null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                evidence(
-                    true, "FAILED", "CONNECT_SCOPE_INVALID", "AVAILABLE", null, validProof(), 73L))
+    assertThatThrownBy(() ->
+            evidence(true, "FAILED", "CONNECT_SCOPE_INVALID", "AVAILABLE", null, validProof(), 73L))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                evidence(
-                    true,
-                    "FAILED",
-                    "CONNECT_SCOPE_INVALID",
-                    "UNAVAILABLE",
-                    "ENTITLEMENT_UNAVAILABLE",
-                    null,
-                    null))
+    assertThatThrownBy(() ->
+            evidence(
+                true,
+                "FAILED",
+                "CONNECT_SCOPE_INVALID",
+                "UNAVAILABLE",
+                "ENTITLEMENT_UNAVAILABLE",
+                null,
+                null))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -182,10 +176,9 @@ class AccountJoinOperationRepositoryCanonicalTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
     try {
-      assertThatThrownBy(
-              () ->
-                  repository.commitCanonicalJoin(
-                      "request-v2", mock(CanonicalJoinScopeV2.class), "caller", null, validProof()))
+      assertThatThrownBy(() ->
+              repository.commitCanonicalJoin(
+                  "request-v2", mock(CanonicalJoinScopeV2.class), "caller", null, validProof()))
           .isInstanceOf(CanonicalJoinOperationConflictException.class)
           .hasMessage("Canonical JOIN outcome/proof conflict");
       verifyNoInteractions(dsl, scopes);

@@ -47,42 +47,38 @@ final class GameSessionAdmissionPointerControlPlaneService {
                 .toList();
     List<PointerAuditKey> auditKeys =
         pointers.stream()
-            .map(
-                pointer ->
-                    new PointerAuditKey(
-                        pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug()))
+            .map(pointer ->
+                new PointerAuditKey(pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug()))
             .distinct()
             .toList();
     Map<PointerAuditKey, GameplayAdmissionPointerAuditEntry> latestAudits =
         gameplayAdmissionPointerAuthorityService.findLatestPointerAudits(auditKeys);
     List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream()
-            .map(
-                pointer -> {
-                  PointerAuditKey key =
-                      new PointerAuditKey(
-                          pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug());
-                  GameplayAdmissionPointerAuditEntry latestAudit = latestAudits.get(key);
-                  if (latestAudit == null) {
-                    throw new AdmissionPointerAuditUnavailableException(
-                        "Admission pointer audit unavailable for current pointer "
-                            + pointer.tenantId()
-                            + ":"
-                            + pointer.worldSlug()
-                            + "/"
-                            + pointer.realmSlug());
-                  }
-                  if (!matchesCurrentPointer(pointer, latestAudit)) {
-                    throw new AdmissionPointerAuditUnavailableException(
-                        "Admission pointer audit does not match current pointer "
-                            + pointer.tenantId()
-                            + ":"
-                            + pointer.worldSlug()
-                            + "/"
-                            + pointer.realmSlug());
-                  }
-                  return toEntry(latestAudit);
-                })
+            .map(pointer -> {
+              PointerAuditKey key =
+                  new PointerAuditKey(pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug());
+              GameplayAdmissionPointerAuditEntry latestAudit = latestAudits.get(key);
+              if (latestAudit == null) {
+                throw new AdmissionPointerAuditUnavailableException(
+                    "Admission pointer audit unavailable for current pointer "
+                        + pointer.tenantId()
+                        + ":"
+                        + pointer.worldSlug()
+                        + "/"
+                        + pointer.realmSlug());
+              }
+              if (!matchesCurrentPointer(pointer, latestAudit)) {
+                throw new AdmissionPointerAuditUnavailableException(
+                    "Admission pointer audit does not match current pointer "
+                        + pointer.tenantId()
+                        + ":"
+                        + pointer.worldSlug()
+                        + "/"
+                        + pointer.realmSlug());
+              }
+              return toEntry(latestAudit);
+            })
             .toList();
     return ListAdmissionPointersResponse.newBuilder().addAllPointers(entries).build();
   }

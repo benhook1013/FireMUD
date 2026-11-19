@@ -126,11 +126,10 @@ class AccountAuthorityCurrentnessIntegrationTest {
         .isNotEqualTo(initial.tenantAuthorityEvent().eventId());
     assertCanonicalCheckpoint(fixture, changed);
 
-    assertThatThrownBy(
-            () ->
-                jdbc.update(
-                    "UPDATE subscription SET status = 'active', row_version = row_version + 1 WHERE subscription_id = ?",
-                    fixture.creation().subscriptionId()))
+    assertThatThrownBy(() ->
+            jdbc.update(
+                "UPDATE subscription SET status = 'active', row_version = row_version + 1 WHERE subscription_id = ?",
+                fixture.creation().subscriptionId()))
         .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     int changedReads = fixture.transport().reads();
     assertThat(
@@ -197,10 +196,9 @@ class AccountAuthorityCurrentnessIntegrationTest {
 
     TransactionTemplate transaction =
         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
-    transaction.executeWithoutResult(
-        status ->
-            grants.revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-                accountId, tenantId, "world", "private"));
+    transaction.executeWithoutResult(status ->
+        grants.revokeByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            accountId, tenantId, "world", "private"));
     AccountRealmAccessGrant revoked =
         grants
             .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
@@ -232,45 +230,43 @@ class AccountAuthorityCurrentnessIntegrationTest {
     assertThat(event.tenantBillingEventDigest()).isEqualTo(receipt.billingEventDigest());
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              var currentGeneration =
-                  new AccountAuthorityGenerationRepository(fixture.dsl())
-                      .read(AuthorityScope.tenant(fixture.tenantId()));
-              assertThat(currentGeneration.generation())
-                  .isEqualTo(event.tenantAuthorityGeneration());
-              assertThat(currentGeneration.sourceVersion())
-                  .isEqualTo(event.tenantAuthoritySourceVersion());
-              var checkpoint =
-                  new AccountAuthorityOutboxRepository(fixture.dsl())
-                      .readCheckpoint(event.outboxStreamKey())
-                      .orElseThrow();
-              assertThat(checkpoint.outboxSequence()).isEqualTo(event.outboxSequence());
-              assertThat(checkpoint.sourceEventId()).isEqualTo(event.eventId().toString());
-              assertThat(checkpoint.sourceEventDigest()).isEqualTo(event.eventDigest());
-              assertThat(
-                      fixture
-                          .jdbc()
-                          .queryForObject(
-                              "SELECT event_digest FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ? AND tenant_billing_sequence = ? AND event_id = ?",
-                              String.class,
-                              fixture.tenantId(),
-                              receipt.tenantBillingSequence(),
-                              receipt.billingEventId()))
-                  .isEqualTo(receipt.billingEventDigest());
-              assertThat(
-                      fixture
-                          .jdbc()
-                          .queryForMap(
-                              "SELECT current_generation, tenant_billing_sequence, last_outbox_sequence, "
-                                  + "last_event_id, last_event_digest FROM account_tenant_authority_source_records WHERE tenant_uuid = ?",
-                              fixture.tenantId()))
-                  .containsEntry("current_generation", event.tenantAuthorityGeneration())
-                  .containsEntry("tenant_billing_sequence", receipt.tenantBillingSequence())
-                  .containsEntry("last_outbox_sequence", checkpoint.outboxSequence())
-                  .containsEntry("last_event_id", event.eventId().toString())
-                  .containsEntry("last_event_digest", event.eventDigest());
-            });
+        .executeWithoutResult(status -> {
+          var currentGeneration =
+              new AccountAuthorityGenerationRepository(fixture.dsl())
+                  .read(AuthorityScope.tenant(fixture.tenantId()));
+          assertThat(currentGeneration.generation()).isEqualTo(event.tenantAuthorityGeneration());
+          assertThat(currentGeneration.sourceVersion())
+              .isEqualTo(event.tenantAuthoritySourceVersion());
+          var checkpoint =
+              new AccountAuthorityOutboxRepository(fixture.dsl())
+                  .readCheckpoint(event.outboxStreamKey())
+                  .orElseThrow();
+          assertThat(checkpoint.outboxSequence()).isEqualTo(event.outboxSequence());
+          assertThat(checkpoint.sourceEventId()).isEqualTo(event.eventId().toString());
+          assertThat(checkpoint.sourceEventDigest()).isEqualTo(event.eventDigest());
+          assertThat(
+                  fixture
+                      .jdbc()
+                      .queryForObject(
+                          "SELECT event_digest FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ? AND tenant_billing_sequence = ? AND event_id = ?",
+                          String.class,
+                          fixture.tenantId(),
+                          receipt.tenantBillingSequence(),
+                          receipt.billingEventId()))
+              .isEqualTo(receipt.billingEventDigest());
+          assertThat(
+                  fixture
+                      .jdbc()
+                      .queryForMap(
+                          "SELECT current_generation, tenant_billing_sequence, last_outbox_sequence, "
+                              + "last_event_id, last_event_digest FROM account_tenant_authority_source_records WHERE tenant_uuid = ?",
+                          fixture.tenantId()))
+              .containsEntry("current_generation", event.tenantAuthorityGeneration())
+              .containsEntry("tenant_billing_sequence", receipt.tenantBillingSequence())
+              .containsEntry("last_outbox_sequence", checkpoint.outboxSequence())
+              .containsEntry("last_event_id", event.eventId().toString())
+              .containsEntry("last_event_digest", event.eventDigest());
+        });
   }
 
   @Test

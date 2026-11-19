@@ -144,18 +144,17 @@ class AccountStartSessionAuthorityCapturePostgresIntegrationTest {
   private static void assertGuardRejected(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedDiagnostic) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
-                throw new AssertionError(
-                    "Capture guard rejection must be a PostgreSQL exception", sqlFailure);
-              }
-              var serverError = postgresFailure.getServerErrorMessage();
-              assertThat(serverError).isNotNull();
-              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
-            });
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+          if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+            throw new AssertionError(
+                "Capture guard rejection must be a PostgreSQL exception", sqlFailure);
+          }
+          var serverError = postgresFailure.getServerErrorMessage();
+          assertThat(serverError).isNotNull();
+          assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+        });
   }
 
   private static SQLException findSqlException(Throwable failure) {

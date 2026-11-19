@@ -122,10 +122,9 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
                 baseline.checkpoints().get(3)),
             List.of(baseline.sourceEvidence().getFirst()));
     assertThat(RuntimeMembershipAuthorityEvidenceValidator.validate(missing)).isEmpty();
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWith(missing, missing.checkpoints(), List.of())))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWith(missing, missing.checkpoints(), List.of())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("one source for each positive checkpoint");
   }
@@ -154,10 +153,9 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
       // The supplied event is freshly sealed and valid independently of current carrier authority.
       assertThat(MembershipAuthorityEventV1Codec.verify(event.canonicalJson()).eventDigest())
           .isEqualTo(event.eventDigest());
-      assertThatThrownBy(
-              () ->
-                  RuntimeMembershipAuthorityEvidenceValidator.validate(
-                      copyWithMembershipSource(baseline, event)))
+      assertThatThrownBy(() ->
+              RuntimeMembershipAuthorityEvidenceValidator.validate(
+                  copyWithMembershipSource(baseline, event)))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("must not be ahead");
     }
@@ -377,10 +375,9 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
     for (String unequalGeneration : List.of("1", "3")) {
       MembershipEvent membership =
           membershipEvent(ACCOUNT_ID, TENANT_ID, unequalGeneration, cutoff);
-      assertThatThrownBy(
-              () ->
-                  RuntimeMembershipAuthorityEvidenceValidator.validate(
-                      copyWithMembershipSource(valid, membership)))
+      assertThatThrownBy(() ->
+              RuntimeMembershipAuthorityEvidenceValidator.validate(
+                  copyWithMembershipSource(valid, membership)))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("membership source tenantAuthorityGeneration current equality");
     }
@@ -407,10 +404,9 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
             goodTuple.accountSecurityCutoff(),
             Optional.of(Map.of(TENANT_ID, wrongCutoff)));
 
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWithTenantTuple(valid, tupleWithWrongCutoff)))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWithTenantTuple(valid, tupleWithWrongCutoff)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("current tenant cutoff billing sequence");
   }
@@ -429,10 +425,9 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
     MembershipEvent membership =
         membershipEvent(ACCOUNT_ID, TENANT_ID, "2", differentHistoricalCutoff);
 
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWithMembershipSource(valid, membership)))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWithMembershipSource(valid, membership)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("membership source tenantBillingCutoff current exact equality");
   }
@@ -450,10 +445,9 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
             valid.authorityTuple().privateRealmGrantVersions(),
             valid.authorityTuple().accountSecurityCutoff(),
             valid.authorityTuple().tenantBillingCutoff());
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWithTenantSource(valid, staleTuple, "1", valid.sourceEvidence().get(2))))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWithTenantSource(valid, staleTuple, "1", valid.sourceEvidence().get(2))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("current tenant authority generation");
 
@@ -465,18 +459,16 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
             otherTenantEvent.eventId().toString(),
             otherTenantEvent.eventDigest(),
             new String(otherTenantEvent.payload(), java.nio.charset.StandardCharsets.UTF_8));
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWithTenantSource(valid, valid.authorityTuple(), "1", crossTenantCarrier)))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWithTenantSource(valid, valid.authorityTuple(), "1", crossTenantCarrier)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("source event stream key");
 
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWithTenantSource(
-                        valid, valid.authorityTuple(), "2", valid.sourceEvidence().get(2))))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWithTenantSource(
+                    valid, valid.authorityTuple(), "2", valid.sourceEvidence().get(2))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("sourceEvidence sequence must equal its exact current checkpoint");
   }
@@ -503,31 +495,27 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
             TenantAuthorityEventV1Codec.tenantBillingEventId(requestId),
             "sha256:" + "6".repeat(64));
 
-    assertThatThrownBy(
-            () ->
-                TenantAuthorityEventV1Codec.seal(
-                    authorityRequest, source, 2L, 2L, 1L, billingReceipt))
+    assertThatThrownBy(() ->
+            TenantAuthorityEventV1Codec.seal(authorityRequest, source, 2L, 2L, 1L, billingReceipt))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("billing request");
 
     var otherTenantSource = tenantCreationEvidence(UUID.fromString(OTHER_TENANT_ID));
-    assertThatThrownBy(
-            () ->
-                TenantAuthorityEventV1Codec.seal(
-                    authorityRequest,
-                    otherTenantSource,
-                    2L,
-                    2L,
+    assertThatThrownBy(() ->
+            TenantAuthorityEventV1Codec.seal(
+                authorityRequest,
+                otherTenantSource,
+                2L,
+                2L,
+                1L,
+                new TenantAuthorityEventV1Codec.BillingReceipt(
+                    UUID.fromString(TENANT_ID),
+                    requestId,
+                    requestDigest,
+                    TenantAuthorityEventV1Codec.tenantBillingStreamKey(UUID.fromString(TENANT_ID)),
                     1L,
-                    new TenantAuthorityEventV1Codec.BillingReceipt(
-                        UUID.fromString(TENANT_ID),
-                        requestId,
-                        requestDigest,
-                        TenantAuthorityEventV1Codec.tenantBillingStreamKey(
-                            UUID.fromString(TENANT_ID)),
-                        1L,
-                        TenantAuthorityEventV1Codec.tenantBillingEventId(requestId),
-                        "sha256:" + "6".repeat(64))))
+                    TenantAuthorityEventV1Codec.tenantBillingEventId(requestId),
+                    "sha256:" + "6".repeat(64))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact source");
   }
@@ -545,13 +533,12 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
             currentAccount.eventId(),
             "sha256:" + "0".repeat(64),
             currentAccount.canonicalJson());
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWith(
-                        valid,
-                        valid.checkpoints(),
-                        List.of(forgedAccountCarrier, valid.sourceEvidence().get(1)))))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWith(
+                    valid,
+                    valid.checkpoints(),
+                    List.of(forgedAccountCarrier, valid.sourceEvidence().get(1)))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("source carrier eventDigest");
 
@@ -562,13 +549,12 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
             currentAccount.eventId(),
             currentAccount.eventDigest(),
             " " + currentAccount.canonicalJson());
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWith(
-                        valid,
-                        valid.checkpoints(),
-                        List.of(alteredCanonicalBytes, valid.sourceEvidence().get(1)))))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWith(
+                    valid,
+                    valid.checkpoints(),
+                    List.of(alteredCanonicalBytes, valid.sourceEvidence().get(1)))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("source carrier canonical event bytes");
 
@@ -580,13 +566,12 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
             otherScope.eventId(),
             otherScope.eventDigest(),
             otherScope.canonicalJson());
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWith(
-                        valid,
-                        valid.checkpoints(),
-                        List.of(valid.sourceEvidence().get(0), mismatchedScopeCarrier))))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWith(
+                    valid,
+                    valid.checkpoints(),
+                    List.of(valid.sourceEvidence().get(0), mismatchedScopeCarrier))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("source event stream key");
 
@@ -626,22 +611,19 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
             accountSource.eventDigest(),
             malformedResetDigest);
 
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWith(
-                        valid,
-                        valid.checkpoints(),
-                        List.of(malformedSource, valid.sourceEvidence().get(1)))))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWith(
+                    valid,
+                    valid.checkpoints(),
+                    List.of(malformedSource, valid.sourceEvidence().get(1)))))
         .isInstanceOf(IllegalArgumentException.class)
-        .satisfies(
-            failure ->
-                assertThat(failure.getSuppressed())
-                    .anySatisfy(
-                        diagnostic ->
-                            assertThat(diagnostic.getMessage())
-                                .contains("eventDigest")
-                                .contains("canonical event preimage")));
+        .satisfies(failure ->
+            assertThat(failure.getSuppressed())
+                .anySatisfy(diagnostic ->
+                    assertThat(diagnostic.getMessage())
+                        .contains("eventDigest")
+                        .contains("canonical event preimage")));
   }
 
   @Test
@@ -656,23 +638,21 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
             accountSource.eventDigest(),
             "{\"unsupported\":true}");
 
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWith(
-                        valid,
-                        valid.checkpoints(),
-                        List.of(malformedSource, valid.sourceEvidence().get(1)))))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWith(
+                    valid,
+                    valid.checkpoints(),
+                    List.of(malformedSource, valid.sourceEvidence().get(1)))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("account source")
         .hasMessageContaining("supported Account event schema")
-        .satisfies(
-            failure -> {
-              assertThat(failure.getSuppressed()).hasSize(4);
-              assertThat(failure.getSuppressed())
-                  .allSatisfy(
-                      diagnostic -> assertThat(diagnostic.getMessage()).isNotNull().isNotBlank());
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getSuppressed()).hasSize(4);
+          assertThat(failure.getSuppressed())
+              .allSatisfy(
+                  diagnostic -> assertThat(diagnostic.getMessage()).isNotNull().isNotBlank());
+        });
   }
 
   @Test
@@ -681,20 +661,18 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
     List<RuntimeMembershipAuthorityEvidenceValidator.Checkpoint> reversed =
         new ArrayList<>(valid.checkpoints());
     java.util.Collections.reverse(reversed);
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWith(valid, reversed, valid.sourceEvidence())))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWith(valid, reversed, valid.sourceEvidence())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("sorted by stream key");
 
     List<RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence> duplicateSource =
         new ArrayList<>(valid.sourceEvidence());
     duplicateSource.add(valid.sourceEvidence().get(0));
-    assertThatThrownBy(
-            () ->
-                RuntimeMembershipAuthorityEvidenceValidator.validate(
-                    copyWith(valid, valid.checkpoints(), duplicateSource)))
+    assertThatThrownBy(() ->
+            RuntimeMembershipAuthorityEvidenceValidator.validate(
+                copyWith(valid, valid.checkpoints(), duplicateSource)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("sourceEvidence");
   }

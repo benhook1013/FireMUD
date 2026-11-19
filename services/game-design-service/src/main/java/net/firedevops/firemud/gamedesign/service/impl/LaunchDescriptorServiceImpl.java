@@ -105,11 +105,9 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
             .findLaunchConfigByTenantIdAndId(source.sourceGameTenantKey(), request.gameTemplateId())
             .filter(row -> row.getId() == request.gameTemplateId())
             .filter(row -> source.sourceGameTenantKey().equals(row.getTenantId()))
-            .orElseThrow(
-                () ->
-                    denial(
-                        "INVALID_TEMPLATE_CONFIGURATION",
-                        "template is not owned by the source game"));
+            .orElseThrow(() ->
+                denial(
+                    "INVALID_TEMPLATE_CONFIGURATION", "template is not owned by the source game"));
     if (template.getTemplateReferencePhase() != TemplateReferencePhase.ENFORCED) {
       throw denial(
           "TEMPLATE_REFERENCE_PHASE_NOT_ENFORCED", "template reference phase is not enforced");
@@ -126,25 +124,23 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
             .findById(versionId)
             .filter(row -> row.getId().equals(versionId))
             .filter(row -> source.sourceGameTenantKey().equals(row.getTenantId()))
-            .map(
-                row ->
-                    new VersionDto(
-                        row.getId(),
-                        row.getTenantId(),
-                        row.getVersionNumber(),
-                        row.getVersionState(),
-                        row.getVersionStateEpoch(),
-                        row.getScriptPatchVersion(),
-                        row.getBaseVersionId(),
-                        row.isScriptOnly(),
-                        row.getNotes(),
-                        row.getCreatedAt(),
-                        row.getUpdatedAt()))
-            .orElseThrow(
-                () ->
-                    denial(
-                        "INVALID_TEMPLATE_CONFIGURATION",
-                        "target version is not owned by the source game"));
+            .map(row ->
+                new VersionDto(
+                    row.getId(),
+                    row.getTenantId(),
+                    row.getVersionNumber(),
+                    row.getVersionState(),
+                    row.getVersionStateEpoch(),
+                    row.getScriptPatchVersion(),
+                    row.getBaseVersionId(),
+                    row.isScriptOnly(),
+                    row.getNotes(),
+                    row.getCreatedAt(),
+                    row.getUpdatedAt()))
+            .orElseThrow(() ->
+                denial(
+                    "INVALID_TEMPLATE_CONFIGURATION",
+                    "target version is not owned by the source game"));
     if (version.versionState() != VersionLifecycleState.PUBLISHED
         && version.versionState() != VersionLifecycleState.ACTIVE) {
       throw denial("VERSION_STATE_EPOCH_STALE", "resolved version is not activation-eligible");
@@ -164,11 +160,10 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
           templateRemapSetService
               .findApprovedTemplateRemapSet(
                   source.sourceGameTenantKey(), request.sourceVersionId(), versionId)
-              .orElseThrow(
-                  () ->
-                      denial(
-                          "LAUNCH_REMAP_REQUIRED",
-                          "replacement-instance launch requires an approved remapSetId"));
+              .orElseThrow(() ->
+                  denial(
+                      "LAUNCH_REMAP_REQUIRED",
+                      "replacement-instance launch requires an approved remapSetId"));
       remapSetId = remap.remapSetId();
     }
     PublishedReleaseBundleDto bundle =
@@ -315,10 +310,9 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
                 storedRequest.authoredWorldSourceOperationId(),
                 storedRequest.authoredWorldSourceEvidenceDigest(),
                 Objects.requireNonNull(descriptor.getVersionId(), "descriptor versionId"))
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "AUTHORED_WORLD_SOURCE_NOT_FOUND: exact committed source or version is missing"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "AUTHORED_WORLD_SOURCE_NOT_FOUND: exact committed source or version is missing"));
     AuthoredWorldSourceEvidence source = sourceSnapshot.sourceEvidence();
     requireExactSource(storedRequest, source);
     String sourceJson = writeJson(source);
@@ -356,10 +350,9 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
     LaunchDescriptor descriptor =
         launchDescriptorRepository
             .findBoundByRequest(workloadNamespace, canonicalTenantId, controlPlaneRequestId)
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "LAUNCH_DESCRIPTOR_NOT_FOUND: no descriptor exists for the exact request"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "LAUNCH_DESCRIPTOR_NOT_FOUND: no descriptor exists for the exact request"));
     if (!LaunchDescriptor.OUTCOME_SUCCESS.equals(descriptor.getOutcomeStatus())) {
       throw new IllegalArgumentException(
           "LAUNCH_DESCRIPTOR_CONFLICT: request outcome is not a successful descriptor");
@@ -389,10 +382,9 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
                 request.canonicalTenantId(),
                 request.worldSlug(),
                 workloadNamespace)
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "AUTHORED_WORLD_SOURCE_NOT_FOUND: exact committed source evidence is missing"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "AUTHORED_WORLD_SOURCE_NOT_FOUND: exact committed source evidence is missing"));
     requireExactSource(request, source);
     return source;
   }

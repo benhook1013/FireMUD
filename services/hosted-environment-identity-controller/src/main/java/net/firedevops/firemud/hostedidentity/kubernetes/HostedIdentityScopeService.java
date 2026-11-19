@@ -88,11 +88,10 @@ public class HostedIdentityScopeService {
         expectedLabels.entrySet().stream()
                 .allMatch(entry -> entry.getValue().equals(labels.get(entry.getKey())))
             && labels.entrySet().stream()
-                .allMatch(
-                    entry ->
-                        entry.getValue().equals(expectedLabels.get(entry.getKey()))
-                            || ("kubernetes.io/metadata.name".equals(entry.getKey())
-                                && plan.identityNamespace().equals(entry.getValue())));
+                .allMatch(entry ->
+                    entry.getValue().equals(expectedLabels.get(entry.getKey()))
+                        || ("kubernetes.io/metadata.name".equals(entry.getKey())
+                            && plan.identityNamespace().equals(entry.getValue())));
     if (!plan.identityNamespace().equals(namespace.getMetadata().getName())
         || (namespace.getMetadata().getGenerateName() != null
             && !namespace.getMetadata().getGenerateName().isBlank())

@@ -129,24 +129,23 @@ public final class AccountPublicBootstrapWorldsOwner {
                 .factory())) {
       List<Callable<AccountPublicBootstrapEntitlementOwner.Evaluation>> reads =
           tenants.stream()
-              .<Callable<AccountPublicBootstrapEntitlementOwner.Evaluation>>map(
-                  tenantId ->
-                      () -> {
-                        requireNoAmbientTransaction();
-                        requireWorkloadOnlySourceContext();
-                        if (!ENTITLEMENT_PERMITS.tryAcquire(5, TimeUnit.SECONDS))
-                          throw new IllegalStateException(
-                              "Discovery entitlement capacity is unavailable");
-                        try {
-                          var evaluation = Objects.requireNonNull(entitlements.evaluate(tenantId));
-                          if (!tenantId.equals(evaluation.canonicalTenantId()))
-                            throw new IllegalStateException(
-                                "Entitlement source returned another canonical tenant");
-                          return evaluation;
-                        } finally {
-                          ENTITLEMENT_PERMITS.release();
-                        }
-                      })
+              .<Callable<AccountPublicBootstrapEntitlementOwner.Evaluation>>map(tenantId ->
+                  () -> {
+                    requireNoAmbientTransaction();
+                    requireWorkloadOnlySourceContext();
+                    if (!ENTITLEMENT_PERMITS.tryAcquire(5, TimeUnit.SECONDS))
+                      throw new IllegalStateException(
+                          "Discovery entitlement capacity is unavailable");
+                    try {
+                      var evaluation = Objects.requireNonNull(entitlements.evaluate(tenantId));
+                      if (!tenantId.equals(evaluation.canonicalTenantId()))
+                        throw new IllegalStateException(
+                            "Entitlement source returned another canonical tenant");
+                      return evaluation;
+                    } finally {
+                      ENTITLEMENT_PERMITS.release();
+                    }
+                  })
               .toList();
       var completed = workers.invokeAll(reads);
       Map<UUID, AccountPublicBootstrapEntitlementOwner.Evaluation> evaluations =

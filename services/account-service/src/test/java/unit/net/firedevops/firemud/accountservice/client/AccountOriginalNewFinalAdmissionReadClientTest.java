@@ -27,12 +27,11 @@ class AccountOriginalNewFinalAdmissionReadClientTest {
 
   @Test
   void rejectsContinuityDurationAboveTheCanonicalCap() {
-    assertThatThrownBy(
-            () ->
-                readback(
-                    ADMISSION_AT_MILLIS,
-                    MAX_CONTINUITY_DURATION_MILLIS + 1L,
-                    ADMISSION_AT_MILLIS + MAX_CONTINUITY_DURATION_MILLIS + 1L))
+    assertThatThrownBy(() ->
+            readback(
+                ADMISSION_AT_MILLIS,
+                MAX_CONTINUITY_DURATION_MILLIS + 1L,
+                ADMISSION_AT_MILLIS + MAX_CONTINUITY_DURATION_MILLIS + 1L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Protected original final-admission readback is malformed");
   }

@@ -44,27 +44,23 @@ class SelectedOwnerIntakeSourceReadProtoCodecTest {
             NAMESPACE, scope(Owner.ENTITY_MANAGEMENT));
     var wire = SelectedOwnerIntakeSourceReadProtoCodec.toRequest(request);
 
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder().setSchemaVersion(2).build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder().setSchemaVersion(2).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder().setTargetNamespace("other").build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder().setTargetNamespace("other").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder()
-                        .setIntendedReader("spiffe://firemud/ns/test/sa/entity-management-service")
-                        .build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder()
+                    .setIntendedReader("spiffe://firemud/ns/test/sa/entity-management-service")
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder().setPurpose("AUTOMATION_INTAKE_SOURCE").build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder().setPurpose("AUTOMATION_INTAKE_SOURCE").build()))
         .isInstanceOf(IllegalArgumentException.class);
     for (UUID reusedIdentity :
         List.of(
@@ -74,18 +70,14 @@ class SelectedOwnerIntakeSourceReadProtoCodecTest {
             request.scope().actorAccountId(),
             request.scope().selected().requestId(),
             request.scope().selected().commitId())) {
-      assertThatThrownBy(
-              () ->
-                  SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                      wire.toBuilder().setReadRequestId(reusedIdentity.toString()).build()))
+      assertThatThrownBy(() ->
+              SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                  wire.toBuilder().setReadRequestId(reusedIdentity.toString()).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder()
-                        .setReadRequestId("00000000-0000-0000-0000-000000000000")
-                        .build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder().setReadRequestId("00000000-0000-0000-0000-000000000000").build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -96,35 +88,29 @@ class SelectedOwnerIntakeSourceReadProtoCodecTest {
             NAMESPACE, scope(Owner.AUTOMATION_SCRIPTING));
     var wire = SelectedOwnerIntakeSourceReadProtoCodec.toRequest(request);
 
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder().clearPreliminarySourceScope().build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder().clearPreliminarySourceScope().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder().setPreliminaryScopeDigest("sha256:" + "0".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder().setPreliminaryScopeDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder()
-                        .setPreliminarySourceScope(ByteString.copyFrom(new byte[] {1}))
-                        .build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder()
+                    .setPreliminarySourceScope(ByteString.copyFrom(new byte[] {1}))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder().setUnknownFields(unknownField()).build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder().setUnknownFields(unknownField()).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
-                    wire.toBuilder()
-                        .setPurpose(
-                            "x".repeat(SelectedOwnerIntakeSourceReadProtoCodec.MAX_WIRE_BYTES))
-                        .build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromRequest(
+                wire.toBuilder()
+                    .setPurpose("x".repeat(SelectedOwnerIntakeSourceReadProtoCodec.MAX_WIRE_BYTES))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -136,28 +122,24 @@ class SelectedOwnerIntakeSourceReadProtoCodecTest {
     var wire = SelectedOwnerIntakeSourceReadProtoCodec.toRequest(request);
     var response = SelectedOwnerIntakeSourceReadProtoCodec.toResponse(request);
 
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(wire.toBuilder().setReadRequestId(UUID.randomUUID().toString()))
-                        .build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(wire.toBuilder().setReadRequestId(UUID.randomUUID().toString()))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
-                    request, response.toBuilder().setPermitted(false).build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
+                request, response.toBuilder().setPermitted(false).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
-                    request, response.toBuilder().clearRequest().build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
+                request, response.toBuilder().clearRequest().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
-                    request, response.toBuilder().setUnknownFields(unknownField()).build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
+                request, response.toBuilder().setUnknownFields(unknownField()).build()))
         .isInstanceOf(IllegalArgumentException.class);
     var oversizedResponseUnknownFields =
         UnknownFieldSet.newBuilder()
@@ -169,11 +151,10 @@ class SelectedOwnerIntakeSourceReadProtoCodecTest {
                             new byte[SelectedOwnerIntakeSourceReadProtoCodec.MAX_WIRE_BYTES]))
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
-                    request,
-                    response.toBuilder().setUnknownFields(oversizedResponseUnknownFields).build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceReadProtoCodec.fromResponse(
+                request,
+                response.toBuilder().setUnknownFields(oversizedResponseUnknownFields).build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

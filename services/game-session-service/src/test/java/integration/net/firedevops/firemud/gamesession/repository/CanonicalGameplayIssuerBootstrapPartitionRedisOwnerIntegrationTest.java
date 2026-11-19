@@ -123,19 +123,17 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     assertThat(work.memberOperations())
         .filteredOn(CanonicalGameplayIssuerBootstrapMemberOperation::expectedBindingPresent)
         .singleElement()
-        .satisfies(
-            operation ->
-                assertThat(operation.bindingLifecycle())
-                    .isEqualTo(
-                        net.firedevops.firemud.gamesession.binding
-                            .CanonicalGameplayBindingInventoryEntry.Lifecycle.ACTIVE));
+        .satisfies(operation ->
+            assertThat(operation.bindingLifecycle())
+                .isEqualTo(
+                    net.firedevops.firemud.gamesession.binding
+                        .CanonicalGameplayBindingInventoryEntry.Lifecycle.ACTIVE));
     assertThat(work.memberOperations())
         .filteredOn(operation -> !operation.countsTowardCapacity())
         .singleElement()
-        .satisfies(
-            operation ->
-                assertThat(operation.expectedMemberValue().reservation().lifecycle())
-                    .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASED));
+        .satisfies(operation ->
+            assertThat(operation.expectedMemberValue().reservation().lifecycle())
+                .isEqualTo(CanonicalIssuerPartitionReservation.Lifecycle.RELEASED));
 
     var active =
         work.memberOperations().stream()
@@ -214,11 +212,10 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
         partitionWork(fixture, fixture.partitionId());
     var candidateOperation =
         work.memberOperations().stream()
-            .filter(
-                operation ->
-                    operation.bindingLifecycle()
-                        == net.firedevops.firemud.gamesession.binding
-                            .CanonicalGameplayBindingInventoryEntry.Lifecycle.CANDIDATE_PREPARED)
+            .filter(operation ->
+                operation.bindingLifecycle()
+                    == net.firedevops.firemud.gamesession.binding
+                        .CanonicalGameplayBindingInventoryEntry.Lifecycle.CANDIDATE_PREPARED)
             .findFirst()
             .orElseThrow();
 
@@ -345,9 +342,8 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     administratorCommands.pexpire(expiringKey, 60_000);
     long ttlBefore = administratorCommands.pttl(expiringKey);
 
-    assertThatThrownBy(
-            () ->
-                owner(expiringWork, currentState(fixture, expiringWork)).buildAndRead(expiringWork))
+    assertThatThrownBy(() ->
+            owner(expiringWork, currentState(fixture, expiringWork)).buildAndRead(expiringWork))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.pttl(expiringKey)).isPositive().isLessThanOrEqualTo(ttlBefore);
     assertThat(administratorCommands.hget(expiringKey, expiringField))
@@ -359,10 +355,8 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
     byte[] wrongTypeKey = key(fixture, wrongTypePartition);
     byte[] wrongTypeValue = ascii("foreign-persistent-string");
     administratorCommands.set(wrongTypeKey, wrongTypeValue);
-    assertThatThrownBy(
-            () ->
-                owner(wrongTypeWork, currentState(fixture, wrongTypeWork))
-                    .buildAndRead(wrongTypeWork))
+    assertThatThrownBy(() ->
+            owner(wrongTypeWork, currentState(fixture, wrongTypeWork)).buildAndRead(wrongTypeWork))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.type(wrongTypeKey)).isEqualTo("string");
     assertThat(administratorCommands.get(wrongTypeKey)).containsExactly(wrongTypeValue);
@@ -908,11 +902,9 @@ class CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest {
   private Map<String, String> hashImage(byte[] key) {
     Map<byte[], byte[]> raw = administratorCommands.hgetall(key);
     Map<String, String> image = new LinkedHashMap<>();
-    raw.forEach(
-        (field, value) ->
-            image.put(
-                Base64.getEncoder().encodeToString(field),
-                Base64.getEncoder().encodeToString(value)));
+    raw.forEach((field, value) ->
+        image.put(
+            Base64.getEncoder().encodeToString(field), Base64.getEncoder().encodeToString(value)));
     return image;
   }
 

@@ -142,10 +142,8 @@ class SocialRuntimeFamilyCatalogTest {
             + fact
             + "],"
             + gaps;
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalog.fromStored(
-                    manyFamilies.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalog.fromStored(manyFamilies.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
     String compactFact =
         "{\"kind\":\"TYPE\",\"identity\":\"x\",\"definitionDigest\":\"sha256:"
@@ -168,62 +166,53 @@ class SocialRuntimeFamilyCatalogTest {
   void rejectsDuplicateUnknownOversizedAndChangedCorrelationWireValues() {
     var request = new Request(UUID.randomUUID(), "test");
     var wire = SocialRuntimeFamilyCatalogCodec.toRequest(request);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalogCodec.fromRequest(
-                    wire.toBuilder()
-                        .addCanonicalRequestBytes(wire.getCanonicalRequestBytes(0))
-                        .build()))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalogCodec.fromRequest(
+                wire.toBuilder()
+                    .addCanonicalRequestBytes(wire.getCanonicalRequestBytes(0))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalogCodec.fromRequest(
-                    wire.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    9, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalogCodec.fromRequest(
+                wire.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(9, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalogCodec.fromRequest(
-                    wire.toBuilder()
-                        .setCanonicalRequestBytes(0, ByteString.copyFrom(new byte[1025]))
-                        .build()))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalogCodec.fromRequest(
+                wire.toBuilder()
+                    .setCanonicalRequestBytes(0, ByteString.copyFrom(new byte[1025]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     var evidence = new Evidence(request, UUID.randomUUID(), catalog());
     var response = SocialRuntimeFamilyCatalogCodec.toResponse(request, evidence);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalogCodec.fromResponse(
-                    new Request(UUID.randomUUID(), "test"), response))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalogCodec.fromResponse(
+                new Request(UUID.randomUUID(), "test"), response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalogCodec.fromResponse(
-                    new Request(request.readRequestId(), "other"), response))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalogCodec.fromResponse(
+                new Request(request.readRequestId(), "other"), response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalogCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .addCanonicalResponseBytes(response.getCanonicalResponseBytes(0))
-                        .build()))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalogCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .addCanonicalResponseBytes(response.getCanonicalResponseBytes(0))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalogCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    9, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalogCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(9, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -232,15 +221,13 @@ class SocialRuntimeFamilyCatalogTest {
     var evidence =
         new Evidence(new Request(UUID.randomUUID(), "test"), UUID.randomUUID(), catalog());
     byte[] bytes = SocialRuntimeFamilyCatalogCodec.evidenceBytes(evidence);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalogCodec.evidenceFromStored(
-                    Arrays.copyOf(bytes, bytes.length - 1)))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalogCodec.evidenceFromStored(
+                Arrays.copyOf(bytes, bytes.length - 1)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalogCodec.evidenceFromStored(
-                    Arrays.copyOf(bytes, bytes.length + 1)))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalogCodec.evidenceFromStored(
+                Arrays.copyOf(bytes, bytes.length + 1)))
         .isInstanceOf(IllegalArgumentException.class);
     int digestOffset =
         4 + 4 + SocialRuntimeFamilyCatalogCodec.requestBytes(evidence.request()).length + 16 + 4;
@@ -249,10 +236,9 @@ class SocialRuntimeFamilyCatalogTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> SocialRuntimeFamilyCatalog.fromStored(new byte[] {(byte) 0xc3, 0x28}))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SocialRuntimeFamilyCatalog.fromStored(
-                    new byte[SocialRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
+    assertThatThrownBy(() ->
+            SocialRuntimeFamilyCatalog.fromStored(
+                new byte[SocialRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new Request(new UUID(0, 0), "test"))
         .isInstanceOf(IllegalArgumentException.class);

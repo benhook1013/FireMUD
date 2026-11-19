@@ -197,16 +197,15 @@ class AccountTenantCreationAuthorizationPreparationTest {
 
     Fixture() throws Exception {
       when(manager.getTransaction(any()))
-          .thenAnswer(
-              invocation -> {
-                TransactionDefinition definition = invocation.getArgument(0);
-                assertThat(definition.getIsolationLevel())
-                    .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                TransactionSynchronizationManager.setActualTransactionActive(true);
-                begins++;
-                return mock(TransactionStatus.class);
-              });
+          .thenAnswer(invocation -> {
+            TransactionDefinition definition = invocation.getArgument(0);
+            assertThat(definition.getIsolationLevel())
+                .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            TransactionSynchronizationManager.setActualTransactionActive(true);
+            begins++;
+            return mock(TransactionStatus.class);
+          });
       doAnswer(
               invocation -> {
                 commits++;
@@ -287,12 +286,11 @@ class AccountTenantCreationAuthorizationPreparationTest {
           .thenReturn(row);
       when(issuances.decodeStored(row)).thenReturn(issuance);
       when(actors.readAcceptedSignerKey("kid"))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(commits).isEqualTo(1);
-                return new AcceptedSignerKey("kid", "fingerprint");
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(commits).isEqualTo(1);
+            return new AcceptedSignerKey("kid", "fingerprint");
+          });
       when(captured.originalSignerReceipt()).thenReturn(receipt);
       when(captured.originalClaims()).thenReturn(issuance.claims);
       when(captured.issuanceOperationId()).thenReturn(issuanceId);

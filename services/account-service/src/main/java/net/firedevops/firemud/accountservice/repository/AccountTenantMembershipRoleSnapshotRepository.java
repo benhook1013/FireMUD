@@ -228,10 +228,9 @@ public class AccountTenantMembershipRoleSnapshotRepository {
     RoleSnapshot readback =
         findForCanonicalUpdate(
                 accountUuid, tenantUuid, expectedProvenance, membership.getId(), snapshotVersion)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Canonical role snapshot header is absent after its write"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Canonical role snapshot header is absent after its write"));
     requireSnapshotReadback(expected, Optional.of(readback));
     return readback;
   }
@@ -422,10 +421,8 @@ public class AccountTenantMembershipRoleSnapshotRepository {
 
   private void requireSnapshotReadback(RoleSnapshot expected, Optional<RoleSnapshot> readback) {
     RoleSnapshot actual =
-        readback.orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "Account role snapshot header is absent after its write"));
+        readback.orElseThrow(() ->
+            new IllegalStateException("Account role snapshot header is absent after its write"));
     if (!expected.equals(actual)) {
       throw new IllegalStateException(
           "Account role snapshot readback differs from its exact write");

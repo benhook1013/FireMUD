@@ -94,52 +94,47 @@ class CanonicalPlayerCreatedRosterClientTest {
     when(stub.withDeadlineAfter(20L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.withMaxInboundMessageSize(anyInt())).thenReturn(stub);
     when(stub.listPlayerCreatedRoster(any()))
-        .thenAnswer(
-            call -> {
-              outside();
-              return fixture.roster();
-            });
+        .thenAnswer(call -> {
+          outside();
+          return fixture.roster();
+        });
     when(stub.readSelectedPlayerCreatedCharacter(any()))
-        .thenAnswer(
-            call -> {
-              outside();
-              return fixture.selected();
-            });
+        .thenAnswer(call -> {
+          outside();
+          return fixture.selected();
+        });
     stored =
         new AtomicReference<>(
             CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
                 fixture.original(), 1, UUID.randomUUID(), null));
     when(owner.begin(fixture.original()))
-        .thenAnswer(
-            call -> {
-              outside();
-              return stored.get();
-            });
+        .thenAnswer(call -> {
+          outside();
+          return stored.get();
+        });
     when(owner.recordPlayerCreated(fixture.original(), fixture.roster()))
-        .thenAnswer(
-            call -> {
-              outside();
-              stored.set(
-                  CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
-                      fixture.original(),
-                      1,
-                      UUID.fromString(stored.get().getTargetFenceUuid()),
-                      fixture.roster()));
-              return stored.get();
-            });
+        .thenAnswer(call -> {
+          outside();
+          stored.set(
+              CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+                  fixture.original(),
+                  1,
+                  UUID.fromString(stored.get().getTargetFenceUuid()),
+                  fixture.roster()));
+          return stored.get();
+        });
     when(owner.selectOriginal(
             fixture.original(), UUID.fromString(fixture.selected().getSelectedCharacterUuid())))
-        .thenAnswer(
-            call -> {
-              outside();
-              stored.set(
-                  stored.get().toBuilder()
-                      .setSelectionInput(
-                          CanonicalGameplayRosterSelectionInput.newBuilder().setSchemaVersion(1))
-                      .setSelectedCharacterUuid(fixture.selected().getSelectedCharacterUuid())
-                      .build());
-              return stored.get();
-            });
+        .thenAnswer(call -> {
+          outside();
+          stored.set(
+              stored.get().toBuilder()
+                  .setSelectionInput(
+                      CanonicalGameplayRosterSelectionInput.newBuilder().setSchemaVersion(1))
+                  .setSelectedCharacterUuid(fixture.selected().getSelectedCharacterUuid())
+                  .build());
+          return stored.get();
+        });
     doAnswer(
             call -> {
               outside();
@@ -246,10 +241,8 @@ class CanonicalPlayerCreatedRosterClientTest {
     assertThatThrownBy(
             () -> client.reserveSelectionInput(source, fixture.context(), "1", null, "invalid"))
         .isInstanceOf(NullPointerException.class);
-    assertThatThrownBy(
-            () ->
-                client.reserveSelectionInput(
-                    source, fixture.context(), "x".repeat(129), null, null))
+    assertThatThrownBy(() ->
+            client.reserveSelectionInput(source, fixture.context(), "x".repeat(129), null, null))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(stub);
   }
@@ -522,25 +515,15 @@ class CanonicalPlayerCreatedRosterClientTest {
     }
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new CanonicalPlayerCreatedRosterClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    channels,
-                    fixture.namespace(),
-                    owner))
+    assertThatThrownBy(() ->
+            new CanonicalPlayerCreatedRosterClient(
+                new ServiceEndpointsProperties(), plaintext, channels, fixture.namespace(), owner))
         .isInstanceOf(IllegalArgumentException.class);
     var classpath = tls.copy();
     classpath.setCertChain("classpath:client.crt");
-    assertThatThrownBy(
-            () ->
-                new CanonicalPlayerCreatedRosterClient(
-                    new ServiceEndpointsProperties(),
-                    classpath,
-                    channels,
-                    fixture.namespace(),
-                    owner))
+    assertThatThrownBy(() ->
+            new CanonicalPlayerCreatedRosterClient(
+                new ServiceEndpointsProperties(), classpath, channels, fixture.namespace(), owner))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

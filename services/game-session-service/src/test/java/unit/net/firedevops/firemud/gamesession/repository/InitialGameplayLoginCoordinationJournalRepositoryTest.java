@@ -119,18 +119,17 @@ class InitialGameplayLoginCoordinationJournalRepositoryTest {
                 ByteString.EMPTY,
                 ByteString.EMPTY));
     when(fixture.dsl.execute(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              assertThat(sql)
-                  .contains("SET verified_token_jti")
-                  .doesNotContain("retirement_request_bytes");
-              fixture.columns.put("verified_token_jti", uuid(4));
-              fixture.columns.put("verified_token_sha256", "a".repeat(64));
-              fixture.columns.put("verified_token_generation", 1L);
-              fixture.columns.put("verified_issuance_fence", 19L);
-              return 1;
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          assertThat(sql)
+              .contains("SET verified_token_jti")
+              .doesNotContain("retirement_request_bytes");
+          fixture.columns.put("verified_token_jti", uuid(4));
+          fixture.columns.put("verified_token_sha256", "a".repeat(64));
+          fixture.columns.put("verified_token_generation", 1L);
+          fixture.columns.put("verified_issuance_fence", 19L);
+          return 1;
+        });
     writableTransaction();
     var late = fixture.journal.recordVerifiedResult(ORIGINAL, result);
     assertThat(late.verifiedWitness()).isPresent();

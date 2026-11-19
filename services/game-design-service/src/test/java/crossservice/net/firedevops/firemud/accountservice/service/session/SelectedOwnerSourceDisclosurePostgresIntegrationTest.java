@@ -214,24 +214,22 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
             for (var owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
               UUID requestId = UUID.randomUUID();
               var scope =
-                  asGameDesign(
-                      () ->
-                          reservations.reserveSourceRead(
-                              issued.compact(),
-                              requestId,
-                              owner,
-                              local.binding(),
-                              issued.environment()));
+                  asGameDesign(() ->
+                      reservations.reserveSourceRead(
+                          issued.compact(),
+                          requestId,
+                          owner,
+                          local.binding(),
+                          issued.environment()));
               var retained = retainedReservation(f, scope);
               var request = SelectedOwnerIntakeSourceReadEvidence.Request.create(NAMESPACE, scope);
               var content = sources.read(request);
               var expected =
                   local
                       .tx()
-                      .execute(
-                          ignored ->
-                              new GameDesignSourceRepository(local.dsl())
-                                  .requireSelectedOwnerIntakeSource(scope));
+                      .execute(ignored ->
+                          new GameDesignSourceRepository(local.dsl())
+                              .requireSelectedOwnerIntakeSource(scope));
               assertThat(content.canonicalBytes()).isEqualTo(expected.canonicalBytes());
               assertThat(content.digest()).isEqualTo(expected.digest());
               for (String family :
@@ -250,14 +248,13 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                           .canonicalBytes())
                   .isEqualTo(content.canonicalBytes());
               assertThat(
-                      asGameDesign(
-                              () ->
-                                  reservations.reserveSourceRead(
-                                      issued.compact(),
-                                      requestId,
-                                      owner,
-                                      local.binding(),
-                                      issued.environment()))
+                      asGameDesign(() ->
+                              reservations.reserveSourceRead(
+                                  issued.compact(),
+                                  requestId,
+                                  owner,
+                                  local.binding(),
+                                  issued.environment()))
                           .canonicalBytes())
                   .isEqualTo(scope.canonicalBytes());
               assertThat(retainedReservation(f, scope)).isEqualTo(retained);
@@ -274,11 +271,10 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                       scope.intakeRequestId(),
                       scope.actorAccountId(),
                       scope.selected());
-              assertThatThrownBy(
-                      () ->
-                          sources.read(
-                              SelectedOwnerIntakeSourceReadEvidence.Request.create(
-                                  NAMESPACE, substituted)))
+              assertThatThrownBy(() ->
+                      sources.read(
+                          SelectedOwnerIntakeSourceReadEvidence.Request.create(
+                              NAMESPACE, substituted)))
                   .isInstanceOf(io.grpc.StatusRuntimeException.class);
               assertThat(retainedReservation(f, scope)).isEqualTo(retained);
               var capturedSources =
@@ -297,38 +293,34 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                   .isEqualTo("ABORTED");
               assertThat(f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(blockedWriter)))
                   .isTrue();
-              f.tx(
-                  () -> {
-                    f.fences.markSourceAborted(
-                        blockedWriter,
-                        net.firedevops.firemud.accountservice.authordraft
-                            .DraftAuthorizationFenceRepository.SourceChangeAbortReason
-                            .DEFINITIVE_ABORT);
-                    return null;
-                  });
+              f.tx(() -> {
+                f.fences.markSourceAborted(
+                    blockedWriter,
+                    net.firedevops.firemud.accountservice.authordraft
+                        .DraftAuthorizationFenceRepository.SourceChangeAbortReason
+                        .DEFINITIVE_ABORT);
+                return null;
+              });
               var aborted = retainedReservation(f, scope);
               assertThatThrownBy(() -> sources.read(request))
                   .isInstanceOf(io.grpc.StatusRuntimeException.class);
-              assertThatThrownBy(
-                      () ->
-                          asGameDesign(
-                              () ->
-                                  reservations.reserveSourceRead(
-                                      issued.compact(),
-                                      requestId,
-                                      owner,
-                                      local.binding(),
-                                      issued.environment())))
+              assertThatThrownBy(() ->
+                      asGameDesign(() ->
+                          reservations.reserveSourceRead(
+                              issued.compact(),
+                              requestId,
+                              owner,
+                              local.binding(),
+                              issued.environment())))
                   .isInstanceOf(io.grpc.StatusRuntimeException.class);
               asGameDesign(() -> reservations.abortSourceRead(scope));
               assertThat(retainedReservation(f, scope)).isEqualTo(aborted);
               assertThat(
                       local
                           .tx()
-                          .execute(
-                              ignored ->
-                                  new GameDesignSourceRepository(local.dsl())
-                                      .requireSelectedOwnerIntakeSource(scope))
+                          .execute(ignored ->
+                              new GameDesignSourceRepository(local.dsl())
+                                  .requireSelectedOwnerIntakeSource(scope))
                           .canonicalBytes())
                   .isEqualTo(content.canonicalBytes());
             }
@@ -374,22 +366,21 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                 captured.sources())
             .withRequiredOwners();
     issued.actors().claimOriginalDraft(issued.compact(), original, issued.environment());
-    f.tx(
-        () -> {
-          for (var owner : original.requiredOwners())
-            f.fences.recordOwnerReadback(
-                original,
-                new DraftAuthorizationFenceBinding.OwnerReadback(
-                    owner,
-                    DraftAuthorizationFenceBinding.Outcome.COMMITTED,
-                    original.operationId(),
-                    original.commitId(),
-                    original.fenceId(),
-                    original.inputDigest(),
-                    original.canonicalBytes(),
-                    new byte[] {1}));
-          return null;
-        });
+    f.tx(() -> {
+      for (var owner : original.requiredOwners())
+        f.fences.recordOwnerReadback(
+            original,
+            new DraftAuthorizationFenceBinding.OwnerReadback(
+                owner,
+                DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+                original.operationId(),
+                original.commitId(),
+                original.fenceId(),
+                original.inputDigest(),
+                original.canonicalBytes(),
+                new byte[] {1}));
+      return null;
+    });
   }
 
   private static Local sourceStore() {
@@ -454,22 +445,21 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                     CommandSource.SCOPE,
                     "effective",
                     "0")));
-    tx.executeWithoutResult(
-        ignored -> {
-          var source = new GameDesignSourceRepository(dsl);
-          var reviewed =
-              new GameDesignReviewedBaseRepository(dsl)
-                  .resolve(target, DraftBaseReference.parse(binding.baseCommitId()));
-          source.claimReviewed(binding, reviewed);
-          var coordinator = new DraftCommitCoordinatorRepository(dsl);
-          coordinator.claimApplicationSlot(binding);
-          coordinator.markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
-          var applied = source.apply(binding);
-          IsolatedPublicationOwnerSetup.advanceIsolatedSourceVisibility(
-              dsl, binding, List.of(applied.ownerOutcome()));
-          source.captureSynchronized(binding);
-          coordinator.releaseApplicationSlot(binding);
-        });
+    tx.executeWithoutResult(ignored -> {
+      var source = new GameDesignSourceRepository(dsl);
+      var reviewed =
+          new GameDesignReviewedBaseRepository(dsl)
+              .resolve(target, DraftBaseReference.parse(binding.baseCommitId()));
+      source.claimReviewed(binding, reviewed);
+      var coordinator = new DraftCommitCoordinatorRepository(dsl);
+      coordinator.claimApplicationSlot(binding);
+      coordinator.markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+      var applied = source.apply(binding);
+      IsolatedPublicationOwnerSetup.advanceIsolatedSourceVisibility(
+          dsl, binding, List.of(applied.ownerOutcome()));
+      source.captureSynchronized(binding);
+      coordinator.releaseApplicationSlot(binding);
+    });
     return new Local(dsl, manager, tx, binding);
   }
 

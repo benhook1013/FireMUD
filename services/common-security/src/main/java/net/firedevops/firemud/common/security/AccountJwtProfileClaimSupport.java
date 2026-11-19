@@ -130,15 +130,14 @@ final class AccountJwtProfileClaimSupport {
   private static Map<String, Long> requireGenerationMap(Object value, boolean decimalCounters) {
     Map<String, Object> source = requireObjectMap(value);
     Map<String, Long> result = new LinkedHashMap<>();
-    source.forEach(
-        (key, generation) -> {
-          requireUuid(key);
-          result.put(
-              key,
-              decimalCounters
-                  ? requirePositiveDecimalLong(generation)
-                  : requirePositiveLong(generation));
-        });
+    source.forEach((key, generation) -> {
+      requireUuid(key);
+      result.put(
+          key,
+          decimalCounters
+              ? requirePositiveDecimalLong(generation)
+              : requirePositiveLong(generation));
+    });
     return result;
   }
 
@@ -288,25 +287,24 @@ final class AccountJwtProfileClaimSupport {
     if (cutoffs.isEmpty()) {
       throw invalid();
     }
-    cutoffs.forEach(
-        (tenantId, cutoffValue) -> {
-          requireUuid(tenantId);
-          Map<String, Object> cutoff = requireObjectMap(cutoffValue);
-          if (!cutoff
-              .keySet()
-              .equals(
-                  Set.of(
-                      "tenantAuthorityGeneration",
-                      "tenantBillingSequence",
-                      "outboxStreamKey",
-                      "outboxSequence"))) {
-            throw invalid();
-          }
-          requirePositiveCounter(cutoff.get("tenantAuthorityGeneration"), decimalCounters);
-          requirePositiveCounter(cutoff.get("tenantBillingSequence"), decimalCounters);
-          requirePositiveCounter(cutoff.get("outboxSequence"), decimalCounters);
-          requireBoundedText(cutoff.get("outboxStreamKey"), 2048);
-        });
+    cutoffs.forEach((tenantId, cutoffValue) -> {
+      requireUuid(tenantId);
+      Map<String, Object> cutoff = requireObjectMap(cutoffValue);
+      if (!cutoff
+          .keySet()
+          .equals(
+              Set.of(
+                  "tenantAuthorityGeneration",
+                  "tenantBillingSequence",
+                  "outboxStreamKey",
+                  "outboxSequence"))) {
+        throw invalid();
+      }
+      requirePositiveCounter(cutoff.get("tenantAuthorityGeneration"), decimalCounters);
+      requirePositiveCounter(cutoff.get("tenantBillingSequence"), decimalCounters);
+      requirePositiveCounter(cutoff.get("outboxSequence"), decimalCounters);
+      requireBoundedText(cutoff.get("outboxStreamKey"), 2048);
+    });
   }
 
   static void requireBoundedText(Object value, int maximumLength) {

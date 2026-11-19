@@ -448,10 +448,9 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
             .findByTenantIdAndVersionIdOrderByIdAsc(request.tenantId(), request.versionId())
             .stream()
             .filter(binding -> bindingWithinScope(binding, scopeType, scopeId))
-            .filter(
-                binding ->
-                    !StringUtils.hasText(request.aggregateId())
-                        || !binding.getId().equals(parseId(request.aggregateId(), "aggregate_id")))
+            .filter(binding ->
+                !StringUtils.hasText(request.aggregateId())
+                    || !binding.getId().equals(parseId(request.aggregateId(), "aggregate_id")))
             .toList();
     if (!inScopeBindings.isEmpty()) {
       worldEntitySpawnBindingRepository.deleteAll(inScopeBindings);
@@ -473,11 +472,10 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
               request.scopeType(),
               requireNormalizedScopeId(request),
               ruleName)
-          .map(
-              existing -> {
-                validateExpectedAggregateEpoch(request, existing.getId());
-                return existing;
-              })
+          .map(existing -> {
+            validateExpectedAggregateEpoch(request, existing.getId());
+            return existing;
+          })
           .orElseGet(GenerationRule::new);
     }
     failIfSeedAppendOnlyUpdate(request);
@@ -568,10 +566,9 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
         roomExitRepository
             .findByTenantIdAndVersionIdOrderByIdAsc(request.tenantId(), request.versionId())
             .stream()
-            .filter(
-                exit ->
-                    roomWithinScope(exit.getFromRoom(), scopeType, scopeId)
-                        || roomWithinScope(exit.getToRoom(), scopeType, scopeId))
+            .filter(exit ->
+                roomWithinScope(exit.getFromRoom(), scopeType, scopeId)
+                    || roomWithinScope(exit.getToRoom(), scopeType, scopeId))
             .toList();
     if (!inScopeExits.isEmpty()) {
       roomExitRepository.deleteAll(inScopeExits);

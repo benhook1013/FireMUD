@@ -67,11 +67,10 @@ public final class AccountSelectedOwnerIntakeSourceReadService {
           .asRuntimeException();
     }
     return Objects.requireNonNull(
-        transaction.execute(
-            ignored -> {
-              repository.readSourceScope(scope, current);
-              return scope;
-            }));
+        transaction.execute(ignored -> {
+          repository.readSourceScope(scope, current);
+          return scope;
+        }));
   }
 
   private String intendedReader(Owner owner) {

@@ -31,36 +31,35 @@ final class CanonicalGameplayIssuerOriginalMemberSourceRepository {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     var before = Objects.requireNonNull(currentSource.readFreshCurrentState());
     var original =
-        dsl.transactionResult(
-            configuration -> {
-              var transaction = org.jooq.impl.DSL.using(configuration);
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              var anchor =
-                  CanonicalGameplayIssuerBootstrapCoverageRepository
-                      .readInstalledAnchorForBindingPreparationInTransaction(transaction, before);
-              var local =
-                  transaction.fetchOne(
-                      "SELECT operation_id FROM game_session_canonical_issuer_binding_local_operation WHERE reservation_id = ?",
-                      source.reservation().reservationId());
-              var bootstrap =
-                  transaction.fetchOne(
-                      "SELECT * FROM game_session_canonical_issuer_bootstrap_member_operation WHERE bootstrap_operation_id = ? AND reservation_id = ?",
-                      anchor.bootstrapOperationId(),
-                      source.reservation().reservationId());
-              if (local != null && bootstrap != null) throw unavailable();
-              if (local != null) return null;
-              if (bootstrap == null || !source.neverAdmitted()) throw unavailable();
-              var result = readInstalledInTransaction(transaction, anchor, before, bootstrap);
-              if (!result.reservation().owner().equals(source.reservation().owner())
-                  || !result
-                      .reservation()
-                      .bindingGeneration()
-                      .equals(source.reservation().bindingGeneration())
-                  || !result.transitionId().equals(source.transition().transitionId())
-                  || !sameFrozenReservation(result.reservation(), source.reservation()))
-                throw unavailable();
-              return result;
-            });
+        dsl.transactionResult(configuration -> {
+          var transaction = org.jooq.impl.DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          var anchor =
+              CanonicalGameplayIssuerBootstrapCoverageRepository
+                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, before);
+          var local =
+              transaction.fetchOne(
+                  "SELECT operation_id FROM game_session_canonical_issuer_binding_local_operation WHERE reservation_id = ?",
+                  source.reservation().reservationId());
+          var bootstrap =
+              transaction.fetchOne(
+                  "SELECT * FROM game_session_canonical_issuer_bootstrap_member_operation WHERE bootstrap_operation_id = ? AND reservation_id = ?",
+                  anchor.bootstrapOperationId(),
+                  source.reservation().reservationId());
+          if (local != null && bootstrap != null) throw unavailable();
+          if (local != null) return null;
+          if (bootstrap == null || !source.neverAdmitted()) throw unavailable();
+          var result = readInstalledInTransaction(transaction, anchor, before, bootstrap);
+          if (!result.reservation().owner().equals(source.reservation().owner())
+              || !result
+                  .reservation()
+                  .bindingGeneration()
+                  .equals(source.reservation().bindingGeneration())
+              || !result.transitionId().equals(source.transition().transitionId())
+              || !sameFrozenReservation(result.reservation(), source.reservation()))
+            throw unavailable();
+          return result;
+        });
     var after = Objects.requireNonNull(currentSource.readFreshCurrentState());
     if (original == null) {
       return CanonicalGameplayIssuerOriginalMemberSource.ordinary(

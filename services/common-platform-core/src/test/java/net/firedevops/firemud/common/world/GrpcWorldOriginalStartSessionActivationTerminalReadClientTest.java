@@ -26,10 +26,9 @@ class GrpcWorldOriginalStartSessionActivationTerminalReadClientTest {
     GrpcChannelFactory factory = mock(GrpcChannelFactory.class);
     CommonGrpcClientProperties plaintext = fileBacked(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GrpcWorldOriginalStartSessionActivationTerminalReadClient(
-                    new ServiceEndpointsProperties(), plaintext, factory, "world-runtime"))
+    assertThatThrownBy(() ->
+            new GrpcWorldOriginalStartSessionActivationTerminalReadClient(
+                new ServiceEndpointsProperties(), plaintext, factory, "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
 
@@ -37,10 +36,9 @@ class GrpcWorldOriginalStartSessionActivationTerminalReadClientTest {
     classpath.setCertChain("classpath:client.crt");
     classpath.setPrivateKey("/tmp/key");
     classpath.setCaCert("/tmp/ca");
-    assertThatThrownBy(
-            () ->
-                new GrpcWorldOriginalStartSessionActivationTerminalReadClient(
-                    new ServiceEndpointsProperties(), classpath, factory, "world-runtime"))
+    assertThatThrownBy(() ->
+            new GrpcWorldOriginalStartSessionActivationTerminalReadClient(
+                new ServiceEndpointsProperties(), classpath, factory, "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("file-backed");
     verifyNoInteractions(factory);

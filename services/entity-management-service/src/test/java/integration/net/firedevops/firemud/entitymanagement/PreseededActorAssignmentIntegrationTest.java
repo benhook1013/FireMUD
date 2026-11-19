@@ -136,28 +136,24 @@ class PreseededActorAssignmentIntegrationTest {
   @Test
   void receiptLockRequiresCallerOwnedWritableTransactionThroughRepositoryProxy() {
     UUID absentActor = UUID.randomUUID();
-    assertThatThrownBy(
-            () ->
-                characterRepository.lockCurrentPreseededActorAssignmentReceipt(
-                    assignmentUuid, accountUuid, absentActor, "a".repeat(64)))
+    assertThatThrownBy(() ->
+            characterRepository.lockCurrentPreseededActorAssignmentReceipt(
+                assignmentUuid, accountUuid, absentActor, "a".repeat(64)))
         .isInstanceOf(IllegalTransactionStateException.class);
 
     TransactionTemplate writable = new TransactionTemplate(transactionManager);
     Optional<PreseededActorAssignmentReceipt> absentReceipt =
-        writable.execute(
-            ignored ->
-                characterRepository.lockCurrentPreseededActorAssignmentReceipt(
-                    assignmentUuid, accountUuid, absentActor, "a".repeat(64)));
+        writable.execute(ignored ->
+            characterRepository.lockCurrentPreseededActorAssignmentReceipt(
+                assignmentUuid, accountUuid, absentActor, "a".repeat(64)));
     assertThat(absentReceipt).isEmpty();
 
     TransactionTemplate readOnly = new TransactionTemplate(transactionManager);
     readOnly.setReadOnly(true);
-    assertThatThrownBy(
-            () ->
-                readOnly.execute(
-                    ignored ->
-                        characterRepository.lockCurrentPreseededActorAssignmentReceipt(
-                            assignmentUuid, accountUuid, absentActor, "a".repeat(64))))
+    assertThatThrownBy(() ->
+            readOnly.execute(ignored ->
+                characterRepository.lockCurrentPreseededActorAssignmentReceipt(
+                    assignmentUuid, accountUuid, absentActor, "a".repeat(64))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable hold transaction");
   }
@@ -173,38 +169,37 @@ class PreseededActorAssignmentIntegrationTest {
 
     UUID missingCharacterUuid = UUID.randomUUID();
     UUID invalidOperationUuid = UUID.randomUUID();
-    assertThatThrownBy(
-            () ->
-                jdbcTemplate.update(
-                    "INSERT INTO entity_preseeded_actor_assignment_operations ("
-                        + "assignment_uuid, intent_digest, account_uuid, account_uuid_provenance, "
-                        + "account_identity_schema_version, account_identity_target_namespace, "
-                        + "source_account_row_id, eligibility, "
-                        + "eligibility_evaluated_at, membership_authority_generation, "
-                        + "eligibility_evidence_digest, tenant_uuid, realm_uuid, world_slug, "
-                        + "realm_slug, game_instance_id, catalog_revision, canonical_version_uuid, "
-                        + "publication_evidence_format, frozen_policy_digest, "
-                        + "playable_state_namespace_id, playable_state_scope, entry_policy, "
-                        + "actor_kind, display_name, status, character_uuid, completed_at, "
-                        + "account_authority_snapshot_digest, account_purpose, account_currentness, "
-                        + "published_owner_proof_digest, published_release_bundle_ref) "
-                        + "SELECT ?, intent_digest, account_uuid, account_uuid_provenance, "
-                        + "account_identity_schema_version, account_identity_target_namespace, "
-                        + "source_account_row_id, eligibility, "
-                        + "eligibility_evaluated_at, membership_authority_generation, "
-                        + "eligibility_evidence_digest, tenant_uuid, realm_uuid, world_slug, "
-                        + "realm_slug, game_instance_id, catalog_revision, canonical_version_uuid, "
-                        + "publication_evidence_format, frozen_policy_digest, "
-                        + "playable_state_namespace_id, playable_state_scope, entry_policy, "
-                        + "actor_kind, display_name, 'ASSIGNED', ?, CURRENT_TIMESTAMP "
-                        + ", account_authority_snapshot_digest, account_purpose, "
-                        + "account_currentness, published_owner_proof_digest, "
-                        + "published_release_bundle_ref "
-                        + "FROM entity_preseeded_actor_assignment_operations "
-                        + "WHERE assignment_uuid = ?",
-                    invalidOperationUuid,
-                    missingCharacterUuid,
-                    assignmentUuid))
+    assertThatThrownBy(() ->
+            jdbcTemplate.update(
+                "INSERT INTO entity_preseeded_actor_assignment_operations ("
+                    + "assignment_uuid, intent_digest, account_uuid, account_uuid_provenance, "
+                    + "account_identity_schema_version, account_identity_target_namespace, "
+                    + "source_account_row_id, eligibility, "
+                    + "eligibility_evaluated_at, membership_authority_generation, "
+                    + "eligibility_evidence_digest, tenant_uuid, realm_uuid, world_slug, "
+                    + "realm_slug, game_instance_id, catalog_revision, canonical_version_uuid, "
+                    + "publication_evidence_format, frozen_policy_digest, "
+                    + "playable_state_namespace_id, playable_state_scope, entry_policy, "
+                    + "actor_kind, display_name, status, character_uuid, completed_at, "
+                    + "account_authority_snapshot_digest, account_purpose, account_currentness, "
+                    + "published_owner_proof_digest, published_release_bundle_ref) "
+                    + "SELECT ?, intent_digest, account_uuid, account_uuid_provenance, "
+                    + "account_identity_schema_version, account_identity_target_namespace, "
+                    + "source_account_row_id, eligibility, "
+                    + "eligibility_evaluated_at, membership_authority_generation, "
+                    + "eligibility_evidence_digest, tenant_uuid, realm_uuid, world_slug, "
+                    + "realm_slug, game_instance_id, catalog_revision, canonical_version_uuid, "
+                    + "publication_evidence_format, frozen_policy_digest, "
+                    + "playable_state_namespace_id, playable_state_scope, entry_policy, "
+                    + "actor_kind, display_name, 'ASSIGNED', ?, CURRENT_TIMESTAMP "
+                    + ", account_authority_snapshot_digest, account_purpose, "
+                    + "account_currentness, published_owner_proof_digest, "
+                    + "published_release_bundle_ref "
+                    + "FROM entity_preseeded_actor_assignment_operations "
+                    + "WHERE assignment_uuid = ?",
+                invalidOperationUuid,
+                missingCharacterUuid,
+                assignmentUuid))
         .isInstanceOf(DataAccessException.class);
 
     assertThat(
@@ -419,10 +414,9 @@ class PreseededActorAssignmentIntegrationTest {
                 validTarget.realmUuid(),
                 newOperation,
                 validTarget.playableStateScope()));
-    assertThatThrownBy(
-            () ->
-                retentionTransaction.execute(
-                    ignored -> retentionRepository.reserveAdmission(otherwiseValidRequest)))
+    assertThatThrownBy(() ->
+            retentionTransaction.execute(
+                ignored -> retentionRepository.reserveAdmission(otherwiseValidRequest)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
     assertThat(
@@ -767,13 +761,12 @@ class PreseededActorAssignmentIntegrationTest {
                 String.class,
                 assignmentUuid))
         .isEqualTo("CANONICAL_UUID");
-    assertThatThrownBy(
-            () ->
-                jdbcTemplate.update(
-                    "UPDATE entity_preseeded_actor_assignment_operations "
-                        + "SET canonical_version_uuid = ? WHERE assignment_uuid = ?",
-                    UUID.randomUUID(),
-                    assignmentUuid))
+    assertThatThrownBy(() ->
+            jdbcTemplate.update(
+                "UPDATE entity_preseeded_actor_assignment_operations "
+                    + "SET canonical_version_uuid = ? WHERE assignment_uuid = ?",
+                UUID.randomUUID(),
+                assignmentUuid))
         .isInstanceOf(DataAccessException.class);
 
     assertThat(
@@ -887,34 +880,31 @@ class PreseededActorAssignmentIntegrationTest {
 
         PreseededActorAssignmentRequest request = assignmentRequest(owner, "Reserved-Key Actor");
         PreseededActorAssignmentResult assigned =
-            isolatedDsl.transactionResult(
-                configuration ->
-                    new CharacterRepository(DSL.using(configuration))
-                        .assignPreseededActor(
-                            request,
-                            owner,
-                            accountIdentity(assignmentUuid, accountUuid),
-                            request.mutationIntentDigest()));
+            isolatedDsl.transactionResult(configuration ->
+                new CharacterRepository(DSL.using(configuration))
+                    .assignPreseededActor(
+                        request,
+                        owner,
+                        accountIdentity(assignmentUuid, accountUuid),
+                        request.mutationIntentDigest()));
         assertThat(assigned.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
         assertThat(assigned.characterUuid()).isNotNull();
 
-        assertThatThrownBy(
-                () ->
-                    isolatedDsl.execute(
-                        "INSERT INTO characters (account_id, name, tenant_id) "
-                            + "VALUES (23, 'Legacy Reserved-Key Actor', ?)",
-                        sourceReceipt.localTenantKey()))
+        assertThatThrownBy(() ->
+                isolatedDsl.execute(
+                    "INSERT INTO characters (account_id, name, tenant_id) "
+                        + "VALUES (23, 'Legacy Reserved-Key Actor', ?)",
+                    sourceReceipt.localTenantKey()))
             .isInstanceOf(org.jooq.exception.DataAccessException.class)
             .hasMessageContaining("reserved by an immutable empty-source receipt");
-        assertThatThrownBy(
-                () ->
-                    isolatedDsl.execute(
-                        "UPDATE characters SET account_uuid = NULL, tenant_uuid = NULL, "
-                            + "playable_state_namespace_id = NULL, playable_state_scope = NULL, "
-                            + "actor_identity_status = 'QUARANTINED', "
-                            + "actor_identity_quarantine_reason = 'OWNER_PROVENANCE_MISSING' "
-                            + "WHERE character_uuid = ?",
-                        assigned.characterUuid()))
+        assertThatThrownBy(() ->
+                isolatedDsl.execute(
+                    "UPDATE characters SET account_uuid = NULL, tenant_uuid = NULL, "
+                        + "playable_state_namespace_id = NULL, playable_state_scope = NULL, "
+                        + "actor_identity_status = 'QUARANTINED', "
+                        + "actor_identity_quarantine_reason = 'OWNER_PROVENANCE_MISSING' "
+                        + "WHERE character_uuid = ?",
+                    assigned.characterUuid()))
             .isInstanceOf(org.jooq.exception.DataAccessException.class)
             .hasMessageContaining("reserved by an immutable empty-source receipt");
 
@@ -1716,17 +1706,15 @@ class PreseededActorAssignmentIntegrationTest {
         .isEqualTo(1);
     assertThat(characterRepository.readPreseededActorAssignmentReceipt(selector))
         .contains(originalReceipt);
-    assertThatThrownBy(
-            () ->
-                jdbcTemplate.update(
-                    "UPDATE entity_preseeded_actor_runtime_projections SET projection_fence = projection_fence + 1 WHERE assignment_uuid = ?",
-                    assignmentUuid))
+    assertThatThrownBy(() ->
+            jdbcTemplate.update(
+                "UPDATE entity_preseeded_actor_runtime_projections SET projection_fence = projection_fence + 1 WHERE assignment_uuid = ?",
+                assignmentUuid))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                jdbcTemplate.update(
-                    "DELETE FROM entity_preseeded_actor_runtime_projections WHERE assignment_uuid = ?",
-                    assignmentUuid))
+    assertThatThrownBy(() ->
+            jdbcTemplate.update(
+                "DELETE FROM entity_preseeded_actor_runtime_projections WHERE assignment_uuid = ?",
+                assignmentUuid))
         .isInstanceOf(DataAccessException.class);
     // Stale durable character authority must invalidate the retained runtime projection read.
     jdbcTemplate.update(
@@ -1750,14 +1738,13 @@ class PreseededActorAssignmentIntegrationTest {
         UUID operation = index < 2 ? assignmentUuid : UUID.randomUUID();
         UUID account = index < 2 ? accountUuid : UUID.randomUUID();
         futures.add(
-            executor.submit(
-                () -> {
-                  ready.countDown();
-                  if (!start.await(10, TimeUnit.SECONDS)) {
-                    throw new IllegalStateException("Runtime projection race did not start");
-                  }
-                  return assign(operation, account, 4L, scope, "Assigned Actor");
-                }));
+            executor.submit(() -> {
+              ready.countDown();
+              if (!start.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Runtime projection race did not start");
+              }
+              return assign(operation, account, 4L, scope, "Assigned Actor");
+            }));
       }
       assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
       start.countDown();
@@ -1789,33 +1776,31 @@ class PreseededActorAssignmentIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<PreseededActorAssignmentResult> first =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                if (!start.await(10, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Assignment race did not start");
-                }
-                return assign(
-                    assignmentUuid,
-                    accountUuid,
-                    4L,
-                    PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    "Concurrent Actor");
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            if (!start.await(10, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Assignment race did not start");
+            }
+            return assign(
+                assignmentUuid,
+                accountUuid,
+                4L,
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+                "Concurrent Actor");
+          });
       Future<PreseededActorAssignmentResult> second =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                if (!start.await(10, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Assignment race did not start");
-                }
-                return assign(
-                    secondAssignmentUuid,
-                    accountUuid,
-                    4L,
-                    PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    "Concurrent Actor");
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            if (!start.await(10, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Assignment race did not start");
+            }
+            return assign(
+                secondAssignmentUuid,
+                accountUuid,
+                4L,
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+                "Concurrent Actor");
+          });
 
       assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
       start.countDown();
@@ -1828,10 +1813,8 @@ class PreseededActorAssignmentIntegrationTest {
               .orElseThrow();
       PreseededActorAssignmentResult loser =
           results.stream()
-              .filter(
-                  result ->
-                      result.outcome()
-                          == PreseededActorAssignmentResult.Outcome.IDEMPOTENCY_CONFLICT)
+              .filter(result ->
+                  result.outcome() == PreseededActorAssignmentResult.Outcome.IDEMPOTENCY_CONFLICT)
               .findFirst()
               .orElseThrow();
 
@@ -1880,14 +1863,13 @@ class PreseededActorAssignmentIntegrationTest {
         namespaceUuid,
         PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED.name());
 
-    assertThatThrownBy(
-            () ->
-                assign(
-                    assignmentUuid,
-                    accountUuid,
-                    4L,
-                    PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    "Assigned Actor"))
+    assertThatThrownBy(() ->
+            assign(
+                assignmentUuid,
+                accountUuid,
+                4L,
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+                "Assigned Actor"))
         .isInstanceOf(RuntimeException.class);
 
     assertThat(
@@ -1913,24 +1895,20 @@ class PreseededActorAssignmentIntegrationTest {
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
             "Assigned Actor");
 
-    assertThatThrownBy(
-            () ->
-                jdbcTemplate.update(
-                    "DELETE FROM entity_preseeded_actor_assignment_operations "
-                        + "WHERE assignment_uuid = ?",
-                    assignmentUuid))
+    assertThatThrownBy(() ->
+            jdbcTemplate.update(
+                "DELETE FROM entity_preseeded_actor_assignment_operations "
+                    + "WHERE assignment_uuid = ?",
+                assignmentUuid))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                jdbcTemplate.update(
-                    "DELETE FROM entity_tenant_identities WHERE canonical_tenant_uuid = ?",
-                    tenantUuid))
+    assertThatThrownBy(() ->
+            jdbcTemplate.update(
+                "DELETE FROM entity_tenant_identities WHERE canonical_tenant_uuid = ?", tenantUuid))
         .isInstanceOf(DataAccessException.class);
 
-    assertThatThrownBy(
-            () ->
-                jdbcTemplate.execute(
-                    "TRUNCATE TABLE entity_preseeded_actor_assignment_operations CASCADE"))
+    assertThatThrownBy(() ->
+            jdbcTemplate.execute(
+                "TRUNCATE TABLE entity_preseeded_actor_assignment_operations CASCADE"))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(() -> jdbcTemplate.execute("TRUNCATE TABLE entity_tenant_identities"))
         .isInstanceOf(DataAccessException.class);
@@ -2008,13 +1986,12 @@ class PreseededActorAssignmentIntegrationTest {
         new TransactionTemplate(
             new org.springframework.jdbc.datasource.DataSourceTransactionManager(ownerDataSource));
     var snapshot =
-        ownerTransaction.execute(
-            ignored ->
-                new CharacterRepository(ownerDsl)
-                    .captureCanonicalGameplayRosterSnapshot(
-                        request,
-                        new CanonicalGameplayRosterOwnerEvidence(
-                            requestUuid, owner.canonicalAccountUuid(), target, Instant.now())));
+        ownerTransaction.execute(ignored ->
+            new CharacterRepository(ownerDsl)
+                .captureCanonicalGameplayRosterSnapshot(
+                    request,
+                    new CanonicalGameplayRosterOwnerEvidence(
+                        requestUuid, owner.canonicalAccountUuid(), target, Instant.now())));
     assertThat(snapshot.actors()).isEmpty();
     Long mappedTenantRowId =
         isolatedDsl

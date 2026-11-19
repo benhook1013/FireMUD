@@ -87,12 +87,11 @@ class WorldDesignMutationServiceImplTest {
     when(entityManagementClient.validateEntityTemplateReference(1L, 7L, "NPC", 55L))
         .thenReturn(true);
     when(regionRepository.save(any(Region.class)))
-        .thenAnswer(
-            invocation -> {
-              Region region = invocation.getArgument(0);
-              region.setId(44L);
-              return region;
-            });
+        .thenAnswer(invocation -> {
+          Region region = invocation.getArgument(0);
+          region.setId(44L);
+          return region;
+        });
     when(aggregateEpochRepository.save(any(WorldDesignAggregateEpoch.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(scopeEpochRepository.findByTenantIdAndVersionIdAndScopeTypeAndScopeId(
@@ -381,12 +380,11 @@ class WorldDesignMutationServiceImplTest {
                 1L, 7L, 12L, "NPC", 55L))
         .thenReturn(Optional.empty());
     when(worldEntitySpawnBindingRepository.save(any(WorldEntitySpawnBinding.class)))
-        .thenAnswer(
-            invocation -> {
-              WorldEntitySpawnBinding binding = invocation.getArgument(0);
-              binding.setId(102L);
-              return binding;
-            });
+        .thenAnswer(invocation -> {
+          WorldEntitySpawnBinding binding = invocation.getArgument(0);
+          binding.setId(102L);
+          return binding;
+        });
     when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
             1L, 7L, "WORLD_ENTITY_SPAWN_BINDING", 102L))
         .thenReturn(Optional.empty());
@@ -397,18 +395,16 @@ class WorldDesignMutationServiceImplTest {
     assertEquals("APPLIED", result.result());
     verify(worldEntitySpawnBindingRepository)
         .deleteAll(
-            org.mockito.ArgumentMatchers.argThat(
-                bindings -> {
-                  java.util.Iterator<? extends WorldEntitySpawnBinding> iterator =
-                      bindings.iterator();
-                  if (!iterator.hasNext()) {
-                    return false;
-                  }
-                  WorldEntitySpawnBinding binding = iterator.next();
-                  return !iterator.hasNext()
-                      && binding.getId().equals(100L)
-                      && binding.getRoom().getId().equals(13L);
-                }));
+            org.mockito.ArgumentMatchers.argThat(bindings -> {
+              java.util.Iterator<? extends WorldEntitySpawnBinding> iterator = bindings.iterator();
+              if (!iterator.hasNext()) {
+                return false;
+              }
+              WorldEntitySpawnBinding binding = iterator.next();
+              return !iterator.hasNext()
+                  && binding.getId().equals(100L)
+                  && binding.getRoom().getId().equals(13L);
+            }));
   }
 
   @Test
@@ -453,12 +449,11 @@ class WorldDesignMutationServiceImplTest {
                 1L, 7L, 12L, "NPC", 55L))
         .thenReturn(Optional.empty());
     when(worldEntitySpawnBindingRepository.save(any(WorldEntitySpawnBinding.class)))
-        .thenAnswer(
-            invocation -> {
-              WorldEntitySpawnBinding binding = invocation.getArgument(0);
-              binding.setId(102L);
-              return binding;
-            });
+        .thenAnswer(invocation -> {
+          WorldEntitySpawnBinding binding = invocation.getArgument(0);
+          binding.setId(102L);
+          return binding;
+        });
     when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
             1L, 7L, "WORLD_ENTITY_SPAWN_BINDING", 102L))
         .thenReturn(Optional.empty());
@@ -470,18 +465,16 @@ class WorldDesignMutationServiceImplTest {
     assertEquals("APPLIED", result.result());
     verify(worldEntitySpawnBindingRepository)
         .deleteAll(
-            org.mockito.ArgumentMatchers.argThat(
-                bindings -> {
-                  java.util.Iterator<? extends WorldEntitySpawnBinding> iterator =
-                      bindings.iterator();
-                  if (!iterator.hasNext()) {
-                    return false;
-                  }
-                  WorldEntitySpawnBinding binding = iterator.next();
-                  return !iterator.hasNext()
-                      && binding.getId().equals(100L)
-                      && binding.getRoom().getId().equals(13L);
-                }));
+            org.mockito.ArgumentMatchers.argThat(bindings -> {
+              java.util.Iterator<? extends WorldEntitySpawnBinding> iterator = bindings.iterator();
+              if (!iterator.hasNext()) {
+                return false;
+              }
+              WorldEntitySpawnBinding binding = iterator.next();
+              return !iterator.hasNext()
+                  && binding.getId().equals(100L)
+                  && binding.getRoom().getId().equals(13L);
+            }));
   }
 
   @Test
@@ -512,12 +505,11 @@ class WorldDesignMutationServiceImplTest {
     Zone zone = zone(13L, 99L);
     when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 13L)).thenReturn(Optional.of(zone));
     when(roomRepository.save(any(Room.class)))
-        .thenAnswer(
-            invocation -> {
-              Room room = invocation.getArgument(0);
-              room.setId(88L);
-              return room;
-            });
+        .thenAnswer(invocation -> {
+          Room room = invocation.getArgument(0);
+          room.setId(88L);
+          return room;
+        });
     when(ledgerRepository
             .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
                 1L, 7L, "commit-room", "revision-room", "UPSERT", "ROOM", ""))
@@ -555,12 +547,11 @@ class WorldDesignMutationServiceImplTest {
     Zone zone = zone(13L, 99L);
     when(zoneRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 13L)).thenReturn(Optional.of(zone));
     when(roomRepository.save(any(Room.class)))
-        .thenAnswer(
-            invocation -> {
-              Room room = invocation.getArgument(0);
-              room.setId(88L);
-              return room;
-            });
+        .thenAnswer(invocation -> {
+          Room room = invocation.getArgument(0);
+          room.setId(88L);
+          return room;
+        });
     when(ledgerRepository
             .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
                 1L, 7L, "commit-room", "revision-room", "UPSERT", "ROOM", ""))
@@ -586,12 +577,11 @@ class WorldDesignMutationServiceImplTest {
     when(roomRepository.findByTenantIdAndVersionIdAndId(1L, 7L, 22L))
         .thenReturn(Optional.of(toRoom));
     when(roomExitRepository.save(any(RoomExit.class)))
-        .thenAnswer(
-            invocation -> {
-              RoomExit exit = invocation.getArgument(0);
-              exit.setId(31L);
-              return exit;
-            });
+        .thenAnswer(invocation -> {
+          RoomExit exit = invocation.getArgument(0);
+          exit.setId(31L);
+          return exit;
+        });
     when(ledgerRepository
             .findByTenantIdAndVersionIdAndCommitIdAndRevisionIdAndOperationTypeAndAggregateTypeAndRequestedAggregateId(
                 1L, 7L, "commit-exit", "revision-exit", "UPSERT", "ROOM_EXIT", ""))
@@ -651,12 +641,11 @@ class WorldDesignMutationServiceImplTest {
             1L, 7L, "ZONE_SUBTREE", "12", "population"))
         .thenReturn(Optional.empty());
     when(generationRuleRepository.save(any(GenerationRule.class)))
-        .thenAnswer(
-            invocation -> {
-              GenerationRule rule = invocation.getArgument(0);
-              rule.setId(71L);
-              return rule;
-            });
+        .thenAnswer(invocation -> {
+          GenerationRule rule = invocation.getArgument(0);
+          rule.setId(71L);
+          return rule;
+        });
     when(aggregateEpochRepository.findByTenantIdAndVersionIdAndAggregateTypeAndAggregateId(
             1L, 7L, "GENERATION_RULE", 71L))
         .thenReturn(Optional.empty());
@@ -668,13 +657,12 @@ class WorldDesignMutationServiceImplTest {
     assertEquals("APPLIED", result.result());
     verify(generationRuleRepository)
         .deleteAll(
-            org.mockito.ArgumentMatchers.argThat(
-                rules -> {
-                  java.util.Iterator<? extends GenerationRule> iterator = rules.iterator();
-                  return iterator.hasNext()
-                      && iterator.next().getId().equals(70L)
-                      && !iterator.hasNext();
-                }));
+            org.mockito.ArgumentMatchers.argThat(rules -> {
+              java.util.Iterator<? extends GenerationRule> iterator = rules.iterator();
+              return iterator.hasNext()
+                  && iterator.next().getId().equals(70L)
+                  && !iterator.hasNext();
+            }));
   }
 
   @Test
@@ -800,12 +788,11 @@ class WorldDesignMutationServiceImplTest {
             1L, 7L, "ZONE_SUBTREE", "12", "population"))
         .thenReturn(Optional.empty());
     when(roomRepository.save(any(Room.class)))
-        .thenAnswer(
-            invocation -> {
-              Room room = invocation.getArgument(0);
-              room.setId("room-a".equals(room.getName()) ? 90L : 91L);
-              return room;
-            });
+        .thenAnswer(invocation -> {
+          Room room = invocation.getArgument(0);
+          room.setId("room-a".equals(room.getName()) ? 90L : 91L);
+          return room;
+        });
     when(entityManagementClient.validateEntityTemplateReference(1L, 7L, "NPC", 55L))
         .thenReturn(true);
     when(worldEntitySpawnBindingRepository

@@ -136,12 +136,11 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
   @Test
   void committedReservationIsExactReplayableAndSurvivesOwnerReplacementWithoutCredentials() {
     var original = coordinates();
-    transactions.executeWithoutResult(
-        status -> {
-          assertThat(journal.reserve(original).coordinates()).isEqualTo(original);
-          assertThatThrownBy(() -> journal.readCommitted(original))
-              .isInstanceOf(JournalUnavailableException.class);
-        });
+    transactions.executeWithoutResult(status -> {
+      assertThat(journal.reserve(original).coordinates()).isEqualTo(original);
+      assertThatThrownBy(() -> journal.readCommitted(original))
+          .isInstanceOf(JournalUnavailableException.class);
+    });
     var committed = journal.readCommitted(original).orElseThrow();
     assertThat(committed.abandoned()).isFalse();
     assertThat(committed.verifiedWitness()).isEmpty();
@@ -188,11 +187,10 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
   @Test
   void rolledBackReservationIsNotCommittedDispatchEvidence() {
     var original = coordinates();
-    transactions.executeWithoutResult(
-        status -> {
-          journal.reserve(original);
-          status.setRollbackOnly();
-        });
+    transactions.executeWithoutResult(status -> {
+      journal.reserve(original);
+      status.setRollbackOnly();
+    });
     assertThat(journal.readCommitted(original)).isEmpty();
     assertThat(journal.readRetainedPage(Optional.empty(), 128)).isEmpty();
     assertThatThrownBy(() -> transactions.executeWithoutResult(status -> journal.abandon(original)))
@@ -227,10 +225,8 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
   void frozenWitnessAbsenceSurvivesLateValidatedResultAndReceiptReplay() throws Exception {
     var original = coordinates();
     reserve(original);
-    assertThatThrownBy(
-            () ->
-                transactions.executeWithoutResult(
-                    status -> journal.freezeRetirementRequest(original)))
+    assertThatThrownBy(() ->
+            transactions.executeWithoutResult(status -> journal.freezeRetirementRequest(original)))
         .isInstanceOf(JournalConflictException.class);
     transactions.executeWithoutResult(status -> journal.abandon(original));
     transactions.executeWithoutResult(status -> journal.freezeRetirementRequest(original));
@@ -246,16 +242,14 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
     assertThat(frozenBytes(original)).containsExactly(frozen);
     transactions.executeWithoutResult(status -> journal.recordVerifiedResult(original, result));
     var changedResult = validatedResult(original, UUID.randomUUID());
-    assertThatThrownBy(
-            () ->
-                transactions.executeWithoutResult(
-                    status -> journal.recordVerifiedResult(original, changedResult)))
+    assertThatThrownBy(() ->
+            transactions.executeWithoutResult(
+                status -> journal.recordVerifiedResult(original, changedResult)))
         .isInstanceOf(JournalConflictException.class);
     var otherOriginalResult = validatedResult(coordinates(), UUID.randomUUID());
-    assertThatThrownBy(
-            () ->
-                transactions.executeWithoutResult(
-                    status -> journal.recordVerifiedResult(original, otherOriginalResult)))
+    assertThatThrownBy(() ->
+            transactions.executeWithoutResult(
+                status -> journal.recordVerifiedResult(original, otherOriginalResult)))
         .isInstanceOf(JournalConflictException.class);
     UUID operation = UUID.randomUUID();
     var pending = receipt(original, operation, Disposition.PENDING);
@@ -269,10 +263,9 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
             pending,
             receipt(original, operation, Disposition.NO_TOKEN),
             receipt(original, UUID.randomUUID(), Disposition.RETIRED))) {
-      assertThatThrownBy(
-              () ->
-                  transactions.executeWithoutResult(
-                      status -> journal.recordDisposalReceipt(original, conflict)))
+      assertThatThrownBy(() ->
+              transactions.executeWithoutResult(
+                  status -> journal.recordDisposalReceipt(original, conflict)))
           .isInstanceOf(JournalConflictException.class);
     }
     assertThat(journal.readCommitted(original).orElseThrow().retainedReceipt()).contains(terminal);
@@ -313,32 +306,27 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var freezer =
-          executor.submit(
-              () ->
-                  transactions.execute(
-                      status -> {
-                        journal.abandon(original);
-                        var request =
-                            journal
-                                .freezeRetirementRequest(original)
-                                .frozenRetirementRequest()
-                                .orElseThrow();
-                        frozenInsideTransaction.countDown();
-                        await(releaseCommit);
-                        return request;
-                      }));
+          executor.submit(() ->
+              transactions.execute(status -> {
+                journal.abandon(original);
+                var request =
+                    journal
+                        .freezeRetirementRequest(original)
+                        .frozenRetirementRequest()
+                        .orElseThrow();
+                frozenInsideTransaction.countDown();
+                await(releaseCommit);
+                return request;
+              }));
       assertThat(frozenInsideTransaction.await(5, TimeUnit.SECONDS)).isTrue();
       var late =
-          executor.submit(
-              () ->
-                  transactions.execute(
-                      status -> {
-                        lateBackend.set(
-                            dsl.fetchSingle("SELECT pg_backend_pid() AS pid")
-                                .get("pid", Integer.class));
-                        lateStarted.countDown();
-                        return journal.recordVerifiedResult(original, result);
-                      }));
+          executor.submit(() ->
+              transactions.execute(status -> {
+                lateBackend.set(
+                    dsl.fetchSingle("SELECT pg_backend_pid() AS pid").get("pid", Integer.class));
+                lateStarted.countDown();
+                return journal.recordVerifiedResult(original, result);
+              }));
       assertThat(lateStarted.await(5, TimeUnit.SECONDS)).isTrue();
       long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
       boolean waiting = false;
@@ -487,22 +475,19 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
     assertThatThrownBy(
             () -> transactions.executeWithoutResult(status -> unjoined.reserve(original)))
         .isInstanceOf(JournalUnavailableException.class);
-    assertThatThrownBy(
-            () ->
-                transactions.executeWithoutResult(
-                    status -> {
-                      dsl.execute("SET LOCAL synchronous_commit = 'off'");
-                      journal.reserve(original);
-                    }))
+    assertThatThrownBy(() ->
+            transactions.executeWithoutResult(status -> {
+              dsl.execute("SET LOCAL synchronous_commit = 'off'");
+              journal.reserve(original);
+            }))
         .isInstanceOf(JournalUnavailableException.class);
     reserve(original);
-    transactions.executeWithoutResult(
-        status -> {
-          assertThatThrownBy(() -> journal.readCommitted(original))
-              .isInstanceOf(JournalUnavailableException.class);
-          assertThatThrownBy(() -> journal.readRetainedPage(Optional.empty(), 1))
-              .isInstanceOf(JournalUnavailableException.class);
-        });
+    transactions.executeWithoutResult(status -> {
+      assertThatThrownBy(() -> journal.readCommitted(original))
+          .isInstanceOf(JournalUnavailableException.class);
+      assertThatThrownBy(() -> journal.readRetainedPage(Optional.empty(), 1))
+          .isInstanceOf(JournalUnavailableException.class);
+    });
     try (Connection connection = dataSource.getConnection()) {
       var reader =
           new InitialGameplayLoginCoordinationJournalRepository(
@@ -527,13 +512,12 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
         List.of(coordinates(), coordinates(), coordinates(), coordinates(), coordinates());
     originals.forEach(this::reserve);
     var terminalOriginal = originals.get(0);
-    transactions.executeWithoutResult(
-        status -> {
-          journal.abandon(terminalOriginal);
-          journal.freezeRetirementRequest(terminalOriginal);
-          journal.recordDisposalReceipt(
-              terminalOriginal, receipt(terminalOriginal, UUID.randomUUID(), Disposition.NO_TOKEN));
-        });
+    transactions.executeWithoutResult(status -> {
+      journal.abandon(terminalOriginal);
+      journal.freezeRetirementRequest(terminalOriginal);
+      journal.recordDisposalReceipt(
+          terminalOriginal, receipt(terminalOriginal, UUID.randomUUID(), Disposition.NO_TOKEN));
+    });
     var expected =
         dsl.fetch("SELECT request_id FROM " + TABLE + " ORDER BY request_id")
             .getValues("request_id", UUID.class);

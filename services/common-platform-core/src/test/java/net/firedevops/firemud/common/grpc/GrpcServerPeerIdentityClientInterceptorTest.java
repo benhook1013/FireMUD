@@ -116,10 +116,9 @@ class GrpcServerPeerIdentityClientInterceptorTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new GrpcServerPeerIdentityClientInterceptor("not-a-workload"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GrpcServerPeerIdentityClientInterceptor(
-                    "spiffe://FIREMUD/ns/firemud/sa/game-design-service"))
+    assertThatThrownBy(() ->
+            new GrpcServerPeerIdentityClientInterceptor(
+                "spiffe://FIREMUD/ns/firemud/sa/game-design-service"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

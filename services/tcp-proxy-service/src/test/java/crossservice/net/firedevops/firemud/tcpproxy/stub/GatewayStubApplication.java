@@ -98,13 +98,12 @@ public class GatewayStubApplication {
     public Mono<Void> handle(WebSocketSession inbound) {
       HttpHeaders outboundHeaders = new HttpHeaders();
       HttpHeaders inboundHeaders = inbound.getHandshakeInfo().getHeaders();
-      FORWARDED_HEADER_NAMES.forEach(
-          headerName -> {
-            var values = inboundHeaders.get(headerName);
-            if (values != null) {
-              values.forEach(value -> outboundHeaders.add(headerName, value));
-            }
-          });
+      FORWARDED_HEADER_NAMES.forEach(headerName -> {
+        var values = inboundHeaders.get(headerName);
+        if (values != null) {
+          values.forEach(value -> outboundHeaders.add(headerName, value));
+        }
+      });
 
       return client.execute(
           targetUri,

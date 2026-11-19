@@ -99,32 +99,31 @@ public final class AccountTenantCapacityOwner {
     request.requireStructurallyValid();
     if (!(request.context() instanceof PlayerContext)) throw unavailable();
     CommitDecision decision =
-        commitWithFreshSnapshot(
-            () -> {
-              // Replay precedes current sources and quota. A lost refusal response retains its
-              // original decision even if capacity becomes available before the caller retries.
-              Record existing = capacity.findForReplay(request.identity());
-              if (existing != null) {
-                return new CommitDecision(capacity.exact(request, existing), null);
-              }
-              if (request.capacityRearmFence() != 1) throw conflict();
-              UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
-              if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
-              originDecisions.requireFreshAttemptBinding(request);
-              lockPlayerAccount(request);
-              current(request);
-              requireSupportedShape(request);
-              if (!request.evidence().permitsCreation())
-                throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
-              var reservation =
-                  capacity.createIfQuotaAvailable(request, request.evidence().expiresAt(), clock);
-              if (reservation.isPresent()) {
-                return new CommitDecision(reservation.orElseThrow(), null);
-              }
-              UUID denialId = originDecisions.refuseQuota(request);
-              requireCurrentLifetime(request.evidence(), clock.instant());
-              return new CommitDecision(null, denialId);
-            });
+        commitWithFreshSnapshot(() -> {
+          // Replay precedes current sources and quota. A lost refusal response retains its
+          // original decision even if capacity becomes available before the caller retries.
+          Record existing = capacity.findForReplay(request.identity());
+          if (existing != null) {
+            return new CommitDecision(capacity.exact(request, existing), null);
+          }
+          if (request.capacityRearmFence() != 1) throw conflict();
+          UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
+          if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
+          originDecisions.requireFreshAttemptBinding(request);
+          lockPlayerAccount(request);
+          current(request);
+          requireSupportedShape(request);
+          if (!request.evidence().permitsCreation())
+            throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
+          var reservation =
+              capacity.createIfQuotaAvailable(request, request.evidence().expiresAt(), clock);
+          if (reservation.isPresent()) {
+            return new CommitDecision(reservation.orElseThrow(), null);
+          }
+          UUID denialId = originDecisions.refuseQuota(request);
+          requireCurrentLifetime(request.evidence(), clock.instant());
+          return new CommitDecision(null, denialId);
+        });
     // Throw only after the transaction has committed the exact denial.
     if (decision.denialId() != null)
       throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, decision.denialId());
@@ -148,63 +147,61 @@ public final class AccountTenantCapacityOwner {
         || !Objects.equals(
             prior.evidence().fields().get("authorityTuple"),
             next.evidence().fields().get("authorityTuple"))) throw conflict();
-    return commitWithFreshSnapshot(
-        () -> {
-          lockPlayerAccount(next);
-          Record row = capacity.find(prior.identity());
-          if (row == null) throw conflict();
-          if (next.admissionAttemptId().equals(row.get("admission_attempt_id", UUID.class))) {
-            capacity.requirePriorHistory(prior, next);
-            return capacity.exact(next, row);
-          }
-          capacity.exact(prior, row);
-          requireClaim(row, recoveryOwner, claimFence, clock.instant());
-          if (!"RESERVED".equals(row.get("state", String.class))
-              || !"NOT_EXECUTED_AFTER_AUTHORIZATION"
-                  .equals(row.get("execution_status", String.class))
-              || row.get("owner_readback", byte[].class) == null) throw conflict();
-          current(next);
-          requireSupportedShape(next);
-          originDecisions.accept(next);
-          requireClaim(row, recoveryOwner, claimFence, clock.instant());
-          requireCurrentLifetime(next.evidence(), clock.instant());
-          int history =
-              dsl.execute(
-                  "INSERT INTO account_tenant_capacity_attempt_history "
-                      + "(tenant_uuid, request_id, admission_id, admission_attempt_id, capacity_rearm_fence, mutation_digest, canonical_payload, owner_readback) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                  prior.identity().tenantId(),
-                  prior.identity().requestId(),
-                  prior.identity().admissionId(),
-                  prior.admissionAttemptId(),
-                  prior.capacityRearmFence(),
-                  prior.mutationDigest(),
-                  CapacityAdmissionDigest.preimage(prior),
-                  row.get("owner_readback", byte[].class));
-          if (history != 1) throw unavailable();
-          int changed =
-              dsl.execute(
-                  "UPDATE account_tenant_capacity_reservations SET admission_attempt_id = ?, capacity_rearm_fence = ?, reservation_fence = ?, mutation_digest = ?, canonical_payload = ?, evaluation_identity = ?, expires_at = ?::timestamptz, reconcile_deadline = ?::timestamptz, next_reconcile_at = NULL, recovery_attempt_count = 0, execution_status = 'OWNER_EXECUTION_PENDING', owner_readback = NULL, owner_readback_digest = NULL "
-                      + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND admission_attempt_id = ? AND capacity_rearm_fence = ? AND mutation_digest = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION'",
-                  next.admissionAttemptId(),
-                  next.capacityRearmFence(),
-                  Math.incrementExact(number(row, "reservation_fence")),
-                  next.mutationDigest(),
-                  CapacityAdmissionDigest.preimage(next),
-                  next.evidence().evaluationIdentity(),
-                  at(next.evidence().expiresAt()),
-                  at(next.evidence().expiresAt().plusSeconds(60)),
-                  prior.identity().tenantId(),
-                  prior.identity().requestId(),
-                  prior.identity().admissionId(),
-                  prior.admissionAttemptId(),
-                  prior.capacityRearmFence(),
-                  prior.mutationDigest(),
-                  recoveryOwner,
-                  claimFence);
-          if (changed != 1) throw conflict();
-          // Reservation identity and both usage columns are deliberately untouched.
-          return capacity.exact(next, Objects.requireNonNull(capacity.find(next.identity())));
-        });
+    return commitWithFreshSnapshot(() -> {
+      lockPlayerAccount(next);
+      Record row = capacity.find(prior.identity());
+      if (row == null) throw conflict();
+      if (next.admissionAttemptId().equals(row.get("admission_attempt_id", UUID.class))) {
+        capacity.requirePriorHistory(prior, next);
+        return capacity.exact(next, row);
+      }
+      capacity.exact(prior, row);
+      requireClaim(row, recoveryOwner, claimFence, clock.instant());
+      if (!"RESERVED".equals(row.get("state", String.class))
+          || !"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(row.get("execution_status", String.class))
+          || row.get("owner_readback", byte[].class) == null) throw conflict();
+      current(next);
+      requireSupportedShape(next);
+      originDecisions.accept(next);
+      requireClaim(row, recoveryOwner, claimFence, clock.instant());
+      requireCurrentLifetime(next.evidence(), clock.instant());
+      int history =
+          dsl.execute(
+              "INSERT INTO account_tenant_capacity_attempt_history "
+                  + "(tenant_uuid, request_id, admission_id, admission_attempt_id, capacity_rearm_fence, mutation_digest, canonical_payload, owner_readback) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              prior.identity().tenantId(),
+              prior.identity().requestId(),
+              prior.identity().admissionId(),
+              prior.admissionAttemptId(),
+              prior.capacityRearmFence(),
+              prior.mutationDigest(),
+              CapacityAdmissionDigest.preimage(prior),
+              row.get("owner_readback", byte[].class));
+      if (history != 1) throw unavailable();
+      int changed =
+          dsl.execute(
+              "UPDATE account_tenant_capacity_reservations SET admission_attempt_id = ?, capacity_rearm_fence = ?, reservation_fence = ?, mutation_digest = ?, canonical_payload = ?, evaluation_identity = ?, expires_at = ?::timestamptz, reconcile_deadline = ?::timestamptz, next_reconcile_at = NULL, recovery_attempt_count = 0, execution_status = 'OWNER_EXECUTION_PENDING', owner_readback = NULL, owner_readback_digest = NULL "
+                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND admission_attempt_id = ? AND capacity_rearm_fence = ? AND mutation_digest = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION'",
+              next.admissionAttemptId(),
+              next.capacityRearmFence(),
+              Math.incrementExact(number(row, "reservation_fence")),
+              next.mutationDigest(),
+              CapacityAdmissionDigest.preimage(next),
+              next.evidence().evaluationIdentity(),
+              at(next.evidence().expiresAt()),
+              at(next.evidence().expiresAt().plusSeconds(60)),
+              prior.identity().tenantId(),
+              prior.identity().requestId(),
+              prior.identity().admissionId(),
+              prior.admissionAttemptId(),
+              prior.capacityRearmFence(),
+              prior.mutationDigest(),
+              recoveryOwner,
+              claimFence);
+      if (changed != 1) throw conflict();
+      // Reservation identity and both usage columns are deliberately untouched.
+      return capacity.exact(next, Objects.requireNonNull(capacity.find(next.identity())));
+    });
   }
 
   private void current(Request request) {
@@ -236,10 +233,9 @@ public final class AccountTenantCapacityOwner {
     }
     if (!(fields.get("sourceReferences") instanceof Map<?, ?> source)) throw unavailable();
     var issuance =
-        qualifiedSource(
-                () ->
-                    issuances.readCurrentCommittedCandidateByJti(
-                        UUID.fromString((String) source.get("callerTokenJti"))))
+        qualifiedSource(() ->
+                issuances.readCurrentCommittedCandidateByJti(
+                    UUID.fromString((String) source.get("callerTokenJti"))))
             .orElseThrow(AccountTenantCapacityRepository::unavailable);
     if (!issuance.identity().accountId().equals(player.accountId())
         || !issuance.identity().callerWorkload().equals(request.evidence().callerWorkload())
@@ -253,9 +249,8 @@ public final class AccountTenantCapacityOwner {
         || now.getEpochSecond() < issuance.identity().notBeforeEpochSecond()
         || now.getEpochSecond() >= issuance.identity().expiresAtEpochSecond()) throw unavailable();
     var scope =
-        qualifiedSource(
-                () ->
-                    scopes.findCanonicalEvidenceByTokenHash(parsed.verifiedConnectScopeTokenHash()))
+        qualifiedSource(() ->
+                scopes.findCanonicalEvidenceByTokenHash(parsed.verifiedConnectScopeTokenHash()))
             .orElseThrow(AccountTenantCapacityRepository::unavailable);
     if (!scope.accountUuid().equals(player.accountId())
         || !scope.tenantUuid().equals(player.tenantId())
@@ -318,11 +313,10 @@ public final class AccountTenantCapacityOwner {
     if (caller.isCancelled() || retryDeadline.isExpired()) throw unavailable();
     for (int attempt = 1; ; attempt++) {
       try {
-        return inTransaction(
-            () -> {
-              if (caller.isCancelled() || retryDeadline.isExpired()) throw unavailable();
-              return action.get();
-            });
+        return inTransaction(() -> {
+          if (caller.isCancelled() || retryDeadline.isExpired()) throw unavailable();
+          return action.get();
+        });
       } catch (RuntimeException failure) {
         // A PostgreSQL serialization failure rolls back the whole transaction. Retry outside
         // that transaction so a concurrent original can become exact replay or conflict.
@@ -362,17 +356,15 @@ public final class AccountTenantCapacityOwner {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
     return Objects.requireNonNull(
-        transaction.execute(
-            status -> {
-              AccountTenantCapacityRepository.transaction();
-              dsl.connection(
-                  connection -> {
-                    if (connection.getAutoCommit()
-                        || connection.isReadOnly()
-                        || connection.getTransactionIsolation()
-                            != Connection.TRANSACTION_SERIALIZABLE) throw unavailable();
-                  });
-              return action.get();
-            }));
+        transaction.execute(status -> {
+          AccountTenantCapacityRepository.transaction();
+          dsl.connection(connection -> {
+            if (connection.getAutoCommit()
+                || connection.isReadOnly()
+                || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE)
+              throw unavailable();
+          });
+          return action.get();
+        }));
   }
 }

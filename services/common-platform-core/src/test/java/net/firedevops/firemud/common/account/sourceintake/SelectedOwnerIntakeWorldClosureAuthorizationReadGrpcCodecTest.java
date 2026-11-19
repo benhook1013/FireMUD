@@ -136,17 +136,15 @@ class SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodecTest {
                             .build()))
             .build();
     for (var changed : List.of(notHeld, substituted, unknown, nestedUnknown)) {
-      assertThatThrownBy(
-              () ->
-                  SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodec.fromResponse(
-                      request, changed))
+      assertThatThrownBy(() ->
+              SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodec.fromResponse(
+                  request, changed))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodec.fromResponse(
-                    request,
-                    ReadHeldSelectedOwnerWorldClosureAuthorizationResponse.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodec.fromResponse(
+                request,
+                ReadHeldSelectedOwnerWorldClosureAuthorizationResponse.getDefaultInstance()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -171,14 +169,13 @@ class SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodecTest {
             .build();
     assertThat(oversizedResponse.getSerializedSize())
         .isGreaterThan(SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodec.MAX_WIRE_BYTES);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodec.fromResponse(
-                    Request.create(
-                        "test",
-                        SelectedOwnerIntakeAuthorizationReadEvidenceTest.binding(
-                            Owner.ENTITY_MANAGEMENT)),
-                    oversizedResponse))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeWorldClosureAuthorizationReadGrpcCodec.fromResponse(
+                Request.create(
+                    "test",
+                    SelectedOwnerIntakeAuthorizationReadEvidenceTest.binding(
+                        Owner.ENTITY_MANAGEMENT)),
+                oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

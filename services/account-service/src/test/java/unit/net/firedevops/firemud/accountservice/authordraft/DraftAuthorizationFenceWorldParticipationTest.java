@@ -35,35 +35,31 @@ class DraftAuthorizationFenceWorldParticipationTest {
   void worldParticipationAdmissionRequiresWritableReadCommittedOwnerTransaction() throws Exception {
     Fixture fixture = new Fixture(false);
 
-    assertThatThrownBy(
-            () ->
-                fixture.repository.requireWorldParticipationDisclosureAdmission(
-                    List.of(fixture.source)))
+    assertThatThrownBy(() ->
+            fixture.repository.requireWorldParticipationDisclosureAdmission(
+                List.of(fixture.source)))
         .isInstanceOf(IllegalStateException.class);
 
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
-    assertThatThrownBy(
-            () ->
-                fixture.repository.requireWorldParticipationDisclosureAdmission(
-                    List.of(fixture.source)))
+    assertThatThrownBy(() ->
+            fixture.repository.requireWorldParticipationDisclosureAdmission(
+                List.of(fixture.source)))
         .isInstanceOf(IllegalStateException.class);
 
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
     fixture.begin();
     fixture.autoCommit = true;
-    assertThatThrownBy(
-            () ->
-                fixture.repository.requireWorldParticipationDisclosureAdmission(
-                    List.of(fixture.source)))
+    assertThatThrownBy(() ->
+            fixture.repository.requireWorldParticipationDisclosureAdmission(
+                List.of(fixture.source)))
         .isInstanceOf(IllegalStateException.class);
 
     fixture.autoCommit = false;
     fixture.isolation = Connection.TRANSACTION_REPEATABLE_READ;
-    assertThatThrownBy(
-            () ->
-                fixture.repository.requireWorldParticipationDisclosureAdmission(
-                    List.of(fixture.source)))
+    assertThatThrownBy(() ->
+            fixture.repository.requireWorldParticipationDisclosureAdmission(
+                List.of(fixture.source)))
         .isInstanceOf(IllegalStateException.class);
 
     assertThat(fixture.lockedKeys).isEmpty();
@@ -78,10 +74,8 @@ class DraftAuthorizationFenceWorldParticipationTest {
     SourceEvidence second = source("z-second");
     fixture.pendingWorldKey = second.key();
 
-    assertThatThrownBy(
-            () ->
-                fixture.repository.requireWorldParticipationDisclosureAdmission(
-                    List.of(second, first)))
+    assertThatThrownBy(() ->
+            fixture.repository.requireWorldParticipationDisclosureAdmission(List.of(second, first)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("World participation remains pending");
 
@@ -117,11 +111,10 @@ class DraftAuthorizationFenceWorldParticipationTest {
         .anyMatch(statement -> statement.contains("account_selected_publication_sources"))
         .anyMatch(statement -> statement.contains("account_game_logic_intake_sources"));
     assertThat(fixture.fetchedSql)
-        .noneMatch(
-            statement ->
-                statement.contains("account_draft_authorization_fences")
-                    || statement.contains(
-                        "SELECT operation_id FROM account_draft_authorization_sources"));
+        .noneMatch(statement ->
+            statement.contains("account_draft_authorization_fences")
+                || statement.contains(
+                    "SELECT operation_id FROM account_draft_authorization_sources"));
     assertThat(fixture.sql).noneMatch(statement -> statement.contains("UPDATE "));
   }
 

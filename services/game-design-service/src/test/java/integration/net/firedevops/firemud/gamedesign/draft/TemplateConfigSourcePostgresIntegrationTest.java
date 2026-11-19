@@ -105,10 +105,9 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 .get(0, Long.class))
         .isEqualTo(1L);
 
-    f.tx.executeWithoutResult(
-        ignored ->
-            assertThat(new TemplateConfigSourceRepository(f.dsl).apply(declaration).orElseThrow())
-                .isEqualTo(new TemplateConfigSourceSnapshot.Application(declaration, "0", first)));
+    f.tx.executeWithoutResult(ignored ->
+        assertThat(new TemplateConfigSourceRepository(f.dsl).apply(declaration).orElseThrow())
+            .isEqualTo(new TemplateConfigSourceSnapshot.Application(declaration, "0", first)));
     assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
         .isZero();
 
@@ -140,19 +139,18 @@ class TemplateConfigSourcePostgresIntegrationTest {
         .isEqualTo(1L);
 
     var operation =
-        f.tx.execute(
-            ignored -> {
-              try {
-                return IsolatedPublicationOwnerSetup.retainSourceBacked(
-                    f.dsl,
-                    f.target,
-                    1L,
-                    "Automation inventory declaration source freeze",
-                    actualTemplate.commitId().toString());
-              } catch (Exception e) {
-                throw new IllegalStateException("Unable to retain source-backed publication", e);
-              }
-            });
+        f.tx.execute(ignored -> {
+          try {
+            return IsolatedPublicationOwnerSetup.retainSourceBacked(
+                f.dsl,
+                f.target,
+                1L,
+                "Automation inventory declaration source freeze",
+                actualTemplate.commitId().toString());
+          } catch (Exception e) {
+            throw new IllegalStateException("Unable to retain source-backed publication", e);
+          }
+        });
     var capture =
         Objects.requireNonNull(
                 f.tx.execute(
@@ -195,11 +193,9 @@ class TemplateConfigSourcePostgresIntegrationTest {
     assertThat(latest.revisionId()).isEqualTo(second.revisions().getFirst().revisionId());
     assertThat(latest.inventory()).isEqualTo(inventory);
 
-    f.tx.executeWithoutResult(
-        ignored ->
-            assertThat(new TemplateConfigSourceRepository(f.dsl).apply(second).orElseThrow())
-                .isEqualTo(
-                    new TemplateConfigSourceSnapshot.Application(second, "1", secondSnapshot)));
+    f.tx.executeWithoutResult(ignored ->
+        assertThat(new TemplateConfigSourceRepository(f.dsl).apply(second).orElseThrow())
+            .isEqualTo(new TemplateConfigSourceSnapshot.Application(second, "1", secondSnapshot)));
     var unrelated =
         binding(
             f,
@@ -356,12 +352,10 @@ class TemplateConfigSourcePostgresIntegrationTest {
                     v1025MigrationHistory.size())
                 .getValues("history_entry", String.class))
         .containsExactlyElementsOf(v1025MigrationHistory);
-    f.tx.executeWithoutResult(
-        ignored ->
-            assertThat(new TemplateConfigSourceRepository(f.dsl).apply(automation).orElseThrow())
-                .isEqualTo(
-                    new TemplateConfigSourceSnapshot.Application(
-                        automation, "1", automationSource)));
+    f.tx.executeWithoutResult(ignored ->
+        assertThat(new TemplateConfigSourceRepository(f.dsl).apply(automation).orElseThrow())
+            .isEqualTo(
+                new TemplateConfigSourceSnapshot.Application(automation, "1", automationSource)));
 
     var migratedDeclaration =
         f.dsl.fetchSingle(
@@ -498,11 +492,9 @@ class TemplateConfigSourcePostgresIntegrationTest {
     assertThat(entitySource.entries()).hasSize(1);
     assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
         .isEqualTo(1L);
-    f.tx.executeWithoutResult(
-        ignored ->
-            assertThat(new TemplateConfigSourceRepository(f.dsl).apply(entity).orElseThrow())
-                .isEqualTo(
-                    new TemplateConfigSourceSnapshot.Application(entity, "2", entitySource)));
+    f.tx.executeWithoutResult(ignored ->
+        assertThat(new TemplateConfigSourceRepository(f.dsl).apply(entity).orElseThrow())
+            .isEqualTo(new TemplateConfigSourceSnapshot.Application(entity, "2", entitySource)));
 
     var unrelated =
         binding(
@@ -575,14 +567,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, automationInventory),
             TemplateConfigSource.SCOPE,
             "0");
-    assertThatThrownBy(
-            () ->
-                f.tx.executeWithoutResult(
-                    ignored -> {
-                      stageInProgressTemplateApplication(f, missingResult);
-                      f.dsl.execute(
-                          "SET CONSTRAINTS template_config_application_commit_guard IMMEDIATE");
-                    }))
+    assertThatThrownBy(() ->
+            f.tx.executeWithoutResult(ignored -> {
+              stageInProgressTemplateApplication(f, missingResult);
+              f.dsl.execute("SET CONSTRAINTS template_config_application_commit_guard IMMEDIATE");
+            }))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining("template config application requires exact atomic owner result");
 
@@ -594,27 +583,24 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 DraftCommitBinding.Owner.ENTITY_MANAGEMENT, entityInventory),
             TemplateConfigSource.SCOPE,
             "0");
-    assertThatThrownBy(
-            () ->
-                f.tx.executeWithoutResult(
-                    ignored -> {
-                      var application = stageInProgressTemplateApplication(f, changedResult);
-                      byte[] alteredResultBytes = application.canonicalBytes();
-                      alteredResultBytes[0] ^= 1;
-                      new DraftCommitCoordinatorRepository(f.dsl)
-                          .recordOwnerOutcome(
-                              changedResult,
-                              new DraftCommitCoordinatorRepository.OwnerOutcome(
-                                  DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                                  DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
-                                  changedResult.commitId(),
-                                  changedResult.digest(),
-                                  "ordinary-source:" + changedResult.commitId(),
-                                  alteredResultBytes,
-                                  List.of(application.appliedEpoch())));
-                      f.dsl.execute(
-                          "SET CONSTRAINTS template_config_application_commit_guard IMMEDIATE");
-                    }))
+    assertThatThrownBy(() ->
+            f.tx.executeWithoutResult(ignored -> {
+              var application = stageInProgressTemplateApplication(f, changedResult);
+              byte[] alteredResultBytes = application.canonicalBytes();
+              alteredResultBytes[0] ^= 1;
+              new DraftCommitCoordinatorRepository(f.dsl)
+                  .recordOwnerOutcome(
+                      changedResult,
+                      new DraftCommitCoordinatorRepository.OwnerOutcome(
+                          DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                          DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+                          changedResult.commitId(),
+                          changedResult.digest(),
+                          "ordinary-source:" + changedResult.commitId(),
+                          alteredResultBytes,
+                          List.of(application.appliedEpoch())));
+              f.dsl.execute("SET CONSTRAINTS template_config_application_commit_guard IMMEDIATE");
+            }))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining(
             "template config owner result must contain exact complete tagged source bytes");
@@ -680,15 +666,14 @@ class TemplateConfigSourcePostgresIntegrationTest {
         .isEqualTo("LEGACY");
     // Replay reads the actual original stored application, not a second CREATE or current name
     // lookup.
-    f.tx.executeWithoutResult(
-        ignored ->
-            assertThat(
-                    new GameDesignSourceRepository(f.dsl)
-                        .apply(binding)
-                        .templateConfig()
-                        .orElseThrow()
-                        .snapshot())
-                .isEqualTo(first));
+    f.tx.executeWithoutResult(ignored ->
+        assertThat(
+                new GameDesignSourceRepository(f.dsl)
+                    .apply(binding)
+                    .templateConfig()
+                    .orElseThrow()
+                    .snapshot())
+            .isEqualTo(first));
     assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
         .isEqualTo(1L);
     var sibling = binding(f, commandUpsert("TEMPLATE_SIBLING"), CommandSource.SCOPE, "0");
@@ -735,18 +720,15 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 .get(0, Long.class))
         .isEqualTo(1L);
     assertThat(source(f, binding)).isEqualTo(first);
-    assertThatThrownBy(
-            () ->
-                f.dsl.execute(
-                    "UPDATE game_design_template_config_source_revision SET payload_json = '{}'"))
+    assertThatThrownBy(() ->
+            f.dsl.execute(
+                "UPDATE game_design_template_config_source_revision SET payload_json = '{}'"))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThatThrownBy(() -> f.dsl.execute("DELETE FROM game_design_template_config_source_ref"))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                f.dsl.execute(
-                    "UPDATE game_templates SET config = '{}' WHERE id = ?",
-                    Long.parseLong(templateId)))
+    assertThatThrownBy(() ->
+            f.dsl.execute(
+                "UPDATE game_templates SET config = '{}' WHERE id = ?", Long.parseLong(templateId)))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
   }
 
@@ -799,13 +781,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
     assertThatThrownBy(() -> apply(f, binding))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("TEMPLATE_CONFIG_TEMPLATE_OWNER_PROVENANCE_UNAVAILABLE");
-    assertThatThrownBy(
-            () ->
-                f.tx.executeWithoutResult(
-                    ignored ->
-                        f.dsl.execute(
-                            "INSERT INTO game_design_template_config_source_row_insert VALUES (?, pg_current_xact_id()::TEXT)",
-                            legacy)))
+    assertThatThrownBy(() ->
+            f.tx.executeWithoutResult(ignored ->
+                f.dsl.execute(
+                    "INSERT INTO game_design_template_config_source_row_insert VALUES (?, pg_current_xact_id()::TEXT)",
+                    legacy)))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThat(new TemplateConfigSourceRepository(f.dsl).readSnapshot(f.target, binding.commitId()))
         .isEmpty();
@@ -814,12 +794,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
   @Test
   void explicitTargetRawInsertAndLegacyReassignmentCannotCommit() {
     var f = fixture();
-    assertThatThrownBy(
-            () ->
-                f.dsl.execute(
-                    "INSERT INTO game_templates (tenant_id, name, config, default_version_id) VALUES (?, 'Raw target', '{}'::JSONB, ?)",
-                    f.target.gameDesignVersionTenantKey(),
-                    f.target.gameDesignVersionRowId()))
+    assertThatThrownBy(() ->
+            f.dsl.execute(
+                "INSERT INTO game_templates (tenant_id, name, config, default_version_id) VALUES (?, 'Raw target', '{}'::JSONB, ?)",
+                f.target.gameDesignVersionTenantKey(),
+                f.target.gameDesignVersionRowId()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining(
             "explicit template target requires actual authorized CREATE qualification");
@@ -829,12 +808,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 "INSERT INTO game_templates (tenant_id, name, config) VALUES (?, 'Unrelated legacy', '{}'::JSONB) RETURNING id",
                 f.target.gameDesignVersionTenantKey())
             .get(0, Long.class);
-    assertThatThrownBy(
-            () ->
-                f.dsl.execute(
-                    "UPDATE game_templates SET default_version_id = ? WHERE id = ?",
-                    f.target.gameDesignVersionRowId(),
-                    legacy))
+    assertThatThrownBy(() ->
+            f.dsl.execute(
+                "UPDATE game_templates SET default_version_id = ? WHERE id = ?",
+                f.target.gameDesignVersionRowId(),
+                legacy))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining(
             "unqualified template cannot be reassigned into managed source target");
@@ -846,12 +824,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
     var selected = binding(f, commandUpsert("TEMPLATE_SELECTED"), CommandSource.SCOPE, "0");
     apply(f, selected);
     assertThat(source(f, selected).entries()).isEmpty();
-    assertThatThrownBy(
-            () ->
-                f.dsl.execute(
-                    "INSERT INTO game_templates (tenant_id, name, config, default_version_id) VALUES (?, 'After capture', '{}'::JSONB, ?)",
-                    f.target.gameDesignVersionTenantKey(),
-                    f.target.gameDesignVersionRowId()))
+    assertThatThrownBy(() ->
+            f.dsl.execute(
+                "INSERT INTO game_templates (tenant_id, name, config, default_version_id) VALUES (?, 'After capture', '{}'::JSONB, ?)",
+                f.target.gameDesignVersionTenantKey(),
+                f.target.gameDesignVersionRowId()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining(
             "explicit template target requires actual authorized CREATE qualification");
@@ -862,18 +839,16 @@ class TemplateConfigSourcePostgresIntegrationTest {
   void newCaptureCannotIgnorePendingUnqualifiedExplicitTargetRow() {
     var f = fixture();
     var selected = binding(f, commandUpsert("TEMPLATE_BLOCKED"), CommandSource.SCOPE, "0");
-    assertThatThrownBy(
-            () ->
-                f.tx.executeWithoutResult(
-                    ignored -> {
-                      // The deferred insert guard has not fired: new source capture must
-                      // independently deny.
-                      f.dsl.execute(
-                          "INSERT INTO game_templates (tenant_id, name, config, default_version_id) VALUES (?, 'Pending raw target', '{}'::JSONB, ?)",
-                          f.target.gameDesignVersionTenantKey(),
-                          f.target.gameDesignVersionRowId());
-                      apply(f, selected);
-                    }))
+    assertThatThrownBy(() ->
+            f.tx.executeWithoutResult(ignored -> {
+              // The deferred insert guard has not fired: new source capture must
+              // independently deny.
+              f.dsl.execute(
+                  "INSERT INTO game_templates (tenant_id, name, config, default_version_id) VALUES (?, 'Pending raw target', '{}'::JSONB, ?)",
+                  f.target.gameDesignVersionTenantKey(),
+                  f.target.gameDesignVersionRowId());
+              apply(f, selected);
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("TEMPLATE_CONFIG_EXPLICIT_TARGET_INVENTORY_UNQUALIFIED");
     assertThat(
@@ -971,15 +946,14 @@ class TemplateConfigSourcePostgresIntegrationTest {
         selectedPublicationInputs(f, selectedCommit, "selected inherited template association");
     var reservation =
         Objects.requireNonNull(
-            f.tx.execute(
-                ignored ->
-                    new SelectedDraftPublicationOwner(f.dsl)
-                        .reserve(
-                            inputs.intent(),
-                            inputs.operation().account(),
-                            inputs.operation().world(),
-                            inputs.operation().inventory(),
-                            inputs.firstRead())));
+            f.tx.execute(ignored ->
+                new SelectedDraftPublicationOwner(f.dsl)
+                    .reserve(
+                        inputs.intent(),
+                        inputs.operation().account(),
+                        inputs.operation().world(),
+                        inputs.operation().inventory(),
+                        inputs.firstRead())));
     var operation = reservation.operation();
     var returnedGameplayCapture = reservation.sourceCapture().gameplay();
     assertThat(returnedGameplayCapture).isPresent();
@@ -1036,15 +1010,14 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 originalWorldSourceRead.request().intakeRequestId(),
                 originalWorldSourceRead.request().canonicalTenantId()),
             originalWorldSourceRead.receipt());
-    f.tx.executeWithoutResult(
-        ignored ->
-            new SelectedDraftPublicationOwner(f.dsl)
-                .reserve(
-                    selection.intent(),
-                    operation.account(),
-                    operation.world(),
-                    operation.inventory(),
-                    replayWorldSourceRead));
+    f.tx.executeWithoutResult(ignored ->
+        new SelectedDraftPublicationOwner(f.dsl)
+            .reserve(
+                selection.intent(),
+                operation.account(),
+                operation.world(),
+                operation.inventory(),
+                replayWorldSourceRead));
     assertThat(associations.readExact(operation, templateCapture).getFirst().canonicalBytes())
         .containsExactly(retained.getFirst().canonicalBytes());
     var originalReceipt = originalWorldSourceRead.receipt();
@@ -1074,25 +1047,22 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 originalWorldSourceRead.request().intakeRequestId(),
                 originalWorldSourceRead.request().canonicalTenantId()),
             substitutedReceipt);
-    assertThatThrownBy(
-            () ->
-                f.tx.executeWithoutResult(
-                    ignored ->
-                        new SelectedDraftPublicationOwner(f.dsl)
-                            .reserve(
-                                selection.intent(),
-                                operation.account(),
-                                operation.world(),
-                                operation.inventory(),
-                                substitutedWorldSourceRead)))
+    assertThatThrownBy(() ->
+            f.tx.executeWithoutResult(ignored ->
+                new SelectedDraftPublicationOwner(f.dsl)
+                    .reserve(
+                        selection.intent(),
+                        operation.account(),
+                        operation.world(),
+                        operation.inventory(),
+                        substitutedWorldSourceRead)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("ASSOCIATION_CONFLICT");
     assertThat(associations.readExact(operation, templateCapture).getFirst().canonicalBytes())
         .containsExactly(retained.getFirst().canonicalBytes());
-    assertThatThrownBy(
-            () ->
-                f.dsl.execute(
-                    "UPDATE game_design_selected_template_world_source_association SET world_slug = 'substituted'"))
+    assertThatThrownBy(() ->
+            f.dsl.execute(
+                "UPDATE game_design_selected_template_world_source_association SET world_slug = 'substituted'"))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
   }
 
@@ -1187,17 +1157,16 @@ class TemplateConfigSourcePostgresIntegrationTest {
       throw new IllegalStateException("Timed out waiting to start concurrent owner reservation");
     }
     return Objects.requireNonNull(
-        f.tx.execute(
-            ignored ->
-                new SelectedDraftPublicationOwner(f.dsl)
-                    .reserve(
-                        AuthoredDraftPublishSelection.fromStored(
-                                selection.canonicalJson(), selection.digest())
-                            .intent(),
-                        operation.account(),
-                        operation.world(),
-                        operation.inventory(),
-                        sourceRead)),
+        f.tx.execute(ignored ->
+            new SelectedDraftPublicationOwner(f.dsl)
+                .reserve(
+                    AuthoredDraftPublishSelection.fromStored(
+                            selection.canonicalJson(), selection.digest())
+                        .intent(),
+                    operation.account(),
+                    operation.world(),
+                    operation.inventory(),
+                    sourceRead)),
         "concurrent owner reservation returned no result");
   }
 
@@ -1205,36 +1174,35 @@ class TemplateConfigSourcePostgresIntegrationTest {
       Fixture f, DraftCommitBinding selectedCommit, String notes) throws Exception {
     var prepared =
         Objects.requireNonNull(
-            f.tx.execute(
-                ignored -> {
-                  String versionEpoch =
-                      Objects.requireNonNull(
-                              f.dsl
-                                  .fetchSingle(
-                                      "SELECT version_state_epoch FROM version WHERE id = ?",
-                                      f.target.gameDesignVersionRowId())
-                                  .get(0, Long.class))
-                          .toString();
-                  var intent =
-                      new AuthoredDraftPublishSelection.PublishIntent(
-                          f.target.canonicalTenantId(),
-                          f.target.canonicalVersionId(),
-                          UUID.randomUUID().toString(),
-                          versionEpoch,
-                          notes,
-                          selectedCommit.requestId(),
-                          selectedCommit.commitId(),
-                          selectedCommit.digest());
-                  var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
-                  var evidence =
-                      coordinator.requireSynchronizedPublicationEvidence(
-                          f.target,
-                          selectedCommit.requestId(),
-                          selectedCommit.commitId(),
-                          selectedCommit.digest());
-                  return new PreparedSelection(
-                      intent, AuthoredDraftPublishSelection.capture(intent, f.target, evidence));
-                }));
+            f.tx.execute(ignored -> {
+              String versionEpoch =
+                  Objects.requireNonNull(
+                          f.dsl
+                              .fetchSingle(
+                                  "SELECT version_state_epoch FROM version WHERE id = ?",
+                                  f.target.gameDesignVersionRowId())
+                              .get(0, Long.class))
+                      .toString();
+              var intent =
+                  new AuthoredDraftPublishSelection.PublishIntent(
+                      f.target.canonicalTenantId(),
+                      f.target.canonicalVersionId(),
+                      UUID.randomUUID().toString(),
+                      versionEpoch,
+                      notes,
+                      selectedCommit.requestId(),
+                      selectedCommit.commitId(),
+                      selectedCommit.digest());
+              var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
+              var evidence =
+                  coordinator.requireSynchronizedPublicationEvidence(
+                      f.target,
+                      selectedCommit.requestId(),
+                      selectedCommit.commitId(),
+                      selectedCommit.digest());
+              return new PreparedSelection(
+                  intent, AuthoredDraftPublishSelection.capture(intent, f.target, evidence));
+            }));
     var selection =
         AuthoredDraftPublishSelectionBinding.fromStored(
             prepared.selection().canonicalJson(), prepared.selection().digest());
@@ -1336,68 +1304,62 @@ class TemplateConfigSourcePostgresIntegrationTest {
   }
 
   private void apply(Fixture f, DraftCommitBinding binding) {
-    f.tx.executeWithoutResult(
-        ignored -> {
-          var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
-          var reviewed = new GameDesignReviewedBaseRepository(f.dsl);
-          var sources = new GameDesignSourceRepository(f.dsl);
-          sources.claimReviewed(
-              binding,
-              reviewed.resolve(f.target, DraftBaseReference.parse(binding.baseCommitId())));
-          coordinator.claimApplicationSlot(binding);
-          coordinator.markOwnerInProgress(
-              binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
-          var applied = sources.apply(binding);
-          coordinator.advanceSourceVisibilityFence(
-              binding,
-              new DraftCommitCoordinatorRepository.CoordinatorProof(
-                  binding, List.of(applied.ownerOutcome())));
-          sources.captureSynchronized(binding);
-          coordinator.releaseApplicationSlot(binding);
-        });
+    f.tx.executeWithoutResult(ignored -> {
+      var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
+      var reviewed = new GameDesignReviewedBaseRepository(f.dsl);
+      var sources = new GameDesignSourceRepository(f.dsl);
+      sources.claimReviewed(
+          binding, reviewed.resolve(f.target, DraftBaseReference.parse(binding.baseCommitId())));
+      coordinator.claimApplicationSlot(binding);
+      coordinator.markOwnerInProgress(binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
+      var applied = sources.apply(binding);
+      coordinator.advanceSourceVisibilityFence(
+          binding,
+          new DraftCommitCoordinatorRepository.CoordinatorProof(
+              binding, List.of(applied.ownerOutcome())));
+      sources.captureSynchronized(binding);
+      coordinator.releaseApplicationSlot(binding);
+    });
   }
 
   /** Retains controlled World owner/source inputs without reserving the publication under test. */
   private void applyIsolatedWorldSuccessor(
       Fixture f, DraftCommitBinding binding, WorldPublishedStartLocationEvidence worldEvidence) {
-    f.tx.executeWithoutResult(
-        ignored -> {
-          var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
-          var reviewed = new GameDesignReviewedBaseRepository(f.dsl);
-          var sources = new GameDesignSourceRepository(f.dsl);
-          sources.claimReviewed(
-              binding,
-              reviewed.resolve(f.target, DraftBaseReference.parse(binding.baseCommitId())));
-          coordinator.claimApplicationSlot(binding);
-          coordinator.markOwnerInProgress(binding, DraftCommitBinding.Owner.WORLD_MANAGEMENT);
-          var appliedEpochs =
-              binding.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-                  .map(
-                      unit ->
-                          new DraftCommitCoordinatorRepository.AppliedEpoch(
-                              unit.aggregateType(),
-                              unit.aggregateId(),
-                              unit.scopeType(),
-                              unit.scopeId(),
-                              unit.expectedEpoch(),
-                              new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
-                  .toList();
-          var outcome =
-              new DraftCommitCoordinatorRepository.OwnerOutcome(
-                  DraftCommitBinding.Owner.WORLD_MANAGEMENT,
-                  DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
-                  binding.commitId(),
-                  binding.digest(),
-                  "ISOLATED-world-applied",
-                  worldEvidence.appliedResultBytes(),
-                  appliedEpochs);
-          coordinator.recordOwnerOutcome(binding, outcome);
-          coordinator.advanceSourceVisibilityFence(
-              binding,
-              new DraftCommitCoordinatorRepository.CoordinatorProof(binding, List.of(outcome)));
-          sources.captureSynchronized(binding);
-          coordinator.releaseApplicationSlot(binding);
-        });
+    f.tx.executeWithoutResult(ignored -> {
+      var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
+      var reviewed = new GameDesignReviewedBaseRepository(f.dsl);
+      var sources = new GameDesignSourceRepository(f.dsl);
+      sources.claimReviewed(
+          binding, reviewed.resolve(f.target, DraftBaseReference.parse(binding.baseCommitId())));
+      coordinator.claimApplicationSlot(binding);
+      coordinator.markOwnerInProgress(binding, DraftCommitBinding.Owner.WORLD_MANAGEMENT);
+      var appliedEpochs =
+          binding.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
+              .map(unit ->
+                  new DraftCommitCoordinatorRepository.AppliedEpoch(
+                      unit.aggregateType(),
+                      unit.aggregateId(),
+                      unit.scopeType(),
+                      unit.scopeId(),
+                      unit.expectedEpoch(),
+                      new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+              .toList();
+      var outcome =
+          new DraftCommitCoordinatorRepository.OwnerOutcome(
+              DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+              DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+              binding.commitId(),
+              binding.digest(),
+              "ISOLATED-world-applied",
+              worldEvidence.appliedResultBytes(),
+              appliedEpochs);
+      coordinator.recordOwnerOutcome(binding, outcome);
+      coordinator.advanceSourceVisibilityFence(
+          binding,
+          new DraftCommitCoordinatorRepository.CoordinatorProof(binding, List.of(outcome)));
+      sources.captureSynchronized(binding);
+      coordinator.releaseApplicationSlot(binding);
+    });
   }
 
   private static TemplateConfigSourceSnapshot.Application stageInProgressTemplateApplication(
@@ -1481,15 +1443,14 @@ class TemplateConfigSourcePostgresIntegrationTest {
       Fixture f, List<DraftCommitBinding.RevisionPayload> revisions, Map<String, String> scopes) {
     var units =
         scopes.entrySet().stream()
-            .map(
-                e ->
-                    new DraftCommitBinding.AffectedUnit(
-                        DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
-                        e.getKey(),
-                        f.target.canonicalVersionId().toString(),
-                        e.getKey(),
-                        "effective",
-                        e.getValue()))
+            .map(e ->
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+                    e.getKey(),
+                    f.target.canonicalVersionId().toString(),
+                    e.getKey(),
+                    "effective",
+                    e.getValue()))
             .toList();
     return DraftCommitBinding.create(
         f.target, UUID.randomUUID(), UUID.randomUUID(), currentBaseReference(f), revisions, units);

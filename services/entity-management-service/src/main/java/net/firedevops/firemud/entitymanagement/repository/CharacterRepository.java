@@ -1282,10 +1282,9 @@ public class CharacterRepository {
     List<CanonicalGameplayRosterActor> actors =
         query
             .forShare()
-            .fetch(
-                row ->
-                    new CanonicalGameplayRosterActor(
-                        row.get(CHARACTERS.CHARACTER_UUID), row.get(CHARACTERS.NAME)));
+            .fetch(row ->
+                new CanonicalGameplayRosterActor(
+                    row.get(CHARACTERS.CHARACTER_UUID), row.get(CHARACTERS.NAME)));
     if (actors.size() > CanonicalGameplayRosterSnapshotDigest.MAX_ROSTER_SIZE) {
       throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_LIMIT_EXCEEDED");
     }

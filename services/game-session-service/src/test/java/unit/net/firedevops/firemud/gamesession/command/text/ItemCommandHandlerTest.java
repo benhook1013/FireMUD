@@ -62,12 +62,11 @@ class ItemCommandHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "INVENTORY".equals(gameplayCommand.getCommandName())
-                        && "INVENTORY".equals(gameplayCommand.getCommandText())
-                        && gameplayCommand.getCommandId() != null
-                        && gameplayCommand.getCommandId().startsWith("item-")));
+            Mockito.argThat(gameplayCommand ->
+                "INVENTORY".equals(gameplayCommand.getCommandName())
+                    && "INVENTORY".equals(gameplayCommand.getCommandText())
+                    && gameplayCommand.getCommandId() != null
+                    && gameplayCommand.getCommandId().startsWith("item-")));
   }
 
   @Test

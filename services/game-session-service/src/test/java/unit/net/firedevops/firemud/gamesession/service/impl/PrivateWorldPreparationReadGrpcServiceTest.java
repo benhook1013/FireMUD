@@ -524,9 +524,9 @@ class PrivateWorldPreparationReadGrpcServiceTest {
     final RealmEntryPolicy policy =
         RealmEntryPolicy.parse(
             """
-        {"schemaVersion":1,"worldSlug":"world","worldDisplayName":"World","realmSlug":"private",
-         "realmDisplayName":"Private","visible":true,"publicProduction":false,"stateScope":"ISOLATED","entryPolicy":"PRESEEDED_ONLY"}
-        """,
+            {"schemaVersion":1,"worldSlug":"world","worldDisplayName":"World","realmSlug":"private",
+             "realmDisplayName":"Private","visible":true,"publicProduction":false,"stateScope":"ISOLATED","entryPolicy":"PRESEEDED_ONLY"}
+            """,
             JsonMapper.builder().build());
     final GameSessionInitialPlaytestLifecycleRepository.SourceReference source =
         new GameSessionInitialPlaytestLifecycleRepository.SourceReference(

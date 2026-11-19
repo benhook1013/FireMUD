@@ -39,11 +39,10 @@ public final class EntityCharacterCreateSource {
     var receipt =
         intakes
             .read(action.scope().targetNamespace(), association.get(0, UUID.class))
-            .orElseThrow(
-                () ->
-                    Status.UNAVAILABLE
-                        .withDescription("Entity selected source receipt is unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.UNAVAILABLE
+                    .withDescription("Entity selected source receipt is unavailable")
+                    .asRuntimeException());
     var owner =
         receipt.inputs().worldInventoryReadEvidence().inventory().publicEvidence().ownerScope();
     if (!action.scope().targetNamespace().equals(receipt.targetNamespace())

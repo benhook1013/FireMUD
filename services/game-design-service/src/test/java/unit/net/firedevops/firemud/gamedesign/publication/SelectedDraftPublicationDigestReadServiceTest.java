@@ -551,14 +551,13 @@ class SelectedDraftPublicationDigestReadServiceTest {
       SelectedDraftPublicationDigestReadService service, PublicationDigestRequestBinding request) {
     assertThatThrownBy(() -> service.read(NAMESPACE, request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              var status = ((StatusRuntimeException) failure).getStatus();
-              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-              assertThat(status.getDescription())
-                  .isEqualTo("Selected publication source readback unavailable")
-                  .doesNotContain("secret");
-            });
+        .satisfies(failure -> {
+          var status = ((StatusRuntimeException) failure).getStatus();
+          assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+          assertThat(status.getDescription())
+              .isEqualTo("Selected publication source readback unavailable")
+              .doesNotContain("secret");
+        });
   }
 
   private record Fixture(

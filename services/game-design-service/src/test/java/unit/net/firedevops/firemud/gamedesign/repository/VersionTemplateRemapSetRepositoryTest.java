@@ -77,21 +77,19 @@ class VersionTemplateRemapSetRepositoryTest {
 
       assertThat(inserted.getRemapEntries())
           .singleElement()
-          .satisfies(
-              savedEntry -> {
-                assertThat(savedEntry.getId()).isNotNull();
-                assertThat(savedEntry.getCreatedAt()).isEqualTo(entryCreatedAt);
-              });
+          .satisfies(savedEntry -> {
+            assertThat(savedEntry.getId()).isNotNull();
+            assertThat(savedEntry.getCreatedAt()).isEqualTo(entryCreatedAt);
+          });
       assertThat(executedSql)
           .filteredOn(
               sql -> sql.toLowerCase().contains("insert into \"version_template_remap_entry\""))
           .singleElement()
-          .satisfies(
-              sql -> {
-                assertThat(sql.toLowerCase())
-                    .contains("select \"id\", \"created_at\" from final table");
-                assertThat(sql.toLowerCase()).doesNotContain("select *");
-              });
+          .satisfies(sql -> {
+            assertThat(sql.toLowerCase())
+                .contains("select \"id\", \"created_at\" from final table");
+            assertThat(sql.toLowerCase()).doesNotContain("select *");
+          });
     }
   }
 }

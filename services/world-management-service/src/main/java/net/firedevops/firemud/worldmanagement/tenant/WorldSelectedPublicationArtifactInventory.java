@@ -258,10 +258,9 @@ public final class WorldSelectedPublicationArtifactInventory {
     var inboundClosure =
         graph
             .inboundSourceClosure()
-            .orElseThrow(
-                () ->
-                    new ConflictException(
-                        "World selected inventory requires the exact original inbound source closure declaration"));
+            .orElseThrow(() ->
+                new ConflictException(
+                    "World selected inventory requires the exact original inbound source closure declaration"));
     List<FamilyCount> counts = new ArrayList<>();
     for (WorldCanonicalAuthoredGraph.Family family : SUPPORTED_FAMILY_ORDER) {
       counts.add(new FamilyCount(family.name(), graph.family(family).size()));
@@ -323,10 +322,9 @@ public final class WorldSelectedPublicationArtifactInventory {
             new WorldSelectedPublicationArtifactInventoryEvidence.InboundSourceClosureDeclaration(
                 inboundClosure.schemaVersion(),
                 inboundClosure.familyCounts().stream()
-                    .map(
-                        family ->
-                            new WorldSelectedPublicationArtifactInventoryEvidence
-                                .InboundSourceFamilyCount(family.family().name(), family.count()))
+                    .map(family ->
+                        new WorldSelectedPublicationArtifactInventoryEvidence
+                            .InboundSourceFamilyCount(family.family().name(), family.count()))
                     .toList()));
     var bindingBytes = accountBinding.canonicalBytes();
     var envelope =
@@ -808,11 +806,10 @@ public final class WorldSelectedPublicationArtifactInventory {
         .filter(count -> family.equals(count.family()))
         .mapToInt(FamilyCount::rowCount)
         .findFirst()
-        .orElseThrow(
-            () ->
-                unrepresentable(
-                    UnrepresentableReason.UNKNOWN_GRAPH_FAMILY,
-                    "World selected graph omitted a required closed source family"));
+        .orElseThrow(() ->
+            unrepresentable(
+                UnrepresentableReason.UNKNOWN_GRAPH_FAMILY,
+                "World selected graph omitted a required closed source family"));
   }
 
   private static boolean isSha256(String value) {
@@ -865,15 +862,14 @@ public final class WorldSelectedPublicationArtifactInventory {
       List<AppliedEpoch> actual) {
     var expected =
         selectedCommit.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new AppliedEpoch(
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch(),
-                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+            .map(unit ->
+                new AppliedEpoch(
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch(),
+                    new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
             .toList();
     return !expected.isEmpty() && expected.equals(actual);
   }

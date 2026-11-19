@@ -370,27 +370,26 @@ class MoveAggregationServiceTest {
   @Test
   void resolveAddsGameplayLoggingContext() {
     when(worldStub.getRoomSnapshot(any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(MDC.get("tenantId")).isEqualTo(LookTestFixtures.TENANT);
-              assertThat(MDC.get("characterId")).isEqualTo("player-1");
-              assertThat(MDC.get("gameInstanceId")).isNull();
-              return GetRoomSnapshotResponse.newBuilder()
-                  .setSnapshot(
-                      RoomSnapshot.newBuilder()
-                          .setTenantId(LookTestFixtures.TENANT)
-                          .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
-                          .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
-                          .setRoomName(LookTestFixtures.ROOM_NAME)
-                          .addExits(
-                              RoomExitSnapshot.newBuilder()
-                                  .setDirection("EAST")
-                                  .setLabel("EAST")
-                                  .setTargetRoomInstanceId("R-2045")
-                                  .build())
-                          .build())
-                  .build();
-            });
+        .thenAnswer(ignored -> {
+          assertThat(MDC.get("tenantId")).isEqualTo(LookTestFixtures.TENANT);
+          assertThat(MDC.get("characterId")).isEqualTo("player-1");
+          assertThat(MDC.get("gameInstanceId")).isNull();
+          return GetRoomSnapshotResponse.newBuilder()
+              .setSnapshot(
+                  RoomSnapshot.newBuilder()
+                      .setTenantId(LookTestFixtures.TENANT)
+                      .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+                      .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                      .setRoomName(LookTestFixtures.ROOM_NAME)
+                      .addExits(
+                          RoomExitSnapshot.newBuilder()
+                              .setDirection("EAST")
+                              .setLabel("EAST")
+                              .setTargetRoomInstanceId("R-2045")
+                              .build())
+                      .build())
+              .build();
+        });
     service.resolve(
         MoveRequest.newBuilder()
             .setTenantId(LookTestFixtures.TENANT)

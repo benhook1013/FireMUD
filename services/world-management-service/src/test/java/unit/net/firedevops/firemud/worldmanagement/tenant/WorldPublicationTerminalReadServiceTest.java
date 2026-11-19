@@ -97,14 +97,13 @@ class WorldPublicationTerminalReadServiceTest {
       try {
         assertThatThrownBy(() -> service.read(request))
             .isInstanceOf(io.grpc.StatusRuntimeException.class)
-            .satisfies(
-                failure -> {
-                  var status = Status.fromThrowable(failure);
-                  assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-                  assertThat(status.getDescription())
-                      .isEqualTo("World publication terminal owner read is unavailable")
-                      .doesNotContain("sensitive");
-                });
+            .satisfies(failure -> {
+              var status = Status.fromThrowable(failure);
+              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(status.getDescription())
+                  .isEqualTo("World publication terminal owner read is unavailable")
+                  .doesNotContain("sensitive");
+            });
       } finally {
         context.detach(previous);
       }

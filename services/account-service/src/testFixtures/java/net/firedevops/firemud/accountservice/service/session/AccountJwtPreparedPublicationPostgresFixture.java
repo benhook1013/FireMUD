@@ -432,28 +432,26 @@ public final class AccountJwtPreparedPublicationPostgresFixture {
     result.put(
         "profiles",
         validator.profiles().stream()
-            .map(
-                profile ->
-                    Map.of("tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
+            .map(profile ->
+                Map.of("tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
             .toList());
     result.put(
         "pods",
         validator.pods().stream()
-            .map(
-                pod ->
-                    Map.ofEntries(
-                        Map.entry("name", pod.name()),
-                        Map.entry("uid", pod.uid()),
-                        Map.entry("resourceVersion", pod.resourceVersion()),
-                        Map.entry("ownerReplicaSetName", pod.ownerName()),
-                        Map.entry("ownerReplicaSetUid", pod.ownerUid()),
-                        Map.entry("podTemplateHash", pod.podTemplateHash()),
-                        Map.entry("image", pod.image()),
-                        Map.entry("verifierConfigSha256", pod.verifierConfigSha256()),
-                        Map.entry("podIp", pod.podIp()),
-                        Map.entry("exactPodEndpoint", pod.endpoint().toString()),
-                        Map.entry("canonicalServiceUri", pod.receiverServiceUri()),
-                        Map.entry("leafSpkiSha256", pod.leafSpkiSha256())))
+            .map(pod ->
+                Map.ofEntries(
+                    Map.entry("name", pod.name()),
+                    Map.entry("uid", pod.uid()),
+                    Map.entry("resourceVersion", pod.resourceVersion()),
+                    Map.entry("ownerReplicaSetName", pod.ownerName()),
+                    Map.entry("ownerReplicaSetUid", pod.ownerUid()),
+                    Map.entry("podTemplateHash", pod.podTemplateHash()),
+                    Map.entry("image", pod.image()),
+                    Map.entry("verifierConfigSha256", pod.verifierConfigSha256()),
+                    Map.entry("podIp", pod.podIp()),
+                    Map.entry("exactPodEndpoint", pod.endpoint().toString()),
+                    Map.entry("canonicalServiceUri", pod.receiverServiceUri()),
+                    Map.entry("leafSpkiSha256", pod.leafSpkiSha256())))
             .toList());
     result.put("receiverServiceUri", serviceUri);
     result.put("receiverPort", receiverPort);

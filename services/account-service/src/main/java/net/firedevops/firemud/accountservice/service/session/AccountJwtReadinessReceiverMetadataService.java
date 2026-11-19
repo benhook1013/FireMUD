@@ -321,10 +321,9 @@ public final class AccountJwtReadinessReceiverMetadataService {
       InventorySnapshot inventory, ValidatorObservation validator, PodObservation pod) {
     List<ReplicaSetObservation> ownedReplicaSets =
         validator.replicaSets().stream()
-            .filter(
-                replicaSet ->
-                    replicaSet.uid().equals(pod.ownerUid())
-                        && replicaSet.name().equals(pod.ownerName()))
+            .filter(replicaSet ->
+                replicaSet.uid().equals(pod.ownerUid())
+                    && replicaSet.name().equals(pod.ownerName()))
             .toList();
     URI endpoint = pod.endpoint();
     String endpointHost = endpoint == null ? null : endpoint.getHost();

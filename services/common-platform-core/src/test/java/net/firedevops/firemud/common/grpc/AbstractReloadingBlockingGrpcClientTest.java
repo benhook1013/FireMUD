@@ -111,11 +111,10 @@ class AbstractReloadingBlockingGrpcClientTest {
       client.initExplicit();
       var original = client.requirePublishedExplicitStub();
       when(previous.shutdown())
-          .thenAnswer(
-              invocation -> {
-                stubAtShutdown.set(client.requirePublishedExplicitStub());
-                return previous;
-              });
+          .thenAnswer(invocation -> {
+            stubAtShutdown.set(client.requirePublishedExplicitStub());
+            return previous;
+          });
 
       client.reloadChannel();
 
@@ -165,22 +164,21 @@ class AbstractReloadingBlockingGrpcClientTest {
           client.initExplicit();
           Function<CountDownLatch, Future<PingResponse>> submitCall =
               ready ->
-                  executor.submit(
-                      () ->
-                          client.withPublishedInitializedStub(
-                              "test client has no stub",
-                              stub -> {
-                                assertThat(stub.getChannel()).isSameAs(previous);
-                                selected.countDown();
-                                try {
-                                  assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
-                                } catch (InterruptedException interrupted) {
-                                  Thread.currentThread().interrupt();
-                                  throw new AssertionError(interrupted);
-                                }
-                                return stub.withDeadlineAfter(5, TimeUnit.SECONDS)
-                                    .ping(PingRequest.getDefaultInstance());
-                              }));
+                  executor.submit(() ->
+                      client.withPublishedInitializedStub(
+                          "test client has no stub",
+                          stub -> {
+                            assertThat(stub.getChannel()).isSameAs(previous);
+                            selected.countDown();
+                            try {
+                              assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+                            } catch (InterruptedException interrupted) {
+                              Thread.currentThread().interrupt();
+                              throw new AssertionError(interrupted);
+                            }
+                            return stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                                .ping(PingRequest.getDefaultInstance());
+                          }));
           var first = submitCall.apply(startFirst);
           var second = submitCall.apply(startSecond);
           try {
@@ -284,22 +282,20 @@ class AbstractReloadingBlockingGrpcClientTest {
     var release = new CountDownLatch(1);
     when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
         .thenReturn(previous)
-        .thenAnswer(
-            invocation -> {
-              building.countDown();
-              assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
-              return replacement;
-            });
+        .thenAnswer(invocation -> {
+          building.countDown();
+          assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+          return replacement;
+        });
     var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
     var executor = Executors.newFixedThreadPool(2, Thread.ofPlatform().daemon().factory());
     try {
       client.initExplicit();
       var reload =
-          executor.submit(
-              () -> {
-                client.reloadChannel();
-                return null;
-              });
+          executor.submit(() -> {
+            client.reloadChannel();
+            return null;
+          });
       try {
         assertThat(building.await(5, TimeUnit.SECONDS)).isTrue();
         var call =
@@ -416,13 +412,12 @@ class AbstractReloadingBlockingGrpcClientTest {
       client.init();
       Files.writeString(certificate, "certificate-2");
 
-      awaitCondition(
-          () -> {
-            Health health = TlsCertificateWatcher.health();
-            return "OUT_OF_SERVICE".equals(health.getStatus().getCode())
-                && ((Number) health.getDetails().get("unhealthyWatchers")).intValue()
-                    >= unhealthyWatchersBefore + 1;
-          });
+      awaitCondition(() -> {
+        Health health = TlsCertificateWatcher.health();
+        return "OUT_OF_SERVICE".equals(health.getStatus().getCode())
+            && ((Number) health.getDetails().get("unhealthyWatchers")).intValue()
+                >= unhealthyWatchersBefore + 1;
+      });
 
       Health health = TlsCertificateWatcher.health();
       assertThat(health.getStatus().getCode()).isEqualTo("OUT_OF_SERVICE");

@@ -41,10 +41,8 @@ class PublicationClientCloseLifecycleTest {
   @ResourceLock(Resources.SYSTEM_PROPERTIES)
   Stream<DynamicTest> sharesInitAndCloseLifecycleAcrossExplicitClients(@TempDir Path directory) {
     return clientCases().stream()
-        .map(
-            testCase ->
-                DynamicTest.dynamicTest(
-                    testCase.name(), () -> assertLifecycle(testCase, directory)));
+        .map(testCase ->
+            DynamicTest.dynamicTest(testCase.name(), () -> assertLifecycle(testCase, directory)));
   }
 
   private static List<ClientCase> clientCases() {

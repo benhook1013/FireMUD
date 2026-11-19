@@ -128,12 +128,11 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 1L, 2L, "region-alpha", 7L, "dispatch-1"))
         .thenReturn(Optional.empty(), Optional.of(accepted), Optional.of(accepted));
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayCommand command = invocation.getArgument(0);
-              command.setCommandId("auto-failed");
-              return new GameplayCommandRepository.IdempotentInsertResult(command, true);
-            });
+        .thenAnswer(invocation -> {
+          GameplayCommand command = invocation.getArgument(0);
+          command.setCommandId("auto-failed");
+          return new GameplayCommandRepository.IdempotentInsertResult(command, true);
+        });
     RuntimeRegionStatus ownership = new RuntimeRegionStatus();
     ownership.setTenantId(1L);
     ownership.setGameInstanceId(2L);
@@ -191,10 +190,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 1L, 2L, "region-alpha", 7L, "dispatch-1"))
         .thenReturn(Optional.empty());
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
     RuntimeRegionStatus ownership = new RuntimeRegionStatus();
     ownership.setTenantId(1L);
     ownership.setGameInstanceId(2L);
@@ -300,10 +297,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
             request.tenantId(), request.regionId()))
         .thenReturn(Optional.of(ownership));
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
 
     AdmissionResult result =
         AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
@@ -354,12 +349,11 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 1L, 2L, "region-alpha", 7L, "dispatch-1"))
         .thenReturn(Optional.empty());
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayCommand inserted = invocation.getArgument(0);
-              inserted.setId(1L);
-              return new GameplayCommandRepository.IdempotentInsertResult(inserted, true);
-            });
+        .thenAnswer(invocation -> {
+          GameplayCommand inserted = invocation.getArgument(0);
+          inserted.setId(1L);
+          return new GameplayCommandRepository.IdempotentInsertResult(inserted, true);
+        });
 
     RuntimeRegionStatus ownership = new RuntimeRegionStatus();
     ownership.setTenantId(1L);
@@ -562,10 +556,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
         .thenReturn(Optional.of(ownership));
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
     when(pointerAuthority.listByRuntimeTarget(1L, 2L))
         .thenReturn(List.of(currentPointer("demo", "production", 17L)));
 
@@ -639,10 +631,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
     when(pointerAuthority.listByRuntimeTarget(1L, 2L))
         .thenReturn(List.of(currentPointer("demo", "production", 17L)));
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
     RuntimeRegionStatus ownership = new RuntimeRegionStatus();
     ownership.setTenantId(1L);
     ownership.setGameInstanceId(2L);
@@ -1429,39 +1419,36 @@ class AutomationGameplayCommandAdmissionSupportTest {
     winner.setCommandId("auto-winner");
     winner.setExecutionOutcome("STAGED");
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayCommand candidate = invocation.getArgument(0);
-              if ("say hello".equals(candidate.getCommandText())) {
-                exactInserted.countDown();
-                return new GameplayCommandRepository.IdempotentInsertResult(winner, true);
-              }
-              if (!exactInserted.await(5, TimeUnit.SECONDS)) {
-                throw new AssertionError("exact admission did not win the race");
-              }
-              return new GameplayCommandRepository.IdempotentInsertResult(winner, false);
-            });
+        .thenAnswer(invocation -> {
+          GameplayCommand candidate = invocation.getArgument(0);
+          if ("say hello".equals(candidate.getCommandText())) {
+            exactInserted.countDown();
+            return new GameplayCommandRepository.IdempotentInsertResult(winner, true);
+          }
+          if (!exactInserted.await(5, TimeUnit.SECONDS)) {
+            throw new AssertionError("exact admission did not win the race");
+          }
+          return new GameplayCommandRepository.IdempotentInsertResult(winner, false);
+        });
 
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<AdmissionResult> exact =
-          executor.submit(
-              () ->
-                  AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
-                      automationRequest(),
-                      gameInstanceRepository,
-                      gameplayCommandRepository,
-                      runtimeRegionStatusRepository,
-                      tickService));
+          executor.submit(() ->
+              AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+                  automationRequest(),
+                  gameInstanceRepository,
+                  gameplayCommandRepository,
+                  runtimeRegionStatusRepository,
+                  tickService));
       Future<AdmissionResult> changed =
-          executor.submit(
-              () ->
-                  AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
-                      changedAdmissionRequests()[0],
-                      gameInstanceRepository,
-                      gameplayCommandRepository,
-                      runtimeRegionStatusRepository,
-                      tickService));
+          executor.submit(() ->
+              AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+                  changedAdmissionRequests()[0],
+                  gameInstanceRepository,
+                  gameplayCommandRepository,
+                  runtimeRegionStatusRepository,
+                  tickService));
 
       AdmissionResult exactResult = exact.get(5, TimeUnit.SECONDS);
       AdmissionResult changedResult = changed.get(5, TimeUnit.SECONDS);
@@ -2056,16 +2043,12 @@ class AutomationGameplayCommandAdmissionSupportTest {
   private static GameInstanceRepository mockGameInstanceRepository() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     when(repository.findByTenantIdAndGameInstanceIdForUpdate(anyLong(), anyLong()))
-        .thenAnswer(
-            invocation ->
-                repository
-                    .findById(invocation.getArgument(1, Long.class))
-                    .filter(
-                        instance ->
-                            instance.getTenantId() != null
-                                && instance
-                                    .getTenantId()
-                                    .equals(invocation.getArgument(0, Long.class))));
+        .thenAnswer(invocation ->
+            repository
+                .findById(invocation.getArgument(1, Long.class))
+                .filter(instance ->
+                    instance.getTenantId() != null
+                        && instance.getTenantId().equals(invocation.getArgument(0, Long.class))));
     return repository;
   }
 
@@ -2109,10 +2092,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 request.automationDispatchId()))
         .thenReturn(Optional.empty());
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
     RuntimeRegionStatus ownership = new RuntimeRegionStatus();
     ownership.setTenantId(request.tenantId());
     ownership.setGameInstanceId(request.gameInstanceId());
@@ -2232,10 +2213,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
     when(pointerAuthority.listByRuntimeTarget(1L, 9L))
         .thenReturn(List.of(targetPointer("target-world", "target-realm", 23L)));
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -2262,10 +2241,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
     when(pointerAuthority.listByRuntimeTarget(1L, 9L))
         .thenReturn(List.of(targetPointer("target-world", "target-realm", 23L)));
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -2415,18 +2392,17 @@ class AutomationGameplayCommandAdmissionSupportTest {
     RemoteCommandCoordinator coordinator = commandCoordinator("trigger-followup");
     configureTargetAdmission(followup, coordinator, "trigger");
     when(remoteFollowupRuntimeService.recordResult(any()))
-        .thenAnswer(
-            invocation -> {
-              followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
-              followup.setFailureCode("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE");
-              followup.setFailureMessage(
-                  "Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available");
-              return new RemoteFollowupRuntimeService.ResultOutcome(
-                  RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_ABANDONED,
-                  RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED,
-                  false,
-                  false);
-            });
+        .thenAnswer(invocation -> {
+          followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
+          followup.setFailureCode("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE");
+          followup.setFailureMessage(
+              "Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available");
+          return new RemoteFollowupRuntimeService.ResultOutcome(
+              RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_ABANDONED,
+              RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED,
+              false,
+              false);
+        });
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult first =
         service.execute(effect);

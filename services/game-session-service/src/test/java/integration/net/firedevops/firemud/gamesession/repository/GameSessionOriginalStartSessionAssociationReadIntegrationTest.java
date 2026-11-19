@@ -682,13 +682,12 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
             "registered fresh source receipt");
     FreshGameSessionTenantAssociation tenantAssociation =
         Objects.requireNonNull(
-            transactions.execute(
-                status ->
-                    tenantRepository.associateFresh(
-                        UUID.randomUUID(),
-                        namespace,
-                        sourceReceipt,
-                        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source))),
+            transactions.execute(status ->
+                tenantRepository.associateFresh(
+                    UUID.randomUUID(),
+                    namespace,
+                    sourceReceipt,
+                    CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source))),
             "fresh tenant association");
     var createCatalog =
         new CreateCanonicalRealmCatalogRequest(
@@ -757,15 +756,14 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
               dsl, transactions, tuple, source, publishedSet, binding, ownerClaimLease);
       StartingInstance startingInstance =
           Objects.requireNonNull(
-              transactions.execute(
-                  status ->
-                      starting.createStarting(
-                          tenantAssociation,
-                          binding,
-                          tuple.preAuthorizationTuple().action().target().ownerAccountId(),
-                          tuple.controlPlaneRequestId(),
-                          tuple.mutationDigest(),
-                          tuple)));
+              transactions.execute(status ->
+                  starting.createStarting(
+                      tenantAssociation,
+                      binding,
+                      tuple.preAuthorizationTuple().action().target().ownerAccountId(),
+                      tuple.controlPlaneRequestId(),
+                      tuple.mutationDigest(),
+                      tuple)));
       return new OwnerBackedStarting(startingInstance, claim);
     }
 
@@ -774,34 +772,16 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
       ReservationResult reservation =
           Objects.requireNonNull(transactions.execute(status -> attempts.reserve(tuple)));
       AttemptClaim claim = reservation.claim().orElseThrow();
-      transactions.executeWithoutResult(
-          status ->
-              attempts.attachAccountRedemptionProjection(
-                  claim,
-                  GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.projection(
-                      tuple)));
+      transactions.executeWithoutResult(status ->
+          attempts.attachAccountRedemptionProjection(
+              claim,
+              GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.projection(
+                  tuple)));
       var descriptor = unpinnedDescriptor(tuple, source);
       var binding = completeBinding(descriptor, CANONICAL_VERSION, publishedSet);
       StartingInstance startingInstance =
           Objects.requireNonNull(
-              transactions.execute(
-                  status ->
-                      starting.createStarting(
-                          tenantAssociation,
-                          binding,
-                          tuple.preAuthorizationTuple().action().target().ownerAccountId(),
-                          tuple.controlPlaneRequestId(),
-                          tuple.mutationDigest(),
-                          tuple)));
-      return new OwnerBackedStarting(startingInstance, claim);
-    }
-
-    StartingInstance startWithoutOwnerPins(StartSessionPostAuthorizationExecutionTuple tuple) {
-      var descriptor = unpinnedDescriptor(tuple, source);
-      var binding = completeBinding(descriptor, CANONICAL_VERSION, publishedSet);
-      return Objects.requireNonNull(
-          transactions.execute(
-              status ->
+              transactions.execute(status ->
                   starting.createStarting(
                       tenantAssociation,
                       binding,
@@ -809,6 +789,21 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
                       tuple.controlPlaneRequestId(),
                       tuple.mutationDigest(),
                       tuple)));
+      return new OwnerBackedStarting(startingInstance, claim);
+    }
+
+    StartingInstance startWithoutOwnerPins(StartSessionPostAuthorizationExecutionTuple tuple) {
+      var descriptor = unpinnedDescriptor(tuple, source);
+      var binding = completeBinding(descriptor, CANONICAL_VERSION, publishedSet);
+      return Objects.requireNonNull(
+          transactions.execute(status ->
+              starting.createStarting(
+                  tenantAssociation,
+                  binding,
+                  tuple.preAuthorizationTuple().action().target().ownerAccountId(),
+                  tuple.controlPlaneRequestId(),
+                  tuple.mutationDigest(),
+                  tuple)));
     }
 
     java.util.Optional<OriginalStartSessionAssociation> read(

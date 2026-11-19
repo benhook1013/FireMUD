@@ -42,10 +42,9 @@ public class RegionServiceImpl implements RegionService {
         regionRepository
             .findByIdForUpdate(regionId)
             .filter(r -> tenantId.equals(r.getTenantId()) && versionId.equals(r.getVersionId()))
-            .orElseThrow(
-                () ->
-                    new WorldDesignPublicationFenceRepository.ConflictException(
-                        "Region tenant or Version changed before the publication owner lock"));
+            .orElseThrow(() ->
+                new WorldDesignPublicationFenceRepository.ConflictException(
+                    "Region tenant or Version changed before the publication owner lock"));
     region.setShardId(shardId);
     return regionMapper.toDto(regionRepository.save(region));
   }

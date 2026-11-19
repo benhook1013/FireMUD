@@ -340,13 +340,12 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
   private static void assertCanonicalInitialAdmissionHoldLifecycleGuard(
       DSLContext dsl, String schema) {
     assertThat(triggerMetadata(dsl, schema, "world_instance"))
-        .anySatisfy(
-            trigger -> {
-              assertThat(trigger)
-                  .contains("aaa_world_canonical_initial_admission_hold_lifecycle")
-                  .contains("world_guard_canonical_initial_admission_hold_lifecycle");
-              assertThat(trigger.split(":", 8)[4]).isIn("O", "A");
-            });
+        .anySatisfy(trigger -> {
+          assertThat(trigger)
+              .contains("aaa_world_canonical_initial_admission_hold_lifecycle")
+              .contains("world_guard_canonical_initial_admission_hold_lifecycle");
+          assertThat(trigger.split(":", 8)[4]).isIn("O", "A");
+        });
   }
 
   private static void cloneProbeTables(DSLContext dsl, String sourceSchema, String probeSchema) {
@@ -442,129 +441,128 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     byte[] resultBytes = resultBytes(fixture, receiptBytes, receiptDigest);
     String correctResultDigest = digest(resultBytes);
 
-    dsl.transaction(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          String commitTable = DSL.name(schema, "world_topology_draft_commit").toString();
-          String ownerTable = DSL.name(schema, "world_design_publication_fence_owner").toString();
-          String roomTable = DSL.name(schema, "room").toString();
-          String identityTable = DSL.name(schema, "world_authored_topology_identity").toString();
-          String receiptTable = DSL.name(schema, "world_draft_start_location_receipt").toString();
-          String applicationTable = DSL.name(schema, "world_draft_graph_application").toString();
+    dsl.transaction(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      String commitTable = DSL.name(schema, "world_topology_draft_commit").toString();
+      String ownerTable = DSL.name(schema, "world_design_publication_fence_owner").toString();
+      String roomTable = DSL.name(schema, "room").toString();
+      String identityTable = DSL.name(schema, "world_authored_topology_identity").toString();
+      String receiptTable = DSL.name(schema, "world_draft_start_location_receipt").toString();
+      String applicationTable = DSL.name(schema, "world_draft_graph_application").toString();
 
-          tx.execute(
-              "INSERT INTO "
-                  + commitTable
-                  + " (request_id, commit_id, target_namespace, canonical_tenant_id, "
-                  + "canonical_version_id, local_tenant_key, local_version_key, binding_json, "
-                  + "binding_digest, graph_bytes, graph_sha256, application_transaction_id) "
-                  + "VALUES (?, ?, 'dev', ?, ?, ?, ?, ?::jsonb, ?, ?, ?, txid_current())",
-              fixture.requestId(),
-              fixture.commitId(),
-              fixture.tenantId(),
-              fixture.versionId(),
-              fixture.localTenantKey(),
-              fixture.localVersionKey(),
-              fixture.bindingJson(),
-              fixture.bindingDigest(),
-              fixture.graphBytes(),
-              fixture.graphSha256());
-          tx.execute(
-              "INSERT INTO "
-                  + ownerTable
-                  + " (target_namespace, canonical_tenant_id, local_tenant_key, version_id, "
-                  + "owner_freeze_phase, current_publication_fence) "
-                  + "VALUES ('dev', ?, ?, ?, 'OPEN', NULL)",
-              fixture.tenantId(),
-              fixture.localTenantKey(),
-              fixture.localVersionKey());
-          tx.execute(
-              "INSERT INTO " + roomTable + " (id, tenant_id, version_id) VALUES (?, ?, ?)",
-              fixture.roomRowId(),
-              fixture.localTenantKey(),
-              fixture.localVersionKey());
-          tx.execute(
-              "INSERT INTO "
-                  + identityTable
-                  + " (target_namespace, canonical_tenant_id, canonical_version_id, family, "
-                  + "template_id, private_row_key, tenant_id, version_id, "
-                  + "version_identity_operation_id, request_id, commit_id, revision_id, revision_order) "
-                  + "VALUES ('dev', ?, ?, 'ROOM', ?, ?, ?, ?, ?, ?, ?, ?, '0')",
-              fixture.tenantId(),
-              fixture.versionId(),
-              fixture.roomTemplateId(),
-              fixture.roomRowId(),
-              fixture.localTenantKey(),
-              fixture.localVersionKey(),
-              fixture.versionIdentityOperationId(),
-              fixture.requestId(),
-              fixture.commitId(),
-              fixture.revisionId());
+      tx.execute(
+          "INSERT INTO "
+              + commitTable
+              + " (request_id, commit_id, target_namespace, canonical_tenant_id, "
+              + "canonical_version_id, local_tenant_key, local_version_key, binding_json, "
+              + "binding_digest, graph_bytes, graph_sha256, application_transaction_id) "
+              + "VALUES (?, ?, 'dev', ?, ?, ?, ?, ?::jsonb, ?, ?, ?, txid_current())",
+          fixture.requestId(),
+          fixture.commitId(),
+          fixture.tenantId(),
+          fixture.versionId(),
+          fixture.localTenantKey(),
+          fixture.localVersionKey(),
+          fixture.bindingJson(),
+          fixture.bindingDigest(),
+          fixture.graphBytes(),
+          fixture.graphSha256());
+      tx.execute(
+          "INSERT INTO "
+              + ownerTable
+              + " (target_namespace, canonical_tenant_id, local_tenant_key, version_id, "
+              + "owner_freeze_phase, current_publication_fence) "
+              + "VALUES ('dev', ?, ?, ?, 'OPEN', NULL)",
+          fixture.tenantId(),
+          fixture.localTenantKey(),
+          fixture.localVersionKey());
+      tx.execute(
+          "INSERT INTO " + roomTable + " (id, tenant_id, version_id) VALUES (?, ?, ?)",
+          fixture.roomRowId(),
+          fixture.localTenantKey(),
+          fixture.localVersionKey());
+      tx.execute(
+          "INSERT INTO "
+              + identityTable
+              + " (target_namespace, canonical_tenant_id, canonical_version_id, family, "
+              + "template_id, private_row_key, tenant_id, version_id, "
+              + "version_identity_operation_id, request_id, commit_id, revision_id, revision_order) "
+              + "VALUES ('dev', ?, ?, 'ROOM', ?, ?, ?, ?, ?, ?, ?, ?, '0')",
+          fixture.tenantId(),
+          fixture.versionId(),
+          fixture.roomTemplateId(),
+          fixture.roomRowId(),
+          fixture.localTenantKey(),
+          fixture.localVersionKey(),
+          fixture.versionIdentityOperationId(),
+          fixture.requestId(),
+          fixture.commitId(),
+          fixture.revisionId());
 
-          String receiptAccountDigest =
-              corruption == Corruption.RECEIPT_ACCOUNT_DIGEST
-                  ? wrongDigest(fixture.accountBindingDigest())
-                  : fixture.accountBindingDigest();
-          boolean bypassReceiptGuard = corruption == Corruption.APPLICATION_RECEIPT_FIELD_MISMATCH;
-          if (bypassReceiptGuard) {
-            tx.execute(
-                "ALTER TABLE "
-                    + receiptTable
-                    + " DISABLE TRIGGER trg_world_start_location_receipt_guard");
-          }
-          tx.execute(
-              "INSERT INTO "
-                  + receiptTable
-                  + " (operation_id, request_id, commit_id, authorization_fence_id, "
-                  + "target_namespace, account_binding_bytes, account_binding_digest, binding_digest, "
-                  + "canonical_tenant_id, canonical_version_id, room_template_id, graph_digest, "
-                  + "receipt_digest, receipt_bytes) "
-                  + "VALUES (?, ?, ?, ?, 'dev', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              fixture.operationId(),
-              fixture.requestId(),
-              fixture.commitId(),
-              fixture.authorizationFenceId(),
-              fixture.accountBindingBytes(),
-              receiptAccountDigest,
-              fixture.bindingDigest(),
-              fixture.tenantId(),
-              fixture.versionId(),
-              fixture.roomTemplateId(),
-              fixture.graphDigest(),
-              receiptDigest,
-              receiptBytes);
-          if (bypassReceiptGuard) {
-            tx.execute(
-                "ALTER TABLE "
-                    + receiptTable
-                    + " ENABLE TRIGGER trg_world_start_location_receipt_guard");
-          }
+      String receiptAccountDigest =
+          corruption == Corruption.RECEIPT_ACCOUNT_DIGEST
+              ? wrongDigest(fixture.accountBindingDigest())
+              : fixture.accountBindingDigest();
+      boolean bypassReceiptGuard = corruption == Corruption.APPLICATION_RECEIPT_FIELD_MISMATCH;
+      if (bypassReceiptGuard) {
+        tx.execute(
+            "ALTER TABLE "
+                + receiptTable
+                + " DISABLE TRIGGER trg_world_start_location_receipt_guard");
+      }
+      tx.execute(
+          "INSERT INTO "
+              + receiptTable
+              + " (operation_id, request_id, commit_id, authorization_fence_id, "
+              + "target_namespace, account_binding_bytes, account_binding_digest, binding_digest, "
+              + "canonical_tenant_id, canonical_version_id, room_template_id, graph_digest, "
+              + "receipt_digest, receipt_bytes) "
+              + "VALUES (?, ?, ?, ?, 'dev', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          fixture.operationId(),
+          fixture.requestId(),
+          fixture.commitId(),
+          fixture.authorizationFenceId(),
+          fixture.accountBindingBytes(),
+          receiptAccountDigest,
+          fixture.bindingDigest(),
+          fixture.tenantId(),
+          fixture.versionId(),
+          fixture.roomTemplateId(),
+          fixture.graphDigest(),
+          receiptDigest,
+          receiptBytes);
+      if (bypassReceiptGuard) {
+        tx.execute(
+            "ALTER TABLE "
+                + receiptTable
+                + " ENABLE TRIGGER trg_world_start_location_receipt_guard");
+      }
 
-          String applicationAccountDigest =
-              corruption == Corruption.APPLICATION_ACCOUNT_DIGEST
-                  ? wrongDigest(fixture.accountBindingDigest())
-                  : fixture.accountBindingDigest();
-          String resultDigest =
-              corruption == Corruption.RESULT_DIGEST
-                  ? wrongDigest(correctResultDigest)
-                  : correctResultDigest;
-          tx.execute(
-              "INSERT INTO "
-                  + applicationTable
-                  + " (operation_id, request_id, commit_id, authorization_fence_id, "
-                  + "operation_bytes, account_binding_bytes, account_binding_digest, result_bytes, "
-                  + "result_digest, application_transaction_id) "
-                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, txid_current())",
-              fixture.operationId(),
-              fixture.requestId(),
-              fixture.commitId(),
-              fixture.authorizationFenceId(),
-              fixture.operationBytes(),
-              fixture.accountBindingBytes(),
-              applicationAccountDigest,
-              resultBytes,
-              resultDigest);
-        });
+      String applicationAccountDigest =
+          corruption == Corruption.APPLICATION_ACCOUNT_DIGEST
+              ? wrongDigest(fixture.accountBindingDigest())
+              : fixture.accountBindingDigest();
+      String resultDigest =
+          corruption == Corruption.RESULT_DIGEST
+              ? wrongDigest(correctResultDigest)
+              : correctResultDigest;
+      tx.execute(
+          "INSERT INTO "
+              + applicationTable
+              + " (operation_id, request_id, commit_id, authorization_fence_id, "
+              + "operation_bytes, account_binding_bytes, account_binding_digest, result_bytes, "
+              + "result_digest, application_transaction_id) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, txid_current())",
+          fixture.operationId(),
+          fixture.requestId(),
+          fixture.commitId(),
+          fixture.authorizationFenceId(),
+          fixture.operationBytes(),
+          fixture.accountBindingBytes(),
+          applicationAccountDigest,
+          resultBytes,
+          resultDigest);
+    });
   }
 
   private static Fixture fixture() throws Exception {
@@ -676,13 +674,12 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
   private static String bindingJson(UUID tenantId, UUID versionId, UUID roomTemplateId) {
     String familyCounts =
         FAMILY_NAMES.stream()
-            .map(
-                family ->
-                    "{\"family\":\"WORLD_DESIGN_AGGREGATE_TYPE_"
-                        + family
-                        + "\",\"count\":"
-                        + (family.equals("ROOM") ? 1 : 0)
-                        + "}")
+            .map(family ->
+                "{\"family\":\"WORLD_DESIGN_AGGREGATE_TYPE_"
+                    + family
+                    + "\",\"count\":"
+                    + (family.equals("ROOM") ? 1 : 0)
+                    + "}")
             .reduce((left, right) -> left + "," + right)
             .orElseThrow();
     return "{\"revisions\":[{\"owner\":\"WORLD_MANAGEMENT\",\"payload\":{"
@@ -787,13 +784,12 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
   private static void assertSqlState(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String state) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              Throwable cause = failure;
-              while (cause.getCause() != null) cause = cause.getCause();
-              assertThat(cause).isInstanceOf(PSQLException.class);
-              assertThat(((PSQLException) cause).getSQLState()).isEqualTo(state);
-            });
+        .satisfies(failure -> {
+          Throwable cause = failure;
+          while (cause.getCause() != null) cause = cause.getCause();
+          assertThat(cause).isInstanceOf(PSQLException.class);
+          assertThat(((PSQLException) cause).getSQLState()).isEqualTo(state);
+        });
   }
 
   private static DriverManagerDataSource source(String schema) {

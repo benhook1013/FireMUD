@@ -93,31 +93,29 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
               CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.REGION_OBLIGATION);
       assertThat(intent.barrierTargets())
           .singleElement()
-          .satisfies(
-              target -> {
-                assertThat(target.tenantId()).isEqualTo(TENANT_ID);
-                assertThat(target.playableStateNamespaceId()).isEqualTo(NAMESPACE_ID);
-              });
+          .satisfies(target -> {
+            assertThat(target.tenantId()).isEqualTo(TENANT_ID);
+            assertThat(target.playableStateNamespaceId()).isEqualTo(NAMESPACE_ID);
+          });
       assertNoInstalledOrCoverageClaim(testSchema.dsl(), intent);
       var originalCohortRow = intent.cohortRows().get(0);
-      assertThatThrownBy(
-              () ->
-                  testSchema
-                      .dsl()
-                      .execute(
-                          "INSERT INTO"
-                              + " game_session_canonical_account_admission_fence_intent_cohort_row"
-                              + " (operation_id, account_id, row_ordinal, source_kind, source_key,"
-                              + " tenant_id, playable_state_namespace_id, source_row)"
-                              + " VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb))",
-                          intent.operationId(),
-                          intent.accountId(),
-                          intent.cohortRows().size() + 1L,
-                          originalCohortRow.kind().name(),
-                          originalCohortRow.sourceKey(),
-                          originalCohortRow.tenantId(),
-                          originalCohortRow.playableStateNamespaceId(),
-                          originalCohortRow.sourceRecordJson()))
+      assertThatThrownBy(() ->
+              testSchema
+                  .dsl()
+                  .execute(
+                      "INSERT INTO"
+                          + " game_session_canonical_account_admission_fence_intent_cohort_row"
+                          + " (operation_id, account_id, row_ordinal, source_kind, source_key,"
+                          + " tenant_id, playable_state_namespace_id, source_row)"
+                          + " VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb))",
+                      intent.operationId(),
+                      intent.accountId(),
+                      intent.cohortRows().size() + 1L,
+                      originalCohortRow.kind().name(),
+                      originalCohortRow.sourceKey(),
+                      originalCohortRow.tenantId(),
+                      originalCohortRow.playableStateNamespaceId(),
+                      originalCohortRow.sourceRecordJson()))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23505"));
@@ -199,11 +197,10 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
       assertThat(otherAccountIntent.accountId()).isEqualTo(OTHER_ACCOUNT_ID);
       assertThat(otherAccountIntent.barrierTargets())
           .singleElement()
-          .satisfies(
-              target -> {
-                assertThat(target.tenantId()).isEqualTo(OTHER_TENANT_ID);
-                assertThat(target.playableStateNamespaceId()).isEqualTo(OTHER_NAMESPACE_ID);
-              });
+          .satisfies(target -> {
+            assertThat(target.tenantId()).isEqualTo(OTHER_TENANT_ID);
+            assertThat(target.playableStateNamespaceId()).isEqualTo(OTHER_NAMESPACE_ID);
+          });
       assertThat(otherAccountIntent.cohortRows())
           .filteredOn(
               row -> row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.BINDING)
@@ -229,32 +226,28 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
               .beginFenceIntent(ACCOUNT_ID, UUID.randomUUID());
 
       assertThat(cutoff.cohortRows())
-          .anySatisfy(
-              row -> {
-                assertThat(row.kind())
-                    .isEqualTo(CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIALIZER);
-                assertThat(row.sourceKey()).isEqualTo(initial.originalRequestId().toString());
-                assertThat(row.sourceRecordJson()).contains(initial.initializerId().toString());
-              });
+          .anySatisfy(row -> {
+            assertThat(row.kind())
+                .isEqualTo(CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIALIZER);
+            assertThat(row.sourceKey()).isEqualTo(initial.originalRequestId().toString());
+            assertThat(row.sourceRecordJson()).contains(initial.initializerId().toString());
+          });
       assertThat(cutoff.cohortRows())
-          .anySatisfy(
-              row -> {
-                assertThat(row.kind())
-                    .isEqualTo(
-                        CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET);
-                assertThat(row.sourceKey()).isEqualTo(initial.initializerId() + ":0");
-                assertThat(row.tenantId()).isEqualTo(OTHER_TENANT_ID);
-                assertThat(row.playableStateNamespaceId()).isEqualTo(OTHER_NAMESPACE_ID);
-              });
+          .anySatisfy(row -> {
+            assertThat(row.kind())
+                .isEqualTo(CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET);
+            assertThat(row.sourceKey()).isEqualTo(initial.initializerId() + ":0");
+            assertThat(row.tenantId()).isEqualTo(OTHER_TENANT_ID);
+            assertThat(row.playableStateNamespaceId()).isEqualTo(OTHER_NAMESPACE_ID);
+          });
       assertThat(cutoff.barrierTargets())
           .extracting(
               CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget::tenantId,
               CanonicalGameplayAccountAdmissionFenceIntent.BarrierTarget::playableStateNamespaceId)
           .contains(org.assertj.core.groups.Tuple.tuple(OTHER_TENANT_ID, OTHER_NAMESPACE_ID));
-      assertThatThrownBy(
-              () ->
-                  insertControlledInitialTarget(
-                      testSchema.dsl(), ACCOUNT_ID, TENANT_ID, OTHER_NAMESPACE_ID))
+      assertThatThrownBy(() ->
+              insertControlledInitialTarget(
+                  testSchema.dsl(), ACCOUNT_ID, TENANT_ID, OTHER_NAMESPACE_ID))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
@@ -275,16 +268,14 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
               .beginFenceIntent(ACCOUNT_ID, UUID.randomUUID());
 
       assertThat(cutoff.cohortRows())
-          .noneSatisfy(
-              row ->
-                  assertThat(row.kind())
-                      .isIn(
-                          CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIALIZER,
-                          CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET));
-      assertThatThrownBy(
-              () ->
-                  insertControlledInitialTarget(
-                      testSchema.dsl(), ACCOUNT_ID, OTHER_TENANT_ID, OTHER_NAMESPACE_ID))
+          .noneSatisfy(row ->
+              assertThat(row.kind())
+                  .isIn(
+                      CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIALIZER,
+                      CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.INITIAL_TARGET));
+      assertThatThrownBy(() ->
+              insertControlledInitialTarget(
+                  testSchema.dsl(), ACCOUNT_ID, OTHER_TENANT_ID, OTHER_NAMESPACE_ID))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
@@ -318,11 +309,10 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
               UUID.randomUUID(), UUID.randomUUID(), 17L);
       var login = mockLoginResult(original, UUID.randomUUID(), UUID.randomUUID());
 
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayAccountInitialBarrierInitializerRepository(
-                          missingControlSchema.dsl())
-                      .beginOrRead(original, login, OTHER_TENANT_ID, OTHER_NAMESPACE_ID))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayAccountInitialBarrierInitializerRepository(
+                      missingControlSchema.dsl())
+                  .beginOrRead(original, login, OTHER_TENANT_ID, OTHER_NAMESPACE_ID))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
           .hasMessageContaining("Account coverage control row is missing");
     } finally {
@@ -396,17 +386,15 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
       var owner = new CanonicalGameplayAccountAdmissionBarrierRepository(testSchema.dsl());
       CountDownLatch start = new CountDownLatch(1);
       Future<CanonicalGameplayBindingTransitionSnapshot> prepareFuture =
-          executor.submit(
-              () -> {
-                start.await();
-                return prepare(inventory, ACCOUNT_ID, OTHER_TENANT_ID, OTHER_NAMESPACE_ID, 2);
-              });
+          executor.submit(() -> {
+            start.await();
+            return prepare(inventory, ACCOUNT_ID, OTHER_TENANT_ID, OTHER_NAMESPACE_ID, 2);
+          });
       Future<CanonicalGameplayAccountAdmissionFenceIntent> intentFuture =
-          executor.submit(
-              () -> {
-                start.await();
-                return owner.beginFenceIntent(ACCOUNT_ID, UUID.randomUUID());
-              });
+          executor.submit(() -> {
+            start.await();
+            return owner.beginFenceIntent(ACCOUNT_ID, UUID.randomUUID());
+          });
       start.countDown();
 
       var intent = intentFuture.get(30, TimeUnit.SECONDS);
@@ -590,60 +578,59 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
     UUID tokenJti = UUID.randomUUID();
     String accountEvidenceDigest = "sha256:" + "a".repeat(64);
     String sourceControlDigest = "sha256:" + "b".repeat(64);
-    dsl.transaction(
-        configuration -> {
-          var transaction = org.jooq.impl.DSL.using(configuration);
-          var inventoryClock =
-              transaction.fetchOne(
-                  "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
-                      + " WHERE singleton_id = 1 FOR UPDATE");
-          var control =
-              transaction.fetchOne(
-                  "SELECT state, last_operation_fence FROM"
-                      + " game_session_canonical_account_coverage_control"
-                      + " WHERE account_id = ? FOR UPDATE",
-                  accountId);
-          if (inventoryClock == null || control == null) {
-            throw new IllegalStateException("Controlled source lacks positive SQL owners");
-          }
-          transaction.execute(
-              "INSERT INTO game_session_initial_gameplay_login_journal"
-                  + " (request_id, caller_context_id, expected_attempt_fence) VALUES (?, ?, 7)",
-              originalRequestId,
-              callerContextId);
-          transaction.execute(
-              "UPDATE game_session_initial_gameplay_login_journal"
-                  + " SET verified_token_jti = ?, verified_token_sha256 = ?,"
-                  + " verified_token_generation = 1, verified_issuance_fence = 1"
-                  + " WHERE request_id = ?",
-              tokenJti,
-              "c".repeat(64),
-              originalRequestId);
-          transaction.execute(
-              "INSERT INTO game_session_canonical_initial_account_barrier_initializer"
-                  + " (initializer_id, original_request_id, original_caller_context_id,"
-                  + " original_attempt_fence, account_id, account_login_evidence_digest,"
-                  + " source_control_state, source_control_epoch, inventory_snapshot_revision,"
-                  + " source_control_digest) VALUES (?, ?, ?, 7, ?, ?, ?, 0, ?, ?)",
-              initializerId,
-              originalRequestId,
-              callerContextId,
-              accountId,
-              accountEvidenceDigest,
-              "NO_ACTIVE_ACCOUNT_WIDE_FLOW",
-              inventoryClock.get("inventory_revision"),
-              sourceControlDigest);
-          transaction.execute(
-              "INSERT INTO game_session_canonical_initial_account_barrier_target"
-                  + " (initializer_id, original_request_id, account_id, target_ordinal, tenant_id,"
-                  + " playable_state_namespace_id, target_state)"
-                  + " VALUES (?, ?, ?, 0, ?, ?, 'NEVER_DISPATCHED')",
-              initializerId,
-              originalRequestId,
-              accountId,
-              tenantId,
-              namespaceId);
-        });
+    dsl.transaction(configuration -> {
+      var transaction = org.jooq.impl.DSL.using(configuration);
+      var inventoryClock =
+          transaction.fetchOne(
+              "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
+                  + " WHERE singleton_id = 1 FOR UPDATE");
+      var control =
+          transaction.fetchOne(
+              "SELECT state, last_operation_fence FROM"
+                  + " game_session_canonical_account_coverage_control"
+                  + " WHERE account_id = ? FOR UPDATE",
+              accountId);
+      if (inventoryClock == null || control == null) {
+        throw new IllegalStateException("Controlled source lacks positive SQL owners");
+      }
+      transaction.execute(
+          "INSERT INTO game_session_initial_gameplay_login_journal"
+              + " (request_id, caller_context_id, expected_attempt_fence) VALUES (?, ?, 7)",
+          originalRequestId,
+          callerContextId);
+      transaction.execute(
+          "UPDATE game_session_initial_gameplay_login_journal"
+              + " SET verified_token_jti = ?, verified_token_sha256 = ?,"
+              + " verified_token_generation = 1, verified_issuance_fence = 1"
+              + " WHERE request_id = ?",
+          tokenJti,
+          "c".repeat(64),
+          originalRequestId);
+      transaction.execute(
+          "INSERT INTO game_session_canonical_initial_account_barrier_initializer"
+              + " (initializer_id, original_request_id, original_caller_context_id,"
+              + " original_attempt_fence, account_id, account_login_evidence_digest,"
+              + " source_control_state, source_control_epoch, inventory_snapshot_revision,"
+              + " source_control_digest) VALUES (?, ?, ?, 7, ?, ?, ?, 0, ?, ?)",
+          initializerId,
+          originalRequestId,
+          callerContextId,
+          accountId,
+          accountEvidenceDigest,
+          "NO_ACTIVE_ACCOUNT_WIDE_FLOW",
+          inventoryClock.get("inventory_revision"),
+          sourceControlDigest);
+      transaction.execute(
+          "INSERT INTO game_session_canonical_initial_account_barrier_target"
+              + " (initializer_id, original_request_id, account_id, target_ordinal, tenant_id,"
+              + " playable_state_namespace_id, target_state)"
+              + " VALUES (?, ?, ?, 0, ?, ?, 'NEVER_DISPATCHED')",
+          initializerId,
+          originalRequestId,
+          accountId,
+          tenantId,
+          namespaceId);
+    });
     return new ControlledInitialTarget(initializerId, originalRequestId);
   }
 

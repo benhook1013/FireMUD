@@ -47,10 +47,9 @@ class DemoAccountAuthenticationClientTest {
     assertThat(client.authenticateDemoOwner()).isEqualTo(actual);
     verify(stub)
         .authenticate(
-            argThat(
-                request ->
-                    request.getEmail().equals("demo@example.com")
-                        && request.getPassword().equals("swordfish")));
+            argThat(request ->
+                request.getEmail().equals("demo@example.com")
+                    && request.getPassword().equals("swordfish")));
   }
 
   @Test
@@ -73,12 +72,11 @@ class DemoAccountAuthenticationClientTest {
     verify(stub, times(3)).authenticate(requests.capture());
     verify(stub, times(3)).withDeadlineAfter(5, TimeUnit.SECONDS);
     assertThat(requests.getAllValues())
-        .allSatisfy(
-            request -> {
-              assertThat(request).isSameAs(requests.getValue());
-              assertThat(request.getEmail()).isEqualTo("demo@example.com");
-              assertThat(request.getPassword()).isEqualTo("swordfish");
-            });
+        .allSatisfy(request -> {
+          assertThat(request).isSameAs(requests.getValue());
+          assertThat(request.getEmail()).isEqualTo("demo@example.com");
+          assertThat(request.getPassword()).isEqualTo("swordfish");
+        });
   }
 
   @Test
@@ -138,11 +136,10 @@ class DemoAccountAuthenticationClientTest {
     var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.authenticate(any()))
-        .thenAnswer(
-            invocation -> {
-              Thread.currentThread().interrupt();
-              throw Status.UNAVAILABLE.asRuntimeException();
-            });
+        .thenAnswer(invocation -> {
+          Thread.currentThread().interrupt();
+          throw Status.UNAVAILABLE.asRuntimeException();
+        });
     var client = client(stub);
     try {
       assertThatThrownBy(client::authenticateDemoOwner)
@@ -231,15 +228,14 @@ class DemoAccountAuthenticationClientTest {
   void enabledUnusedClientDoesNotValidatePlaintextConfigurationUntilRequested() {
     contextRunner
         .withPropertyValues("firemud.grpc.plaintext=true")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThatThrownBy(() -> context.getBean(DemoAccountAuthenticationClient.class))
-                  .hasRootCauseInstanceOf(IllegalArgumentException.class)
-                  .hasRootCauseMessage(
-                      "Demo Account authentication require Entity Management workload mTLS");
-              verifyNoInteractions(context.getBean(GrpcChannelFactory.class));
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThatThrownBy(() -> context.getBean(DemoAccountAuthenticationClient.class))
+              .hasRootCauseInstanceOf(IllegalArgumentException.class)
+              .hasRootCauseMessage(
+                  "Demo Account authentication require Entity Management workload mTLS");
+          verifyNoInteractions(context.getBean(GrpcChannelFactory.class));
+        });
   }
 
   @Test
@@ -250,15 +246,14 @@ class DemoAccountAuthenticationClientTest {
             "firemud.grpc.cert-chain=/fixture/client.crt",
             "firemud.grpc.private-key=/fixture/client.key",
             "firemud.grpc.ca-cert=/fixture/ca.crt")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThatThrownBy(() -> context.getBean(DemoAccountAuthenticationClient.class))
-                  .hasRootCauseInstanceOf(IllegalArgumentException.class)
-                  .hasRootCauseMessage(
-                      "Demo authentication requires the configured workload namespace");
-              verifyNoInteractions(context.getBean(GrpcChannelFactory.class));
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThatThrownBy(() -> context.getBean(DemoAccountAuthenticationClient.class))
+              .hasRootCauseInstanceOf(IllegalArgumentException.class)
+              .hasRootCauseMessage(
+                  "Demo authentication requires the configured workload namespace");
+          verifyNoInteractions(context.getBean(GrpcChannelFactory.class));
+        });
   }
 
   @Configuration(proxyBeanMethods = false)

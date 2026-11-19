@@ -322,30 +322,28 @@ public final class StartSessionTemplateAssociationReadEvidence {
     }
     List<AuthoredWorldReleaseAttestationEvidence.Artifact> artifacts =
         bundle.getArtifactDigestsList().stream()
-            .map(
-                value ->
-                    new AuthoredWorldReleaseAttestationEvidence.Artifact(
-                        value.getUsageKey(),
-                        value.getArtifactKind(),
-                        value.getImmutableObjectKey(),
-                        value.getContentDigest(),
-                        value.getContentType(),
-                        value.getArtifactSchemaVersion()))
+            .map(value ->
+                new AuthoredWorldReleaseAttestationEvidence.Artifact(
+                    value.getUsageKey(),
+                    value.getArtifactKind(),
+                    value.getImmutableObjectKey(),
+                    value.getContentDigest(),
+                    value.getContentType(),
+                    value.getArtifactSchemaVersion()))
             .toList();
     List<GameDesignPublicationTerminalEvidence.Participant> participants =
         bundle.getParticipantDigestsList().stream()
-            .map(
-                value ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
-                        value.getParticipantKey(),
-                        value.getScopeValue(),
-                        null,
-                        value.getAppliedCommitId(),
-                        value.getContentDigest(),
-                        value.getDigestSchemaVersion(),
-                        value.hasAbilitySchemaDigest() ? value.getAbilitySchemaDigest() : null,
-                        null,
-                        null))
+            .map(value ->
+                new GameDesignPublicationTerminalEvidence.Participant(
+                    value.getParticipantKey(),
+                    value.getScopeValue(),
+                    null,
+                    value.getAppliedCommitId(),
+                    value.getContentDigest(),
+                    value.getDigestSchemaVersion(),
+                    value.hasAbilitySchemaDigest() ? value.getAbilitySchemaDigest() : null,
+                    null,
+                    null))
             .toList();
     return new GameDesignPublicationTerminalEvidence.ReleaseContent(
         UUID.fromString(bundle.getCanonicalTenantId()),

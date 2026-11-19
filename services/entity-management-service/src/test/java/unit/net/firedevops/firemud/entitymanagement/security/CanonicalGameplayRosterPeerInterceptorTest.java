@@ -57,17 +57,15 @@ class CanonicalGameplayRosterPeerInterceptorTest {
     ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
     ServerCall.Listener<String> listener = new ServerCall.Listener<>() {};
     when(next.startCall(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer())
-                  .isNotNull()
-                  .satisfies(
-                      peer -> {
-                        assertThat(peer.isService("game-session-service")).isTrue();
-                        assertThat(peer.isInNamespace(WORKLOAD_NAMESPACE)).isTrue();
-                      });
-              return listener;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer())
+              .isNotNull()
+              .satisfies(peer -> {
+                assertThat(peer.isService("game-session-service")).isTrue();
+                assertThat(peer.isInNamespace(WORKLOAD_NAMESPACE)).isTrue();
+              });
+          return listener;
+        });
 
     interceptor.interceptCall(call, new Metadata(), next);
 
@@ -84,11 +82,10 @@ class CanonicalGameplayRosterPeerInterceptorTest {
             peerSession("spiffe://firemud/ns/gameplay/sa/game-session-service"));
     ServerCallHandler<String, String> trustedNext = mock(ServerCallHandler.class);
     when(trustedNext.startCall(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer()).isNotNull();
-              return new ServerCall.Listener<>() {};
-            });
+        .thenAnswer(invocation -> {
+          assertThat(CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer()).isNotNull();
+          return new ServerCall.Listener<>() {};
+        });
 
     interceptor.interceptCall(trustedCall, new Metadata(), trustedNext);
 
@@ -133,12 +130,10 @@ class CanonicalGameplayRosterPeerInterceptorTest {
           callFor(method, peerSession("spiffe://firemud/ns/gameplay/sa/game-session-service"));
       ServerCallHandler<String, String> trustedNext = mock(ServerCallHandler.class);
       when(trustedNext.startCall(any(), any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer())
-                    .isNotNull();
-                return new ServerCall.Listener<>() {};
-              });
+          .thenAnswer(invocation -> {
+            assertThat(CanonicalGameplayRosterPeerInterceptor.currentVerifiedPeer()).isNotNull();
+            return new ServerCall.Listener<>() {};
+          });
       interceptor.interceptCall(trusted, new Metadata(), trustedNext);
       verify(trustedNext).startCall(any(), any());
 
@@ -251,10 +246,9 @@ class CanonicalGameplayRosterPeerInterceptorTest {
 
       verify(call)
           .close(
-              org.mockito.ArgumentMatchers.argThat(
-                  status ->
-                      status.getCode() == Status.Code.PERMISSION_DENIED
-                          && "Trusted Game Session peer required".equals(status.getDescription())),
+              org.mockito.ArgumentMatchers.argThat(status ->
+                  status.getCode() == Status.Code.PERMISSION_DENIED
+                      && "Trusted Game Session peer required".equals(status.getDescription())),
               any(Metadata.class));
       verify(next, never()).startCall(any(), any());
     }
@@ -275,10 +269,9 @@ class CanonicalGameplayRosterPeerInterceptorTest {
 
     verify(call)
         .close(
-            org.mockito.ArgumentMatchers.argThat(
-                status ->
-                    status.getCode() == Status.Code.PERMISSION_DENIED
-                        && "Trusted Game Session peer required".equals(status.getDescription())),
+            org.mockito.ArgumentMatchers.argThat(status ->
+                status.getCode() == Status.Code.PERMISSION_DENIED
+                    && "Trusted Game Session peer required".equals(status.getDescription())),
             any(Metadata.class));
     verify(next, never()).startCall(any(), any());
   }

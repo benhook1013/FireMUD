@@ -167,17 +167,16 @@ class AccountTenantMembershipRepositoryTest {
     Record membershipReadback = freshMembershipRecord(73L, 17L, 2L, 1L);
     AtomicInteger membershipReads = new AtomicInteger();
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              if (sql.contains("FROM accounts WHERE id = ? FOR UPDATE")) {
-                return lockedAccount;
-              }
-              if (sql.contains("FROM account_tenant_membership")) {
-                return membershipReads.getAndIncrement() == 0 ? null : membershipReadback;
-              }
-              return null;
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          if (sql.contains("FROM accounts WHERE id = ? FOR UPDATE")) {
+            return lockedAccount;
+          }
+          if (sql.contains("FROM account_tenant_membership")) {
+            return membershipReads.getAndIncrement() == 0 ? null : membershipReadback;
+          }
+          return null;
+        });
     ResultQuery<?> insertQuery = mock(ResultQuery.class);
     doReturn(insertQuery).when(dsl).resultQuery(anyString(), any(Object[].class));
     doReturn(73L).when(insertQuery).fetchOne(0, Long.class);
@@ -255,13 +254,12 @@ class AccountTenantMembershipRepositoryTest {
     when(lockedAccount.get("account_uuid_source_numeric_id", Long.class)).thenReturn(17L);
     Record existingMembership = freshMembershipRecord(73L, 17L, 2L, 1L);
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              return sql.contains("FROM accounts WHERE id = ? FOR UPDATE")
-                  ? lockedAccount
-                  : existingMembership;
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          return sql.contains("FROM accounts WHERE id = ? FOR UPDATE")
+              ? lockedAccount
+              : existingMembership;
+        });
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
     AccountTenantMembershipRepository repository =
@@ -289,12 +287,10 @@ class AccountTenantMembershipRepositoryTest {
     Record lockedAccount = lockedAccountRecord();
     Record pendingMembership = freshMembershipRecord(73L, 17L, 2L, 1L);
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation ->
-                ((String) invocation.getArgument(0))
-                        .contains("FROM accounts WHERE id = ? FOR UPDATE")
-                    ? lockedAccount
-                    : pendingMembership);
+        .thenAnswer(invocation ->
+            ((String) invocation.getArgument(0)).contains("FROM accounts WHERE id = ? FOR UPDATE")
+                ? lockedAccount
+                : pendingMembership);
     PairAuthority baseline =
         new PairAuthority(
             ACCOUNT_UUID, TENANT_UUID, freshProvenance(), false, 1L, 1L, 0L, null, null, false);
@@ -333,12 +329,10 @@ class AccountTenantMembershipRepositoryTest {
     Record lockedAccount = lockedAccountRecord();
     Record positiveMembership = freshMembershipRecord(73L, 17L, 2L, 1L);
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation ->
-                ((String) invocation.getArgument(0))
-                        .contains("FROM accounts WHERE id = ? FOR UPDATE")
-                    ? lockedAccount
-                    : positiveMembership);
+        .thenAnswer(invocation ->
+            ((String) invocation.getArgument(0)).contains("FROM accounts WHERE id = ? FOR UPDATE")
+                ? lockedAccount
+                : positiveMembership);
     PairAuthority positive =
         new PairAuthority(
             ACCOUNT_UUID,

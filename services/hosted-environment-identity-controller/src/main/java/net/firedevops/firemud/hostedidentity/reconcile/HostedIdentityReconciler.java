@@ -879,12 +879,11 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       return false;
     }
     return resource.getStatus().getConditions().stream()
-        .anyMatch(
-            condition ->
-                "Ready".equals(condition.getType())
-                    && "False".equals(condition.getStatus())
-                    && java.util.Objects.equals(
-                        resource.getMetadata().getGeneration(), condition.getObservedGeneration()));
+        .anyMatch(condition ->
+            "Ready".equals(condition.getType())
+                && "False".equals(condition.getStatus())
+                && java.util.Objects.equals(
+                    resource.getMetadata().getGeneration(), condition.getObservedGeneration()));
   }
 
   static UpdateControl<HostedEnvironmentIdentity> finishRetirement(

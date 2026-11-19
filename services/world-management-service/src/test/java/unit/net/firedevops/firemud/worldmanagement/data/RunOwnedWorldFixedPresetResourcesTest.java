@@ -79,13 +79,12 @@ class RunOwnedWorldFixedPresetResourcesTest {
     WorldAuthoredSourceIntakeReceipt sourceReceipt = sourceReceipt(evidence);
     WorldAuthoredVersionIdentityReceipt versionReceipt = versionReceipt(evidence, sourceReceipt);
 
-    assertThatThrownBy(
-            () ->
-                withFixturePeer(
-                    evidence,
-                    () ->
-                        RunOwnedWorldFixedPresetResources.plan(
-                            evidence, sourceReceipt, versionReceipt)))
+    assertThatThrownBy(() ->
+            withFixturePeer(
+                evidence,
+                () ->
+                    RunOwnedWorldFixedPresetResources.plan(
+                        evidence, sourceReceipt, versionReceipt)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageStartingWith("RUN_OWNED_WORLD_FIXED_PRESET_OVERRIDES_UNSUPPORTED:");
   }

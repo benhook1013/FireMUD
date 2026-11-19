@@ -85,10 +85,9 @@ class AccountRuntimeIdentityClientTest {
       assertThatThrownBy(() -> client.resolveRuntimeAccountIdentity(invalid[0], invalid[1]))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                client.resolveRuntimeAccountIdentity(
-                    "AB426BB3-A733-43F0-9C8E-2E379CBDF7EC", REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolveRuntimeAccountIdentity(
+                "AB426BB3-A733-43F0-9C8E-2E379CBDF7EC", REQUEST_ID.toString()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Canonical nonnil canonical account ID is required")
         .hasCauseInstanceOf(IllegalArgumentException.class);
@@ -99,10 +98,9 @@ class AccountRuntimeIdentityClientTest {
   void rejectsUninitializedClientAndAbsentOwnerResponseWithoutActivation() throws Exception {
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
     AccountRuntimeIdentityClient uninitialized = newClientWithoutStub(channelFactory);
-    assertThatThrownBy(
-            () ->
-                uninitialized.resolveRuntimeAccountIdentity(
-                    ACCOUNT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            uninitialized.resolveRuntimeAccountIdentity(
+                ACCOUNT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     verifyNoInteractions(channelFactory);
@@ -110,9 +108,8 @@ class AccountRuntimeIdentityClientTest {
     RuntimeAccountIdentityServiceGrpc.RuntimeAccountIdentityServiceBlockingStub stub = mockStub();
     when(stub.resolveRuntimeAccountIdentity(any())).thenReturn(null);
     AccountRuntimeIdentityClient client = newClient(stub);
-    assertThatThrownBy(
-            () ->
-                client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("absent");
   }
@@ -155,13 +152,11 @@ class AccountRuntimeIdentityClientTest {
     when(stub.resolveRuntimeAccountIdentity(any())).thenThrow(timeout).thenThrow(unavailable);
     AccountRuntimeIdentityClient client = newClient(stub);
 
-    assertThatThrownBy(
-            () ->
-                client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
         .isSameAs(timeout);
-    assertThatThrownBy(
-            () ->
-                client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
         .isSameAs(unavailable);
 
     verify(stub, times(2)).withDeadlineAfter(5L, TimeUnit.SECONDS);
@@ -173,16 +168,14 @@ class AccountRuntimeIdentityClientTest {
     CommonGrpcClientProperties plaintext = mtlsProperties();
     plaintext.setPlaintext(true);
 
-    assertThatThrownBy(
-            () ->
-                new AccountRuntimeIdentityClient(
-                    new ServiceEndpointsProperties(), plaintext, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new AccountRuntimeIdentityClient(
+                new ServiceEndpointsProperties(), plaintext, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
-    assertThatThrownBy(
-            () ->
-                new AccountRuntimeIdentityClient(
-                    new ServiceEndpointsProperties(), null, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new AccountRuntimeIdentityClient(
+                new ServiceEndpointsProperties(), null, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("TLS configuration is required");
 
@@ -191,10 +184,9 @@ class AccountRuntimeIdentityClientTest {
             incompleteMtlsProperties(null, "entity.key", "account-ca.crt"),
             incompleteMtlsProperties("entity.crt", null, "account-ca.crt"),
             incompleteMtlsProperties("entity.crt", "entity.key", null))) {
-      assertThatThrownBy(
-              () ->
-                  new AccountRuntimeIdentityClient(
-                      new ServiceEndpointsProperties(), incomplete, channelFactory, NAMESPACE))
+      assertThatThrownBy(() ->
+              new AccountRuntimeIdentityClient(
+                  new ServiceEndpointsProperties(), incomplete, channelFactory, NAMESPACE))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("certificate, key, and CA");
     }
@@ -204,18 +196,16 @@ class AccountRuntimeIdentityClientTest {
             incompleteMtlsProperties("classpath:entity.crt", "entity.key", "account-ca.crt"),
             incompleteMtlsProperties("entity.crt", "classpath:entity.key", "account-ca.crt"),
             incompleteMtlsProperties("entity.crt", "entity.key", "classpath:account-ca.crt"))) {
-      assertThatThrownBy(
-              () ->
-                  new AccountRuntimeIdentityClient(
-                      new ServiceEndpointsProperties(), classpath, channelFactory, NAMESPACE))
+      assertThatThrownBy(() ->
+              new AccountRuntimeIdentityClient(
+                  new ServiceEndpointsProperties(), classpath, channelFactory, NAMESPACE))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("file-backed");
     }
 
-    assertThatThrownBy(
-            () ->
-                new AccountRuntimeIdentityClient(
-                    new ServiceEndpointsProperties(), mtlsProperties(), channelFactory, "bad.ns"))
+    assertThatThrownBy(() ->
+            new AccountRuntimeIdentityClient(
+                new ServiceEndpointsProperties(), mtlsProperties(), channelFactory, "bad.ns"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("one DNS label");
     verifyNoInteractions(channelFactory);
@@ -266,9 +256,8 @@ class AccountRuntimeIdentityClientTest {
     setStub(client, staleStub);
     client.close();
 
-    assertThatThrownBy(
-            () ->
-                client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
     verifyNoInteractions(staleStub);
@@ -283,9 +272,8 @@ class AccountRuntimeIdentityClientTest {
     when(stub.resolveRuntimeAccountIdentity(any())).thenReturn(response);
     AccountRuntimeIdentityClient client = newClient(stub);
 
-    assertThatThrownBy(
-            () ->
-                client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -295,9 +283,8 @@ class AccountRuntimeIdentityClientTest {
     when(stub.resolveRuntimeAccountIdentity(any())).thenReturn(response);
     AccountRuntimeIdentityClient client = newClient(stub);
 
-    assertThatThrownBy(
-            () ->
-                client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
+    assertThatThrownBy(() ->
+            client.resolveRuntimeAccountIdentity(ACCOUNT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(PreseededActorAssignmentService.PreconditionException.class)
         .hasMessage("Account runtime identity response does not match the exact request");
   }

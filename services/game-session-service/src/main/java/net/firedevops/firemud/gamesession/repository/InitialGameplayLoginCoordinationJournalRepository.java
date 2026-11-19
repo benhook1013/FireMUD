@@ -149,13 +149,12 @@ public final class InitialGameplayLoginCoordinationJournalRepository {
     }
     retained
         .retainedReceipt()
-        .ifPresent(
-            previous -> {
-              if (!previous.disposalOperationId().equals(receipt.disposalOperationId())
-                  || previous.disposition() != Disposition.PENDING && !previous.equals(receipt)) {
-                throw new JournalConflictException();
-              }
-            });
+        .ifPresent(previous -> {
+          if (!previous.disposalOperationId().equals(receipt.disposalOperationId())
+              || previous.disposition() != Disposition.PENDING && !previous.equals(receipt)) {
+            throw new JournalConflictException();
+          }
+        });
     if (!retained.retainedReceipt().filter(receipt::equals).isPresent()) {
       dsl.execute(
           "UPDATE "
@@ -176,13 +175,12 @@ public final class InitialGameplayLoginCoordinationJournalRepository {
     Objects.requireNonNull(coordinates, "coordinates");
     requireNoTransaction();
     Record row =
-        dsl.connectionResult(
-            connection -> {
-              requireConnection(connection, false);
-              return DSL.using(connection, SQLDialect.POSTGRES)
-                  .fetchOne(
-                      "SELECT * FROM " + TABLE + " WHERE request_id = ?", coordinates.requestId());
-            });
+        dsl.connectionResult(connection -> {
+          requireConnection(connection, false);
+          return DSL.using(connection, SQLDialect.POSTGRES)
+              .fetchOne(
+                  "SELECT * FROM " + TABLE + " WHERE request_id = ?", coordinates.requestId());
+        });
     if (row == null) {
       return Optional.empty();
     }
@@ -199,23 +197,18 @@ public final class InitialGameplayLoginCoordinationJournalRepository {
       throw new IllegalArgumentException("LOGIN journal page size must be between 1 and 128");
     }
     requireNoTransaction();
-    return dsl.connectionResult(
-        connection -> {
-          requireConnection(connection, false);
-          var reader = DSL.using(connection, SQLDialect.POSTGRES);
-          var rows =
-              afterRequestId.isPresent()
-                  ? reader.fetch(
-                      "SELECT * FROM "
-                          + TABLE
-                          + " WHERE request_id > ? ORDER BY request_id LIMIT ?",
-                      afterRequestId.orElseThrow(),
-                      limit)
-                  : reader.fetch("SELECT * FROM " + TABLE + " ORDER BY request_id LIMIT ?", limit);
-          return rows.stream()
-              .map(InitialGameplayLoginCoordinationJournalRepository::decode)
-              .toList();
-        });
+    return dsl.connectionResult(connection -> {
+      requireConnection(connection, false);
+      var reader = DSL.using(connection, SQLDialect.POSTGRES);
+      var rows =
+          afterRequestId.isPresent()
+              ? reader.fetch(
+                  "SELECT * FROM " + TABLE + " WHERE request_id > ? ORDER BY request_id LIMIT ?",
+                  afterRequestId.orElseThrow(),
+                  limit)
+              : reader.fetch("SELECT * FROM " + TABLE + " ORDER BY request_id LIMIT ?", limit);
+      return rows.stream().map(InitialGameplayLoginCoordinationJournalRepository::decode).toList();
+    });
   }
 
   private InitialGameplayLoginJournalSnapshot locked(
@@ -301,11 +294,10 @@ public final class InitialGameplayLoginCoordinationJournalRepository {
             .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
       throw new JournalUnavailableException();
     }
-    dsl.connectionResult(
-        connection -> {
-          requireConnection(connection, true);
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      requireConnection(connection, true);
+      return null;
+    });
   }
 
   private static void requireConnection(Connection connection, boolean mutation)

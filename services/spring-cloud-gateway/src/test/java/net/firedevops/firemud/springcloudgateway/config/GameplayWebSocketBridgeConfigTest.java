@@ -63,18 +63,17 @@ class GameplayWebSocketBridgeConfigTest {
 
   @Test
   void gameplayWebSocketPathIsOwnedByGatewayCode() {
-    contextRunner.run(
-        context -> {
-          assertThat(context).hasSingleBean(GameplayWebSocketBridgeHandler.class);
-          assertThat(context).hasSingleBean(SimpleUrlHandlerMapping.class);
-          assertThat(context).hasSingleBean(WebSocketHandlerAdapter.class);
+    contextRunner.run(context -> {
+      assertThat(context).hasSingleBean(GameplayWebSocketBridgeHandler.class);
+      assertThat(context).hasSingleBean(SimpleUrlHandlerMapping.class);
+      assertThat(context).hasSingleBean(WebSocketHandlerAdapter.class);
 
-          SimpleUrlHandlerMapping mapping = context.getBean(SimpleUrlHandlerMapping.class);
-          assertThat(mapping.getUrlMap()).containsKeys("/ws/game", "/ws/game/**");
-          assertThat(mapping.getUrlMap().get("/ws/game"))
-              .isInstanceOf(WebHandler.class)
-              .isSameAs(mapping.getUrlMap().get("/ws/game/**"));
-        });
+      SimpleUrlHandlerMapping mapping = context.getBean(SimpleUrlHandlerMapping.class);
+      assertThat(mapping.getUrlMap()).containsKeys("/ws/game", "/ws/game/**");
+      assertThat(mapping.getUrlMap().get("/ws/game"))
+          .isInstanceOf(WebHandler.class)
+          .isSameAs(mapping.getUrlMap().get("/ws/game/**"));
+    });
   }
 
   @Test
@@ -84,22 +83,20 @@ class GameplayWebSocketBridgeConfigTest {
 
     for (String endpoint : new String[] {"", " \t ", "false"}) {
       contextRunner
-          .withInitializer(
-              applicationContext ->
-                  applicationContext
-                      .getEnvironment()
-                      .getPropertySources()
-                      .addFirst(
-                          new MapPropertySource(
-                              "test-authenticated-upstream",
-                              Map.of(
-                                  "firemud.gateway.gameplay.bridge.authenticated-upstream-url",
-                                  endpoint))))
-          .run(
-              context ->
-                  assertThat(context)
-                      .as("endpoint=%s", endpoint)
-                      .doesNotHaveBean(AuthenticatedGameplayWebSocketClient.class));
+          .withInitializer(applicationContext ->
+              applicationContext
+                  .getEnvironment()
+                  .getPropertySources()
+                  .addFirst(
+                      new MapPropertySource(
+                          "test-authenticated-upstream",
+                          Map.of(
+                              "firemud.gateway.gameplay.bridge.authenticated-upstream-url",
+                              endpoint))))
+          .run(context ->
+              assertThat(context)
+                  .as("endpoint=%s", endpoint)
+                  .doesNotHaveBean(AuthenticatedGameplayWebSocketClient.class));
     }
   }
 
@@ -116,42 +113,39 @@ class GameplayWebSocketBridgeConfigTest {
             "firemud.gateway.gameplay.bridge.tls.cert-chain=" + certificate,
             "firemud.gateway.gameplay.bridge.tls.private-key=" + privateKey,
             "firemud.gateway.gameplay.bridge.tls.ca-cert=" + caCertificate)
-        .run(
-            context ->
-                assertThat(context)
-                    .hasFailed()
-                    .getFailure()
-                    .hasRootCauseMessage("Dedicated authenticated gameplay wss endpoint required"));
+        .run(context ->
+            assertThat(context)
+                .hasFailed()
+                .getFailure()
+                .hasRootCauseMessage("Dedicated authenticated gameplay wss endpoint required"));
   }
 
   @Test
   void gameplayWebSocketMappingUsesPathPatternSemanticsForMatrixParameters() {
-    contextRunner.run(
-        context -> {
-          SimpleUrlHandlerMapping mapping = context.getBean(SimpleUrlHandlerMapping.class);
-          Object handler = mapping.getUrlMap().get("/ws/game");
-          assertThat(handler).isInstanceOf(WebHandler.class);
+    contextRunner.run(context -> {
+      SimpleUrlHandlerMapping mapping = context.getBean(SimpleUrlHandlerMapping.class);
+      Object handler = mapping.getUrlMap().get("/ws/game");
+      assertThat(handler).isInstanceOf(WebHandler.class);
 
-          for (String path :
-              new String[] {"/ws/game;probe", "/ws;probe/game", "/ws/game;probe/child"}) {
-            assertThat(
-                    mapping
-                        .getHandler(
-                            MockServerWebExchange.from(MockServerHttpRequest.get(path).build()))
-                        .block())
-                .as("path=%s", path)
-                .isSameAs(handler);
-          }
+      for (String path :
+          new String[] {"/ws/game;probe", "/ws;probe/game", "/ws/game;probe/child"}) {
+        assertThat(
+                mapping
+                    .getHandler(MockServerWebExchange.from(MockServerHttpRequest.get(path).build()))
+                    .block())
+            .as("path=%s", path)
+            .isSameAs(handler);
+      }
 
-          assertThat(
-                  mapping
-                      .getHandler(
-                          MockServerWebExchange.from(
-                              MockServerHttpRequest.get("/ws/game%3Bprobe").build()))
-                      .block())
-              .as("encoded semicolon is not a matrix parameter accepted by PathPattern")
-              .isNull();
-        });
+      assertThat(
+              mapping
+                  .getHandler(
+                      MockServerWebExchange.from(
+                          MockServerHttpRequest.get("/ws/game%3Bprobe").build()))
+                  .block())
+          .as("encoded semicolon is not a matrix parameter accepted by PathPattern")
+          .isNull();
+    });
   }
 
   @Test
@@ -161,11 +155,10 @@ class GameplayWebSocketBridgeConfigTest {
     when(session.getAttributes()).thenReturn(new HashMap<>());
     AtomicReference<VerifiedTcpProxyOrigin> received = new AtomicReference<>();
     when(handler.handle(session))
-        .thenAnswer(
-            invocation -> {
-              received.set(VerifiedTcpProxyOrigin.from(session));
-              return Mono.empty();
-            });
+        .thenAnswer(invocation -> {
+          received.set(VerifiedTcpProxyOrigin.from(session));
+          return Mono.empty();
+        });
     X509Certificate certificate;
     try (InputStream input =
         Objects.requireNonNull(getClass().getResourceAsStream("/certs/tcp-proxy-client.pem"))) {
@@ -207,9 +200,8 @@ class GameplayWebSocketBridgeConfigTest {
             HandshakeWebSocketService.class,
             (upgrade, construction) ->
                 when(upgrade.handleRequest(any(), any()))
-                    .thenAnswer(
-                        invocation ->
-                            invocation.<WebSocketHandler>getArgument(1).handle(session)))) {
+                    .thenAnswer(invocation ->
+                        invocation.<WebSocketHandler>getArgument(1).handle(session)))) {
       SimpleUrlHandlerMapping mapping =
           (SimpleUrlHandlerMapping)
               new GameplayWebSocketBridgeConfig().gameplayWebSocketBridgeMapping(handler);

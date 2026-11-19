@@ -85,80 +85,73 @@ public final class WorldDraftDesignDigestServiceImpl implements WorldDraftDesign
               regionRepository
                   .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
                   .stream()
-                  .map(
-                      region ->
-                          Map.<String, Object>of(
-                              "id", region.getId(),
-                              "shardId", region.getShardId(),
-                              "name", region.getName(),
-                              "weather", value(region.getWeather()),
-                              "generationSeed", region.getGenerationSeed(),
-                              "generatorType", value(region.getGeneratorType()),
-                              "generatorParams", value(region.getGeneratorParams()),
-                              "spacingMultiplier", region.getSpacingMultiplier()))
+                  .map(region ->
+                      Map.<String, Object>of(
+                          "id", region.getId(),
+                          "shardId", region.getShardId(),
+                          "name", region.getName(),
+                          "weather", value(region.getWeather()),
+                          "generationSeed", region.getGenerationSeed(),
+                          "generatorType", value(region.getGeneratorType()),
+                          "generatorParams", value(region.getGeneratorParams()),
+                          "spacingMultiplier", region.getSpacingMultiplier()))
                   .toList(),
               "zones",
               zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey).stream()
-                  .map(
-                      zone ->
-                          Map.<String, Object>of(
-                              "id", zone.getId(),
-                              "regionId", zone.getRegion().getId(),
-                              "name", zone.getName()))
+                  .map(zone ->
+                      Map.<String, Object>of(
+                          "id", zone.getId(),
+                          "regionId", zone.getRegion().getId(),
+                          "name", zone.getName()))
                   .toList(),
               "rooms",
               roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey).stream()
-                  .map(
-                      room ->
-                          Map.<String, Object>of(
-                              "id", room.getId(),
-                              "zoneId", room.getZone().getId(),
-                              "name", room.getName(),
-                              "description", value(room.getDescription()),
-                              "nameLocalizedVariantsJson",
-                                  value(room.getNameLocalizedVariantsJson()),
-                              "descriptionLocalizedVariantsJson",
-                                  value(room.getDescriptionLocalizedVariantsJson())))
+                  .map(room ->
+                      Map.<String, Object>of(
+                          "id", room.getId(),
+                          "zoneId", room.getZone().getId(),
+                          "name", room.getName(),
+                          "description", value(room.getDescription()),
+                          "nameLocalizedVariantsJson", value(room.getNameLocalizedVariantsJson()),
+                          "descriptionLocalizedVariantsJson",
+                              value(room.getDescriptionLocalizedVariantsJson())))
                   .toList(),
               "roomExits",
               roomExitRepository
                   .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
                   .stream()
-                  .map(
-                      roomExit ->
-                          Map.<String, Object>of(
-                              "id", roomExit.getId(),
-                              "fromRoomId", roomExit.getFromRoom().getId(),
-                              "toRoomId", roomExit.getToRoom().getId(),
-                              "direction", roomExit.getDirection(),
-                              "cost", roomExit.getCost()))
+                  .map(roomExit ->
+                      Map.<String, Object>of(
+                          "id", roomExit.getId(),
+                          "fromRoomId", roomExit.getFromRoom().getId(),
+                          "toRoomId", roomExit.getToRoom().getId(),
+                          "direction", roomExit.getDirection(),
+                          "cost", roomExit.getCost()))
                   .toList(),
               "generationRules",
               generationRuleRepository
                   .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
                   .stream()
-                  .map(
-                      rule ->
-                          Map.<String, Object>of(
-                              "id", rule.getId(),
-                              "name", rule.getName(),
-                              "scopeType", value(rule.getScopeType()),
-                              "scopeId", value(rule.getScopeId()),
-                              "value", value(rule.getValue())))
+                  .map(rule ->
+                      Map.<String, Object>of(
+                          "id", rule.getId(),
+                          "name", rule.getName(),
+                          "scopeType", value(rule.getScopeType()),
+                          "scopeId", value(rule.getScopeId()),
+                          "value", value(rule.getValue())))
                   .toList(),
               "worldEntitySpawnBindings",
               worldEntitySpawnBindingRepository
                   .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
                   .stream()
-                  .map(
-                      binding ->
-                          Map.<String, Object>of(
-                              "id", binding.getId(),
-                              "roomId", binding.getRoom().getId(),
-                              "entityTemplateType", binding.getEntityTemplateType(),
-                              "entityReference", entityReference(binding),
-                              "spawnCount", binding.getSpawnCount(),
-                              "respawnDelaySeconds", binding.getRespawnDelaySeconds()))
+                  .map(binding ->
+                      Map.<String, Object>of(
+                          "id", binding.getId(),
+                          "roomId", binding.getRoom().getId(),
+                          "entityTemplateType", binding.getEntityTemplateType(),
+                          "entityReference", entityReference(binding),
+                          "spawnCount", binding.getSpawnCount(),
+                          "respawnDelaySeconds", binding.getRespawnDelaySeconds()))
                   .toList());
       int schemaVersion = DIGEST_SCHEMA_VERSION;
       if (inboundSourceClosure != null) {

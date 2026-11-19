@@ -121,33 +121,31 @@ public final class WorldCanonicalInstancePreparationRepository {
     String inputDigest = digest(exactInput.getBytes(StandardCharsets.UTF_8));
     var evidence = input.gameSessionReadEvidence();
     return Boolean.TRUE.equals(
-        readTransaction.execute(
-            status -> {
-              applyDatabaseTimeouts();
-              return dsl.fetchExists(
-                  dsl.selectOne()
-                      .from("world_canonical_instance_execution")
-                      .where(
-                          "target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?"
-                              + " AND canonical_game_instance_id=? AND operation_state='COMMITTED'"
-                              + " AND original_post_authorization_tuple=?"
-                              + " AND original_post_authorization_tuple_sha256=?"
-                              + " AND game_session_owner_mutation_id=? AND game_session_owner_attempt_id=?"
-                              + " AND game_session_owner_fence=? AND preparation_input_digest=?"
-                              + " AND preparation_input_json=? AND original_attempt_evidence_bytes IS NOT NULL",
-                          evidence.targetNamespace(),
-                          evidence.canonicalTenantId(),
-                          evidence.controlPlaneRequestId(),
-                          input.canonicalGameInstanceId(),
-                          operation.originalPostAuthorizationTuple(),
-                          HexFormat.of()
-                              .formatHex(sha256(operation.originalPostAuthorizationTuple())),
-                          operation.gameSessionOwnerMutationId(),
-                          operation.gameSessionOwnerAttemptId(),
-                          operation.gameSessionOwnerFence(),
-                          inputDigest,
-                          exactInput));
-            }));
+        readTransaction.execute(status -> {
+          applyDatabaseTimeouts();
+          return dsl.fetchExists(
+              dsl.selectOne()
+                  .from("world_canonical_instance_execution")
+                  .where(
+                      "target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?"
+                          + " AND canonical_game_instance_id=? AND operation_state='COMMITTED'"
+                          + " AND original_post_authorization_tuple=?"
+                          + " AND original_post_authorization_tuple_sha256=?"
+                          + " AND game_session_owner_mutation_id=? AND game_session_owner_attempt_id=?"
+                          + " AND game_session_owner_fence=? AND preparation_input_digest=?"
+                          + " AND preparation_input_json=? AND original_attempt_evidence_bytes IS NOT NULL",
+                      evidence.targetNamespace(),
+                      evidence.canonicalTenantId(),
+                      evidence.controlPlaneRequestId(),
+                      input.canonicalGameInstanceId(),
+                      operation.originalPostAuthorizationTuple(),
+                      HexFormat.of().formatHex(sha256(operation.originalPostAuthorizationTuple())),
+                      operation.gameSessionOwnerMutationId(),
+                      operation.gameSessionOwnerAttemptId(),
+                      operation.gameSessionOwnerFence(),
+                      inputDigest,
+                      exactInput));
+        }));
   }
 
   /**
@@ -242,56 +240,55 @@ public final class WorldCanonicalInstancePreparationRepository {
       }
 
       committed =
-          transaction.execute(
-              status -> {
-                requireWritableReadCommittedTransaction();
-                applyDatabaseTimeouts();
-                authority.requireHeld();
-                Record beginRow =
-                    dsl.fetchOne(
-                        "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
-                        inputJson,
-                        inputDigest,
-                        executionIdentity.originalPostAuthorizationTuple(),
-                        executionIdentity.accountWorldParticipationId(),
-                        executionIdentity.accountWorldParticipationFence(),
-                        executionIdentity.gameSessionOwnerAttemptId(),
-                        executionIdentity.gameSessionOwnerFence(),
-                        executionIdentity.canonicalGameInstanceId(),
-                        intentFence,
-                        executionIdentity.gameSessionOwnerMutationId(),
-                        executionIdentity.originalAttemptReadRequestId(),
-                        OffsetDateTime.ofInstant(
-                            executionIdentity.originalGameSessionLeaseExpiresAt(),
-                            java.time.ZoneOffset.UTC),
-                        executionIdentity.originalAttemptEvidenceBytes(),
-                        executionIdentity.originalAttemptEvidenceDigest());
-                Long worldExecutionFence = beginRow == null ? null : beginRow.get(0, Long.class);
-                if (worldExecutionFence == null || worldExecutionFence <= 0L) {
-                  return null;
-                }
-                Record row =
-                    Objects.requireNonNull(
-                        fetchCanonicalPreparation(inputJson, inputDigest),
-                        "Canonical preparation owner function returned no row");
-                MaterializedInstance materialized =
-                    new MaterializedInstance(
-                        required(row, "world_instance_id", Long.class),
-                        required(row, "private_game_instance_key", Long.class));
-                WorldCanonicalInstanceAssociation.Claim claim =
-                    new WorldCanonicalInstanceAssociation.Claim(
-                        input.gameSessionReadRequest(),
-                        input.gameSessionReadEvidence(),
-                        materialized.worldInstanceId(),
-                        input.completeLaunchBinding(),
-                        input.versionIdentity());
-                associationRepository.retainClaimInOwnerTransaction(claim);
-                authority.requireHeld();
-                dsl.fetch(
-                    "SELECT world_commit_canonical_instance_execution(?)",
-                    materialized.worldInstanceId());
-                return materialized;
-              });
+          transaction.execute(status -> {
+            requireWritableReadCommittedTransaction();
+            applyDatabaseTimeouts();
+            authority.requireHeld();
+            Record beginRow =
+                dsl.fetchOne(
+                    "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
+                    inputJson,
+                    inputDigest,
+                    executionIdentity.originalPostAuthorizationTuple(),
+                    executionIdentity.accountWorldParticipationId(),
+                    executionIdentity.accountWorldParticipationFence(),
+                    executionIdentity.gameSessionOwnerAttemptId(),
+                    executionIdentity.gameSessionOwnerFence(),
+                    executionIdentity.canonicalGameInstanceId(),
+                    intentFence,
+                    executionIdentity.gameSessionOwnerMutationId(),
+                    executionIdentity.originalAttemptReadRequestId(),
+                    OffsetDateTime.ofInstant(
+                        executionIdentity.originalGameSessionLeaseExpiresAt(),
+                        java.time.ZoneOffset.UTC),
+                    executionIdentity.originalAttemptEvidenceBytes(),
+                    executionIdentity.originalAttemptEvidenceDigest());
+            Long worldExecutionFence = beginRow == null ? null : beginRow.get(0, Long.class);
+            if (worldExecutionFence == null || worldExecutionFence <= 0L) {
+              return null;
+            }
+            Record row =
+                Objects.requireNonNull(
+                    fetchCanonicalPreparation(inputJson, inputDigest),
+                    "Canonical preparation owner function returned no row");
+            MaterializedInstance materialized =
+                new MaterializedInstance(
+                    required(row, "world_instance_id", Long.class),
+                    required(row, "private_game_instance_key", Long.class));
+            WorldCanonicalInstanceAssociation.Claim claim =
+                new WorldCanonicalInstanceAssociation.Claim(
+                    input.gameSessionReadRequest(),
+                    input.gameSessionReadEvidence(),
+                    materialized.worldInstanceId(),
+                    input.completeLaunchBinding(),
+                    input.versionIdentity());
+            associationRepository.retainClaimInOwnerTransaction(claim);
+            authority.requireHeld();
+            dsl.fetch(
+                "SELECT world_commit_canonical_instance_execution(?)",
+                materialized.worldInstanceId());
+            return materialized;
+          });
     } catch (RuntimeException outcomeUncertain) {
       return recoverAfterUncertainWrite(input, executionIdentity, outcomeUncertain);
     }
@@ -300,10 +297,9 @@ public final class WorldCanonicalInstancePreparationRepository {
       ExecutionOperation terminal =
           readExactExecution(executionIdentity)
               .operation()
-              .orElseThrow(
-                  () ->
-                      new InvalidPreparationEvidenceException(
-                          "A serialized World execution disappeared before terminal readback"));
+              .orElseThrow(() ->
+                  new InvalidPreparationEvidenceException(
+                      "A serialized World execution disappeared before terminal readback"));
       if (terminal.state() == ExecutionState.COMMITTED) {
         return readCommittedResult(input, terminal);
       }
@@ -313,10 +309,9 @@ public final class WorldCanonicalInstancePreparationRepository {
 
     Result result =
         readOwnerPreparation(input)
-            .orElseThrow(
-                () ->
-                    new InvalidPreparationEvidenceException(
-                        "Committed canonical World preparation has no independent result readback"));
+            .orElseThrow(() ->
+                new InvalidPreparationEvidenceException(
+                    "Committed canonical World preparation has no independent result readback"));
     if (result.association().worldInstanceId() != committed.worldInstanceId()) {
       throw new InvalidPreparationEvidenceException(
           "Canonical World preparation readback differs from its committed owner row");
@@ -336,30 +331,29 @@ public final class WorldCanonicalInstancePreparationRepository {
       WorldCanonicalInstanceExecutionIdentity identity,
       WorldCanonicalInstancePreparationService.HeldCommitAuthority authority) {
     Long fence =
-        intentTransaction.execute(
-            status -> {
-              requireWritableReadCommittedTransaction();
-              applyDatabaseTimeouts();
-              authority.requireHeld();
-              Record intentRow =
-                  dsl.fetchOne(
-                      "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
-                      inputJson,
-                      inputDigest,
-                      identity.originalPostAuthorizationTuple(),
-                      identity.accountWorldParticipationId(),
-                      identity.accountWorldParticipationFence(),
-                      identity.gameSessionOwnerAttemptId(),
-                      identity.gameSessionOwnerFence(),
-                      identity.canonicalGameInstanceId(),
-                      identity.gameSessionOwnerMutationId(),
-                      identity.originalAttemptReadRequestId(),
-                      OffsetDateTime.ofInstant(
-                          identity.originalGameSessionLeaseExpiresAt(), java.time.ZoneOffset.UTC),
-                      identity.originalAttemptEvidenceBytes(),
-                      identity.originalAttemptEvidenceDigest());
-              return intentRow == null ? null : intentRow.get(0, Long.class);
-            });
+        intentTransaction.execute(status -> {
+          requireWritableReadCommittedTransaction();
+          applyDatabaseTimeouts();
+          authority.requireHeld();
+          Record intentRow =
+              dsl.fetchOne(
+                  "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
+                  inputJson,
+                  inputDigest,
+                  identity.originalPostAuthorizationTuple(),
+                  identity.accountWorldParticipationId(),
+                  identity.accountWorldParticipationFence(),
+                  identity.gameSessionOwnerAttemptId(),
+                  identity.gameSessionOwnerFence(),
+                  identity.canonicalGameInstanceId(),
+                  identity.gameSessionOwnerMutationId(),
+                  identity.originalAttemptReadRequestId(),
+                  OffsetDateTime.ofInstant(
+                      identity.originalGameSessionLeaseExpiresAt(), java.time.ZoneOffset.UTC),
+                  identity.originalAttemptEvidenceBytes(),
+                  identity.originalAttemptEvidenceDigest());
+          return intentRow == null ? null : intentRow.get(0, Long.class);
+        });
     if (fence == null) {
       throw new InvalidPreparationEvidenceException(
           "World execution intent transaction returned no fence result");
@@ -372,30 +366,29 @@ public final class WorldCanonicalInstancePreparationRepository {
       WorldCanonicalInstanceExecutionIdentity identity,
       WorldCanonicalInstancePreparationService.HeldCommitAuthority authority) {
     Long fence =
-        intentTransaction.execute(
-            status -> {
-              requireWritableReadCommittedTransaction();
-              applyDatabaseTimeouts();
-              authority.requireHeld();
-              Record claimRow =
-                  dsl.fetchOne(
-                      "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
-                      identity.preparationInputJson(),
-                      identity.preparationInputDigest(),
-                      identity.originalPostAuthorizationTuple(),
-                      identity.accountWorldParticipationId(),
-                      identity.accountWorldParticipationFence(),
-                      identity.gameSessionOwnerAttemptId(),
-                      identity.gameSessionOwnerFence(),
-                      identity.canonicalGameInstanceId(),
-                      identity.gameSessionOwnerMutationId(),
-                      identity.originalAttemptReadRequestId(),
-                      OffsetDateTime.ofInstant(
-                          identity.originalGameSessionLeaseExpiresAt(), java.time.ZoneOffset.UTC),
-                      identity.originalAttemptEvidenceBytes(),
-                      identity.originalAttemptEvidenceDigest());
-              return claimRow == null ? null : claimRow.get(0, Long.class);
-            });
+        intentTransaction.execute(status -> {
+          requireWritableReadCommittedTransaction();
+          applyDatabaseTimeouts();
+          authority.requireHeld();
+          Record claimRow =
+              dsl.fetchOne(
+                  "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
+                  identity.preparationInputJson(),
+                  identity.preparationInputDigest(),
+                  identity.originalPostAuthorizationTuple(),
+                  identity.accountWorldParticipationId(),
+                  identity.accountWorldParticipationFence(),
+                  identity.gameSessionOwnerAttemptId(),
+                  identity.gameSessionOwnerFence(),
+                  identity.canonicalGameInstanceId(),
+                  identity.gameSessionOwnerMutationId(),
+                  identity.originalAttemptReadRequestId(),
+                  OffsetDateTime.ofInstant(
+                      identity.originalGameSessionLeaseExpiresAt(), java.time.ZoneOffset.UTC),
+                  identity.originalAttemptEvidenceBytes(),
+                  identity.originalAttemptEvidenceDigest());
+          return claimRow == null ? null : claimRow.get(0, Long.class);
+        });
     authority.requireHeld();
     return fence;
   }
@@ -407,25 +400,24 @@ public final class WorldCanonicalInstancePreparationRepository {
     Objects.requireNonNull(identity, "identity");
     requireNoActiveTransaction("World execution terminal read");
     Record row =
-        readTransaction.execute(
-            status -> {
-              applyDatabaseTimeouts();
-              return dsl.fetchOne(
-                  "SELECT clock.database_now, e.canonical_game_instance_id, original_post_authorization_tuple, "
-                      + "original_post_authorization_tuple_sha256, account_world_participation_id, "
-                      + "account_world_participation_fence, game_session_owner_attempt_id, "
-                      + "game_session_owner_fence, game_session_owner_mutation_id, "
-                      + "original_attempt_read_request_id, original_game_session_lease_expires_at, "
-                      + "original_attempt_evidence_bytes, original_attempt_evidence_sha256, "
-                      + "preparation_input_digest, preparation_input_json, "
-                      + "world_execution_fence, operation_state, world_instance_id "
-                      + "FROM (SELECT clock_timestamp() AS database_now) clock "
-                      + "LEFT JOIN world_canonical_instance_execution e ON e.target_namespace=? "
-                      + "AND e.canonical_tenant_id=? AND e.control_plane_request_id=?",
-                  identity.targetNamespace(),
-                  identity.canonicalTenantId(),
-                  identity.controlPlaneRequestId());
-            });
+        readTransaction.execute(status -> {
+          applyDatabaseTimeouts();
+          return dsl.fetchOne(
+              "SELECT clock.database_now, e.canonical_game_instance_id, original_post_authorization_tuple, "
+                  + "original_post_authorization_tuple_sha256, account_world_participation_id, "
+                  + "account_world_participation_fence, game_session_owner_attempt_id, "
+                  + "game_session_owner_fence, game_session_owner_mutation_id, "
+                  + "original_attempt_read_request_id, original_game_session_lease_expires_at, "
+                  + "original_attempt_evidence_bytes, original_attempt_evidence_sha256, "
+                  + "preparation_input_digest, preparation_input_json, "
+                  + "world_execution_fence, operation_state, world_instance_id "
+                  + "FROM (SELECT clock_timestamp() AS database_now) clock "
+                  + "LEFT JOIN world_canonical_instance_execution e ON e.target_namespace=? "
+                  + "AND e.canonical_tenant_id=? AND e.control_plane_request_id=?",
+              identity.targetNamespace(),
+              identity.canonicalTenantId(),
+              identity.controlPlaneRequestId());
+        });
     if (row == null) {
       throw new InvalidPreparationEvidenceException(
           "World exact-operation read returned no database-clock result");
@@ -507,10 +499,9 @@ public final class WorldCanonicalInstancePreparationRepository {
     ExecutionOperation terminal =
         readExactExecution(identity)
             .operation()
-            .orElseThrow(
-                () ->
-                    new InvalidPreparationEvidenceException(
-                        "Serialized World execution disappeared before terminal readback"));
+            .orElseThrow(() ->
+                new InvalidPreparationEvidenceException(
+                    "Serialized World execution disappeared before terminal readback"));
     if (terminal.state() == ExecutionState.ABORTED) {
       throw new ConflictingPreparationException(
           "Exact original World execution is durably ABORTED and cannot be restarted");
@@ -549,10 +540,9 @@ public final class WorldCanonicalInstancePreparationRepository {
   private Result readCommittedResult(Input input, ExecutionOperation terminal) {
     Result result =
         readOwnerPreparation(input)
-            .orElseThrow(
-                () ->
-                    new InvalidPreparationEvidenceException(
-                        "Exact COMMITTED World execution has no immutable preparation readback"));
+            .orElseThrow(() ->
+                new InvalidPreparationEvidenceException(
+                    "Exact COMMITTED World execution has no immutable preparation readback"));
     if (result.association().worldInstanceId() != terminal.worldInstanceId()) {
       throw new InvalidPreparationEvidenceException(
           "Exact COMMITTED World execution differs from its retained terminal result");
@@ -569,47 +559,46 @@ public final class WorldCanonicalInstancePreparationRepository {
     requireNoActiveTransaction("World execution abort");
     Record row =
         Objects.requireNonNull(
-            abortTransaction.execute(
-                status -> {
-                  requireWritableReadCommittedTransaction();
-                  applyDatabaseTimeouts();
-                  if (identity.hasOriginalAttemptEvidence()) {
-                    return dsl.fetchOne(
-                        "SELECT operation_state, world_execution_fence, world_instance_id "
-                            + "FROM world_abort_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
-                        identity.targetNamespace(),
-                        identity.canonicalTenantId(),
-                        identity.controlPlaneRequestId(),
-                        identity.canonicalGameInstanceId(),
-                        identity.preparationInputJson(),
-                        identity.preparationInputDigest(),
-                        identity.originalPostAuthorizationTuple(),
-                        identity.accountWorldParticipationId(),
-                        identity.accountWorldParticipationFence(),
-                        identity.gameSessionOwnerAttemptId(),
-                        identity.gameSessionOwnerFence(),
-                        identity.gameSessionOwnerMutationId(),
-                        identity.originalAttemptReadRequestId(),
-                        OffsetDateTime.ofInstant(
-                            identity.originalGameSessionLeaseExpiresAt(), java.time.ZoneOffset.UTC),
-                        identity.originalAttemptEvidenceBytes(),
-                        identity.originalAttemptEvidenceDigest());
-                  }
-                  return dsl.fetchOne(
-                      "SELECT operation_state, world_execution_fence, world_instance_id "
-                          + "FROM world_abort_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                      identity.targetNamespace(),
-                      identity.canonicalTenantId(),
-                      identity.controlPlaneRequestId(),
-                      identity.canonicalGameInstanceId(),
-                      identity.preparationInputJson(),
-                      identity.preparationInputDigest(),
-                      identity.originalPostAuthorizationTuple(),
-                      identity.accountWorldParticipationId(),
-                      identity.accountWorldParticipationFence(),
-                      identity.gameSessionOwnerAttemptId(),
-                      identity.gameSessionOwnerFence());
-                }),
+            abortTransaction.execute(status -> {
+              requireWritableReadCommittedTransaction();
+              applyDatabaseTimeouts();
+              if (identity.hasOriginalAttemptEvidence()) {
+                return dsl.fetchOne(
+                    "SELECT operation_state, world_execution_fence, world_instance_id "
+                        + "FROM world_abort_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
+                    identity.targetNamespace(),
+                    identity.canonicalTenantId(),
+                    identity.controlPlaneRequestId(),
+                    identity.canonicalGameInstanceId(),
+                    identity.preparationInputJson(),
+                    identity.preparationInputDigest(),
+                    identity.originalPostAuthorizationTuple(),
+                    identity.accountWorldParticipationId(),
+                    identity.accountWorldParticipationFence(),
+                    identity.gameSessionOwnerAttemptId(),
+                    identity.gameSessionOwnerFence(),
+                    identity.gameSessionOwnerMutationId(),
+                    identity.originalAttemptReadRequestId(),
+                    OffsetDateTime.ofInstant(
+                        identity.originalGameSessionLeaseExpiresAt(), java.time.ZoneOffset.UTC),
+                    identity.originalAttemptEvidenceBytes(),
+                    identity.originalAttemptEvidenceDigest());
+              }
+              return dsl.fetchOne(
+                  "SELECT operation_state, world_execution_fence, world_instance_id "
+                      + "FROM world_abort_canonical_instance_execution(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  identity.targetNamespace(),
+                  identity.canonicalTenantId(),
+                  identity.controlPlaneRequestId(),
+                  identity.canonicalGameInstanceId(),
+                  identity.preparationInputJson(),
+                  identity.preparationInputDigest(),
+                  identity.originalPostAuthorizationTuple(),
+                  identity.accountWorldParticipationId(),
+                  identity.accountWorldParticipationFence(),
+                  identity.gameSessionOwnerAttemptId(),
+                  identity.gameSessionOwnerFence());
+            }),
             "World abort transaction did not complete");
     String state = required(row, "operation_state", String.class);
     ExecutionState executionState = ExecutionState.valueOf(state);
@@ -710,10 +699,9 @@ public final class WorldCanonicalInstancePreparationRepository {
     WorldCanonicalInstanceAssociation association =
         associationRepository
             .readOwnerAssociation(input.canonicalGameInstanceId())
-            .orElseThrow(
-                () ->
-                    new InvalidPreparationEvidenceException(
-                        "Canonical World preparation result lost its exact committed association"));
+            .orElseThrow(() ->
+                new InvalidPreparationEvidenceException(
+                    "Canonical World preparation result lost its exact committed association"));
     if (!association.identity().equals(input.gameSessionReadEvidence().canonicalIdentity())
         || !association.completeLaunchBinding().equals(input.completeLaunchBinding())
         || !association.versionIdentity().equals(input.versionIdentity())
@@ -770,10 +758,9 @@ public final class WorldCanonicalInstancePreparationRepository {
     WorldCanonicalFrozenTopology frozen =
         frozenTopologyRepository
             .readCommitted(input.topologyPlan().sourceBinding())
-            .orElseThrow(
-                () ->
-                    new InvalidPreparationEvidenceException(
-                        "Canonical preparation input has no exact committed frozen topology"));
+            .orElseThrow(() ->
+                new InvalidPreparationEvidenceException(
+                    "Canonical preparation input has no exact committed frozen topology"));
     WorldCanonicalInstanceTopologyPlan reconstructed =
         WorldCanonicalInstanceTopologyPlan.create(frozen);
     if (!frozen.captureId().equals(input.captureId())
@@ -845,10 +832,9 @@ public final class WorldCanonicalInstancePreparationRepository {
     var retainedSource =
         sourceIntakeRepository
             .read(source.targetNamespace(), source.intakeRequestId())
-            .orElseThrow(
-                () ->
-                    new InvalidPreparationEvidenceException(
-                        "Canonical preparation has no exact committed World source intake"));
+            .orElseThrow(() ->
+                new InvalidPreparationEvidenceException(
+                    "Canonical preparation has no exact committed World source intake"));
     if (!retainedSource.equals(source)) {
       throw new InvalidPreparationEvidenceException(
           "Canonical preparation source differs from its complete original immutable intake row");
@@ -860,10 +846,9 @@ public final class WorldCanonicalInstancePreparationRepository {
                 launch.targetNamespace(),
                 launch.canonicalTenantId(),
                 launch.controlPlaneRequestId())
-            .orElseThrow(
-                () ->
-                    new InvalidPreparationEvidenceException(
-                        "Canonical preparation has no exact committed launch binding"));
+            .orElseThrow(() ->
+                new InvalidPreparationEvidenceException(
+                    "Canonical preparation has no exact committed launch binding"));
     if (!retainedBinding.operationId().equals(launch.operationId())
         || !retainedBinding.targetNamespace().equals(launch.targetNamespace())
         || !retainedBinding.canonicalTenantId().equals(launch.canonicalTenantId())
@@ -893,10 +878,9 @@ public final class WorldCanonicalInstancePreparationRepository {
                 version.canonicalTenantId(),
                 version.worldSlug(),
                 version.canonicalVersionId())
-            .orElseThrow(
-                () ->
-                    new InvalidPreparationEvidenceException(
-                        "Canonical preparation has no exact committed source-qualified Version identity"));
+            .orElseThrow(() ->
+                new InvalidPreparationEvidenceException(
+                    "Canonical preparation has no exact committed source-qualified Version identity"));
     if (!retainedVersion.equals(version) || !retainedVersion.sourceIntakeReceipt().equals(source)) {
       throw new InvalidPreparationEvidenceException(
           "Canonical preparation Version/source evidence differs from its original immutable row");

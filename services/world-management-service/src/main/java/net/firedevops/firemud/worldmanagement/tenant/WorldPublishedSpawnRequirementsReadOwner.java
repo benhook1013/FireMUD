@@ -176,10 +176,9 @@ final class WorldPublishedSpawnRequirementsReadOwner {
     FreshGraphDeclaration declaration =
         authoredGraph
             .freshGraphDeclaration()
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "Published World source lacks its original complete family declaration"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "Published World source lacks its original complete family declaration"));
     if (!authoredGraph.tenantId().equals(frozenGraph.tenantId())
         || !authoredGraph.versionId().equals(frozenGraph.versionId())
         || authoredGraph.nodes().size() != frozenGraph.rows().size()) {
@@ -365,33 +364,28 @@ final class WorldPublishedSpawnRequirementsReadOwner {
             freeze.contentDigest(),
             freeze.digestSchemaVersion(),
             freeze.suppliedOwnedAffectedTuples().stream()
-                .map(
-                    tuple ->
-                        new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                            tuple.owner(),
-                            tuple.aggregateType(),
-                            tuple.aggregateId(),
-                            tuple.scopeType(),
-                            tuple.scopeId(),
-                            tuple.expectedEpoch()))
+                .map(tuple ->
+                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                        tuple.owner(),
+                        tuple.aggregateType(),
+                        tuple.aggregateId(),
+                        tuple.scopeType(),
+                        tuple.scopeId(),
+                        tuple.expectedEpoch()))
                 .toList());
     var receipt = WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes());
     FreshGraphDeclaration declaration =
         plan.graph()
             .freshGraphDeclaration()
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "Selected World graph has no original fresh declaration"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "Selected World graph has no original fresh declaration"));
     if (!selector.request().equals(expected)
         || !declaration.startLocation().equals(receipt.startLocation())
         || !receipt.bindingDigest().equals(binding.digest())
         || frozenTopology.graph().family(Family.ROOM).stream()
-                .filter(
-                    room ->
-                        room.template()
-                            .templateId()
-                            .equals(receipt.startLocation().roomTemplateId()))
+                .filter(room ->
+                    room.template().templateId().equals(receipt.startLocation().roomTemplateId()))
                 .count()
             != 1) {
       throw new IllegalArgumentException(
@@ -415,15 +409,14 @@ final class WorldPublishedSpawnRequirementsReadOwner {
         request.contentDigest(),
         request.digestSchemaVersion(),
         request.worldAffectedTuples().stream()
-            .map(
-                tuple ->
-                    new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
-                        tuple.owner(),
-                        tuple.aggregateType(),
-                        tuple.aggregateId(),
-                        tuple.scopeType(),
-                        tuple.scopeId(),
-                        tuple.expectedEpoch()))
+            .map(tuple ->
+                new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                    tuple.owner(),
+                    tuple.aggregateType(),
+                    tuple.aggregateId(),
+                    tuple.scopeType(),
+                    tuple.scopeId(),
+                    tuple.expectedEpoch()))
             .toList());
   }
 

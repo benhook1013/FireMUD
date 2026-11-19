@@ -328,8 +328,8 @@ subprojects {
 
     spotless {
         java {
-            // Upgrade the formatter independently: Spotless 8.11 changes its default to 2.x.
-            googleJavaFormat(libs.findVersion("google-java-format").get().requiredVersion)
+            // Keep formatter upgrades limited to layout; do not rewrite Java syntax.
+            googleJavaFormat(libs.findVersion("google-java-format").get().requiredVersion).cleanup(false)
             targetExclude("build/generated/**", "build/generated-src/**")
         }
     }

@@ -361,16 +361,15 @@ public class TextPlayerOutputRenderer {
 
   private String renderRealmsView(RealmBrowseViewOutput output) {
     return output.realms().stream()
-        .map(
-            realm ->
-                realm.displayName()
-                    + " ("
-                    + realm.realmSlug()
-                    + ") ["
-                    + realm.stateScope().toLowerCase(java.util.Locale.ROOT)
-                    + ", "
-                    + realm.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT)
-                    + "]")
+        .map(realm ->
+            realm.displayName()
+                + " ("
+                + realm.realmSlug()
+                + ") ["
+                + realm.stateScope().toLowerCase(java.util.Locale.ROOT)
+                + ", "
+                + realm.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT)
+                + "]")
         .collect(Collectors.joining("\n"));
   }
 
@@ -388,14 +387,13 @@ public class TextPlayerOutputRenderer {
     }
     String roster =
         output.characters().stream()
-            .map(
-                character ->
-                    character.ordinal()
-                        + ") "
-                        + character.characterName()
-                        + " [lvl "
-                        + character.level()
-                        + "]")
+            .map(character ->
+                character.ordinal()
+                    + ") "
+                    + character.characterName()
+                    + " [lvl "
+                    + character.level()
+                    + "]")
             .collect(Collectors.joining("\n"));
     return roster
         + "\n\n"
@@ -443,13 +441,12 @@ public class TextPlayerOutputRenderer {
 
   private String renderWhoEntries(List<WhoViewOutput.Entry> entries) {
     return entries.stream()
-        .map(
-            entry ->
-                switch (entry.activityState()) {
-                  case "AUTO_AFK" -> entry.characterName() + " (idle)";
-                  case "EXPLICIT_AFK" -> entry.characterName() + " (AFK)";
-                  default -> entry.characterName();
-                })
+        .map(entry ->
+            switch (entry.activityState()) {
+              case "AUTO_AFK" -> entry.characterName() + " (idle)";
+              case "EXPLICIT_AFK" -> entry.characterName() + " (AFK)";
+              default -> entry.characterName();
+            })
         .collect(Collectors.joining(", "));
   }
 
@@ -466,17 +463,16 @@ public class TextPlayerOutputRenderer {
     }
     String body =
         output.friends().stream()
-            .map(
-                entry ->
-                    entry.ordinal()
-                        + ") "
-                        + entry.displayName()
-                        + " [acct #"
-                        + entry.friendAccountId()
-                        + "]"
-                        + renderFriendStatusSuffix(entry)
-                        + " - "
-                        + renderFriendStatus(entry))
+            .map(entry ->
+                entry.ordinal()
+                    + ") "
+                    + entry.displayName()
+                    + " [acct #"
+                    + entry.friendAccountId()
+                    + "]"
+                    + renderFriendStatusSuffix(entry)
+                    + " - "
+                    + renderFriendStatus(entry))
             .collect(Collectors.joining("\n"));
     if ("ALL".equalsIgnoreCase(output.filter())) {
       return body;

@@ -150,14 +150,13 @@ public final class BrandingSourceRepository {
         .map(m -> Long.parseLong(m.assetRowId()))
         .distinct()
         .sorted()
-        .forEach(
-            id -> {
-              if (dsl.fetchOne(
-                      "SELECT id FROM game_assets WHERE tenant_id = ? AND id = ? FOR UPDATE",
-                      binding.target().gameDesignVersionTenantKey(),
-                      id)
-                  == null) throw new IllegalStateException("BRANDING_SOURCE_ROW_UNAVAILABLE");
-            });
+        .forEach(id -> {
+          if (dsl.fetchOne(
+                  "SELECT id FROM game_assets WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                  binding.target().gameDesignVersionTenantKey(),
+                  id)
+              == null) throw new IllegalStateException("BRANDING_SOURCE_ROW_UNAVAILABLE");
+        });
     for (var mutation : mutations) {
       net.firedevops.firemud.common.gamedesign.BrandingSourceSnapshot.Item item =
           mutation.operation() == BrandingSource.OperationKind.UPSERT

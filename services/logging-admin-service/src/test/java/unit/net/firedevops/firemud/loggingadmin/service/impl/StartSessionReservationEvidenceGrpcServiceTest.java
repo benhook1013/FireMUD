@@ -192,10 +192,9 @@ class StartSessionReservationEvidenceGrpcServiceTest {
     GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(ACCOUNT_URI).orElseThrow();
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-        .run(
-            () ->
-                unconfigured.readCurrentClaimEvidence(
-                    request(tuple, RESERVATION_OWNER_ID, 1L, issuePurpose()), observer));
+        .run(() ->
+            unconfigured.readCurrentClaimEvidence(
+                request(tuple, RESERVATION_OWNER_ID, 1L, issuePurpose()), observer));
     assertThat(status(observer)).isEqualTo(Status.Code.PERMISSION_DENIED);
 
     StartSessionReservationEvidenceGrpcService missingApprovalFile =
@@ -431,10 +430,9 @@ class StartSessionReservationEvidenceGrpcServiceTest {
     try {
       ReadCurrentClaimEvidenceRequest evidenceRequest = request(tuple(REQUEST_ID));
       assertThat(
-              transportStatus(
-                  () ->
-                      StartSessionReservationEvidenceServiceGrpc.newBlockingStub(channel)
-                          .readCurrentClaimEvidence(evidenceRequest)))
+              transportStatus(() ->
+                  StartSessionReservationEvidenceServiceGrpc.newBlockingStub(channel)
+                      .readCurrentClaimEvidence(evidenceRequest)))
           .isEqualTo(Status.Code.PERMISSION_DENIED);
 
       Metadata invalidJwtHeader = new Metadata();
@@ -442,19 +440,16 @@ class StartSessionReservationEvidenceGrpcServiceTest {
           Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER),
           "Bearer deliberately-invalid");
       assertThat(
-              transportStatus(
-                  () ->
-                      StartSessionReservationEvidenceServiceGrpc.newBlockingStub(channel)
-                          .withInterceptors(
-                              MetadataUtils.newAttachHeadersInterceptor(invalidJwtHeader))
-                          .readCurrentClaimEvidence(evidenceRequest)))
+              transportStatus(() ->
+                  StartSessionReservationEvidenceServiceGrpc.newBlockingStub(channel)
+                      .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(invalidJwtHeader))
+                      .readCurrentClaimEvidence(evidenceRequest)))
           .isEqualTo(Status.Code.PERMISSION_DENIED);
 
       assertThat(
-              transportStatus(
-                  () ->
-                      LoggingAdminServiceGrpc.newBlockingStub(channel)
-                          .ping(PingRequest.getDefaultInstance())))
+              transportStatus(() ->
+                  LoggingAdminServiceGrpc.newBlockingStub(channel)
+                      .ping(PingRequest.getDefaultInstance())))
           .isEqualTo(Status.Code.UNAUTHENTICATED);
       verifyNoInteractions(reservationService);
     } finally {

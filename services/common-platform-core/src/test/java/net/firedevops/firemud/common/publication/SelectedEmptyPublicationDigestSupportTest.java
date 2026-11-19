@@ -47,16 +47,15 @@ class SelectedEmptyPublicationDigestSupportTest {
             tenantId.toString(), Long.toString(retainedVersionRowId + 1L), publishRequestId);
 
     assertThatIllegalStateException()
-        .isThrownBy(
-            () ->
-                SelectedEmptyPublicationDigestSupport.requireOriginalPublicationRequest(
-                    mismatchedRequest,
-                    tenantId,
-                    retainedVersionRowId + 1L,
-                    versionId,
-                    selectedCommitId,
-                    freeze,
-                    "Entity"))
+        .isThrownBy(() ->
+            SelectedEmptyPublicationDigestSupport.requireOriginalPublicationRequest(
+                mismatchedRequest,
+                tenantId,
+                retainedVersionRowId + 1L,
+                versionId,
+                selectedCommitId,
+                freeze,
+                "Entity"))
         .withMessageContaining(
             "publication version row differs from the original retained World freeze");
   }

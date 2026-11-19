@@ -263,10 +263,9 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     Boolean retained = writeTransaction.execute(status -> storeInOwnerTransaction(request));
     if (!Boolean.TRUE.equals(retained)) return Result.unregistered();
     return read(request)
-        .orElseThrow(
-            () ->
-                new InvalidInitialLocationReadbackException(
-                    "World initial-location operation disappeared after owner commit"));
+        .orElseThrow(() ->
+            new InvalidInitialLocationReadbackException(
+                "World initial-location operation disappeared after owner commit"));
   }
 
   /** Reads only the exact retained operation and its associated location row, when APPLIED. */
@@ -274,11 +273,10 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     Objects.requireNonNull(request, "request");
     requireNoActiveTransaction("World canonical initial-location result read");
     return Optional.ofNullable(
-        readTransaction.execute(
-            status -> {
-              requireReadOnlyRepeatableReadTransaction();
-              return readInOwnerTransaction(request).orElse(null);
-            }));
+        readTransaction.execute(status -> {
+          requireReadOnlyRepeatableReadTransaction();
+          return readInOwnerTransaction(request).orElse(null);
+        }));
   }
 
   /**
@@ -295,20 +293,18 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     }
     requireNoActiveTransaction("World canonical initial-location operation read");
     return Optional.ofNullable(
-        readTransaction.execute(
-            status -> {
-              requireReadOnlyRepeatableReadTransaction();
-              Record operation = readOperation(operationId);
-              if (operation == null) return null;
-              Request retainedRequest = retainedRequest(operation, operationId);
-              ParsedRequest parsed = parseRequest(retainedRequest);
-              selector.requireMatches(parsed);
-              return readInOwnerTransaction(retainedRequest)
-                  .orElseThrow(
-                      () ->
-                          invalidReadback(
-                              "Retained World initial-location operation disappeared during readback"));
-            }));
+        readTransaction.execute(status -> {
+          requireReadOnlyRepeatableReadTransaction();
+          Record operation = readOperation(operationId);
+          if (operation == null) return null;
+          Request retainedRequest = retainedRequest(operation, operationId);
+          ParsedRequest parsed = parseRequest(retainedRequest);
+          selector.requireMatches(parsed);
+          return readInOwnerTransaction(retainedRequest)
+              .orElseThrow(() ->
+                  invalidReadback(
+                      "Retained World initial-location operation disappeared during readback"));
+        }));
   }
 
   /**
@@ -320,54 +316,51 @@ public final class WorldCanonicalInitialPlayerLocationRepository {
     Objects.requireNonNull(selector, "selector");
     requireNoActiveTransaction("World canonical initial-location region read");
     return Optional.ofNullable(
-        readTransaction.execute(
-            status -> {
-              requireReadOnlyRepeatableReadTransaction();
-              Record operation = readOperation(selector.operationId());
-              if (operation == null) return null;
-              Request retainedRequest = retainedRequest(operation, selector.operationId());
-              ParsedRequest parsed = parseRequest(retainedRequest);
-              selector.requireMatches(parsed);
-              Result placement =
-                  readInOwnerTransaction(retainedRequest)
-                      .orElseThrow(
-                          () ->
-                              invalidReadback(
-                                  "Retained World initial-location operation disappeared during region read"));
-              if (placement.outcome() != Outcome.APPLIED
-                  || placement.startLocation() == null
-                  || placement.runtimeRoomInstanceId() == null) {
-                throw invalidReadback(
-                    "Initial-location region consequence requires the retained APPLIED placement");
-              }
+        readTransaction.execute(status -> {
+          requireReadOnlyRepeatableReadTransaction();
+          Record operation = readOperation(selector.operationId());
+          if (operation == null) return null;
+          Request retainedRequest = retainedRequest(operation, selector.operationId());
+          ParsedRequest parsed = parseRequest(retainedRequest);
+          selector.requireMatches(parsed);
+          Result placement =
+              readInOwnerTransaction(retainedRequest)
+                  .orElseThrow(() ->
+                      invalidReadback(
+                          "Retained World initial-location operation disappeared during region read"));
+          if (placement.outcome() != Outcome.APPLIED
+              || placement.startLocation() == null
+              || placement.runtimeRoomInstanceId() == null) {
+            throw invalidReadback(
+                "Initial-location region consequence requires the retained APPLIED placement");
+          }
 
-              WorldCanonicalInstanceLifecycleEvidence retainedLifecycle =
-                  WorldCanonicalInstanceLifecycleEvidence.fromStored(
-                      retainedRequest.originalLifecycleEvidenceBytes());
-              WorldCanonicalInstanceLifecycleEvidence currentLifecycle;
-              try {
-                currentLifecycle =
-                    lifecycleRepository
-                        .readForCurrentLocationInOwnerTransaction(retainedLifecycle.request())
-                        .orElse(null);
-              } catch (
-                  WorldCanonicalInstanceLifecycleReadRepository.InvalidLifecycleEvidenceException
-                      invalid) {
-                throw invalidReadback(
-                    "Current World lifecycle evidence is inconsistent with initial placement",
-                    invalid);
-              }
-              requireCurrentLifecycle(retainedLifecycle, currentLifecycle, placement, parsed);
-              RegionMapping mapping =
-                  readInitialRegionMapping(retainedRequest, placement, parsed, currentLifecycle);
-              return new RegionResult(
-                  placement,
-                  mapping.worldInstanceId(),
-                  mapping.runtimeRoomInstanceId(),
-                  mapping.canonicalRegionInstanceId(),
-                  mapping.operationalRegionId(),
-                  currentLifecycle);
-            }));
+          WorldCanonicalInstanceLifecycleEvidence retainedLifecycle =
+              WorldCanonicalInstanceLifecycleEvidence.fromStored(
+                  retainedRequest.originalLifecycleEvidenceBytes());
+          WorldCanonicalInstanceLifecycleEvidence currentLifecycle;
+          try {
+            currentLifecycle =
+                lifecycleRepository
+                    .readForCurrentLocationInOwnerTransaction(retainedLifecycle.request())
+                    .orElse(null);
+          } catch (
+              WorldCanonicalInstanceLifecycleReadRepository.InvalidLifecycleEvidenceException
+                  invalid) {
+            throw invalidReadback(
+                "Current World lifecycle evidence is inconsistent with initial placement", invalid);
+          }
+          requireCurrentLifecycle(retainedLifecycle, currentLifecycle, placement, parsed);
+          RegionMapping mapping =
+              readInitialRegionMapping(retainedRequest, placement, parsed, currentLifecycle);
+          return new RegionResult(
+              placement,
+              mapping.worldInstanceId(),
+              mapping.runtimeRoomInstanceId(),
+              mapping.canonicalRegionInstanceId(),
+              mapping.operationalRegionId(),
+              currentLifecycle);
+        }));
   }
 
   private Request retainedRequest(Record operation, UUID operationId) {

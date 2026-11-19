@@ -56,21 +56,18 @@ class AccountTenantCreationCurrentAuthorizationClientTest {
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
 
-    assertThatThrownBy(
-            () ->
-                new AccountTenantCreationCurrentAuthorizationClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), "test"))
+    assertThatThrownBy(() ->
+            new AccountTenantCreationCurrentAuthorizationClient(
+                endpoints, plaintext, new GrpcChannelFactory(), "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
-    assertThatThrownBy(
-            () ->
-                new AccountTenantCreationCurrentAuthorizationClient(
-                    endpoints, new CommonGrpcClientProperties(), new GrpcChannelFactory(), "test"))
+    assertThatThrownBy(() ->
+            new AccountTenantCreationCurrentAuthorizationClient(
+                endpoints, new CommonGrpcClientProperties(), new GrpcChannelFactory(), "test"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountTenantCreationCurrentAuthorizationClient(
-                    endpoints, tlsFiles(), new GrpcChannelFactory(), "not/a/namespace"))
+    assertThatThrownBy(() ->
+            new AccountTenantCreationCurrentAuthorizationClient(
+                endpoints, tlsFiles(), new GrpcChannelFactory(), "not/a/namespace"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -195,12 +192,11 @@ class AccountTenantCreationCurrentAuthorizationClientTest {
       try (var incoming = Context.current().withDeadlineAfter(1, TimeUnit.SECONDS, scheduler)) {
         var incomingCancelled = new CountDownLatch(1);
         incoming.addListener(ignored -> incomingCancelled.countDown(), Runnable::run);
-        incoming.run(
-            () ->
-                assertThatThrownBy(() -> client.resolveCurrent(binding))
-                    .isInstanceOf(StatusRuntimeException.class)
-                    .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
-                    .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+        incoming.run(() ->
+            assertThatThrownBy(() -> client.resolveCurrent(binding))
+                .isInstanceOf(StatusRuntimeException.class)
+                .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
+                .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
         assertThat(incomingCancelled.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(incoming.isCancelled()).isTrue();
       }

@@ -116,15 +116,14 @@ class CanonicalGameplayRosterConfigurationTest {
   private static Set<String> registeredTypeNames(AnnotationConfigApplicationContext context) {
     var beanFactory = context.getBeanFactory();
     return Arrays.stream(beanFactory.getBeanDefinitionNames())
-        .flatMap(
-            name -> {
-              var definition = beanFactory.getBeanDefinition(name);
-              var beanType = beanFactory.getType(name, false);
-              return Arrays.stream(
-                  new String[] {
-                    definition.getBeanClassName(), beanType == null ? null : beanType.getName()
-                  });
-            })
+        .flatMap(name -> {
+          var definition = beanFactory.getBeanDefinition(name);
+          var beanType = beanFactory.getType(name, false);
+          return Arrays.stream(
+              new String[] {
+                definition.getBeanClassName(), beanType == null ? null : beanType.getName()
+              });
+        })
         .filter(typeName -> typeName != null)
         .collect(Collectors.toSet());
   }

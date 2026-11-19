@@ -93,12 +93,11 @@ class AccountJwtReadinessProbeRepositoryTest {
 
     assertThat(fence.durableActive()).isEmpty();
     assertThat(fence.publishedActive()).isEmpty();
-    assertThatThrownBy(
-            () ->
-                new AccountJwtReadinessProbeRepository.SignerFence(
-                    Optional.empty(),
-                    Optional.of(
-                        new AccountJwtSignerDesiredStateRepository.ActiveSigner("1", "old-key"))))
+    assertThatThrownBy(() ->
+            new AccountJwtReadinessProbeRepository.SignerFence(
+                Optional.empty(),
+                Optional.of(
+                    new AccountJwtSignerDesiredStateRepository.ActiveSigner("1", "old-key"))))
         .isInstanceOf(AccountJwtReadinessProbeRepository.QuarantinedStateException.class);
   }
 

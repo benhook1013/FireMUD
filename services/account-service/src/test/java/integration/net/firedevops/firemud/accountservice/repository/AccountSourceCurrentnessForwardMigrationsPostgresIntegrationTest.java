@@ -244,39 +244,38 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
 
     // This row satisfies the table CHECKs. The INSERT guard must still reject a direct terminal
     // state before it can bypass the protected response readback transition.
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_control_ui_issuance_operations "
-                            + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, "
-                            + "caller_workload, caller_context_id, request_mac_key_id, request_digest, "
-                            + "claims_payload, source_payload, bundle_payload, signer_receipt, "
-                            + "issued_at_epoch_second, expires_at_epoch_second, "
-                            + "registry_cleanup_deadline_epoch_millis, recovery_expires_at, "
-                            + "status, token_hash, pending_registry, active_registry, pending_receipt, "
-                            + "committed_at) VALUES (?, ?, ?, ?, ?, 'test', ?, 'test-key', ?, ?, ?, ?, ?, ?, ?, "
-                            + "?, ?::timestamptz, 'COMMITTED', ?, ?, ?, ?, CURRENT_TIMESTAMP)",
-                        UUID.randomUUID(),
-                        rejectedOperationId,
-                        UUID.randomUUID(),
-                        identity.accountUuid(),
-                        identity.tenantUuid(),
-                        UUID.randomUUID(),
-                        "a".repeat(64),
-                        candidate,
-                        sourcePayload,
-                        bundlePayload,
-                        candidate,
-                        issuedAt,
-                        issuedAt + 300,
-                        (issuedAt + 300) * 1000L,
-                        recoveryExpiresAt,
-                        "b".repeat(64),
-                        candidate,
-                        candidate,
-                        candidate))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_control_ui_issuance_operations "
+                        + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, "
+                        + "caller_workload, caller_context_id, request_mac_key_id, request_digest, "
+                        + "claims_payload, source_payload, bundle_payload, signer_receipt, "
+                        + "issued_at_epoch_second, expires_at_epoch_second, "
+                        + "registry_cleanup_deadline_epoch_millis, recovery_expires_at, "
+                        + "status, token_hash, pending_registry, active_registry, pending_receipt, "
+                        + "committed_at) VALUES (?, ?, ?, ?, ?, 'test', ?, 'test-key', ?, ?, ?, ?, ?, ?, ?, "
+                        + "?, ?::timestamptz, 'COMMITTED', ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                    UUID.randomUUID(),
+                    rejectedOperationId,
+                    UUID.randomUUID(),
+                    identity.accountUuid(),
+                    identity.tenantUuid(),
+                    UUID.randomUUID(),
+                    "a".repeat(64),
+                    candidate,
+                    sourcePayload,
+                    bundlePayload,
+                    candidate,
+                    issuedAt,
+                    issuedAt + 300,
+                    (issuedAt + 300) * 1000L,
+                    recoveryExpiresAt,
+                    "b".repeat(64),
+                    candidate,
+                    candidate,
+                    candidate))
         .isInstanceOf(DataAccessException.class);
 
     ControlUiIssuance committed =
@@ -552,26 +551,25 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
         new DraftAuthorizationFenceRepository(context.dsl());
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              draftFences.reserve(originalDraftBinding);
-              draftFences.claimCommitOrder(originalDraftBinding);
-              for (Owner owner : originalDraftBinding.requiredOwners()) {
-                draftFences.recordOwnerReadback(
-                    originalDraftBinding,
-                    new OwnerReadback(
-                        owner,
-                        Outcome.COMMITTED,
-                        originalDraftBinding.operationId(),
-                        originalDraftBinding.commitId(),
-                        originalDraftBinding.fenceId(),
-                        originalDraftBinding.inputDigest(),
-                        originalDraftBinding.canonicalBytes(),
-                        utf8("test-only settled original owner fixture")));
-              }
-              assertThat(draftFences.readSettlement(originalDraftBinding))
-                  .isEqualTo(DraftAuthorizationFenceRepository.Settlement.COMMITTED);
-            });
+        .executeWithoutResult(status -> {
+          draftFences.reserve(originalDraftBinding);
+          draftFences.claimCommitOrder(originalDraftBinding);
+          for (Owner owner : originalDraftBinding.requiredOwners()) {
+            draftFences.recordOwnerReadback(
+                originalDraftBinding,
+                new OwnerReadback(
+                    owner,
+                    Outcome.COMMITTED,
+                    originalDraftBinding.operationId(),
+                    originalDraftBinding.commitId(),
+                    originalDraftBinding.fenceId(),
+                    originalDraftBinding.inputDigest(),
+                    originalDraftBinding.canonicalBytes(),
+                    utf8("test-only settled original owner fixture")));
+          }
+          assertThat(draftFences.readSettlement(originalDraftBinding))
+              .isEqualTo(DraftAuthorizationFenceRepository.Settlement.COMMITTED);
+        });
 
     byte[] sourceReadScope =
         encodeFrames(
@@ -589,80 +587,78 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     byte[] outboxCheckpoints = "[]".getBytes(StandardCharsets.UTF_8);
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_game_logic_intake_source_read_reservations "
-                          + "(operation_id, fence_id, intake_request_id, actor_account_uuid, "
-                          + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
-                          + "issuance_operation_id, issuance_fence, source_payload, "
-                          + "issuance_bundle, outbox_checkpoints) "
-                          + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                      operationId,
-                      fenceId,
-                      requestId,
-                      identity.accountUuid(),
-                      identity.tenantUuid(),
-                      versionUuid,
-                      sourceReadScope,
-                      sha256(sourceReadScope),
-                      issuance.operationId(),
-                      issuance.fence(),
-                      sourcePayloadBytes,
-                      bundlePayloadBytes,
-                      outboxCheckpoints);
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_game_logic_intake_source_read_sources "
-                          + "(operation_id, source_key, source_evidence) "
-                          + "VALUES (?, ?, ?), (?, ?, ?)",
-                      operationId,
-                      supplementaryKey,
-                      supplementarySource,
-                      operationId,
-                      bmpKey,
-                      bmpSource);
-            });
+        .executeWithoutResult(status -> {
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_game_logic_intake_source_read_reservations "
+                      + "(operation_id, fence_id, intake_request_id, actor_account_uuid, "
+                      + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
+                      + "issuance_operation_id, issuance_fence, source_payload, "
+                      + "issuance_bundle, outbox_checkpoints) "
+                      + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  operationId,
+                  fenceId,
+                  requestId,
+                  identity.accountUuid(),
+                  identity.tenantUuid(),
+                  versionUuid,
+                  sourceReadScope,
+                  sha256(sourceReadScope),
+                  issuance.operationId(),
+                  issuance.fence(),
+                  sourcePayloadBytes,
+                  bundlePayloadBytes,
+                  outboxCheckpoints);
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_game_logic_intake_source_read_sources "
+                      + "(operation_id, source_key, source_evidence) "
+                      + "VALUES (?, ?, ?), (?, ?, ?)",
+                  operationId,
+                  supplementaryKey,
+                  supplementarySource,
+                  operationId,
+                  bmpKey,
+                  bmpSource);
+        });
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_game_logic_intake_authorizations "
-                          + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, version_uuid, "
-                          + "intake_request_id, source_digest, binding, issuance_operation_id, "
-                          + "issuance_fence, source_payload, issuance_bundle, outbox_checkpoints) "
-                          + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                      operationId,
-                      fenceId,
-                      identity.accountUuid(),
-                      identity.tenantUuid(),
-                      versionUuid,
-                      requestId,
-                      sha256(snapshot),
-                      intakeBinding,
-                      issuance.operationId(),
-                      issuance.fence(),
-                      sourcePayloadBytes,
-                      bundlePayloadBytes,
-                      outboxCheckpoints);
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_game_logic_intake_sources "
-                          + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?), (?, ?, ?)",
-                      operationId,
-                      supplementaryKey,
-                      supplementarySource,
-                      operationId,
-                      bmpKey,
-                      bmpSource);
-            });
+        .executeWithoutResult(status -> {
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_game_logic_intake_authorizations "
+                      + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, version_uuid, "
+                      + "intake_request_id, source_digest, binding, issuance_operation_id, "
+                      + "issuance_fence, source_payload, issuance_bundle, outbox_checkpoints) "
+                      + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  operationId,
+                  fenceId,
+                  identity.accountUuid(),
+                  identity.tenantUuid(),
+                  versionUuid,
+                  requestId,
+                  sha256(snapshot),
+                  intakeBinding,
+                  issuance.operationId(),
+                  issuance.fence(),
+                  sourcePayloadBytes,
+                  bundlePayloadBytes,
+                  outboxCheckpoints);
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_game_logic_intake_sources "
+                      + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?), (?, ?, ?)",
+                  operationId,
+                  supplementaryKey,
+                  supplementarySource,
+                  operationId,
+                  bmpKey,
+                  bmpSource);
+        });
 
     var orderedKeys =
         context
@@ -852,39 +848,38 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             sourceKey);
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_selected_publication_authorizations "
-                          + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, "
-                          + "publish_request_id, input_digest, binding, world_evidence, "
-                          + "issuance_operation_id, issuance_fence, "
-                          + "source_payload, issuance_bundle, "
-                          + "outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                      operationId,
-                      fenceId,
-                      identity.accountUuid(),
-                      identity.tenantUuid(),
-                      publishRequestId.toString(),
-                      sha256(inputBytes),
-                      accountBinding,
-                      null,
-                      issuance.operationId(),
-                      issuance.fence(),
-                      sourcePayloadBytes,
-                      bundlePayloadBytes,
-                      outboxCheckpoints);
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_selected_publication_sources "
-                          + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
-                      operationId,
-                      sourceKey,
-                      source);
-            });
+        .executeWithoutResult(status -> {
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_selected_publication_authorizations "
+                      + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, "
+                      + "publish_request_id, input_digest, binding, world_evidence, "
+                      + "issuance_operation_id, issuance_fence, "
+                      + "source_payload, issuance_bundle, "
+                      + "outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  operationId,
+                  fenceId,
+                  identity.accountUuid(),
+                  identity.tenantUuid(),
+                  publishRequestId.toString(),
+                  sha256(inputBytes),
+                  accountBinding,
+                  null,
+                  issuance.operationId(),
+                  issuance.fence(),
+                  sourcePayloadBytes,
+                  bundlePayloadBytes,
+                  outboxCheckpoints);
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_selected_publication_sources "
+                      + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+                  operationId,
+                  sourceKey,
+                  source);
+        });
 
     String requestDigest = sha256(selectedBytes).substring("sha256:".length());
     String contentDigest = sha256(utf8("test-only content digest")).substring("sha256:".length());
@@ -1129,30 +1124,29 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     try {
       context
           .transaction()
-          .executeWithoutResult(
-              status ->
-                  context
-                      .dsl()
-                      .execute(
-                          "INSERT INTO account_game_logic_intake_source_read_reservations "
-                              + "(operation_id, fence_id, intake_request_id, actor_account_uuid, "
-                              + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
-                              + "issuance_operation_id, issuance_fence, source_payload, "
-                              + "issuance_bundle, outbox_checkpoints) "
-                              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                          operationId,
-                          fenceId,
-                          requestId,
-                          identity.accountUuid(),
-                          identity.tenantUuid(),
-                          versionUuid,
-                          scopeBytes,
-                          sha256(scopeBytes),
-                          issuance.operationId(),
-                          issuance.fence(),
-                          sourcePayloadBytes,
-                          bundlePayloadBytes,
-                          utf8("[]")));
+          .executeWithoutResult(status ->
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_game_logic_intake_source_read_reservations "
+                          + "(operation_id, fence_id, intake_request_id, actor_account_uuid, "
+                          + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
+                          + "issuance_operation_id, issuance_fence, source_payload, "
+                          + "issuance_bundle, outbox_checkpoints) "
+                          + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      operationId,
+                      fenceId,
+                      requestId,
+                      identity.accountUuid(),
+                      identity.tenantUuid(),
+                      versionUuid,
+                      scopeBytes,
+                      sha256(scopeBytes),
+                      issuance.operationId(),
+                      issuance.fence(),
+                      sourcePayloadBytes,
+                      bundlePayloadBytes,
+                      utf8("[]")));
     } catch (RuntimeException failure) {
       reservationFailure = failure;
     }
@@ -1239,63 +1233,62 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
 
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_control_ui_issuance_operations "
-                          + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, "
-                          + "caller_workload, caller_context_id, request_mac_key_id, request_digest, "
-                          + "claims_payload, source_payload, bundle_payload, signer_receipt, "
-                          + "issued_at_epoch_second, expires_at_epoch_second, "
-                          + "registry_cleanup_deadline_epoch_millis, recovery_expires_at, status) "
-                          + "VALUES (?, ?, ?, ?, ?, 'test-workload', ?, 'test-key', ?, ?, ?, ?, ?, ?, ?, "
-                          + "?, ?::timestamptz, 'PREPARED')",
-                      requestId,
-                      operationId,
-                      tokenJti,
-                      identity.accountUuid(),
-                      identity.tenantUuid(),
-                      UUID.randomUUID(),
-                      "a".repeat(64),
-                      candidate,
-                      sourcePayload,
-                      bundlePayload,
-                      candidate,
-                      issuedAt,
-                      expiresAt,
-                      cleanupDeadlineEpochMillis,
-                      recoveryExpiresAt);
-              context
-                  .dsl()
-                  .execute(
-                      "UPDATE account_control_ui_issuance_operations "
-                          + "SET status = 'CANDIDATE', token_hash = ?, pending_registry = ?, "
-                          + "active_registry = ? WHERE operation_id = ?",
-                      tokenHash,
-                      candidate,
-                      candidate,
-                      operationId);
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_control_ui_response_envelopes "
-                          + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
-                          + "VALUES (?, ?, ?, ?::timestamptz)",
-                      operationId,
-                      response,
-                      ownerBinding,
-                      recoveryExpiresAt);
-              context
-                  .dsl()
-                  .execute(
-                      "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
-                          + "pending_receipt = ?, committed_at = CURRENT_TIMESTAMP "
-                          + "WHERE operation_id = ?",
-                      response,
-                      operationId);
-            });
+        .executeWithoutResult(status -> {
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_control_ui_issuance_operations "
+                      + "(request_id, operation_id, token_jti, account_uuid, tenant_uuid, "
+                      + "caller_workload, caller_context_id, request_mac_key_id, request_digest, "
+                      + "claims_payload, source_payload, bundle_payload, signer_receipt, "
+                      + "issued_at_epoch_second, expires_at_epoch_second, "
+                      + "registry_cleanup_deadline_epoch_millis, recovery_expires_at, status) "
+                      + "VALUES (?, ?, ?, ?, ?, 'test-workload', ?, 'test-key', ?, ?, ?, ?, ?, ?, ?, "
+                      + "?, ?::timestamptz, 'PREPARED')",
+                  requestId,
+                  operationId,
+                  tokenJti,
+                  identity.accountUuid(),
+                  identity.tenantUuid(),
+                  UUID.randomUUID(),
+                  "a".repeat(64),
+                  candidate,
+                  sourcePayload,
+                  bundlePayload,
+                  candidate,
+                  issuedAt,
+                  expiresAt,
+                  cleanupDeadlineEpochMillis,
+                  recoveryExpiresAt);
+          context
+              .dsl()
+              .execute(
+                  "UPDATE account_control_ui_issuance_operations "
+                      + "SET status = 'CANDIDATE', token_hash = ?, pending_registry = ?, "
+                      + "active_registry = ? WHERE operation_id = ?",
+                  tokenHash,
+                  candidate,
+                  candidate,
+                  operationId);
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_control_ui_response_envelopes "
+                      + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
+                      + "VALUES (?, ?, ?, ?::timestamptz)",
+                  operationId,
+                  response,
+                  ownerBinding,
+                  recoveryExpiresAt);
+          context
+              .dsl()
+              .execute(
+                  "UPDATE account_control_ui_issuance_operations SET status = 'COMMITTED', "
+                      + "pending_receipt = ?, committed_at = CURRENT_TIMESTAMP "
+                      + "WHERE operation_id = ?",
+                  response,
+                  operationId);
+        });
     return new ControlUiIssuance(operationId, 1L);
   }
 
@@ -1343,39 +1336,38 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     try {
       context
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_selected_publication_authorizations "
-                            + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, "
-                            + "publish_request_id, input_digest, binding, world_evidence, "
-                            + "issuance_operation_id, issuance_fence, "
-                            + "source_payload, issuance_bundle, "
-                            + "outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        operationId,
-                        fenceId,
-                        identity.accountUuid(),
-                        identity.tenantUuid(),
-                        publishRequestId,
-                        sha256(input),
-                        binding,
-                        new byte[] {1},
-                        issuance.operationId(),
-                        issuance.fence(),
-                        sourcePayloadBytes,
-                        bundlePayloadBytes,
-                        outboxCheckpoints);
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_selected_publication_sources "
-                            + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
-                        operationId,
-                        sourceKey,
-                        evidenceCopy);
-              });
+          .executeWithoutResult(status -> {
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_selected_publication_authorizations "
+                        + "(operation_id, fence_id, actor_account_uuid, tenant_uuid, "
+                        + "publish_request_id, input_digest, binding, world_evidence, "
+                        + "issuance_operation_id, issuance_fence, "
+                        + "source_payload, issuance_bundle, "
+                        + "outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    operationId,
+                    fenceId,
+                    identity.accountUuid(),
+                    identity.tenantUuid(),
+                    publishRequestId,
+                    sha256(input),
+                    binding,
+                    new byte[] {1},
+                    issuance.operationId(),
+                    issuance.fence(),
+                    sourcePayloadBytes,
+                    bundlePayloadBytes,
+                    outboxCheckpoints);
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_selected_publication_sources "
+                        + "(operation_id, source_key, source_evidence) VALUES (?, ?, ?)",
+                    operationId,
+                    sourceKey,
+                    evidenceCopy);
+          });
       assertThat(accepted)
           .as("selected publication should satisfy its deferred completeness guard")
           .isTrue();
@@ -1500,33 +1492,31 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
 
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              assertThat(fences.read(binding).ordering())
-                  .isEqualTo(DraftAuthorizationFenceRepository.Ordering.RESERVED);
-              assertThat(fences.readSettlement(binding))
-                  .isEqualTo(DraftAuthorizationFenceRepository.Settlement.PENDING);
-              assertThat(fences.readOriginalBinding(binding.operationId())).contains(binding);
-              assertThat(fences.readOwnerResult(binding, Owner.GAME_DESIGN)).isEmpty();
-              assertThat(fences.readUnresolvedOperations(null, 10))
-                  .extracting(DraftAuthorizationFenceRepository.UnresolvedOperation::binding)
-                  .containsExactly(binding);
-              assertThatThrownBy(() -> fences.read(changedBinding))
-                  .isInstanceOf(IllegalArgumentException.class)
-                  .hasMessageContaining("changed immutable Draft operation");
+        .executeWithoutResult(status -> {
+          assertThat(fences.read(binding).ordering())
+              .isEqualTo(DraftAuthorizationFenceRepository.Ordering.RESERVED);
+          assertThat(fences.readSettlement(binding))
+              .isEqualTo(DraftAuthorizationFenceRepository.Settlement.PENDING);
+          assertThat(fences.readOriginalBinding(binding.operationId())).contains(binding);
+          assertThat(fences.readOwnerResult(binding, Owner.GAME_DESIGN)).isEmpty();
+          assertThat(fences.readUnresolvedOperations(null, 10))
+              .extracting(DraftAuthorizationFenceRepository.UnresolvedOperation::binding)
+              .containsExactly(binding);
+          assertThatThrownBy(() -> fences.read(changedBinding))
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("changed immutable Draft operation");
 
-              // This separate connection can take the operation row while every inspection above
-              // remains in its caller transaction; no timing or thread scheduling is involved.
-              assertThat(lockFenceNowait(context, binding.operationId()))
-                  .isEqualTo(binding.operationId());
-            });
+          // This separate connection can take the operation row while every inspection above
+          // remains in its caller transaction; no timing or thread scheduling is involved.
+          assertThat(lockFenceNowait(context, binding.operationId()))
+              .isEqualTo(binding.operationId());
+        });
 
     context
         .transaction()
-        .executeWithoutResult(
-            status ->
-                assertThat(fences.claimCommitOrder(binding).ordering())
-                    .isEqualTo(DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER));
+        .executeWithoutResult(status ->
+            assertThat(fences.claimCommitOrder(binding).ordering())
+                .isEqualTo(DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER));
 
     OwnerReadback ownerReadback =
         new OwnerReadback(
@@ -1540,17 +1530,16 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             utf8("test-only exact owner result"));
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fences.recordOwnerReadback(binding, ownerReadback);
-              assertThat(fences.readOwnerResult(binding, Owner.GAME_DESIGN))
-                  .hasValueSatisfying(
-                      result -> assertThat(result.outcome()).isEqualTo(Outcome.COMMITTED));
-              assertThatThrownBy(() -> lockSourceNowait(context, source.key()))
-                  .isInstanceOf(DataAccessException.class);
-              assertThatThrownBy(() -> lockFenceNowait(context, binding.operationId()))
-                  .isInstanceOf(DataAccessException.class);
-            });
+        .executeWithoutResult(status -> {
+          fences.recordOwnerReadback(binding, ownerReadback);
+          assertThat(fences.readOwnerResult(binding, Owner.GAME_DESIGN))
+              .hasValueSatisfying(
+                  result -> assertThat(result.outcome()).isEqualTo(Outcome.COMMITTED));
+          assertThatThrownBy(() -> lockSourceNowait(context, source.key()))
+              .isInstanceOf(DataAccessException.class);
+          assertThatThrownBy(() -> lockFenceNowait(context, binding.operationId()))
+              .isInstanceOf(DataAccessException.class);
+        });
   }
 
   @Test
@@ -1584,14 +1573,12 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     byte[][] persistedCatalogEvidence = new byte[1][];
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              hostedTerms.ensureScope(hostedScopeId);
-              hostedTerms.insertCandidate(candidate);
-              persistedCatalogEvidence[0] =
-                  HostedTermsEncoding.catalog(
-                      hostedTerms.readCatalog(hostedScopeId, termsVersionId));
-            });
+        .executeWithoutResult(status -> {
+          hostedTerms.ensureScope(hostedScopeId);
+          hostedTerms.insertCandidate(candidate);
+          persistedCatalogEvidence[0] =
+              HostedTermsEncoding.catalog(hostedTerms.readCatalog(hostedScopeId, termsVersionId));
+        });
     SourceEvidence exactSource =
         new SourceEvidence(
             SourceKind.HOSTED_TERMS,
@@ -1638,56 +1625,53 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             sha256(handoffBinding));
 
     byte[] directTerminalPayload = "direct terminal fixture".getBytes(StandardCharsets.UTF_8);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_hosted_terms_disclosure_handoffs "
-                            + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
-                            + "candidate_digest, effective_at, binding, binding_digest, status, "
-                            + "dispatch_attempts, result_outcome, result_payload, result_digest, "
-                            + "result_recorded_at) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?::timestamptz, ?, ?, "
-                            + "'DISCLOSED', 1, 'DISCLOSED', ?, ?, CURRENT_TIMESTAMP)",
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        exactSource.key(),
-                        sha256("direct predecessor".getBytes(StandardCharsets.UTF_8)),
-                        HostedTermsEncoding.digest(document),
-                        effectiveAt,
-                        handoffBinding,
-                        sha256(handoffBinding),
-                        directTerminalPayload,
-                        sha256(directTerminalPayload)))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_hosted_terms_disclosure_handoffs "
+                        + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
+                        + "candidate_digest, effective_at, binding, binding_digest, status, "
+                        + "dispatch_attempts, result_outcome, result_payload, result_digest, "
+                        + "result_recorded_at) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?::timestamptz, ?, ?, "
+                        + "'DISCLOSED', 1, 'DISCLOSED', ?, ?, CURRENT_TIMESTAMP)",
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    exactSource.key(),
+                    sha256("direct predecessor".getBytes(StandardCharsets.UTF_8)),
+                    HostedTermsEncoding.digest(document),
+                    effectiveAt,
+                    handoffBinding,
+                    sha256(handoffBinding),
+                    directTerminalPayload,
+                    sha256(directTerminalPayload)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_hosted_terms_disclosure_handoffs "
-                            + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
-                            + "candidate_digest, effective_at, binding, binding_digest, status, "
-                            + "dispatch_attempts) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?::timestamptz, ?, ?, "
-                            + "'DISPATCH_AUTHORIZED', 1)",
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        exactSource.key(),
-                        sha256("direct authorization predecessor".getBytes(StandardCharsets.UTF_8)),
-                        HostedTermsEncoding.digest(document),
-                        effectiveAt,
-                        handoffBinding,
-                        sha256(handoffBinding)))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_hosted_terms_disclosure_handoffs "
+                        + "(handoff_id, request_id, kind, source_key, predecessor_digest, "
+                        + "candidate_digest, effective_at, binding, binding_digest, status, "
+                        + "dispatch_attempts) VALUES (?, ?, 'CATALOG', ?, ?, ?, ?::timestamptz, ?, ?, "
+                        + "'DISPATCH_AUTHORIZED', 1)",
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    exactSource.key(),
+                    sha256("direct authorization predecessor".getBytes(StandardCharsets.UTF_8)),
+                    HostedTermsEncoding.digest(document),
+                    effectiveAt,
+                    handoffBinding,
+                    sha256(handoffBinding)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_hosted_terms_disclosure_handoffs "
-                            + "SET status = 'DISPATCH_AUTHORIZED', dispatch_attempts = 1 "
-                            + "WHERE handoff_id = ?",
-                        handoffId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_hosted_terms_disclosure_handoffs "
+                        + "SET status = 'DISPATCH_AUTHORIZED', dispatch_attempts = 1 "
+                        + "WHERE handoff_id = ?",
+                    handoffId))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -1726,15 +1710,14 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             exactSource.key(),
             exactSourceEvidence,
             sha256(exactSourceEvidence));
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_hosted_terms_disclosure_handoffs "
-                            + "SET status = 'DISPATCH_AUTHORIZED', dispatch_attempts = 1 "
-                            + "WHERE handoff_id = ?",
-                        handoffId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_hosted_terms_disclosure_handoffs "
+                        + "SET status = 'DISPATCH_AUTHORIZED', dispatch_attempts = 1 "
+                        + "WHERE handoff_id = ?",
+                    handoffId))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -1794,13 +1777,12 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             sha256(exactSourceEvidence));
     String oversizedSourceKey = "é".repeat(1025);
     assertThat(oversizedSourceKey.getBytes(StandardCharsets.UTF_8)).hasSize(2050);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
-                        oversizedSourceKey))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                    oversizedSourceKey))
         .isInstanceOf(DataAccessException.class);
 
     var persisted =
@@ -1829,53 +1811,48 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     assertThat(persisted.get("source_evidence_digest", String.class))
         .isEqualTo(sha256(exactSourceEvidence));
 
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_hosted_terms_disclosure_sources "
-                            + "SET source_evidence = ? WHERE handoff_id = ? AND source_key = ?",
-                        new byte[] {1},
-                        handoffId,
-                        exactSource.key()))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_hosted_terms_disclosure_sources "
+                        + "SET source_evidence = ? WHERE handoff_id = ? AND source_key = ?",
+                    new byte[] {1},
+                    handoffId,
+                    exactSource.key()))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "DELETE FROM account_hosted_terms_disclosure_sources "
-                            + "WHERE handoff_id = ? AND source_key = ?",
-                        handoffId,
-                        exactSource.key()))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "DELETE FROM account_hosted_terms_disclosure_sources "
+                        + "WHERE handoff_id = ? AND source_key = ?",
+                    handoffId,
+                    exactSource.key()))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'AMBIGUOUS', "
-                            + "dispatch_attempts = 1 WHERE handoff_id = ?",
-                        handoffId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'AMBIGUOUS', "
+                        + "dispatch_attempts = 1 WHERE handoff_id = ?",
+                    handoffId))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_hosted_terms_disclosure_handoffs "
-                            + "SET binding = ? WHERE handoff_id = ?",
-                        new byte[] {2},
-                        handoffId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_hosted_terms_disclosure_handoffs "
+                        + "SET binding = ? WHERE handoff_id = ?",
+                    new byte[] {2},
+                    handoffId))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "DELETE FROM account_hosted_terms_disclosure_handoffs WHERE handoff_id = ?",
-                        handoffId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "DELETE FROM account_hosted_terms_disclosure_handoffs WHERE handoff_id = ?",
+                    handoffId))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -1935,9 +1912,8 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     context.transaction().executeWithoutResult(status -> fences.reserve(mismatchedCapture));
 
     DraftAuthorizationFenceBinding exactCapture = draftBinding(exactSource);
-    assertThatThrownBy(
-            () ->
-                context.transaction().executeWithoutResult(status -> fences.reserve(exactCapture)))
+    assertThatThrownBy(() ->
+            context.transaction().executeWithoutResult(status -> fences.reserve(exactCapture)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Exact hosted terms source has authorized disclosure");
     assertThat(
@@ -1949,9 +1925,8 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 .fetchOne(0, Long.class))
         .isZero();
 
-    assertThatThrownBy(
-            () ->
-                context.dsl().execute("TRUNCATE account_hosted_terms_disclosure_handoffs CASCADE"))
+    assertThatThrownBy(() ->
+            context.dsl().execute("TRUNCATE account_hosted_terms_disclosure_handoffs CASCADE"))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
             () -> context.dsl().execute("TRUNCATE account_hosted_terms_disclosure_sources"))
@@ -1992,17 +1967,16 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
         "test-only terminal disclosure result".getBytes(StandardCharsets.UTF_8);
     byte[] mismatchedDigestPayload =
         "different test-only terminal disclosure result".getBytes(StandardCharsets.UTF_8);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'DISCLOSED', "
-                            + "result_outcome = 'DISCLOSED', result_payload = ?, result_digest = ?, "
-                            + "result_recorded_at = CURRENT_TIMESTAMP WHERE handoff_id = ?",
-                        disclosedPayload,
-                        sha256(mismatchedDigestPayload),
-                        handoffId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_hosted_terms_disclosure_handoffs SET status = 'DISCLOSED', "
+                        + "result_outcome = 'DISCLOSED', result_payload = ?, result_digest = ?, "
+                        + "result_recorded_at = CURRENT_TIMESTAMP WHERE handoff_id = ?",
+                    disclosedPayload,
+                    sha256(mismatchedDigestPayload),
+                    handoffId))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -2031,11 +2005,10 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                         + "WHERE handoff_id = ?",
                     handoffId)
                 .fetchOne())
-        .satisfies(
-            row -> {
-              assertThat(row.get("status", String.class)).isEqualTo("DISCLOSED");
-              assertThat(row.get("dispatch_attempts", Integer.class)).isEqualTo(2);
-            });
+        .satisfies(row -> {
+          assertThat(row.get("status", String.class)).isEqualTo("DISCLOSED");
+          assertThat(row.get("dispatch_attempts", Integer.class)).isEqualTo(2);
+        });
   }
 
   @Test
@@ -2137,25 +2110,23 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 fresh.getAccountUuid()))
         .isEqualTo(2L);
 
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_global_role_sources "
-                            + "SET global_roles = ARRAY['moderator']::TEXT[] "
-                            + "WHERE account_uuid = ?",
-                        fresh.getAccountUuid()))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_global_role_sources "
+                        + "SET global_roles = ARRAY['moderator']::TEXT[] "
+                        + "WHERE account_uuid = ?",
+                    fresh.getAccountUuid()))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_platform_restriction_births "
-                            + "SET payload_digest = repeat('0', 64) "
-                            + "WHERE account_uuid = ? AND category = 'account_security_lock'",
-                        fresh.getAccountUuid()))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_platform_restriction_births "
+                        + "SET payload_digest = repeat('0', 64) "
+                        + "WHERE account_uuid = ? AND category = 'account_security_lock'",
+                    fresh.getAccountUuid()))
         .isInstanceOf(DataAccessException.class);
   }
 
@@ -2212,34 +2183,31 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             changeId,
             sourceKey);
 
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_draft_authorization_owner_readbacks "
-                            + "(operation_id, owner, outcome, readback) "
-                            + "VALUES (?, 'GAME_DESIGN', 'COMMITTED', ?)",
-                        operationId,
-                        new byte[] {1}))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_draft_authorization_owner_readbacks "
+                        + "(operation_id, owner, outcome, readback) "
+                        + "VALUES (?, 'GAME_DESIGN', 'COMMITTED', ?)",
+                    operationId,
+                    new byte[] {1}))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_draft_authorization_source_changes "
-                            + "SET status = 'SOURCE_COMMITTED', committed_at = CURRENT_TIMESTAMP "
-                            + "WHERE change_id = ?",
-                        changeId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_draft_authorization_source_changes "
+                        + "SET status = 'SOURCE_COMMITTED', committed_at = CURRENT_TIMESTAMP "
+                        + "WHERE change_id = ?",
+                    changeId))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "DELETE FROM account_draft_authorization_source_changes WHERE change_id = ?",
-                        changeId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "DELETE FROM account_draft_authorization_source_changes WHERE change_id = ?",
+                    changeId))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -2279,41 +2247,38 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             creatorPayload,
             sha256(creatorPayload));
 
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_individual_creator_party_sources "
-                            + "SET source_version = source_version WHERE creator_party_id = ?",
-                        creatorPartyId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_individual_creator_party_sources "
+                        + "SET source_version = source_version WHERE creator_party_id = ?",
+                    creatorPartyId))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "DELETE FROM account_individual_creator_party_sources "
-                            + "WHERE creator_party_id = ?",
-                        creatorPartyId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "DELETE FROM account_individual_creator_party_sources "
+                        + "WHERE creator_party_id = ?",
+                    creatorPartyId))
         .isInstanceOf(DataAccessException.class);
 
     UUID missingTenantSource = UUID.randomUUID();
     byte[] creatorHistory = "no canonical tenant owner source".getBytes(StandardCharsets.UTF_8);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_tenant_creator_party_history "
-                            + "(history_id, tenant_uuid, origin, creator_party_id, source_version, "
-                            + "evidence_payload, evidence_digest) "
-                            + "VALUES (?, ?, 'FRESH_INITIAL', ?, 1, ?, ?)",
-                        UUID.randomUUID(),
-                        missingTenantSource,
-                        creatorPartyId,
-                        creatorHistory,
-                        sha256(creatorHistory)))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_tenant_creator_party_history "
+                        + "(history_id, tenant_uuid, origin, creator_party_id, source_version, "
+                        + "evidence_payload, evidence_digest) "
+                        + "VALUES (?, ?, 'FRESH_INITIAL', ?, 1, ?, ?)",
+                    UUID.randomUUID(),
+                    missingTenantSource,
+                    creatorPartyId,
+                    creatorHistory,
+                    sha256(creatorHistory)))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -2341,18 +2306,14 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             retainedHistoryPayload,
             sha256(retainedHistoryPayload));
 
-    assertThatThrownBy(
-            () ->
-                context.dsl().execute("TRUNCATE account_individual_creator_party_sources CASCADE"))
+    assertThatThrownBy(() ->
+            context.dsl().execute("TRUNCATE account_individual_creator_party_sources CASCADE"))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
             () -> context.dsl().execute("TRUNCATE account_tenant_creator_party_history CASCADE"))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute("TRUNCATE account_fresh_creator_party_association_operations"))
+    assertThatThrownBy(() ->
+            context.dsl().execute("TRUNCATE account_fresh_creator_party_association_operations"))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -2409,22 +2370,20 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             versionPayload,
             sha256(versionPayload));
 
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_hosted_terms_catalog_versions "
-                            + "SET operator_legal_identity = 'changed fixture' WHERE version_id = ?",
-                        termsVersionId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_hosted_terms_catalog_versions "
+                        + "SET operator_legal_identity = 'changed fixture' WHERE version_id = ?",
+                    termsVersionId))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "DELETE FROM account_hosted_terms_catalog_versions WHERE version_id = ?",
-                        termsVersionId))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "DELETE FROM account_hosted_terms_catalog_versions WHERE version_id = ?",
+                    termsVersionId))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -2443,31 +2402,30 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
         .isZero();
 
     byte[] affirmativeAction = "{}".getBytes(StandardCharsets.UTF_8);
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "INSERT INTO account_individual_hosted_terms_acceptances "
-                            + "(evidence_id, action_request_id, creator_party_id, account_uuid, "
-                            + "hosted_scope_id, terms_version_id, document_digest, "
-                            + "operator_legal_identity, operator_identity_version, source_version, "
-                            + "material_generation, individual_party_source, "
-                            + "individual_party_source_digest, "
-                            + "affirmative_action_evidence, affirmative_action_digest, accepted_at) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, ?, 'TEST FIXTURE ONLY', 1, 1, 1, ?, ?, ?, ?, "
-                            + "CURRENT_TIMESTAMP)",
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        creatorPartyId,
-                        identity.accountUuid(),
-                        hostedScopeId,
-                        termsVersionId,
-                        sha256(nonoperativeDocument),
-                        creatorPayload,
-                        sha256(creatorPayload),
-                        affirmativeAction,
-                        sha256(affirmativeAction)))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "INSERT INTO account_individual_hosted_terms_acceptances "
+                        + "(evidence_id, action_request_id, creator_party_id, account_uuid, "
+                        + "hosted_scope_id, terms_version_id, document_digest, "
+                        + "operator_legal_identity, operator_identity_version, source_version, "
+                        + "material_generation, individual_party_source, "
+                        + "individual_party_source_digest, "
+                        + "affirmative_action_evidence, affirmative_action_digest, accepted_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, 'TEST FIXTURE ONLY', 1, 1, 1, ?, ?, ?, ?, "
+                        + "CURRENT_TIMESTAMP)",
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    creatorPartyId,
+                    identity.accountUuid(),
+                    hostedScopeId,
+                    termsVersionId,
+                    sha256(nonoperativeDocument),
+                    creatorPayload,
+                    sha256(creatorPayload),
+                    affirmativeAction,
+                    sha256(affirmativeAction)))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             context
@@ -2528,158 +2486,157 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
     // runtime activation is involved.
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_hosted_terms_scopes (hosted_scope_id) VALUES (?)",
-                      hostedScopeId);
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_hosted_terms_catalog_versions "
-                          + "(version_id, hosted_scope_id, predecessor_version_id, "
-                          + "operator_legal_identity, operator_identity_version, document_bytes, "
-                          + "document_digest, source_version, material_generation, materiality, "
-                          + "publication_evidence_reference, publication_evidence_version, "
-                          + "notice_evidence_reference, notice_evidence_version, effective_at, "
-                          + "version_payload, version_digest) "
-                          + "VALUES (?, ?, NULL, 'TEST FIXTURE ONLY', 1, ?, ?, 1, 1, 'INITIAL', "
-                          + "'test-only/publication', 1, 'test-only/notice', 1, ?::timestamptz, ?, ?)",
-                      termsVersionId,
-                      hostedScopeId,
-                      document,
-                      sha256(document),
-                      effectiveAt,
-                      versionPayload,
-                      sha256(versionPayload));
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_hosted_terms_publication_operations "
-                          + "(request_id, hosted_scope_id, request_payload, request_digest, status) "
-                          + "VALUES (?, ?, ?, ?, 'RECEIVED')",
-                      termsPublicationRequestId,
-                      hostedScopeId,
-                      termsPublicationPayload,
-                      sha256(termsPublicationPayload));
-              context
-                  .dsl()
-                  .execute(
-                      "UPDATE account_hosted_terms_publication_operations "
-                          + "SET status = 'SCHEDULED', candidate_version_id = ? "
-                          + "WHERE request_id = ?",
-                      termsVersionId,
-                      termsPublicationRequestId);
-              context
-                  .dsl()
-                  .execute(
-                      "UPDATE account_hosted_terms_scopes SET current_version_id = ?, "
-                          + "current_source_version = 1, current_material_generation = 1 "
-                          + "WHERE hosted_scope_id = ?",
-                      termsVersionId,
-                      hostedScopeId);
-              context
-                  .dsl()
-                  .execute(
-                      "UPDATE account_hosted_terms_publication_operations SET status = 'COMMITTED', "
-                          + "result_payload = ?, result_digest = ?, committed_at = CURRENT_TIMESTAMP "
-                          + "WHERE request_id = ?",
-                      versionPayload,
-                      sha256(versionPayload),
-                      termsPublicationRequestId);
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_individual_creator_party_sources "
-                          + "(creator_party_id, account_uuid, verification_status, identity_version, "
-                          + "policy_reference, policy_version, verification_evidence_reference, "
-                          + "verification_evidence_version, source_version, source_payload, source_digest) "
-                          + "VALUES (?, ?, 'VERIFIED', 1, 'test-only/policy', 1, "
-                          + "'test-only/verification', 1, 1, ?, ?)",
-                      creatorPartyId,
-                      identity.accountUuid(),
-                      creatorSource,
-                      sha256(creatorSource));
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_individual_hosted_terms_acceptances "
-                          + "(evidence_id, action_request_id, creator_party_id, account_uuid, "
-                          + "hosted_scope_id, terms_version_id, document_digest, "
-                          + "operator_legal_identity, operator_identity_version, source_version, "
-                          + "material_generation, individual_party_source, "
-                          + "individual_party_source_digest, affirmative_action_evidence, "
-                          + "affirmative_action_digest, accepted_at) "
-                          + "VALUES (?, ?, ?, ?, ?, ?, ?, 'TEST FIXTURE ONLY', 1, 1, 1, ?, ?, ?, ?, "
-                          + "CURRENT_TIMESTAMP)",
-                      acceptanceEvidenceId,
-                      acceptanceActionRequestId,
-                      creatorPartyId,
-                      identity.accountUuid(),
-                      hostedScopeId,
-                      termsVersionId,
-                      sha256(document),
-                      creatorSource,
-                      sha256(creatorSource),
-                      affirmativeAction,
-                      sha256(affirmativeAction));
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_hosted_terms_environment_binding_heads "
-                          + "(environment_boundary) VALUES (?)",
-                      environmentBoundary);
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_hosted_terms_environment_binding_publications "
-                          + "(request_id, environment_boundary, request_payload, request_digest, status) "
-                          + "VALUES (?, ?, ?, ?, 'RECEIVED')",
-                      bindingPublicationRequestId,
-                      environmentBoundary,
-                      bindingPublicationPayload,
-                      sha256(bindingPublicationPayload));
-              context
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_hosted_terms_environment_bindings "
-                          + "(binding_id, publication_request_id, environment_boundary, hosted_scope_id, "
-                          + "operator_legal_identity, operator_identity_version, catalog_version_id, "
-                          + "catalog_source_version, authenticated_publisher_identity, "
-                          + "publication_event_identity, publication_evidence_digest, "
-                          + "predecessor_binding_id, predecessor_source_version, source_version, "
-                          + "binding_payload, binding_digest) "
-                          + "VALUES (?, ?, ?, ?, 'TEST FIXTURE ONLY', 1, ?, 1, 'test-only/publisher', "
-                          + "'test-only/event', ?, NULL, NULL, 1, ?, ?)",
-                      bindingId,
-                      bindingPublicationRequestId,
-                      environmentBoundary,
-                      hostedScopeId,
-                      termsVersionId,
-                      sha256(bindingPublicationPayload),
-                      bindingPayload,
-                      sha256(bindingPayload));
-              context
-                  .dsl()
-                  .execute(
-                      "UPDATE account_hosted_terms_environment_binding_publications "
-                          + "SET status = 'COMMITTED', candidate_binding_id = ?, result_payload = ?, "
-                          + "result_digest = ?, committed_at = CURRENT_TIMESTAMP WHERE request_id = ?",
-                      bindingId,
-                      bindingPayload,
-                      sha256(bindingPayload),
-                      bindingPublicationRequestId);
-              context
-                  .dsl()
-                  .execute(
-                      "UPDATE account_hosted_terms_environment_binding_heads "
-                          + "SET current_binding_id = ?, current_source_version = 1 "
-                          + "WHERE environment_boundary = ?",
-                      bindingId,
-                      environmentBoundary);
-            });
+        .executeWithoutResult(status -> {
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_hosted_terms_scopes (hosted_scope_id) VALUES (?)",
+                  hostedScopeId);
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_hosted_terms_catalog_versions "
+                      + "(version_id, hosted_scope_id, predecessor_version_id, "
+                      + "operator_legal_identity, operator_identity_version, document_bytes, "
+                      + "document_digest, source_version, material_generation, materiality, "
+                      + "publication_evidence_reference, publication_evidence_version, "
+                      + "notice_evidence_reference, notice_evidence_version, effective_at, "
+                      + "version_payload, version_digest) "
+                      + "VALUES (?, ?, NULL, 'TEST FIXTURE ONLY', 1, ?, ?, 1, 1, 'INITIAL', "
+                      + "'test-only/publication', 1, 'test-only/notice', 1, ?::timestamptz, ?, ?)",
+                  termsVersionId,
+                  hostedScopeId,
+                  document,
+                  sha256(document),
+                  effectiveAt,
+                  versionPayload,
+                  sha256(versionPayload));
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_hosted_terms_publication_operations "
+                      + "(request_id, hosted_scope_id, request_payload, request_digest, status) "
+                      + "VALUES (?, ?, ?, ?, 'RECEIVED')",
+                  termsPublicationRequestId,
+                  hostedScopeId,
+                  termsPublicationPayload,
+                  sha256(termsPublicationPayload));
+          context
+              .dsl()
+              .execute(
+                  "UPDATE account_hosted_terms_publication_operations "
+                      + "SET status = 'SCHEDULED', candidate_version_id = ? "
+                      + "WHERE request_id = ?",
+                  termsVersionId,
+                  termsPublicationRequestId);
+          context
+              .dsl()
+              .execute(
+                  "UPDATE account_hosted_terms_scopes SET current_version_id = ?, "
+                      + "current_source_version = 1, current_material_generation = 1 "
+                      + "WHERE hosted_scope_id = ?",
+                  termsVersionId,
+                  hostedScopeId);
+          context
+              .dsl()
+              .execute(
+                  "UPDATE account_hosted_terms_publication_operations SET status = 'COMMITTED', "
+                      + "result_payload = ?, result_digest = ?, committed_at = CURRENT_TIMESTAMP "
+                      + "WHERE request_id = ?",
+                  versionPayload,
+                  sha256(versionPayload),
+                  termsPublicationRequestId);
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_individual_creator_party_sources "
+                      + "(creator_party_id, account_uuid, verification_status, identity_version, "
+                      + "policy_reference, policy_version, verification_evidence_reference, "
+                      + "verification_evidence_version, source_version, source_payload, source_digest) "
+                      + "VALUES (?, ?, 'VERIFIED', 1, 'test-only/policy', 1, "
+                      + "'test-only/verification', 1, 1, ?, ?)",
+                  creatorPartyId,
+                  identity.accountUuid(),
+                  creatorSource,
+                  sha256(creatorSource));
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_individual_hosted_terms_acceptances "
+                      + "(evidence_id, action_request_id, creator_party_id, account_uuid, "
+                      + "hosted_scope_id, terms_version_id, document_digest, "
+                      + "operator_legal_identity, operator_identity_version, source_version, "
+                      + "material_generation, individual_party_source, "
+                      + "individual_party_source_digest, affirmative_action_evidence, "
+                      + "affirmative_action_digest, accepted_at) "
+                      + "VALUES (?, ?, ?, ?, ?, ?, ?, 'TEST FIXTURE ONLY', 1, 1, 1, ?, ?, ?, ?, "
+                      + "CURRENT_TIMESTAMP)",
+                  acceptanceEvidenceId,
+                  acceptanceActionRequestId,
+                  creatorPartyId,
+                  identity.accountUuid(),
+                  hostedScopeId,
+                  termsVersionId,
+                  sha256(document),
+                  creatorSource,
+                  sha256(creatorSource),
+                  affirmativeAction,
+                  sha256(affirmativeAction));
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_hosted_terms_environment_binding_heads "
+                      + "(environment_boundary) VALUES (?)",
+                  environmentBoundary);
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_hosted_terms_environment_binding_publications "
+                      + "(request_id, environment_boundary, request_payload, request_digest, status) "
+                      + "VALUES (?, ?, ?, ?, 'RECEIVED')",
+                  bindingPublicationRequestId,
+                  environmentBoundary,
+                  bindingPublicationPayload,
+                  sha256(bindingPublicationPayload));
+          context
+              .dsl()
+              .execute(
+                  "INSERT INTO account_hosted_terms_environment_bindings "
+                      + "(binding_id, publication_request_id, environment_boundary, hosted_scope_id, "
+                      + "operator_legal_identity, operator_identity_version, catalog_version_id, "
+                      + "catalog_source_version, authenticated_publisher_identity, "
+                      + "publication_event_identity, publication_evidence_digest, "
+                      + "predecessor_binding_id, predecessor_source_version, source_version, "
+                      + "binding_payload, binding_digest) "
+                      + "VALUES (?, ?, ?, ?, 'TEST FIXTURE ONLY', 1, ?, 1, 'test-only/publisher', "
+                      + "'test-only/event', ?, NULL, NULL, 1, ?, ?)",
+                  bindingId,
+                  bindingPublicationRequestId,
+                  environmentBoundary,
+                  hostedScopeId,
+                  termsVersionId,
+                  sha256(bindingPublicationPayload),
+                  bindingPayload,
+                  sha256(bindingPayload));
+          context
+              .dsl()
+              .execute(
+                  "UPDATE account_hosted_terms_environment_binding_publications "
+                      + "SET status = 'COMMITTED', candidate_binding_id = ?, result_payload = ?, "
+                      + "result_digest = ?, committed_at = CURRENT_TIMESTAMP WHERE request_id = ?",
+                  bindingId,
+                  bindingPayload,
+                  sha256(bindingPayload),
+                  bindingPublicationRequestId);
+          context
+              .dsl()
+              .execute(
+                  "UPDATE account_hosted_terms_environment_binding_heads "
+                      + "SET current_binding_id = ?, current_source_version = 1 "
+                      + "WHERE environment_boundary = ?",
+                  bindingId,
+                  environmentBoundary);
+        });
 
     assertTruncateRejected(context, "account_hosted_terms_catalog_versions");
     assertTruncateRejected(context, "account_hosted_terms_scopes");

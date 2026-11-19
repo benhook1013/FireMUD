@@ -77,9 +77,8 @@ class InitialGameplayLoginDisposalResultTest {
             response().toBuilder().setDispositionValue(4).build(),
             response().toBuilder().setProofKindValue(3).build(),
             response().toBuilder().setUnknownFields(UNKNOWN).build())) {
-      assertThatThrownBy(
-              () ->
-                  InitialGameplayLoginDisposalResult.fromAuthenticatedResponse(response, request()))
+      assertThatThrownBy(() ->
+              InitialGameplayLoginDisposalResult.fromAuthenticatedResponse(response, request()))
           .isInstanceOf(InitialGameplayLoginDisposalResult.InvalidResultException.class);
     }
     assertThatThrownBy(
@@ -97,10 +96,8 @@ class InitialGameplayLoginDisposalResultTest {
                 .setDispositionValue(disposition)
                 .setProofKindValue(proof)
                 .build();
-        assertThatThrownBy(
-                () ->
-                    InitialGameplayLoginDisposalResult.fromAuthenticatedResponse(
-                        crossed, request()))
+        assertThatThrownBy(() ->
+                InitialGameplayLoginDisposalResult.fromAuthenticatedResponse(crossed, request()))
             .isInstanceOf(InitialGameplayLoginDisposalResult.InvalidResultException.class);
       }
     }

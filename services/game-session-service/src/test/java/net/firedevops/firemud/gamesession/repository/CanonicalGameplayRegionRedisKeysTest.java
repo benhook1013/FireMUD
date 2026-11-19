@@ -37,10 +37,9 @@ class CanonicalGameplayRegionRedisKeysTest {
 
   @Test
   void projectionRejectsNilScopeIdentifiers() {
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionRedisKeys.tenantRegionTag(
-                    TENANT_ID, new UUID(0L, 0L), REGION_ID))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionRedisKeys.tenantRegionTag(
+                TENANT_ID, new UUID(0L, 0L), REGION_ID))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("gameInstanceId");
   }

@@ -79,32 +79,30 @@ class HostedTermsDisclosureHandoffTest {
         .isNotEqualTo(HostedTermsEncoding.digest(changed(original, "requestId").canonicalBytes()))
         .isNotEqualTo(
             HostedTermsEncoding.digest(changed(original, "authorityEvidence").canonicalBytes()));
-    assertThatThrownBy(
-            () ->
-                new HostedTermsDisclosureHandoff(
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    Kind.CATALOG,
-                    source.key(),
-                    original.predecessorDigest(),
-                    original.candidateDigest(),
-                    Instant.parse("2026-10-08T00:00:00.123456789Z"),
-                    List.of(source),
-                    new byte[] {1}))
+    assertThatThrownBy(() ->
+            new HostedTermsDisclosureHandoff(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                Kind.CATALOG,
+                source.key(),
+                original.predecessorDigest(),
+                original.candidateDigest(),
+                Instant.parse("2026-10-08T00:00:00.123456789Z"),
+                List.of(source),
+                new byte[] {1}))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("microsecond");
-    assertThatThrownBy(
-            () ->
-                new HostedTermsDisclosureHandoff(
-                    original.handoffId(),
-                    original.requestId(),
-                    original.kind(),
-                    original.sourceKey(),
-                    original.predecessorDigest(),
-                    original.candidateDigest(),
-                    original.effectiveAt(),
-                    List.of(source, source),
-                    new byte[] {1}))
+    assertThatThrownBy(() ->
+            new HostedTermsDisclosureHandoff(
+                original.handoffId(),
+                original.requestId(),
+                original.kind(),
+                original.sourceKey(),
+                original.predecessorDigest(),
+                original.candidateDigest(),
+                original.effectiveAt(),
+                List.of(source, source),
+                new byte[] {1}))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Distinct complete sorted source evidence");
     byte[] trailing =

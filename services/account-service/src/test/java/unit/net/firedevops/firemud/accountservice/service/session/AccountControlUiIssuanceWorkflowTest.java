@@ -67,19 +67,16 @@ class AccountControlUiIssuanceWorkflowTest {
             "creator@example.test", "test-only-secret"))
         .thenThrow(denial);
     try (var ignored = fixture.withPeer(ISSUER)) {
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .service()
-                      .issue(
-                          fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
-                          fixture.environment))
+      assertThatThrownBy(() ->
+              fixture
+                  .service()
+                  .issue(
+                      fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
+                      fixture.environment))
           .isInstanceOf(AuthenticationException.class)
           .hasMessage(denial.getMessage())
-          .satisfies(
-              error ->
-                  assertThat(((AuthenticationException) error).getCode())
-                      .isEqualTo(denial.getCode()));
+          .satisfies(error ->
+              assertThat(((AuthenticationException) error).getCode()).isEqualTo(denial.getCode()));
     }
     var order = inOrder(fixture.primary, fixture.transactions);
     order
@@ -159,13 +156,12 @@ class AccountControlUiIssuanceWorkflowTest {
         .thenThrow(new IllegalStateException("test-only source unavailable"));
 
     try (var ignored = fixture.withPeer(ISSUER)) {
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .service()
-                      .issue(
-                          fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
-                          fixture.environment))
+      assertThatThrownBy(() ->
+              fixture
+                  .service()
+                  .issue(
+                      fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
+                      fixture.environment))
           .isInstanceOf(IllegalStateException.class);
     }
 
@@ -250,11 +246,10 @@ class AccountControlUiIssuanceWorkflowTest {
     when(fixture.signers.requireOriginal(any(byte[].class))).thenReturn(signer);
     when(fixture.cryptography.currentKeyId()).thenReturn("test-only-mac-key");
     when(fixture.cryptography.requestDigest(anyString(), any(byte[].class)))
-        .thenAnswer(
-            call -> {
-              requestBytes.set(call.getArgument(1, byte[].class).clone());
-              return "account-request-digest";
-            });
+        .thenAnswer(call -> {
+          requestBytes.set(call.getArgument(1, byte[].class).clone());
+          return "account-request-digest";
+        });
     when(fixture.cryptography.seal(any(byte[].class), any(byte[].class), any(Instant.class)))
         .thenReturn(new byte[] {8});
     when(fixture.cryptography.open(any(byte[].class), any(byte[].class), any(Instant.class)))
@@ -392,14 +387,12 @@ class AccountControlUiIssuanceWorkflowTest {
       }
       try (var ignored = conflict.withPeer(ISSUER)) {
         if (originalWasAccount) {
-          assertThatThrownBy(
-                  () ->
-                      conflict
-                          .service()
-                          .issue(
-                              conflict.request(
-                                  conflict.tenant, conflict.context, "test-only-secret"),
-                              conflict.environment))
+          assertThatThrownBy(() ->
+                  conflict
+                      .service()
+                      .issue(
+                          conflict.request(conflict.tenant, conflict.context, "test-only-secret"),
+                          conflict.environment))
               .isInstanceOf(IllegalArgumentException.class);
         } else {
           assertThatThrownBy(() -> conflict.service().issueAccount(conflict.accountRequest()))
@@ -429,13 +422,12 @@ class AccountControlUiIssuanceWorkflowTest {
         .thenThrow(new IllegalStateException("test-only active registry unavailable"));
 
     try (var ignored = fixture.withPeer(ISSUER)) {
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .service()
-                      .issue(
-                          fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
-                          fixture.environment))
+      assertThatThrownBy(() ->
+              fixture
+                  .service()
+                  .issue(
+                      fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
+                      fixture.environment))
           .isInstanceOf(IllegalStateException.class);
     }
 
@@ -458,13 +450,12 @@ class AccountControlUiIssuanceWorkflowTest {
         .thenThrow(new IllegalStateException("test-only Coordination unavailable"));
 
     try (var ignored = fixture.withPeer(ISSUER)) {
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .service()
-                      .issue(
-                          fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
-                          fixture.environment))
+      assertThatThrownBy(() ->
+              fixture
+                  .service()
+                  .issue(
+                      fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
+                      fixture.environment))
           .isInstanceOf(IllegalStateException.class);
     }
 
@@ -474,11 +465,10 @@ class AccountControlUiIssuanceWorkflowTest {
     assertThat(sameOriginalRecord(original, originalCaptor.getValue())).isTrue();
     verify(fixture.registry)
         .revoke(
-            argThat(
-                actual ->
-                    "REVOKING".equals(actual.status)
-                        && original.tokenHash.equals(actual.tokenHash)
-                        && original.operationId.equals(actual.operationId)));
+            argThat(actual ->
+                "REVOKING".equals(actual.status)
+                    && original.tokenHash.equals(actual.tokenHash)
+                    && original.operationId.equals(actual.operationId)));
     verify(fixture.operations, never()).finishRecoveryFailure(any(), any());
   }
 
@@ -492,13 +482,12 @@ class AccountControlUiIssuanceWorkflowTest {
         .thenThrow(new IllegalStateException("test-only Coordination unavailable"));
 
     try (var ignored = fixture.withPeer(ISSUER)) {
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .service()
-                      .issue(
-                          fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
-                          fixture.environment))
+      assertThatThrownBy(() ->
+              fixture
+                  .service()
+                  .issue(
+                      fixture.request(fixture.tenant, fixture.context, "test-only-secret"),
+                      fixture.environment))
           .isInstanceOf(IllegalStateException.class);
     }
 
@@ -585,11 +574,10 @@ class AccountControlUiIssuanceWorkflowTest {
 
     Fixture(Instant recoveryExpiry) {
       when(transactions.getTransaction(any(TransactionDefinition.class)))
-          .thenAnswer(
-              call -> {
-                TransactionSynchronizationManager.setActualTransactionActive(true);
-                return new SimpleTransactionStatus();
-              });
+          .thenAnswer(call -> {
+            TransactionSynchronizationManager.setActualTransactionActive(true);
+            return new SimpleTransactionStatus();
+          });
       doAnswer(
               call -> {
                 TransactionSynchronizationManager.clear();

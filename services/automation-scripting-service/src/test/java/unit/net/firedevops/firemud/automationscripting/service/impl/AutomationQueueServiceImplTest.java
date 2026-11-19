@@ -101,11 +101,10 @@ class AutomationQueueServiceImplTest {
     String queueKey = "automation:queue:{tenant:tenant-1:instance:instance-1}:entity-1";
     AtomicInteger popCount = new AtomicInteger();
     when(listOps.leftPop(queueKey))
-        .thenAnswer(
-            invocation -> {
-              int index = popCount.getAndIncrement();
-              return index < 50 ? pointerJson(41L + index) : null;
-            });
+        .thenAnswer(invocation -> {
+          int index = popCount.getAndIncrement();
+          return index < 50 ? pointerJson(41L + index) : null;
+        });
 
     List<AutomationQueueWorkItemPointer> drained =
         service.drainWorkItems("tenant-1", "instance-1", "entity-1");

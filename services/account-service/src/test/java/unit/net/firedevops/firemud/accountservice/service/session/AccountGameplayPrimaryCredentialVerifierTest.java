@@ -238,13 +238,12 @@ class AccountGameplayPrimaryCredentialVerifierTest {
       when(crypto.hash(eq(2), eq(65536), eq(1), any(char[].class)))
           .thenReturn("process-local-decoy");
       when(crypto.verify(anyString(), any(char[].class)))
-          .thenAnswer(
-              call -> {
-                String storedHash = call.getArgument(0);
-                String presented = new String((char[]) call.getArgument(1));
-                return (storedHash.equals(PASSWORD_HASH) && presented.equals("password"))
-                    || (storedHash.equals(OTP_HASH) && presented.equals("246810"));
-              });
+          .thenAnswer(call -> {
+            String storedHash = call.getArgument(0);
+            String presented = new String((char[]) call.getArgument(1));
+            return (storedHash.equals(PASSWORD_HASH) && presented.equals("password"))
+                || (storedHash.equals(OTP_HASH) && presented.equals("246810"));
+          });
       if (denied)
         assertDenial(
             () -> verifier.verify(account, secret), AuthenticationErrorCodes.INVALID_CREDENTIALS);
@@ -283,13 +282,12 @@ class AccountGameplayPrimaryCredentialVerifierTest {
       when(crypto.hash(eq(2), eq(65536), eq(1), any(char[].class)))
           .thenReturn("process-local-decoy");
       when(crypto.verify(anyString(), any(char[].class)))
-          .thenAnswer(
-              call -> {
-                String storedHash = call.getArgument(0);
-                return secret.equals("246810")
-                    ? storedHash.equals(OTP_HASH)
-                    : storedHash.equals(PASSWORD_HASH);
-              });
+          .thenAnswer(call -> {
+            String storedHash = call.getArgument(0);
+            return secret.equals("246810")
+                ? storedHash.equals(OTP_HASH)
+                : storedHash.equals(PASSWORD_HASH);
+          });
       assertDenial(() -> verifier.verify(account, secret), AuthenticationErrorCodes.ACCOUNT_LOCKED);
       verify(crypto, times(2)).verify(anyString(), any(char[].class));
     }
@@ -387,20 +385,17 @@ class AccountGameplayPrimaryCredentialVerifierTest {
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(readOnly);
     assertThatThrownBy(() -> verifier.verify(account, "password"))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                verifier.consumeOneTimeCredential(
-                    account, new CredentialVerification(ACCOUNT_ID, 15L)))
+    assertThatThrownBy(() ->
+            verifier.consumeOneTimeCredential(account, new CredentialVerification(ACCOUNT_ID, 15L)))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(challenges);
   }
 
   @Test
   void consumptionRejectsMismatchedAccountIdentityBeforeReadingChallenge() {
-    assertThatThrownBy(
-            () ->
-                verifier.consumeOneTimeCredential(
-                    account, new CredentialVerification(UUID.randomUUID(), 15L)))
+    assertThatThrownBy(() ->
+            verifier.consumeOneTimeCredential(
+                account, new CredentialVerification(UUID.randomUUID(), 15L)))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(challenges);
   }
@@ -410,10 +405,8 @@ class AccountGameplayPrimaryCredentialVerifierTest {
   void consumptionRequiresExactChallengeIdentityAndOwnership(boolean wrongOwner) {
     if (wrongOwner) challenge.setAccountId(43L);
     else challenge.setId(16L);
-    assertThatThrownBy(
-            () ->
-                verifier.consumeOneTimeCredential(
-                    account, new CredentialVerification(ACCOUNT_ID, 15L)))
+    assertThatThrownBy(() ->
+            verifier.consumeOneTimeCredential(account, new CredentialVerification(ACCOUNT_ID, 15L)))
         .isInstanceOf(IllegalStateException.class);
     verify(challenges, never()).delete(any());
   }
@@ -421,10 +414,8 @@ class AccountGameplayPrimaryCredentialVerifierTest {
   @Test
   void consumptionRequiresChallengeStillPresent() {
     when(challenges.findByAccountId(42L)).thenReturn(Optional.empty());
-    assertThatThrownBy(
-            () ->
-                verifier.consumeOneTimeCredential(
-                    account, new CredentialVerification(ACCOUNT_ID, 15L)))
+    assertThatThrownBy(() ->
+            verifier.consumeOneTimeCredential(account, new CredentialVerification(ACCOUNT_ID, 15L)))
         .isInstanceOf(IllegalStateException.class);
     verify(challenges, never()).delete(any());
   }
@@ -512,13 +503,12 @@ class AccountGameplayPrimaryCredentialVerifierTest {
     when(fixture.issuance.readCurrentGameplayLoginReplay(REQUEST_ID))
         .thenReturn(Optional.empty(), Optional.empty(), Optional.of(replay));
     when(fixture.issuance.beginPendingForAccount(any(), any(), any(), any(), any()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              verify(challenges, never()).delete(any());
-              transactions.events.add("pending");
-              return pending;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          verify(challenges, never()).delete(any());
+          transactions.events.add("pending");
+          return pending;
+        });
     doAnswer(
             call -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();

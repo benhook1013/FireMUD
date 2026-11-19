@@ -117,22 +117,19 @@ class WorldSelectedPublicationArtifactInventoryGrpcCodecTest {
                 model.inboundSourceClosure().familyCounts().get(5),
                 model.inboundSourceClosure().familyCounts().get(6)));
 
-    assertThatThrownBy(
-            () ->
-                WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
-                    fixture.freezeEvidence(), withInboundClosure(inbound, nonempty)))
+    assertThatThrownBy(() ->
+            WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
+                fixture.freezeEvidence(), withInboundClosure(inbound, nonempty)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported nonempty");
-    assertThatThrownBy(
-            () ->
-                WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
-                    fixture.freezeEvidence(), withInboundClosure(inbound, unknown)))
+    assertThatThrownBy(() ->
+            WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
+                fixture.freezeEvidence(), withInboundClosure(inbound, unknown)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not canonical");
-    assertThatThrownBy(
-            () ->
-                WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
-                    fixture.freezeEvidence(), withInboundClosure(inbound, null)))
+    assertThatThrownBy(() ->
+            WorldSelectedPublicationArtifactInventoryEvidence.fromPublicEvidence(
+                fixture.freezeEvidence(), withInboundClosure(inbound, null)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("source model is unsupported or incomplete");
   }
@@ -149,19 +146,14 @@ class WorldSelectedPublicationArtifactInventoryGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                WorldSelectedPublicationArtifactInventoryGrpcCodec.fromResponse(
-                    fixture.freezeEvidence(),
-                    response.toBuilder()
-                        .setPublicInventoryDigest("sha256:" + "0".repeat(64))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldSelectedPublicationArtifactInventoryGrpcCodec.fromResponse(
+                fixture.freezeEvidence(),
+                response.toBuilder().setPublicInventoryDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldSelectedPublicationArtifactInventoryGrpcCodec.fromResponse(
-                    fixture.freezeEvidence(),
-                    response.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            WorldSelectedPublicationArtifactInventoryGrpcCodec.fromResponse(
+                fixture.freezeEvidence(), response.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
 
@@ -192,10 +184,9 @@ class WorldSelectedPublicationArtifactInventoryGrpcCodecTest {
             original.sourceModel(),
             original.artifactDecisions());
     byte[] changedBytes = changedEvidence.canonicalBytes();
-    assertThatThrownBy(
-            () ->
-                WorldSelectedPublicationArtifactInventoryEvidence.fromCanonicalBytes(
-                    fixture.freezeEvidence(), changedBytes, sha256(changedBytes)))
+    assertThatThrownBy(() ->
+            WorldSelectedPublicationArtifactInventoryEvidence.fromCanonicalBytes(
+                fixture.freezeEvidence(), changedBytes, sha256(changedBytes)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("differs from exact selected Account order or freeze checkpoint");
 
@@ -297,19 +288,18 @@ class WorldSelectedPublicationArtifactInventoryGrpcCodecTest {
             model.generationRuleInputCount(),
             model.spawnBindingCount(),
             model.appliedEpochs());
-    assertThatThrownBy(
-            () ->
-                new PublicEvidence(
-                    fixture.publicEvidence().schema(),
-                    fixture.publicEvidence().schemaVersion(),
-                    fixture.publicEvidence().completeness(),
-                    fixture.publicEvidence().ownerScope(),
-                    fixture.publicEvidence().selectedApplication(),
-                    fixture.publicEvidence().accountOrder(),
-                    fixture.publicEvidence().freeze(),
-                    fixture.publicEvidence().checkpoint(),
-                    unsupportedModel,
-                    fixture.publicEvidence().artifactDecisions()))
+    assertThatThrownBy(() ->
+            new PublicEvidence(
+                fixture.publicEvidence().schema(),
+                fixture.publicEvidence().schemaVersion(),
+                fixture.publicEvidence().completeness(),
+                fixture.publicEvidence().ownerScope(),
+                fixture.publicEvidence().selectedApplication(),
+                fixture.publicEvidence().accountOrder(),
+                fixture.publicEvidence().freeze(),
+                fixture.publicEvidence().checkpoint(),
+                unsupportedModel,
+                fixture.publicEvidence().artifactDecisions()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("source model is unsupported or incomplete");
   }
@@ -382,15 +372,14 @@ class WorldSelectedPublicationArtifactInventoryGrpcCodecTest {
             0,
             0,
             commit.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-                .map(
-                    unit ->
-                        new AppliedEpoch(
-                            unit.aggregateType(),
-                            unit.aggregateId(),
-                            unit.scopeType(),
-                            unit.scopeId(),
-                            unit.expectedEpoch(),
-                            new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                .map(unit ->
+                    new AppliedEpoch(
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch(),
+                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
                 .toList());
     var publicEvidence =
         new PublicEvidence(
@@ -515,10 +504,9 @@ class WorldSelectedPublicationArtifactInventoryGrpcCodecTest {
 
   private static void assertRejectedPublicJson(Fixture fixture, String json) {
     byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-    assertThatThrownBy(
-            () ->
-                WorldSelectedPublicationArtifactInventoryEvidence.fromCanonicalBytes(
-                    fixture.freezeEvidence(), bytes, sha256(bytes)))
+    assertThatThrownBy(() ->
+            WorldSelectedPublicationArtifactInventoryEvidence.fromCanonicalBytes(
+                fixture.freezeEvidence(), bytes, sha256(bytes)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

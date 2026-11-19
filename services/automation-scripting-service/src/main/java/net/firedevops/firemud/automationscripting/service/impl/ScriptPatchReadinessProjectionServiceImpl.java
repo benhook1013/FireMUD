@@ -264,11 +264,10 @@ public class ScriptPatchReadinessProjectionServiceImpl
     }
     return repository
         .findLatestGenerationByTenantId(tenantId)
-        .filter(
-            latest ->
-                generation.equals(latest.getReadinessGeneration())
-                    && projection.getId() != null
-                    && projection.getId().equals(latest.getId()))
+        .filter(latest ->
+            generation.equals(latest.getReadinessGeneration())
+                && projection.getId() != null
+                && projection.getId().equals(latest.getId()))
         .map(latest -> projection);
   }
 
@@ -338,12 +337,11 @@ public class ScriptPatchReadinessProjectionServiceImpl
     if (cancelable.isEmpty()) {
       return;
     }
-    cancelable.forEach(
-        item -> {
-          item.setStatus("CANCELED");
-          item.setCancelReason("superseded_by_newer_patch");
-          item.setUpdatedAt(now);
-        });
+    cancelable.forEach(item -> {
+      item.setStatus("CANCELED");
+      item.setCancelReason("superseded_by_newer_patch");
+      item.setUpdatedAt(now);
+    });
     workItemRepository.saveAll(cancelable);
   }
 
@@ -366,10 +364,9 @@ public class ScriptPatchReadinessProjectionServiceImpl
         && (expectedBaseVersionId == null
             || expectedBaseVersionId <= 0L
             || workItems.stream()
-                .anyMatch(
-                    item ->
-                        item.getScriptPatchBaseVersionId() == null
-                            || !expectedBaseVersionId.equals(item.getScriptPatchBaseVersionId())));
+                .anyMatch(item ->
+                    item.getScriptPatchBaseVersionId() == null
+                        || !expectedBaseVersionId.equals(item.getScriptPatchBaseVersionId())));
   }
 
   private static String onLoadBaseVersionFailureReason(

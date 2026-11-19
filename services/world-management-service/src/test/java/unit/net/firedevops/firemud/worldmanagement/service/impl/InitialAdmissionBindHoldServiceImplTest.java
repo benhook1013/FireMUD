@@ -92,12 +92,11 @@ class InitialAdmissionBindHoldServiceImplTest {
         .thenAnswer(invocation -> Optional.ofNullable(persisted.get()));
     when(holdRepository.hasNonterminalForRealm(TENANT_ID, REALM_UUID)).thenReturn(false);
     when(holdRepository.insertIfNoUniqueConflict(any()))
-        .thenAnswer(
-            invocation -> {
-              InitialAdmissionBindHold hold = invocation.getArgument(0);
-              persisted.set(hold);
-              return Optional.of(hold);
-            });
+        .thenAnswer(invocation -> {
+          InitialAdmissionBindHold hold = invocation.getArgument(0);
+          persisted.set(hold);
+          return Optional.of(hold);
+        });
 
     var first = service.acquire(request());
     var retry = service.acquire(request());
@@ -251,16 +250,15 @@ class InitialAdmissionBindHoldServiceImplTest {
             Mockito.eq("audit-100"),
             Mockito.eq(1L),
             any()))
-        .thenAnswer(
-            invocation -> {
-              InitialAdmissionBindHold committed =
-                  withTerminalProof(
-                      pending,
-                      ownerProof(Outcome.COMMITTED, true, REQUEST_DIGEST),
-                      invocation.getArgument(3));
-              persisted.set(committed);
-              return Optional.of(committed);
-            });
+        .thenAnswer(invocation -> {
+          InitialAdmissionBindHold committed =
+              withTerminalProof(
+                  pending,
+                  ownerProof(Outcome.COMMITTED, true, REQUEST_DIGEST),
+                  invocation.getArgument(3));
+          persisted.set(committed);
+          return Optional.of(committed);
+        });
 
     var first =
         service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.COMMITTED, true, REQUEST_DIGEST));
@@ -306,9 +304,8 @@ class InitialAdmissionBindHoldServiceImplTest {
             Mockito.isNull(),
             Mockito.isNull(),
             any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(withTerminalProof(pending, proof, invocation.getArgument(3))));
+        .thenAnswer(invocation ->
+            Optional.of(withTerminalProof(pending, proof, invocation.getArgument(3))));
 
     var result = service.reconcileOwnerProof(HOLD_ID, proof);
 
@@ -342,9 +339,8 @@ class InitialAdmissionBindHoldServiceImplTest {
     InitialAdmissionBindHold blocked = withStatus(pendingHold(), "RECONCILIATION_REQUIRED", 1L);
     when(holdRepository.findByHoldId(HOLD_ID)).thenReturn(Optional.of(blocked));
     when(holdRepository.markReconciliationRequired(any(), Mockito.eq("GS_OWNER_PENDING"), any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(withStatus(invocation.getArgument(0), "RECONCILIATION_REQUIRED", 2L)));
+        .thenAnswer(invocation ->
+            Optional.of(withStatus(invocation.getArgument(0), "RECONCILIATION_REQUIRED", 2L)));
 
     var result = service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.PENDING, false, null));
 

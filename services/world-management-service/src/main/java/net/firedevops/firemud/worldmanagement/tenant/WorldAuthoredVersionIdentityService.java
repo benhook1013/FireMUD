@@ -401,10 +401,9 @@ public final class WorldAuthoredVersionIdentityService {
                 worldSlug,
                 sourceOperationId,
                 sourceEvidenceDigest)
-            .orElseThrow(
-                () ->
-                    new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
-                        "World Version identity requires an exact committed fresh source intake"));
+            .orElseThrow(() ->
+                new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
+                    "World Version identity requires an exact committed fresh source intake"));
     requireExactFreshSourceIntake(
         sourceReceipt, canonicalTenantId, worldSlug, sourceOperationId, sourceEvidenceDigest);
     return sourceReceipt;

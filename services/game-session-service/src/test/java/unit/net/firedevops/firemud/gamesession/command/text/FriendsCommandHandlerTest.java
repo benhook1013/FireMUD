@@ -252,15 +252,14 @@ class FriendsCommandHandlerTest {
     assertThat(view.matchCount()).isEqualTo(1);
     assertThat(view.friends())
         .singleElement()
-        .satisfies(
-            entry -> {
-              assertThat(entry.friendLinkId()).isNull();
-              assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
-              assertThat(entry.status()).isEqualTo("active");
-              assertThat(entry.linkedAtEpochMs()).isNull();
-              assertThat(entry.displayName()).isEqualTo("Sora");
-              assertThat(entry.activityState()).isEqualTo("AUTO_AFK");
-            });
+        .satisfies(entry -> {
+          assertThat(entry.friendLinkId()).isNull();
+          assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+          assertThat(entry.status()).isEqualTo("active");
+          assertThat(entry.linkedAtEpochMs()).isNull();
+          assertThat(entry.displayName()).isEqualTo("Sora");
+          assertThat(entry.activityState()).isEqualTo("AUTO_AFK");
+        });
     assertThat(
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
@@ -270,12 +269,11 @@ class FriendsCommandHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.any(),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "FRIENDS".equals(gameplayCommand.getCommandName())
-                        && "FRIENDS".equals(gameplayCommand.getCommandText())
-                        && gameplayCommand.getCommandId() != null
-                        && gameplayCommand.getCommandId().startsWith("friends-")));
+            Mockito.argThat(gameplayCommand ->
+                "FRIENDS".equals(gameplayCommand.getCommandName())
+                    && "FRIENDS".equals(gameplayCommand.getCommandText())
+                    && gameplayCommand.getCommandId() != null
+                    && gameplayCommand.getCommandId().startsWith("friends-")));
   }
 
   @Test
@@ -312,15 +310,14 @@ class FriendsCommandHandlerTest {
     assertThat(view.filter()).isEqualTo("ALL");
     assertThat(view.friends())
         .singleElement()
-        .satisfies(
-            entry -> {
-              assertThat(entry.friendLinkId()).isNull();
-              assertThat(entry.status()).isEqualTo("active");
-              assertThat(entry.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID);
-              assertThat(entry.lastSeenAtEpochMs())
-                  .isEqualTo(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli());
-              assertThat(entry.visibilityPolicy()).isNull();
-            });
+        .satisfies(entry -> {
+          assertThat(entry.friendLinkId()).isNull();
+          assertThat(entry.status()).isEqualTo("active");
+          assertThat(entry.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID);
+          assertThat(entry.lastSeenAtEpochMs())
+              .isEqualTo(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli());
+          assertThat(entry.visibilityPolicy()).isNull();
+        });
     String rendered =
         new TextPlayerOutputRenderer(
                 new net.firedevops.firemud.gamesession.config.PresentationProperties())
@@ -351,25 +348,23 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
         .singleElement()
-        .satisfies(
-            output -> {
-              assertThat(output.text()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + " added.");
-              assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
-              FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
-              assertThat(mutation.action()).isEqualTo("ADD");
-              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
-              assertThat(mutation.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID);
-              assertThat(mutation.characterName()).isNull();
-              assertThat(mutation.ordinal()).isNull();
-            });
+        .satisfies(output -> {
+          assertThat(output.text()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + " added.");
+          assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
+          FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
+          assertThat(mutation.action()).isEqualTo("ADD");
+          assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+          assertThat(mutation.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID);
+          assertThat(mutation.characterName()).isNull();
+          assertThat(mutation.ordinal()).isNull();
+        });
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.any(),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "FRIENDS".equals(gameplayCommand.getCommandName())
-                        && ("FRIENDS ADD " + FRIEND_ACCOUNT_ID)
-                            .equals(gameplayCommand.getCommandText())));
+            Mockito.argThat(gameplayCommand ->
+                "FRIENDS".equals(gameplayCommand.getCommandName())
+                    && ("FRIENDS ADD " + FRIEND_ACCOUNT_ID)
+                        .equals(gameplayCommand.getCommandText())));
   }
 
   @Test
@@ -465,12 +460,11 @@ class FriendsCommandHandlerTest {
     assertThat(view.matchCount()).isEqualTo(1);
     assertThat(view.friends())
         .singleElement()
-        .satisfies(
-            entry -> {
-              assertThat(entry.ordinal()).isEqualTo(2);
-              assertThat(entry.friendAccountId()).isEqualTo(OTHER_FRIEND_ACCOUNT_ID);
-              assertThat(entry.visibilityPolicy()).isEqualTo("PRIVATE");
-            });
+        .satisfies(entry -> {
+          assertThat(entry.ordinal()).isEqualTo(2);
+          assertThat(entry.friendAccountId()).isEqualTo(OTHER_FRIEND_ACCOUNT_ID);
+          assertThat(entry.visibilityPolicy()).isEqualTo("PRIVATE");
+        });
     assertThat(
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
@@ -521,12 +515,11 @@ class FriendsCommandHandlerTest {
     assertThat(view.matchCount()).isEqualTo(1);
     assertThat(view.friends())
         .singleElement()
-        .satisfies(
-            entry -> {
-              assertThat(entry.ordinal()).isEqualTo(1);
-              assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
-              assertThat(entry.playableStateScope()).isEqualTo("SHARED");
-            });
+        .satisfies(entry -> {
+          assertThat(entry.ordinal()).isEqualTo(1);
+          assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+          assertThat(entry.playableStateScope()).isEqualTo("SHARED");
+        });
     assertThat(
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
@@ -676,16 +669,15 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
         .singleElement()
-        .satisfies(
-            output -> {
-              assertThat(output.text()).isEqualTo("Sora [acct #" + FRIEND_ACCOUNT_ID + "] added.");
-              assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
-              FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
-              assertThat(mutation.action()).isEqualTo("ADD");
-              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
-              assertThat(mutation.displayName()).isEqualTo("Sora");
-              assertThat(mutation.characterName()).isEqualTo("Sora");
-            });
+        .satisfies(output -> {
+          assertThat(output.text()).isEqualTo("Sora [acct #" + FRIEND_ACCOUNT_ID + "] added.");
+          assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
+          FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
+          assertThat(mutation.action()).isEqualTo("ADD");
+          assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+          assertThat(mutation.displayName()).isEqualTo("Sora");
+          assertThat(mutation.characterName()).isEqualTo("Sora");
+        });
     Mockito.verify(socialGroupsClient).addFriend(1L, CALLER_ACCOUNT_ID, FRIEND_ACCOUNT_ID);
   }
 
@@ -710,17 +702,16 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
         .singleElement()
-        .satisfies(
-            output -> {
-              assertThat(output.text()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + " removed.");
-              assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
-              FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
-              assertThat(mutation.action()).isEqualTo("REMOVE");
-              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
-              assertThat(mutation.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID);
-              assertThat(mutation.characterName()).isNull();
-              assertThat(mutation.ordinal()).isNull();
-            });
+        .satisfies(output -> {
+          assertThat(output.text()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID + " removed.");
+          assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
+          FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
+          assertThat(mutation.action()).isEqualTo("REMOVE");
+          assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+          assertThat(mutation.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID);
+          assertThat(mutation.characterName()).isNull();
+          assertThat(mutation.ordinal()).isNull();
+        });
   }
 
   @Test
@@ -755,17 +746,15 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
         .singleElement()
-        .satisfies(
-            output -> {
-              assertThat(output.text())
-                  .isEqualTo("Sora [acct #" + FRIEND_ACCOUNT_ID + "] removed.");
-              assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
-              FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
-              assertThat(mutation.action()).isEqualTo("REMOVE");
-              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
-              assertThat(mutation.displayName()).isEqualTo("Sora");
-              assertThat(mutation.characterName()).isEqualTo("Sora");
-            });
+        .satisfies(output -> {
+          assertThat(output.text()).isEqualTo("Sora [acct #" + FRIEND_ACCOUNT_ID + "] removed.");
+          assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
+          FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
+          assertThat(mutation.action()).isEqualTo("REMOVE");
+          assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+          assertThat(mutation.displayName()).isEqualTo("Sora");
+          assertThat(mutation.characterName()).isEqualTo("Sora");
+        });
     Mockito.verify(socialGroupsClient).removeFriend(1L, CALLER_ACCOUNT_ID, FRIEND_ACCOUNT_ID);
   }
 
@@ -801,18 +790,16 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
         .singleElement()
-        .satisfies(
-            output -> {
-              assertThat(output.text())
-                  .isEqualTo("Sora [acct #" + FRIEND_ACCOUNT_ID + "] removed.");
-              assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
-              FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
-              assertThat(mutation.action()).isEqualTo("REMOVE");
-              assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
-              assertThat(mutation.displayName()).isEqualTo("Sora");
-              assertThat(mutation.characterName()).isEqualTo("Sora");
-              assertThat(mutation.ordinal()).isEqualTo(1);
-            });
+        .satisfies(output -> {
+          assertThat(output.text()).isEqualTo("Sora [acct #" + FRIEND_ACCOUNT_ID + "] removed.");
+          assertThat(output.payload()).isInstanceOf(FriendMutationResultOutput.class);
+          FriendMutationResultOutput mutation = (FriendMutationResultOutput) output.payload();
+          assertThat(mutation.action()).isEqualTo("REMOVE");
+          assertThat(mutation.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+          assertThat(mutation.displayName()).isEqualTo("Sora");
+          assertThat(mutation.characterName()).isEqualTo("Sora");
+          assertThat(mutation.ordinal()).isEqualTo(1);
+        });
     Mockito.verify(socialGroupsClient).removeFriendByOrdinal(1L, CALLER_ACCOUNT_ID, 1);
   }
 
@@ -1225,12 +1212,11 @@ class FriendsCommandHandlerTest {
     assertThat(view.currentPolicy()).isEqualTo("FRIENDS_ONLY");
     assertThat(view.options()).hasSize(3);
     assertThat(view.options())
-        .anySatisfy(
-            option -> {
-              assertThat(option.policy()).isEqualTo("FRIENDS_ONLY");
-              assertThat(option.current()).isTrue();
-              assertThat(option.selectable()).isTrue();
-            });
+        .anySatisfy(option -> {
+          assertThat(option.policy()).isEqualTo("FRIENDS_ONLY");
+          assertThat(option.current()).isTrue();
+          assertThat(option.selectable()).isTrue();
+        });
     String rendered =
         new TextPlayerOutputRenderer(
                 new net.firedevops.firemud.gamesession.config.PresentationProperties())
@@ -1311,11 +1297,10 @@ class FriendsCommandHandlerTest {
         (FriendPresencePolicyViewOutput) result.outputs().get(1).payload();
     assertThat(view.currentPolicy()).isEqualTo("PRIVATE");
     assertThat(view.options())
-        .anySatisfy(
-            option -> {
-              assertThat(option.policy()).isEqualTo("PRIVATE");
-              assertThat(option.current()).isTrue();
-            });
+        .anySatisfy(option -> {
+          assertThat(option.policy()).isEqualTo("PRIVATE");
+          assertThat(option.current()).isTrue();
+        });
     Mockito.verify(socialGroupsClient)
         .updateFriendPresencePolicy(
             1L,

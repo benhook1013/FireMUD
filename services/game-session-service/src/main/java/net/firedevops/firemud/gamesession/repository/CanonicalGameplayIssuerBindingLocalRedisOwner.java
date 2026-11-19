@@ -280,30 +280,24 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
       int registeredCapacityCount =
           Math.toIntExact(
               work.localEntries().stream()
-                  .filter(
-                      entry ->
-                          entry
-                                  .memberValue()
-                                  .reservation()
-                                  .partitionId()
-                                  .equals(
-                                      work.targetOperation()
-                                          .memberValue()
-                                          .reservation()
-                                          .partitionId())
-                              && entry.countsTowardCapacity())
-                  .count());
-      int registeredReservationCount =
-          Math.toIntExact(
-              work.localEntries().stream()
-                  .filter(
-                      entry ->
-                          entry
+                  .filter(entry ->
+                      entry
                               .memberValue()
                               .reservation()
                               .partitionId()
                               .equals(
-                                  work.targetSource().memberValue().reservation().partitionId()))
+                                  work.targetOperation().memberValue().reservation().partitionId())
+                          && entry.countsTowardCapacity())
+                  .count());
+      int registeredReservationCount =
+          Math.toIntExact(
+              work.localEntries().stream()
+                  .filter(entry ->
+                      entry
+                          .memberValue()
+                          .reservation()
+                          .partitionId()
+                          .equals(work.targetSource().memberValue().reservation().partitionId()))
                   .count());
       if (BigInteger.valueOf(physicalCapacityCount).compareTo(work.anchor().partitionCapacity()) > 0
           || physicalCapacityCount < baselineCapacityCount + (target.countsTowardCapacity() ? 1 : 0)
@@ -377,13 +371,12 @@ public final class CanonicalGameplayIssuerBindingLocalRedisOwner {
     }
     List<CanonicalGameplayIssuerBindingLocalProjectionRepository.LocalEntry> entries =
         work.localEntries().stream()
-            .filter(
-                entry ->
-                    entry
-                        .memberValue()
-                        .reservation()
-                        .partitionId()
-                        .equals(work.targetSource().memberValue().reservation().partitionId()))
+            .filter(entry ->
+                entry
+                    .memberValue()
+                    .reservation()
+                    .partitionId()
+                    .equals(work.targetSource().memberValue().reservation().partitionId()))
             .sorted(java.util.Comparator.comparing(entry -> entry.operationId().toString()))
             .toList();
     arguments.add(ascii(Integer.toString(entries.size())));

@@ -37,10 +37,9 @@ public class GameAuthoredHelpTopicServiceImpl implements GameAuthoredHelpTopicSe
     String normalizedTopic = normalizeKey(topic, "topic");
     return repository
         .findPublishedByCanonicalKey(scope.tenantId(), scope.gameTemplateId(), normalizedTopic)
-        .or(
-            () ->
-                repository.findPublishedByAliasKey(
-                    scope.tenantId(), scope.gameTemplateId(), normalizedTopic))
+        .or(() ->
+            repository.findPublishedByAliasKey(
+                scope.tenantId(), scope.gameTemplateId(), normalizedTopic))
         .map(this::toDto);
   }
 

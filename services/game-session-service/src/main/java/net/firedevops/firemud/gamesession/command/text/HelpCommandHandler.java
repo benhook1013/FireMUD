@@ -292,11 +292,9 @@ public class HelpCommandHandler {
                 "- HELP SAY",
                 "- HELP WHISPER",
                 "- HELP TELL"));
-    lines.removeIf(
-        line ->
-            line.startsWith("- HELP ")
-                && !isEnabled(
-                    capabilityForTopic(line.substring("- HELP ".length())), maybeContext));
+    lines.removeIf(line ->
+        line.startsWith("- HELP ")
+            && !isEnabled(capabilityForTopic(line.substring("- HELP ".length())), maybeContext));
     List<TextCommandDefinition> admittedDefinitions =
         admittedRegistryResolver == null
             ? List.of()
@@ -327,10 +325,9 @@ public class HelpCommandHandler {
     }
     try {
       return maybeContext
-          .map(
-              context ->
-                  commandCapabilitiesSettingsResolver.isEnabled(
-                      capability, context.tenantId(), context.gameInstanceId()))
+          .map(context ->
+              commandCapabilitiesSettingsResolver.isEnabled(
+                  capability, context.tenantId(), context.gameInstanceId()))
           .orElseGet(() -> commandCapabilitiesSettingsResolver.isEnabled(capability, 0L, null));
     } catch (RuntimeException ex) {
       return false;

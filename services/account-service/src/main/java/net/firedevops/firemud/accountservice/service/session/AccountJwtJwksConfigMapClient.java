@@ -288,12 +288,11 @@ public final class AccountJwtJwksConfigMapClient {
 
   private static Map<String, String> unrelatedData(Map<String, String> data) {
     Map<String, String> unrelated = new LinkedHashMap<>();
-    data.forEach(
-        (key, value) -> {
-          if (!ACCOUNT_DATA_KEYS.contains(key)) {
-            unrelated.put(key, value);
-          }
-        });
+    data.forEach((key, value) -> {
+      if (!ACCOUNT_DATA_KEYS.contains(key)) {
+        unrelated.put(key, value);
+      }
+    });
     return Map.copyOf(unrelated);
   }
 

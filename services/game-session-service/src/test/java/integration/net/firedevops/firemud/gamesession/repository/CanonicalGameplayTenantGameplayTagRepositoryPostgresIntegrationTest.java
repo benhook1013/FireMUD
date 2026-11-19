@@ -66,19 +66,17 @@ class CanonicalGameplayTenantGameplayTagRepositoryPostgresIntegrationTest {
       CanonicalGameplayTenantGameplayTagRepository.Assignment second;
       try {
         Future<CanonicalGameplayTenantGameplayTagRepository.Assignment> firstFuture =
-            executor.submit(
-                () -> {
-                  ready.countDown();
-                  await(start);
-                  return versionOne.assignmentForTransition(candidateA.transitionId());
-                });
+            executor.submit(() -> {
+              ready.countDown();
+              await(start);
+              return versionOne.assignmentForTransition(candidateA.transitionId());
+            });
         Future<CanonicalGameplayTenantGameplayTagRepository.Assignment> secondFuture =
-            executor.submit(
-                () -> {
-                  ready.countDown();
-                  await(start);
-                  return versionOne.assignmentForTransition(candidateA.transitionId());
-                });
+            executor.submit(() -> {
+              ready.countDown();
+              await(start);
+              return versionOne.assignmentForTransition(candidateA.transitionId());
+            });
         assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
         start.countDown();
         first = firstFuture.get(30, TimeUnit.SECONDS);
@@ -132,21 +130,17 @@ class CanonicalGameplayTenantGameplayTagRepositoryPostgresIntegrationTest {
       assertThatThrownBy(() -> CanonicalGameplaySessionRedisKeys.session(first, foreignBindingRef))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("persisted tenant assignment");
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayTenantGameplayTagRepository(
-                          dsl, targetB.targetNamespace(), 2)
-                      .assignmentForTransition(candidateA.transitionId()))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayTenantGameplayTagRepository(dsl, targetB.targetNamespace(), 2)
+                  .assignmentForTransition(candidateA.transitionId()))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
           .hasMessageContaining("configured Game Session workload");
 
       // Simulate a future-version candidate colliding with the immutable version-one owner.
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayTenantGameplayTagRepository(
-                          dsl, targetB.targetNamespace(), 2)
-                      .assignmentForTransitionWithCandidate(
-                          candidateB.transitionId(), 2, first.tenantGameplayTag()))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayTenantGameplayTagRepository(dsl, targetB.targetNamespace(), 2)
+                  .assignmentForTransitionWithCandidate(
+                      candidateB.transitionId(), 2, first.tenantGameplayTag()))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
           .hasMessageContaining("already owned by a different tenant");
       assertThat(
@@ -236,53 +230,48 @@ class CanonicalGameplayTenantGameplayTagRepositoryPostgresIntegrationTest {
       ExecutorService executor = Executors.newFixedThreadPool(2);
       try {
         Future<?> controlOwner =
-            executor.submit(
-                () ->
-                    holderDsl.transactionResult(
-                        configuration -> {
-                          DSLContext transaction = DSL.using(configuration);
-                          if (transaction.fetchOne(
-                                  "SELECT account_id FROM"
-                                      + " game_session_canonical_account_coverage_control"
-                                      + " WHERE account_id = ? FOR UPDATE",
-                                  candidate.accountId())
-                              == null) {
-                            throw new IllegalStateException(
-                                "Current account control row is missing");
-                          }
-                          controlRowLocked.countDown();
-                          await(allowIntentAndTargetLocks);
-                          if (transaction.fetchOne(
-                                  "SELECT operation_id FROM"
-                                      + " game_session_canonical_account_admission_fence_intent"
-                                      + " WHERE operation_id = ? AND intent_state ="
-                                      + " 'ACQUISITION_INTENT' FOR UPDATE NOWAIT",
-                                  operationId)
-                              == null) {
-                            throw new IllegalStateException(
-                                "Current acquisition intent is missing");
-                          }
-                          if (transaction.fetchOne(
-                                  "SELECT operation_id FROM"
-                                      + " game_session_canonical_account_admission_fence_intent_barrier_target"
-                                      + " WHERE operation_id = ? AND target_ordinal = 0"
-                                      + " AND target_state = 'REQUIRED' FOR UPDATE NOWAIT",
-                                  operationId)
-                              == null) {
-                            throw new IllegalStateException("Current barrier target is missing");
-                          }
-                          intentAndTargetLocked.countDown();
-                          await(releaseControl);
-                          return Boolean.TRUE;
-                        }));
+            executor.submit(() ->
+                holderDsl.transactionResult(configuration -> {
+                  DSLContext transaction = DSL.using(configuration);
+                  if (transaction.fetchOne(
+                          "SELECT account_id FROM"
+                              + " game_session_canonical_account_coverage_control"
+                              + " WHERE account_id = ? FOR UPDATE",
+                          candidate.accountId())
+                      == null) {
+                    throw new IllegalStateException("Current account control row is missing");
+                  }
+                  controlRowLocked.countDown();
+                  await(allowIntentAndTargetLocks);
+                  if (transaction.fetchOne(
+                          "SELECT operation_id FROM"
+                              + " game_session_canonical_account_admission_fence_intent"
+                              + " WHERE operation_id = ? AND intent_state ="
+                              + " 'ACQUISITION_INTENT' FOR UPDATE NOWAIT",
+                          operationId)
+                      == null) {
+                    throw new IllegalStateException("Current acquisition intent is missing");
+                  }
+                  if (transaction.fetchOne(
+                          "SELECT operation_id FROM"
+                              + " game_session_canonical_account_admission_fence_intent_barrier_target"
+                              + " WHERE operation_id = ? AND target_ordinal = 0"
+                              + " AND target_state = 'REQUIRED' FOR UPDATE NOWAIT",
+                          operationId)
+                      == null) {
+                    throw new IllegalStateException("Current barrier target is missing");
+                  }
+                  intentAndTargetLocked.countDown();
+                  await(releaseControl);
+                  return Boolean.TRUE;
+                }));
         try {
           assertThat(controlRowLocked.await(10, TimeUnit.SECONDS)).isTrue();
           Future<CanonicalGameplayTenantGameplayTagRepository.Assignment> assignment =
-              executor.submit(
-                  () ->
-                      new CanonicalGameplayTenantGameplayTagRepository(
-                              assignmentDsl, runtime.targetNamespace(), 1)
-                          .assignmentForBarrierTarget(operationId, 0L));
+              executor.submit(() ->
+                  new CanonicalGameplayTenantGameplayTagRepository(
+                          assignmentDsl, runtime.targetNamespace(), 1)
+                      .assignmentForBarrierTarget(operationId, 0L));
           awaitControlLockWait(dsl, assignmentApplicationName);
 
           // The reader is queued only on control: the control owner can still lock both later rows

@@ -63,14 +63,12 @@ class AccountCurrentLifecycleRealmGrantReadOwnerTest {
       when(grant.receipt()).thenReturn(receipt);
       when(grant.active()).thenReturn(true);
       when(repository.readCurrent(expected, expiry))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-                assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                    .isTrue();
-                assertThat(transport.calls()).isEqualTo(1);
-                return Optional.of(grant);
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isTrue();
+            assertThat(transport.calls()).isEqualTo(1);
+            return Optional.of(grant);
+          });
       var result =
           new AccountCurrentLifecycleRealmGrantReadOwner(
                   transport.client(),

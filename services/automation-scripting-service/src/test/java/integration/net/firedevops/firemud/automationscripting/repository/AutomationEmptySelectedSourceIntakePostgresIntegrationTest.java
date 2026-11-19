@@ -227,12 +227,11 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
     try (Connection staleRowWriter = repeatableReadSnapshot()) {
       commitCanonicalEmptySourceFixture(9301L, 9302L);
       try {
-        assertThatThrownBy(
-                () ->
-                    execute(
-                        staleRowWriter,
-                        "INSERT INTO scripts (tenant_id, name, version, definition) "
-                            + "VALUES (9301, 'stale-snapshot-script', 'v1', '{}')"))
+        assertThatThrownBy(() ->
+                execute(
+                    staleRowWriter,
+                    "INSERT INTO scripts (tenant_id, name, version, definition) "
+                        + "VALUES (9301, 'stale-snapshot-script', 'v1', '{}')"))
             .isInstanceOf(SQLException.class)
             .hasMessageContaining(
                 "Automation authored-source row writes require READ COMMITTED isolation");

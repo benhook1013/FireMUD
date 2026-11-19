@@ -86,29 +86,27 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   public void recordActivity(long sessionId) {
     sessionRoutingNormalizationService
         .resolveProjectedSessionContext(Long.toString(sessionId))
-        .ifPresent(
-            context -> {
-              GameplayPresence presence =
-                  gameplayPresenceService.findConnectedBySessionId(sessionId).orElse(null);
-              RoutingSnapshot snapshot = routingSnapshot(context, presence);
-              write(
-                  snapshot,
-                  AccountRecentPresenceDisposition.TRANSPORT_LOSS,
-                  currentTimeMillisSupplier.getAsLong());
-            });
+        .ifPresent(context -> {
+          GameplayPresence presence =
+              gameplayPresenceService.findConnectedBySessionId(sessionId).orElse(null);
+          RoutingSnapshot snapshot = routingSnapshot(context, presence);
+          write(
+              snapshot,
+              AccountRecentPresenceDisposition.TRANSPORT_LOSS,
+              currentTimeMillisSupplier.getAsLong());
+        });
   }
 
   @Override
   public void recordDisconnect(long sessionId, AccountRecentPresenceDisposition disposition) {
     sessionRoutingNormalizationService
         .resolveProjectedSessionContext(Long.toString(sessionId))
-        .ifPresent(
-            context -> {
-              GameplayPresence presence =
-                  gameplayPresenceService.findConnectedBySessionId(sessionId).orElse(null);
-              RoutingSnapshot snapshot = routingSnapshot(context, presence);
-              write(snapshot, disposition, currentTimeMillisSupplier.getAsLong());
-            });
+        .ifPresent(context -> {
+          GameplayPresence presence =
+              gameplayPresenceService.findConnectedBySessionId(sessionId).orElse(null);
+          RoutingSnapshot snapshot = routingSnapshot(context, presence);
+          write(snapshot, disposition, currentTimeMillisSupplier.getAsLong());
+        });
   }
 
   @Override

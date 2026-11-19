@@ -51,16 +51,15 @@ public record CanonicalGameplayRosterSnapshot(
     }
     var actors =
         receipt.getActorsList().stream()
-            .map(
-                actor -> {
-                  if (actor.getActorKind()
-                      != net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind
-                          .CANONICAL_ROSTER_ACTOR_KIND_PLAYER) {
-                    throw new IllegalArgumentException("Retained roster actor kind is invalid");
-                  }
-                  return new CanonicalGameplayRosterActor(
-                      UUID.fromString(actor.getCharacterUuid()), actor.getDisplayName());
-                })
+            .map(actor -> {
+              if (actor.getActorKind()
+                  != net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActorKind
+                      .CANONICAL_ROSTER_ACTOR_KIND_PLAYER) {
+                throw new IllegalArgumentException("Retained roster actor kind is invalid");
+              }
+              return new CanonicalGameplayRosterActor(
+                  UUID.fromString(actor.getCharacterUuid()), actor.getDisplayName());
+            })
             .toList();
     var snapshot =
         new CanonicalGameplayRosterSnapshot(

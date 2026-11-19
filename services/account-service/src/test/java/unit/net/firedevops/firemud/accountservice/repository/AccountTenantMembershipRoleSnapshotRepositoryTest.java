@@ -33,30 +33,23 @@ class AccountTenantMembershipRoleSnapshotRepositoryTest {
 
   @Test
   void rejectsMalformedDuplicateOrNonCanonicalRoleEvidence() {
-    assertThatThrownBy(
-            () ->
-                AccountTenantMembershipRoleSnapshotRepository.canonicalizeRoleSet(
-                    List.of("player", "player")))
+    assertThatThrownBy(() ->
+            AccountTenantMembershipRoleSnapshotRepository.canonicalizeRoleSet(
+                List.of("player", "player")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountTenantMembershipRoleSnapshotRepository.canonicalizeRoleSet(
-                    List.of("_player")))
+    assertThatThrownBy(() ->
+            AccountTenantMembershipRoleSnapshotRepository.canonicalizeRoleSet(List.of("_player")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountTenantMembershipRoleSnapshotRepository.canonicalizeRoleSet(
-                    List.of("player admin")))
+    assertThatThrownBy(() ->
+            AccountTenantMembershipRoleSnapshotRepository.canonicalizeRoleSet(
+                List.of("player admin")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountTenantMembershipRoleSnapshotRepository.canonicalizeRoleSet(
-                    List.of("pläyer")))
+    assertThatThrownBy(() ->
+            AccountTenantMembershipRoleSnapshotRepository.canonicalizeRoleSet(List.of("pläyer")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountTenantMembershipRoleSnapshotRepository.requireCanonicalRoleSet(
-                    List.of("player_2", "player")))
+    assertThatThrownBy(() ->
+            AccountTenantMembershipRoleSnapshotRepository.requireCanonicalRoleSet(
+                List.of("player_2", "player")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -68,10 +61,9 @@ class AccountTenantMembershipRoleSnapshotRepositoryTest {
 
     assertThat(snapshot.roles()).isEmpty();
     assertThat(snapshot.snapshotVersion()).isEqualTo(3L);
-    assertThatThrownBy(
-            () ->
-                new AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot(
-                    11L, 7L, 701L, 0L, List.of()))
+    assertThatThrownBy(() ->
+            new AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot(
+                11L, 7L, 701L, 0L, List.of()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -124,10 +116,9 @@ class AccountTenantMembershipRoleSnapshotRepositoryTest {
     assertThat(snapshot.tenantUuid()).isEqualTo(tenantUuid);
     assertThat(snapshot.tenantId()).isNull();
     assertThat(snapshot.tenantProvenance()).isEqualTo(provenance);
-    assertThatThrownBy(
-            () ->
-                new AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot(
-                    11L, 7L, 701L, 1L, List.of("player"), accountUuid, tenantUuid, provenance))
+    assertThatThrownBy(() ->
+            new AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot(
+                11L, 7L, 701L, 1L, List.of("player"), accountUuid, tenantUuid, provenance))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

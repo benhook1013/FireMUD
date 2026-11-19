@@ -83,12 +83,11 @@ class AccountTenantCreationCompletionOwnerTest {
     order
         .verify(f.owners)
         .establishInitial(
-            Mockito.argThat(
-                request ->
-                    request.requestId().equals(f.request)
-                        && request.consentOperationId().equals(f.consent)
-                        && request.consentStatementVersion() == 7
-                        && request.affirmativeConsent()));
+            Mockito.argThat(request ->
+                request.requestId().equals(f.request)
+                    && request.consentOperationId().equals(f.consent)
+                    && request.consentStatementVersion() == 7
+                    && request.affirmativeConsent()));
     order
         .verify(f.reauth)
         .validateAndConsumeLocked(
@@ -521,11 +520,10 @@ class AccountTenantCreationCompletionOwnerTest {
 
     Fixture() throws Exception {
       when(manager.getTransaction(any()))
-          .thenAnswer(
-              invocation -> {
-                TransactionSynchronizationManager.setActualTransactionActive(true);
-                return mock(TransactionStatus.class);
-              });
+          .thenAnswer(invocation -> {
+            TransactionSynchronizationManager.setActualTransactionActive(true);
+            return mock(TransactionStatus.class);
+          });
       doAnswer(
               invocation -> {
                 TransactionSynchronizationManager.setActualTransactionActive(false);
@@ -625,11 +623,10 @@ class AccountTenantCreationCompletionOwnerTest {
       when(clock.get("observed_at", java.time.OffsetDateTime.class))
           .thenAnswer(invocation -> databaseNow.atOffset(ZoneOffset.UTC));
       when(dsl.fetchOne("SELECT clock_timestamp() AS observed_at"))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-                return clock;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            return clock;
+          });
       when(holder.intentPayload()).thenReturn(new byte[] {1});
       when(holder.intentDigest()).thenReturn("sha256:" + "b".repeat(64));
       when(holder.admissionPayload()).thenReturn(admissionPayload);
@@ -643,11 +640,10 @@ class AccountTenantCreationCompletionOwnerTest {
       when(orders.readSettlement(operation))
           .thenAnswer(invocation -> settled ? Optional.of(evidence) : Optional.empty());
       when(orders.settleLocked(holder, terminal))
-          .thenAnswer(
-              invocation -> {
-                settled = true;
-                return evidence;
-              });
+          .thenAnswer(invocation -> {
+            settled = true;
+            return evidence;
+          });
       Record row = mock(Record.class);
       when(row.get("authorization_scope", String.class)).thenReturn("ACCOUNT");
       when(row.get("operation_id", UUID.class)).thenReturn(issuanceId);
@@ -670,12 +666,11 @@ class AccountTenantCreationCompletionOwnerTest {
               issuanceId))
           .thenReturn(row);
       when(actors.readAcceptedSignerKey("kid"))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                beforeSignerRead.run();
-                return new AccountControlUiActorService.AcceptedSignerKey("kid", "fingerprint");
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            beforeSignerRead.run();
+            return new AccountControlUiActorService.AcceptedSignerKey("kid", "fingerprint");
+          });
       var captured = mock(AccountTenantCreationOwnerSourceCapture.Captured.class);
       when(captured.originalClaims()).thenReturn(issuance.claims);
       when(captured.originalSignerReceipt()).thenReturn(signer);
@@ -702,17 +697,15 @@ class AccountTenantCreationCompletionOwnerTest {
       var bootstrap = mock(AccountTenantCreationBootstrapResult.class);
       when(bootstrap.resultDigest()).thenReturn("bootstrap");
       when(bootstraps.bootstrapForCompletion(any(), any()))
-          .thenAnswer(
-              invocation -> {
-                var creator =
-                    invocation
-                        .<net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence>
-                            getArgument(0);
-                var source =
-                    invocation.<AccountTenantCreationCompletionOwner.CurrentSource>getArgument(1);
-                return source.withCurrentAuthorizationAndSourceParticipation(
-                    creator, () -> bootstrap);
-              });
+          .thenAnswer(invocation -> {
+            var creator =
+                invocation
+                    .<net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence>getArgument(
+                        0);
+            var source =
+                invocation.<AccountTenantCreationCompletionOwner.CurrentSource>getArgument(1);
+            return source.withCurrentAuthorizationAndSourceParticipation(creator, () -> bootstrap);
+          });
       var transaction = mock(Record.class);
       when(transaction.get("owner_transaction", String.class)).thenReturn("transaction");
       when(dsl.fetchOne("SELECT txid_current()::text AS owner_transaction"))
@@ -732,37 +725,35 @@ class AccountTenantCreationCompletionOwnerTest {
       when(reauth.validateAndConsumeLocked(any(), any(), anyString(), any()))
           .thenReturn(consumption);
       when(audits.appendCanonicalTenant(any(), anyString(), anyString(), anyString()))
-          .thenAnswer(
-              invocation -> {
-                var audit = mock(AccountAuditEnvelope.class);
-                String payload = invocation.getArgument(3);
-                String digest =
-                    "sha256:"
-                        + AccountControlUiIssuanceRepository.hash(
-                            payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                when(audit.payloadDigest()).thenReturn(digest);
-                return audit;
-              });
+          .thenAnswer(invocation -> {
+            var audit = mock(AccountAuditEnvelope.class);
+            String payload = invocation.getArgument(3);
+            String digest =
+                "sha256:"
+                    + AccountControlUiIssuanceRepository.hash(
+                        payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            when(audit.payloadDigest()).thenReturn(digest);
+            return audit;
+          });
       when(dsl.fetchOne(
               "SELECT * FROM account_tenant_creation_completions WHERE creation_operation_id = ?",
               operation))
           .thenAnswer(invocation -> resultRow);
       when(dsl.execute(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                Object[] values = (Object[]) invocation.getRawArguments()[1];
-                Map<String, Object> stored = new HashMap<>();
-                stored.put("intent_request_id", values[1]);
-                stored.put("tenant_uuid", values[2]);
-                stored.put("terminal_payload", values[3]);
-                stored.put("terminal_digest", values[4]);
-                stored.put("result_payload", values[5]);
-                stored.put("result_digest", values[6]);
-                resultRow = mock(Record.class);
-                when(resultRow.get(anyString(), any(Class.class)))
-                    .thenAnswer(read -> stored.get(read.getArgument(0)));
-                return 1;
-              });
+          .thenAnswer(invocation -> {
+            Object[] values = (Object[]) invocation.getRawArguments()[1];
+            Map<String, Object> stored = new HashMap<>();
+            stored.put("intent_request_id", values[1]);
+            stored.put("tenant_uuid", values[2]);
+            stored.put("terminal_payload", values[3]);
+            stored.put("terminal_digest", values[4]);
+            stored.put("result_payload", values[5]);
+            stored.put("result_digest", values[6]);
+            resultRow = mock(Record.class);
+            when(resultRow.get(anyString(), any(Class.class)))
+                .thenAnswer(read -> stored.get(read.getArgument(0)));
+            return 1;
+          });
     }
 
     AccountTenantCreationCompletionOwner.Result complete() {

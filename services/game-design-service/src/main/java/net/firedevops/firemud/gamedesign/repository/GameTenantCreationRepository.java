@@ -244,10 +244,9 @@ public class GameTenantCreationRepository {
       source =
           gameRepository
               .findRuntimeTenantIdentityByTenantKey(sourceGameTenantKey)
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "New game source identity did not read back after insert"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "New game source identity did not read back after insert"));
     } catch (IllegalStateException exception) {
       throw new IllegalStateException("New game source identity did not read back", exception);
     }

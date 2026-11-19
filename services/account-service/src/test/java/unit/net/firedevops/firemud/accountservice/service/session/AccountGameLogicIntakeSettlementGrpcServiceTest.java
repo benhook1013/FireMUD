@@ -91,9 +91,8 @@ class AccountGameLogicIntakeSettlementGrpcServiceTest {
       var receipt = new AccountGameLogicIntakeSettlement(evidence.receipt().terminal());
       when(owner.settle(any())).thenReturn(receipt);
       var first =
-          authorized(
-              () ->
-                  invoke(AccountGameLogicIntakeSettlementProtoCodec.toRequest(evidence.request())));
+          authorized(() ->
+              invoke(AccountGameLogicIntakeSettlementProtoCodec.toRequest(evidence.request())));
       assertThat(first.error()).isNull();
       assertThat(
               AccountGameLogicIntakeSettlementProtoCodec.fromResponse(

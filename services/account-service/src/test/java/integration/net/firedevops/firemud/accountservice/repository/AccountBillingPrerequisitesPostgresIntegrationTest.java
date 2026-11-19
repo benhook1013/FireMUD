@@ -86,16 +86,14 @@ class AccountBillingPrerequisitesPostgresIntegrationTest {
         race(
             () ->
                 c.tx()
-                    .execute(
-                        s ->
-                            c.customers()
-                                .retainIntent(c.account(), UUID.randomUUID(), UUID.randomUUID())),
+                    .execute(s ->
+                        c.customers()
+                            .retainIntent(c.account(), UUID.randomUUID(), UUID.randomUUID())),
             () ->
                 c.tx()
-                    .execute(
-                        s ->
-                            c.customers()
-                                .retainIntent(c.account(), UUID.randomUUID(), UUID.randomUUID())));
+                    .execute(s ->
+                        c.customers()
+                            .retainIntent(c.account(), UUID.randomUUID(), UUID.randomUUID())));
     assertThat(results)
         .extracting(AccountBillingCustomerRepository.IntentResult::disposition)
         .containsExactlyInAnyOrder(IntentDisposition.CREATED, IntentDisposition.REUSED);
@@ -107,39 +105,34 @@ class AccountBillingPrerequisitesPostgresIntegrationTest {
         .isNotEqualTo(retained.providerIdempotencyId());
     var retry =
         c.tx()
-            .execute(
-                s ->
-                    c.customers()
-                        .retainIntent(
-                            c.account(),
-                            retained.customerProvisioningRequestId(),
-                            retained.providerIdempotencyId()));
+            .execute(s ->
+                c.customers()
+                    .retainIntent(
+                        c.account(),
+                        retained.customerProvisioningRequestId(),
+                        retained.providerIdempotencyId()));
     assertThat(Objects.requireNonNull(retry).disposition()).isEqualTo(IntentDisposition.REPLAYED);
     assertThat(retry.customer()).isEqualTo(retained);
     assertThat(count(c, "billing_customer")).isOne();
     assertThat(c.customers().readHistory(c.account())).containsExactly(retained);
 
-    assertThatThrownBy(
-            () ->
-                c.tx()
-                    .execute(
-                        s ->
-                            c.customers()
-                                .retainIntent(
-                                    c.otherAccount(),
-                                    retained.customerProvisioningRequestId(),
-                                    retained.providerIdempotencyId())))
+    assertThatThrownBy(() ->
+            c.tx()
+                .execute(s ->
+                    c.customers()
+                        .retainIntent(
+                            c.otherAccount(),
+                            retained.customerProvisioningRequestId(),
+                            retained.providerIdempotencyId())))
         .isInstanceOf(AccountBillingCustomerRepository.ConflictException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx()
-                    .execute(
-                        s ->
-                            c.customers()
-                                .retainIntent(
-                                    c.account(),
-                                    retained.customerProvisioningRequestId(),
-                                    UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            c.tx()
+                .execute(s ->
+                    c.customers()
+                        .retainIntent(
+                            c.account(),
+                            retained.customerProvisioningRequestId(),
+                            UUID.randomUUID())))
         .isInstanceOf(AccountBillingCustomerRepository.ConflictException.class);
   }
 
@@ -170,23 +163,18 @@ class AccountBillingPrerequisitesPostgresIntegrationTest {
     assertThat(c.customers().findByAccount(c.account())).contains(confirmed);
     assertThat(c.customers().readHistory(c.account()))
         .containsExactly(intent, ambiguous, absent, confirmed);
-    assertThatThrownBy(
-            () ->
-                observe(c, intent, 1, ambiguousRequest, Observation.PROVIDER_ABSENT, null, DIGEST))
+    assertThatThrownBy(() ->
+            observe(c, intent, 1, ambiguousRequest, Observation.PROVIDER_ABSENT, null, DIGEST))
         .isInstanceOf(AccountBillingCustomerRepository.ConflictException.class);
     assertThatThrownBy(
             () -> observe(c, intent, 2, UUID.randomUUID(), Observation.AMBIGUOUS, null, DIGEST))
         .isInstanceOf(AccountBillingCustomerRepository.StaleVersionException.class);
-    assertThatThrownBy(
-            () ->
-                observe(
-                    c, intent, 4, UUID.randomUUID(), Observation.CONFIRMED, "cus_changed", DIGEST))
+    assertThatThrownBy(() ->
+            observe(c, intent, 4, UUID.randomUUID(), Observation.CONFIRMED, "cus_changed", DIGEST))
         .isInstanceOf(AccountBillingCustomerRepository.ConflictException.class);
     var other = intent(c, c.otherAccount());
-    assertThatThrownBy(
-            () ->
-                observe(
-                    c, other, 1, UUID.randomUUID(), Observation.CONFIRMED, "cus_primary", DIGEST))
+    assertThatThrownBy(() ->
+            observe(c, other, 1, UUID.randomUUID(), Observation.CONFIRMED, "cus_primary", DIGEST))
         .isInstanceOf(AccountBillingCustomerRepository.ConflictException.class);
     assertThat(c.customers().findByAccount(c.otherAccount())).contains(other);
     assertThat(c.customers().readHistory(c.otherAccount())).containsExactly(other);
@@ -202,14 +190,11 @@ class AccountBillingPrerequisitesPostgresIntegrationTest {
     var confirmed =
         observe(c, pending, 1, UUID.randomUUID(), Observation.CONFIRMED, "cus_primary", DIGEST);
     var other = confirm(c, c.otherAccount(), "cus_other");
-    assertThatThrownBy(
-            () ->
-                c.tx()
-                    .execute(
-                        s ->
-                            c.instruments()
-                                .retainAttachment(
-                                    attachment(confirmed, "cus_other", "pm_wrongCustomer"))))
+    assertThatThrownBy(() ->
+            c.tx()
+                .execute(s ->
+                    c.instruments()
+                        .retainAttachment(attachment(confirmed, "cus_other", "pm_wrongCustomer"))))
         .isInstanceOf(AccountPaymentInstrumentRepository.ConflictException.class);
     Attachment wrongOperation =
         new Attachment(
@@ -236,13 +221,10 @@ class AccountBillingPrerequisitesPostgresIntegrationTest {
         .isEqualTo(instrument);
     assertThat(c.instruments().findByOwner(c.otherAccount(), instrument.instrumentUuid()))
         .isEmpty();
-    assertThatThrownBy(
-            () ->
-                c.tx()
-                    .execute(
-                        s ->
-                            c.instruments()
-                                .retainAttachment(attachment(other, "cus_other", "pm_primary"))))
+    assertThatThrownBy(() ->
+            c.tx()
+                .execute(s ->
+                    c.instruments().retainAttachment(attachment(other, "cus_other", "pm_primary"))))
         .isInstanceOf(AccountPaymentInstrumentRepository.ConflictException.class);
     Attachment changedInput =
         new Attachment(
@@ -311,50 +293,46 @@ class AccountBillingPrerequisitesPostgresIntegrationTest {
   void rollbackRemovesOwnerChangesAndTheirAutomaticAuditRows() {
     Context c = context();
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              c.customers().retainIntent(c.account(), UUID.randomUUID(), UUID.randomUUID());
-              s.setRollbackOnly();
-            });
+        .executeWithoutResult(s -> {
+          c.customers().retainIntent(c.account(), UUID.randomUUID(), UUID.randomUUID());
+          s.setRollbackOnly();
+        });
     assertThat(c.customers().findByAccount(c.account())).isEmpty();
     assertThat(c.customers().readHistory(c.account())).isEmpty();
     var intent = intent(c, c.account());
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              c.customers()
-                  .recordObservation(
-                      c.account(),
-                      intent.customerProvisioningRequestId(),
-                      1,
-                      UUID.randomUUID(),
-                      Observation.CONFIRMED,
-                      "cus_rolledBack",
-                      DIGEST);
-              s.setRollbackOnly();
-            });
+        .executeWithoutResult(s -> {
+          c.customers()
+              .recordObservation(
+                  c.account(),
+                  intent.customerProvisioningRequestId(),
+                  1,
+                  UUID.randomUUID(),
+                  Observation.CONFIRMED,
+                  "cus_rolledBack",
+                  DIGEST);
+          s.setRollbackOnly();
+        });
     assertThat(c.customers().findByAccount(c.account())).contains(intent);
     assertThat(c.customers().readHistory(c.account())).containsExactly(intent);
     var confirmed =
         observe(c, intent, 1, UUID.randomUUID(), Observation.CONFIRMED, "cus_primary", DIGEST);
     var request = attachment(confirmed, "cus_primary", "pm_primary");
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              c.instruments().retainAttachment(request);
-              s.setRollbackOnly();
-            });
+        .executeWithoutResult(s -> {
+          c.instruments().retainAttachment(request);
+          s.setRollbackOnly();
+        });
     assertThat(count(c, "payment_instrument")).isZero();
     assertThat(count(c, "account_payment_instrument_observations")).isZero();
     var instrument =
         Objects.requireNonNull(c.tx().execute(s -> c.instruments().retainAttachment(request)));
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              c.instruments()
-                  .recordAvailability(availability(instrument, 1, State.UNAVAILABLE, OTHER_DIGEST));
-              s.setRollbackOnly();
-            });
+        .executeWithoutResult(s -> {
+          c.instruments()
+              .recordAvailability(availability(instrument, 1, State.UNAVAILABLE, OTHER_DIGEST));
+          s.setRollbackOnly();
+        });
     assertThat(c.instruments().findByOwner(c.account(), instrument.instrumentUuid()))
         .contains(instrument);
     assertThat(c.instruments().readHistory(c.account(), instrument.instrumentUuid()))
@@ -541,17 +519,16 @@ class AccountBillingPrerequisitesPostgresIntegrationTest {
       String digest) {
     return Objects.requireNonNull(
         c.tx()
-            .execute(
-                s ->
-                    c.customers()
-                        .recordObservation(
-                            intent.accountUuid(),
-                            intent.customerProvisioningRequestId(),
-                            version,
-                            request,
-                            observation,
-                            customer,
-                            digest)));
+            .execute(s ->
+                c.customers()
+                    .recordObservation(
+                        intent.accountUuid(),
+                        intent.customerProvisioningRequestId(),
+                        version,
+                        request,
+                        observation,
+                        customer,
+                        digest)));
   }
 
   private static <T> List<T> race(Supplier<T> left, Supplier<T> right) throws Exception {
@@ -581,16 +558,15 @@ class AccountBillingPrerequisitesPostgresIntegrationTest {
 
   private static void rejectSql(String sqlState, ThrowingCallable action) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-                if (cause instanceof SQLException sql) {
-                  assertThat(sql.getSQLState()).isEqualTo(sqlState);
-                  return;
-                }
-              }
-              throw new AssertionError("Expected PostgreSQL storage refusal", failure);
-            });
+        .satisfies(failure -> {
+          for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sql) {
+              assertThat(sql.getSQLState()).isEqualTo(sqlState);
+              return;
+            }
+          }
+          throw new AssertionError("Expected PostgreSQL storage refusal", failure);
+        });
   }
 
   private static long count(Context c, String table) {

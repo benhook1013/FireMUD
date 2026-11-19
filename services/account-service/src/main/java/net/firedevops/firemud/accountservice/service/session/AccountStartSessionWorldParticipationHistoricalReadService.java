@@ -57,16 +57,13 @@ public final class AccountStartSessionWorldParticipationHistoricalReadService {
 
     StoredParticipation participation =
         Objects.requireNonNull(
-            ownerTransaction.execute(
-                ignored ->
-                    repository
-                        .findHistoricalForOriginalTuple(request.originalPostAuthorizationTuple())
-                        .orElseThrow(
-                            () ->
-                                Status.FAILED_PRECONDITION
-                                    .withDescription(
-                                        "Exact historical World participation is unavailable")
-                                    .asRuntimeException())),
+            ownerTransaction.execute(ignored ->
+                repository
+                    .findHistoricalForOriginalTuple(request.originalPostAuthorizationTuple())
+                    .orElseThrow(() ->
+                        Status.FAILED_PRECONDITION
+                            .withDescription("Exact historical World participation is unavailable")
+                            .asRuntimeException())),
             "Account historical participation transaction returned no result");
 
     if (!java.security.MessageDigest.isEqual(

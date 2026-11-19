@@ -68,10 +68,9 @@ class AccountResponseEnvelopeCryptographyTest {
 
     byte[] changedAuthorityBundle = authorityBundle.clone();
     changedAuthorityBundle[changedAuthorityBundle.length / 2] ^= 0x01;
-    assertThatThrownBy(
-            () ->
-                cryptography.decrypt(
-                    envelope, bindingWithAuthorityBundle(changedAuthorityBundle), RECOVERY_EXPIRY))
+    assertThatThrownBy(() ->
+            cryptography.decrypt(
+                envelope, bindingWithAuthorityBundle(changedAuthorityBundle), RECOVERY_EXPIRY))
         .isInstanceOf(AccountResponseEnvelopeCryptography.IntegrityException.class);
   }
 
@@ -82,27 +81,23 @@ class AccountResponseEnvelopeCryptographyTest {
         cryptography(Clock.fixed(NOW, ZoneOffset.UTC));
     var binding = binding();
 
-    assertThatThrownBy(
-            () ->
-                bindingWithAuthorityBundle(
-                    new byte
-                        [AccountResponseEnvelopeCryptography.MAX_AUTHORITY_EVIDENCE_BUNDLE_BYTES
-                            + 1]))
+    assertThatThrownBy(() ->
+            bindingWithAuthorityBundle(
+                new byte
+                    [AccountResponseEnvelopeCryptography.MAX_AUTHORITY_EVIDENCE_BUNDLE_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                cryptography.encrypt(
-                    binding,
-                    new byte[AccountResponseEnvelopeCryptography.MAX_RESPONSE_BYTES + 1],
-                    RECOVERY_EXPIRY))
+    assertThatThrownBy(() ->
+            cryptography.encrypt(
+                binding,
+                new byte[AccountResponseEnvelopeCryptography.MAX_RESPONSE_BYTES + 1],
+                RECOVERY_EXPIRY))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                cryptography.decrypt(
-                    new AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope(
-                        new byte[AccountResponseEnvelopeCryptography.MAX_ENVELOPE_BYTES + 1]),
-                    binding,
-                    RECOVERY_EXPIRY))
+    assertThatThrownBy(() ->
+            cryptography.decrypt(
+                new AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope(
+                    new byte[AccountResponseEnvelopeCryptography.MAX_ENVELOPE_BYTES + 1]),
+                binding,
+                RECOVERY_EXPIRY))
         .isInstanceOf(AccountResponseEnvelopeCryptography.IntegrityException.class);
   }
 
@@ -176,13 +171,11 @@ class AccountResponseEnvelopeCryptographyTest {
 
     assertThatThrownBy(() -> expiredCryptography.decrypt(envelope, binding(), RECOVERY_EXPIRY))
         .isInstanceOf(AccountResponseEnvelopeCryptography.ResponseRecoveryExpiredException.class)
-        .satisfies(
-            failure ->
-                assertThat(
-                        ((AccountResponseEnvelopeCryptography.ResponseRecoveryExpiredException)
-                                failure)
-                            .errorCode())
-                    .isEqualTo("RESPONSE_RECOVERY_EXPIRED"));
+        .satisfies(failure ->
+            assertThat(
+                    ((AccountResponseEnvelopeCryptography.ResponseRecoveryExpiredException) failure)
+                        .errorCode())
+                .isEqualTo("RESPONSE_RECOVERY_EXPIRED"));
   }
 
   private AccountResponseEnvelopeCryptography cryptography(Clock clock) {

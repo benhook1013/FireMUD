@@ -93,24 +93,22 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
           return null;
         });
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(),
-                    () -> {
-                      tenantAuthorityEvents.establishFirstEventSource(
-                          tenantId,
-                          requestId,
-                          source,
-                          generationRepository.read(
-                              AccountAuthorityGenerationRepository.AuthorityScope.tenant(
-                                  tenantId)));
-                      context
-                          .dsl()
-                          .execute(
-                              "SET CONSTRAINTS account_tenant_authority_stream_consistency IMMEDIATE");
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context.transaction(),
+                () -> {
+                  tenantAuthorityEvents.establishFirstEventSource(
+                      tenantId,
+                      requestId,
+                      source,
+                      generationRepository.read(
+                          AccountAuthorityGenerationRepository.AuthorityScope.tenant(tenantId)));
+                  context
+                      .dsl()
+                      .execute(
+                          "SET CONSTRAINTS account_tenant_authority_stream_consistency IMMEDIATE");
+                  return null;
+                }))
         .rootCause()
         .hasMessageContaining(
             "Tenant authority outbox head lacks an Account-owned source checkpoint");
@@ -244,18 +242,16 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
 
     DemoTenantEntitlementRequest conflictingReplay =
         request(create.requestId(), tenantId, source, null, null, null, false);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(), () -> entitlements.provision(conflictingReplay, source)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context.transaction(), () -> entitlements.provision(conflictingReplay, source)))
         .isInstanceOf(DemoTenantEntitlementException.class)
         .hasMessageContaining("reused for a different tenant or payload");
 
     FreshTenantCreationEvidence alteredProvenance = alteredProvenance(source);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(), () -> entitlements.provision(create, alteredProvenance)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context.transaction(), () -> entitlements.provision(create, alteredProvenance)))
         .isInstanceOf(DemoTenantEntitlementException.class)
         .hasMessageContaining("differs from exact Account UUID readback");
 
@@ -270,11 +266,10 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
         });
     DemoTenantEntitlementRequest crossTenantReplay =
         request(create.requestId(), otherTenantId, otherSource, null, null, null, true);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(),
-                    () -> entitlements.provision(crossTenantReplay, otherSource)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context.transaction(),
+                () -> entitlements.provision(crossTenantReplay, otherSource)))
         .isInstanceOf(DemoTenantEntitlementException.class)
         .hasMessageContaining("reused for a different tenant or payload");
 
@@ -287,10 +282,9 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
             null,
             null,
             true);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(), () -> entitlements.provision(wrongSourceTenant, source)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context.transaction(), () -> entitlements.provision(wrongSourceTenant, source)))
         .isInstanceOf(DemoTenantEntitlementException.class)
         .hasMessageContaining(
             "Only exact authenticated fresh Game Design tenant creation evidence");
@@ -362,20 +356,19 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
             .get(0, Long.class);
     assertThat(operationCount).isEqualTo(2L);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(),
-                    () -> {
-                      context
-                          .dsl()
-                          .execute(
-                              "UPDATE account_authority_generations SET generation = generation + 1, "
-                                  + "source_version = source_version + 1 WHERE scope_kind = 'TENANT' "
-                                  + "AND tenant_uuid = ?",
-                              tenantId);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context.transaction(),
+                () -> {
+                  context
+                      .dsl()
+                      .execute(
+                          "UPDATE account_authority_generations SET generation = generation + 1, "
+                              + "source_version = source_version + 1 WHERE scope_kind = 'TENANT' "
+                              + "AND tenant_uuid = ?",
+                          tenantId);
+                  return null;
+                }))
         .isInstanceOf(TransactionSystemException.class)
         .hasMessageContaining("JDBC commit failed")
         .rootCause()
@@ -384,19 +377,18 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
             "Tenant authority generation advance lacks its canonical source event");
     assertThat(inTransaction(context.transaction(), () -> entitlements.readCurrent(tenantId)))
         .isEqualTo(updated);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(),
-                    () -> {
-                      context
-                          .dsl()
-                          .execute(
-                              "UPDATE account_demo_tenant_entitlements SET gameplay_available = NOT gameplay_available "
-                                  + "WHERE tenant_uuid = ?",
-                              tenantId);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context.transaction(),
+                () -> {
+                  context
+                      .dsl()
+                      .execute(
+                          "UPDATE account_demo_tenant_entitlements SET gameplay_available = NOT gameplay_available "
+                              + "WHERE tenant_uuid = ?",
+                          tenantId);
+                  return null;
+                }))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Demo entitlement identity is immutable and version advances by one");
     assertThat(inTransaction(context.transaction(), () -> entitlements.readCurrent(tenantId)))
@@ -463,14 +455,13 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
             null,
             null,
             true);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(),
-                    () -> {
-                      entitlements.provision(rollbackRequest, rollbackSource);
-                      throw new IllegalStateException("force owner transaction rollback");
-                    }))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context.transaction(),
+                () -> {
+                  entitlements.provision(rollbackRequest, rollbackSource);
+                  throw new IllegalStateException("force owner transaction rollback");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("force owner transaction rollback");
     assertTenantHasOnlyGenerationOne(context, rollbackTenant);
@@ -525,11 +516,10 @@ class AccountDemoTenantEntitlementPersistenceIntegrationTest {
             null,
             null,
             true);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(),
-                    () -> entitlements.provision(retainedRequest, retainedSource)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context.transaction(),
+                () -> entitlements.provision(retainedRequest, retainedSource)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("advanced without canonical source-event evidence");
     assertThat(

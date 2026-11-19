@@ -61,9 +61,8 @@ class AccountSelectedOwnerIntakeWorldClosureAuthorizationReadGrpcServiceTest {
     }
     var otherNamespace = new Collector();
     peer("other", "world-management-service")
-        .run(
-            () ->
-                service.readHeldSelectedOwnerWorldClosureAuthorization(malformed, otherNamespace));
+        .run(() ->
+            service.readHeldSelectedOwnerWorldClosureAuthorization(malformed, otherNamespace));
     assertThat(otherNamespace.error).isEqualTo(Status.Code.PERMISSION_DENIED);
 
     SessionContext.setContext("44", List.of(), java.util.Map.of());
@@ -78,10 +77,9 @@ class AccountSelectedOwnerIntakeWorldClosureAuthorizationReadGrpcServiceTest {
 
     var allowedPeerMalformed = new Collector();
     peer("test", "world-management-service")
-        .run(
-            () ->
-                service.readHeldSelectedOwnerWorldClosureAuthorization(
-                    malformed, allowedPeerMalformed));
+        .run(() ->
+            service.readHeldSelectedOwnerWorldClosureAuthorization(
+                malformed, allowedPeerMalformed));
     assertThat(allowedPeerMalformed.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(owner);
   }
@@ -155,10 +153,9 @@ class AccountSelectedOwnerIntakeWorldClosureAuthorizationReadGrpcServiceTest {
 
     var wrongNamespace = new Collector();
     peer("test", "world-management-service")
-        .run(
-            () ->
-                service.readHeldSelectedOwnerWorldClosureAuthorization(
-                    valid.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
+        .run(() ->
+            service.readHeldSelectedOwnerWorldClosureAuthorization(
+                valid.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
     assertThat(wrongNamespace.error).isEqualTo(Status.Code.PERMISSION_DENIED);
 
     var changedDigest =

@@ -16,10 +16,9 @@ class WorldOriginalStartSessionActivationTerminalReadGrpcCodecTest {
             .addSchemaVersion(1)
             .build();
 
-    assertThatThrownBy(
-            () ->
-                WorldOriginalStartSessionActivationTerminalReadGrpcCodec.fromRequest(
-                    duplicate, "world-runtime"))
+    assertThatThrownBy(() ->
+            WorldOriginalStartSessionActivationTerminalReadGrpcCodec.fromRequest(
+                duplicate, "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate field");
   }
@@ -34,10 +33,9 @@ class WorldOriginalStartSessionActivationTerminalReadGrpcCodecTest {
                     .build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                WorldOriginalStartSessionActivationTerminalReadGrpcCodec.fromRequest(
-                    unknown, "world-runtime"))
+    assertThatThrownBy(() ->
+            WorldOriginalStartSessionActivationTerminalReadGrpcCodec.fromRequest(
+                unknown, "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
   }

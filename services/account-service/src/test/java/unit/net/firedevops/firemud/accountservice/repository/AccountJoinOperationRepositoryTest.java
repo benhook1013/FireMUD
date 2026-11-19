@@ -40,10 +40,9 @@ class AccountJoinOperationRepositoryTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessage(
               "Canonical Account JOIN operation access requires an active owner transaction");
-      assertThatThrownBy(
-              () ->
-                  repository.recordCanonicalPolicyUnavailable(
-                      "request-v2", scope, "caller", "ENTITLEMENT_UNAVAILABLE"))
+      assertThatThrownBy(() ->
+              repository.recordCanonicalPolicyUnavailable(
+                  "request-v2", scope, "caller", "ENTITLEMENT_UNAVAILABLE"))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage(
               "Canonical Account JOIN operation access requires an active owner transaction");

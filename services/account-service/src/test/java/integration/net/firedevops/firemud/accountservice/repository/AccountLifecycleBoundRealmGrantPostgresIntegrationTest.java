@@ -66,18 +66,17 @@ class AccountLifecycleBoundRealmGrantPostgresIntegrationTest {
     Context context = context();
     Instant fork = context.now().plusSeconds(3600);
     Instant expiry = context.now().plusSeconds(300);
-    assertThatThrownBy(
-            () ->
-                context.apply(
-                    UUID.randomUUID(),
-                    new RealmGrantMutation(
-                        "local",
-                        context.scope(),
-                        Operation.CREATE,
-                        null,
-                        expiry,
-                        "before" + (char) 0 + "after"),
-                    fork))
+    assertThatThrownBy(() ->
+            context.apply(
+                UUID.randomUUID(),
+                new RealmGrantMutation(
+                    "local",
+                    context.scope(),
+                    Operation.CREATE,
+                    null,
+                    expiry,
+                    "before" + (char) 0 + "after"),
+                fork))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("NUL");
     context.assertEmpty();
@@ -230,15 +229,11 @@ class AccountLifecycleBoundRealmGrantPostgresIntegrationTest {
             expiry);
     assertThatThrownBy(() -> context.apply(request, changedAccount, fork))
         .isInstanceOf(IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            context
-                                .repository()
-                                .apply(request, otherControlledActor, original, fork)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    context.repository().apply(request, otherControlledActor, original, fork)))
         .isInstanceOf(IdempotencyConflictException.class);
     context.assertRowsUnchanged(before);
     assertThat(context.count("account_authority_outbox_events")).isEqualTo(1);
@@ -282,23 +277,21 @@ class AccountLifecycleBoundRealmGrantPostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var first =
-          executor.submit(
-              () ->
-                  concurrentWrite(
-                      context,
-                      command(context.scope(), Operation.EXTEND, 1L, expiry.plusSeconds(10)),
-                      fork,
-                      bothReady,
-                      begin));
+          executor.submit(() ->
+              concurrentWrite(
+                  context,
+                  command(context.scope(), Operation.EXTEND, 1L, expiry.plusSeconds(10)),
+                  fork,
+                  bothReady,
+                  begin));
       var second =
-          executor.submit(
-              () ->
-                  concurrentWrite(
-                      context,
-                      command(context.scope(), Operation.REVOKE, 1L, null),
-                      fork,
-                      bothReady,
-                      begin));
+          executor.submit(() ->
+              concurrentWrite(
+                  context,
+                  command(context.scope(), Operation.REVOKE, 1L, null),
+                  fork,
+                  bothReady,
+                  begin));
       assertThat(bothReady.await(30, TimeUnit.SECONDS)).isTrue();
       begin.countDown();
       assertThat(List.of(first.get(60, TimeUnit.SECONDS), second.get(60, TimeUnit.SECONDS)))
@@ -337,19 +330,17 @@ class AccountLifecycleBoundRealmGrantPostgresIntegrationTest {
     assertThat(context.read(expiredFork).effectiveExpiresAt()).isEqualTo(expiredFork);
     assertThat(context.read(fork).receipt().grantExpiresAt()).isEqualTo(expiry);
     List<Map<String, Object>> before = context.rows();
-    assertThatThrownBy(
-            () ->
-                context.apply(
-                    UUID.randomUUID(),
-                    command(context.scope(), Operation.EXTEND, 1L, expiry.plusSeconds(1)),
-                    expiredFork))
+    assertThatThrownBy(() ->
+            context.apply(
+                UUID.randomUUID(),
+                command(context.scope(), Operation.EXTEND, 1L, expiry.plusSeconds(1)),
+                expiredFork))
         .isInstanceOf(GrantRevisionConflictException.class);
-    assertThatThrownBy(
-            () ->
-                context.apply(
-                    UUID.randomUUID(),
-                    command(context.scope(), Operation.EXTEND, 1L, fork.plusNanos(1)),
-                    fork))
+    assertThatThrownBy(() ->
+            context.apply(
+                UUID.randomUUID(),
+                command(context.scope(), Operation.EXTEND, 1L, fork.plusNanos(1)),
+                fork))
         .isInstanceOf(IllegalArgumentException.class);
     context.assertRowsUnchanged(before);
   }
@@ -378,42 +369,38 @@ class AccountLifecycleBoundRealmGrantPostgresIntegrationTest {
     Context context = context();
     Instant fork = context.now().plusSeconds(3600);
     Instant expiry = context.now().plusSeconds(300);
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          context
-                              .repository()
-                              .apply(
-                                  UUID.randomUUID(),
-                                  context.controlledActor(),
-                                  command(context.scope(), Operation.CREATE, null, expiry),
-                                  fork);
-                          throw new IllegalStateException("Controlled downstream owner refusal");
-                        }))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status -> {
+                  context
+                      .repository()
+                      .apply(
+                          UUID.randomUUID(),
+                          context.controlledActor(),
+                          command(context.scope(), Operation.CREATE, null, expiry),
+                          fork);
+                  throw new IllegalStateException("Controlled downstream owner refusal");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Controlled downstream owner refusal");
     context.assertEmpty();
     UUID request = UUID.randomUUID();
     // The policy is genuinely short; no clock, timestamp, source or trigger is rewritten.
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          Instant shortExpiry = context.now().plusSeconds(5);
-                          context
-                              .repository()
-                              .apply(
-                                  request,
-                                  context.controlledActor(),
-                                  command(context.scope(), Operation.CREATE, null, shortExpiry),
-                                  fork);
-                          awaitDatabaseBoundary(context.dsl(), shortExpiry);
-                        }))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status -> {
+                  Instant shortExpiry = context.now().plusSeconds(5);
+                  context
+                      .repository()
+                      .apply(
+                          request,
+                          context.controlledActor(),
+                          command(context.scope(), Operation.CREATE, null, shortExpiry),
+                          fork);
+                  awaitDatabaseBoundary(context.dsl(), shortExpiry);
+                }))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("expired before final commit");
     context.assertEmpty();
@@ -450,9 +437,8 @@ class AccountLifecycleBoundRealmGrantPostgresIntegrationTest {
             "UPDATE " + CURRENT + " SET grant_revision = 3",
             "UPDATE account_authority_outbox_events SET payload = payload",
             "UPDATE account_audit_outbox SET event_type = 'WRONG'")) {
-      assertThatThrownBy(
-              () ->
-                  context.transaction().executeWithoutResult(status -> context.dsl().execute(sql)))
+      assertThatThrownBy(() ->
+              context.transaction().executeWithoutResult(status -> context.dsl().execute(sql)))
           .as(sql)
           .isInstanceOf(RuntimeException.class);
     }
@@ -465,23 +451,21 @@ class AccountLifecycleBoundRealmGrantPostgresIntegrationTest {
   @Test
   void detachedGenericOutboxEventCannotCommitWithoutItsExactGrantOwnerReceipt() {
     Context context = context();
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          String stream =
-                              GrantAuthorityScopeCodec.outboxStreamKey(
-                                  context.scope(), GrantAuthorityScopeCodec.V1_BOUNDS);
-                          new AccountAuthorityOutboxRepository(context.dsl())
-                              .append(
-                                  stream,
-                                  UUID.randomUUID().toString(),
-                                  "unqualified-event",
-                                  "unqualified-digest",
-                                  new byte[] {1});
-                        }))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status -> {
+                  String stream =
+                      GrantAuthorityScopeCodec.outboxStreamKey(
+                          context.scope(), GrantAuthorityScopeCodec.V1_BOUNDS);
+                  new AccountAuthorityOutboxRepository(context.dsl())
+                      .append(
+                          stream,
+                          UUID.randomUUID().toString(),
+                          "unqualified-event",
+                          "unqualified-digest",
+                          new byte[] {1});
+                }))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("exact atomic owner receipt");
     context.assertEmpty();
@@ -491,19 +475,15 @@ class AccountLifecycleBoundRealmGrantPostgresIntegrationTest {
   void primitiveRequiresOwnerTransactionAndDoesNotReadLegacyGrantsOrInferMembership() {
     Context context = context();
     Instant fork = context.now().plusSeconds(3600);
-    assertThatThrownBy(
-            () ->
-                context
-                    .repository()
-                    .apply(
-                        UUID.randomUUID(),
-                        context.controlledActor(),
-                        command(
-                            context.scope(),
-                            Operation.CREATE,
-                            null,
-                            context.now().plusSeconds(300)),
-                        fork))
+    assertThatThrownBy(() ->
+            context
+                .repository()
+                .apply(
+                    UUID.randomUUID(),
+                    context.controlledActor(),
+                    command(
+                        context.scope(), Operation.CREATE, null, context.now().plusSeconds(300)),
+                    fork))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("owner transaction");
     assertThatThrownBy(() -> context.repository().readCurrent(context.scope(), fork))

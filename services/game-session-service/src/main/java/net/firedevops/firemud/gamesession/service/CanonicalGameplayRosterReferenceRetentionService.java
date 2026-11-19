@@ -117,9 +117,8 @@ public final class CanonicalGameplayRosterReferenceRetentionService {
     try {
       int purged =
           Objects.requireNonNull(
-              transactions.execute(
-                  ignored ->
-                      repository.purgeConfirmedRetirementAcknowledgements(policy.batchSize())));
+              transactions.execute(ignored ->
+                  repository.purgeConfirmedRetirementAcknowledgements(policy.batchSize())));
       metrics
           .counter(
               "firemud.canonical.roster.reference.transfer_cleanup",

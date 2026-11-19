@@ -280,19 +280,19 @@ class AdmittedCommandDefinitionReaderTest {
 
   private String validDefinition() {
     return """
-        {"schemaVersion":1,"commandId":"salute","semanticOwner":"GAME_LOGIC","executionDiscipline":"DURABLE_GAMEPLAY","stageRequirement":"GAMEPLAY","promptPolicy":"WHEN_GAMEPLAY","actionCategory":"SOCIAL","historyRecordable":true,"aliases":["salute"],"actionTags":["COMMUNICATION"],"effects":[]}
-        """;
+    {"schemaVersion":1,"commandId":"salute","semanticOwner":"GAME_LOGIC","executionDiscipline":"DURABLE_GAMEPLAY","stageRequirement":"GAMEPLAY","promptPolicy":"WHEN_GAMEPLAY","actionCategory":"SOCIAL","historyRecordable":true,"aliases":["salute"],"actionTags":["COMMUNICATION"],"effects":[]}
+    """;
   }
 
   private String validActionStateDefinition() {
     return """
-        {"schemaVersion":1,"commandId":"block","semanticOwner":"GAME_LOGIC","executionDiscipline":"DURABLE_GAMEPLAY","stageRequirement":"GAMEPLAY","promptPolicy":"WHEN_GAMEPLAY","actionCategory":"GAMEPLAY","historyRecordable":true,"aliases":["block"],"actionTags":["COMBAT"],"effects":[{"effectKind":"APPLY_ACTION_STATE","schemaVersion":1,"targeting":"SELF","replayPolicy":"EFFECT_IDEMPOTENT","payload":{"conditionKey":"blocking","durationSeconds":5,"effectPayload":{"modifiers":[{"operation":"ADD","target_key":"block_mitigation","value":1,"scope_kind":"ACTION_FAMILY","scope_key":"defense"}]}}}]}
-        """;
+    {"schemaVersion":1,"commandId":"block","semanticOwner":"GAME_LOGIC","executionDiscipline":"DURABLE_GAMEPLAY","stageRequirement":"GAMEPLAY","promptPolicy":"WHEN_GAMEPLAY","actionCategory":"GAMEPLAY","historyRecordable":true,"aliases":["block"],"actionTags":["COMBAT"],"effects":[{"effectKind":"APPLY_ACTION_STATE","schemaVersion":1,"targeting":"SELF","replayPolicy":"EFFECT_IDEMPOTENT","payload":{"conditionKey":"blocking","durationSeconds":5,"effectPayload":{"modifiers":[{"operation":"ADD","target_key":"block_mitigation","value":1,"scope_kind":"ACTION_FAMILY","scope_key":"defense"}]}}}]}
+    """;
   }
 
   private String validActionStateDefinitionWithoutScopes() {
     return """
-        {"schemaVersion":1,"commandId":"block","semanticOwner":"GAME_LOGIC","executionDiscipline":"DURABLE_GAMEPLAY","stageRequirement":"GAMEPLAY","promptPolicy":"WHEN_GAMEPLAY","actionCategory":"GAMEPLAY","historyRecordable":true,"aliases":["block"],"actionTags":["COMBAT"],"effects":[{"effectKind":"APPLY_ACTION_STATE","schemaVersion":1,"targeting":"SELF","replayPolicy":"EFFECT_IDEMPOTENT","payload":{"conditionKey":"blocking","durationSeconds":5,"effectPayload":{"modifiers":[{"operation":"ADD","target_key":"block_mitigation","value":1}]}}}]}
-        """;
+    {"schemaVersion":1,"commandId":"block","semanticOwner":"GAME_LOGIC","executionDiscipline":"DURABLE_GAMEPLAY","stageRequirement":"GAMEPLAY","promptPolicy":"WHEN_GAMEPLAY","actionCategory":"GAMEPLAY","historyRecordable":true,"aliases":["block"],"actionTags":["COMBAT"],"effects":[{"effectKind":"APPLY_ACTION_STATE","schemaVersion":1,"targeting":"SELF","replayPolicy":"EFFECT_IDEMPOTENT","payload":{"conditionKey":"blocking","durationSeconds":5,"effectPayload":{"modifiers":[{"operation":"ADD","target_key":"block_mitigation","value":1}]}}}]}
+    """;
   }
 }

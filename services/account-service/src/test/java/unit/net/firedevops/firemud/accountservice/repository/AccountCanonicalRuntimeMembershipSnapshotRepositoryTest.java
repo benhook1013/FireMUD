@@ -40,14 +40,12 @@ class AccountCanonicalRuntimeMembershipSnapshotRepositoryTest {
     var transactionManager = new RecordingTransactionManager();
     var expected = missingSnapshot();
     when(repository.readCurrent(ACCOUNT_UUID, TENANT_UUID))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                  .isFalse();
-              transactionManager.events.add("owner-read");
-              return expected;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+          transactionManager.events.add("owner-read");
+          return expected;
+        });
     var service =
         new AccountCanonicalRuntimeMembershipSnapshotService(repository, transactionManager);
 

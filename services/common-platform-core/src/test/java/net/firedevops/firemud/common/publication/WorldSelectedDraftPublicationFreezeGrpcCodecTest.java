@@ -42,10 +42,9 @@ class WorldSelectedDraftPublicationFreezeGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                WorldSelectedDraftPublicationFreezeGrpcCodec.fromRequest(
-                    wire.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            WorldSelectedDraftPublicationFreezeGrpcCodec.fromRequest(
+                wire.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
     for (var changed :

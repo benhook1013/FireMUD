@@ -93,28 +93,27 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
       // must reject the incomplete fresh PENDING row before any canonical instance or association
       // can be written. This direct SQL probe does not establish who could authenticate such a
       // witness through Account's separate mTLS and currentness path.
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "INSERT INTO world_canonical_instance_execution ("
-                          + "target_namespace,canonical_tenant_id,control_plane_request_id,"
-                          + "canonical_game_instance_id,canonical_world_slug,game_template_id,"
-                          + "original_post_authorization_tuple,original_post_authorization_tuple_sha256,"
-                          + "account_world_participation_id,account_world_participation_fence,"
-                          + "game_session_owner_attempt_id,game_session_owner_fence,"
-                          + "preparation_input_digest,preparation_input_json,world_execution_fence,operation_state) "
-                          + "VALUES (?, ?, ?, ?, 'controlled-proof', 1, ?, ?, ?, 1, ?, 1, ?, ?, "
-                          + "nextval('world_canonical_instance_execution_fence_seq'), 'PENDING')",
-                      "world-runtime",
-                      tenant,
-                      requestId,
-                      gameInstance,
-                      tuple,
-                      sha256(tuple),
-                      participation,
-                      attempt,
-                      inputDigest,
-                      inputJson))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "INSERT INTO world_canonical_instance_execution ("
+                      + "target_namespace,canonical_tenant_id,control_plane_request_id,"
+                      + "canonical_game_instance_id,canonical_world_slug,game_template_id,"
+                      + "original_post_authorization_tuple,original_post_authorization_tuple_sha256,"
+                      + "account_world_participation_id,account_world_participation_fence,"
+                      + "game_session_owner_attempt_id,game_session_owner_fence,"
+                      + "preparation_input_digest,preparation_input_json,world_execution_fence,operation_state) "
+                      + "VALUES (?, ?, ?, ?, 'controlled-proof', 1, ?, ?, ?, 1, ?, 1, ?, ?, "
+                      + "nextval('world_canonical_instance_execution_fence_seq'), 'PENDING')",
+                  "world-runtime",
+                  tenant,
+                  requestId,
+                  gameInstance,
+                  tuple,
+                  sha256(tuple),
+                  participation,
+                  attempt,
+                  inputDigest,
+                  inputJson))
           .isInstanceOf(DataAccessException.class)
           .hasMessageContaining(
               "A fresh World execution intent requires its exact Account owner observation")

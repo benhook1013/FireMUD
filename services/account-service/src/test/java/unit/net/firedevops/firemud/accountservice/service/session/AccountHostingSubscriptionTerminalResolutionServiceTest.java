@@ -327,12 +327,11 @@ class AccountHostingSubscriptionTerminalResolutionServiceTest {
                 events.add("current-actor-" + ordinal);
                 @SuppressWarnings("unchecked")
                 Function<AccountAuthenticatedActor, Object> action = invocation.getArgument(1);
-                return inOwnerTransaction(
-                    () -> {
-                      Object result = action.apply(currentActors[index]);
-                      events.add("current-account-return-" + ordinal);
-                      return result;
-                    });
+                return inOwnerTransaction(() -> {
+                  Object result = action.apply(currentActors[index]);
+                  events.add("current-account-return-" + ordinal);
+                  return result;
+                });
               })
           .when(actors)
           .withCurrentAccount(eq(CONTROL_UI_JWT), any());

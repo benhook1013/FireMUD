@@ -98,12 +98,11 @@ class CanonicalGameplayLegacyMigrationOwnerTest {
     assertThatThrownBy(owner::migrate)
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("remains fenced and unresolved")
-        .satisfies(
-            failure -> {
-              assertThat(failure.getCause()).isSameAs(originalAdapterFailure);
-              assertThat(originalAdapterFailure.getSuppressed())
-                  .containsExactly(blockPersistenceFailure);
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getCause()).isSameAs(originalAdapterFailure);
+          assertThat(originalAdapterFailure.getSuppressed())
+              .containsExactly(blockPersistenceFailure);
+        });
 
     verify(migration).begin(cohortId, writerFence, identity);
     verify(migration).block(operationId, "OWNER_ADAPTER_AMBIGUOUS");

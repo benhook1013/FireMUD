@@ -193,15 +193,13 @@ public final class StartSessionTemplateAssociationReadService {
             .readPhase(canonicalTenantId)
             .filter(value -> value.phase() == TemplateReferenceRepository.Phase.ENFORCED)
             .filter(value -> value.phaseEpoch() > 0L)
-            .filter(
-                value ->
-                    value.inventoryTemplateCount() != null && value.inventoryTemplateCount() > 0L)
+            .filter(value ->
+                value.inventoryTemplateCount() != null && value.inventoryTemplateCount() > 0L)
             .filter(value -> value.inventoryDigest() != null)
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Explicit enforced template reference phase unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Explicit enforced template reference phase unavailable")
+                    .asRuntimeException());
 
     UUID canonicalVersionId;
     UUID selectedCommitId = null;
@@ -211,11 +209,10 @@ public final class StartSessionTemplateAssociationReadService {
       configuredReference =
           templateReferences
               .readExactBaseReference(canonicalTenantId, templateId)
-              .orElseThrow(
-                  () ->
-                      Status.FAILED_PRECONDITION
-                          .withDescription("Current normalized template reference unavailable")
-                          .asRuntimeException());
+              .orElseThrow(() ->
+                  Status.FAILED_PRECONDITION
+                      .withDescription("Current normalized template reference unavailable")
+                      .asRuntimeException());
       canonicalVersionId = configuredReference.canonicalVersionId();
       if (!canonicalTenantId.equals(configuredReference.canonicalTenantId())
           || templateId != configuredReference.templateId()) {
@@ -233,11 +230,10 @@ public final class StartSessionTemplateAssociationReadService {
     Version version =
         versions
             .findByCanonicalTenantIdAndCanonicalVersionId(canonicalTenantId, canonicalVersionId)
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Exact canonical published Version unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Exact canonical published Version unavailable")
+                    .asRuntimeException());
     requireLaunchableVersion(version, canonicalTenantId, canonicalVersionId, phase);
     if (configuredReference != null) {
       configuredEntry =
@@ -253,11 +249,10 @@ public final class StartSessionTemplateAssociationReadService {
       PublishedReleaseBundleDto configuredRelease =
           releases
               .findPublishedReleaseBundle(version.getTenantId(), version.getId())
-              .orElseThrow(
-                  () ->
-                      Status.FAILED_PRECONDITION
-                          .withDescription("Exact published release bundle unavailable")
-                          .asRuntimeException());
+              .orElseThrow(() ->
+                  Status.FAILED_PRECONDITION
+                      .withDescription("Exact published release bundle unavailable")
+                      .asRuntimeException());
       if (!canonicalTenantId.equals(configuredRelease.canonicalTenantId())
           || !canonicalVersionId.equals(configuredRelease.canonicalVersionId())
           || !PublishedReleaseBundleDto.isSelectedAttestationSchema(
@@ -293,11 +288,10 @@ public final class StartSessionTemplateAssociationReadService {
     GameDesignPublicationOperationRepository.Readback operationReadback =
         publicationOperations
             .read(workflowId)
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Exact original publication operation unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Exact original publication operation unavailable")
+                    .asRuntimeException());
     GameDesignPublicationOperation operation = operationReadback.operation();
     if (!"PUBLISHED".equals(operationReadback.outcome())
         || operationReadback.terminalEvidenceBytes() == null
@@ -346,19 +340,17 @@ public final class StartSessionTemplateAssociationReadService {
     GameDesignSourceRepository.Capture capture =
         sourceRepository
             .readCapture(operation)
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Complete original selected source capture unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Complete original selected source capture unavailable")
+                    .asRuntimeException());
     TemplateConfigSourceSnapshot.Capture templateCapture =
         capture
             .templateConfig()
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Exact template source capture unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Exact template source capture unavailable")
+                    .asRuntimeException());
     if (!templateCapture.snapshot().binding().equals(selected.selectedCommit())) {
       throw new IllegalStateException("START_SESSION_CAPTURE_SOURCE_ENTRY_CONFLICT");
     }
@@ -431,11 +423,10 @@ public final class StartSessionTemplateAssociationReadService {
     PublishedReleaseBundleDto release =
         releases
             .findPublishedReleaseBundle(version.getTenantId(), version.getId())
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Exact published release bundle unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Exact published release bundle unavailable")
+                    .asRuntimeException());
     if (!workflowId.equals(release.publishWorkflowId())
         || !canonicalTenantId.equals(release.canonicalTenantId())
         || !canonicalVersionId.equals(release.canonicalVersionId())

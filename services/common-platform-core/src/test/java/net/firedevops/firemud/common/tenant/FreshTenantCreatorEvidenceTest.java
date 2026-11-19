@@ -90,14 +90,9 @@ class FreshTenantCreatorEvidenceTest {
         AUTHORIZATION_DIGEST,
         correctDigest);
     assertInvalid(1, creation, ACCOUNT_ID, new UUID(0L, 0L), AUTHORIZATION_DIGEST, correctDigest);
-    assertThatThrownBy(
-            () ->
-                FreshTenantCreatorDigest.evidenceDigest(
-                    1,
-                    creation,
-                    ACCOUNT_ID,
-                    AUTHORIZATION_OPERATION_ID,
-                    "SHA256:" + "a".repeat(64)))
+    assertThatThrownBy(() ->
+            FreshTenantCreatorDigest.evidenceDigest(
+                1, creation, ACCOUNT_ID, AUTHORIZATION_OPERATION_ID, "SHA256:" + "a".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -150,15 +145,14 @@ class FreshTenantCreatorEvidenceTest {
       UUID authorizationOperationId,
       String authorizationDigest,
       String evidenceDigest) {
-    assertThatThrownBy(
-            () ->
-                new FreshTenantCreatorEvidence(
-                    schemaVersion,
-                    creation,
-                    accountId,
-                    authorizationOperationId,
-                    authorizationDigest,
-                    evidenceDigest))
+    assertThatThrownBy(() ->
+            new FreshTenantCreatorEvidence(
+                schemaVersion,
+                creation,
+                accountId,
+                authorizationOperationId,
+                authorizationDigest,
+                evidenceDigest))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

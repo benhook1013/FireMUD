@@ -145,12 +145,11 @@ public final class StartSessionLaunchDescriptorProducer {
                 canonicalTenantId,
                 association.worldSlug(),
                 request.targetNamespace())
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription(
-                            "Exact registered Game Design source for the association is unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription(
+                        "Exact registered Game Design source for the association is unavailable")
+                    .asRuntimeException());
     requireSourceMatches(association, source);
     AuthoredWorldLaunchDescriptorEvidence.Request descriptorRequest =
         descriptorRequest(tuple, association);
@@ -159,17 +158,16 @@ public final class StartSessionLaunchDescriptorProducer {
 
     OwnerOutcome outcome =
         Objects.requireNonNull(
-            writeTransaction.execute(
-                ignored ->
-                    writeOrRead(
-                        request,
-                        exact,
-                        descriptorRequest,
-                        requestJson,
-                        source,
-                        sourceJson,
-                        canonicalTenantId,
-                        templateId)),
+            writeTransaction.execute(ignored ->
+                writeOrRead(
+                    request,
+                    exact,
+                    descriptorRequest,
+                    requestJson,
+                    source,
+                    sourceJson,
+                    canonicalTenantId,
+                    templateId)),
             "StartSession launch descriptor transaction returned no binding");
     if (outcome.failure() != null) {
       throw new StoredBusinessDenial(exact, outcome.failure());
@@ -1017,32 +1015,30 @@ public final class StartSessionLaunchDescriptorProducer {
     }
     List<GameDesignPublicationTerminalEvidence.Participant> participants =
         bundle.getParticipantDigestsList().stream()
-            .map(
-                value ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
-                        value.getParticipantKey(),
-                        value.getScopeValue(),
-                        null,
-                        value.getAppliedCommitId(),
-                        value.getContentDigest(),
-                        value.getDigestSchemaVersion(),
-                        value.hasAbilitySchemaDigest() ? value.getAbilitySchemaDigest() : null,
-                        null,
-                        null))
+            .map(value ->
+                new GameDesignPublicationTerminalEvidence.Participant(
+                    value.getParticipantKey(),
+                    value.getScopeValue(),
+                    null,
+                    value.getAppliedCommitId(),
+                    value.getContentDigest(),
+                    value.getDigestSchemaVersion(),
+                    value.hasAbilitySchemaDigest() ? value.getAbilitySchemaDigest() : null,
+                    null,
+                    null))
             .toList();
     List<net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence.Artifact>
         artifacts =
             bundle.getArtifactDigestsList().stream()
-                .map(
-                    value ->
-                        new net.firedevops.firemud.common.gamedesign
-                            .AuthoredWorldReleaseAttestationEvidence.Artifact(
-                            value.getUsageKey(),
-                            value.getArtifactKind(),
-                            value.getImmutableObjectKey(),
-                            value.getContentDigest(),
-                            value.getContentType(),
-                            value.getArtifactSchemaVersion()))
+                .map(value ->
+                    new net.firedevops.firemud.common.gamedesign
+                        .AuthoredWorldReleaseAttestationEvidence.Artifact(
+                        value.getUsageKey(),
+                        value.getArtifactKind(),
+                        value.getImmutableObjectKey(),
+                        value.getContentDigest(),
+                        value.getContentType(),
+                        value.getArtifactSchemaVersion()))
                 .toList();
     return new GameDesignPublicationTerminalEvidence.ReleaseContent(
         UUID.fromString(bundle.getCanonicalTenantId()),

@@ -48,11 +48,10 @@ class GameSessionJwtReadinessProtectedLocalIdentityProviderTest {
     Fixture fixture = new Fixture();
     AtomicInteger uidReads = new AtomicInteger();
     var provider =
-        fixture.provider(
-            () -> {
-              uidReads.incrementAndGet();
-              return POD_UID;
-            });
+        fixture.provider(() -> {
+          uidReads.incrementAndGet();
+          return POD_UID;
+        });
 
     var observation = provider.observe();
 

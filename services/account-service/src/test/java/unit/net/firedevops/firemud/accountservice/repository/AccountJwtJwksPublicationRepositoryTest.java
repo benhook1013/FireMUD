@@ -147,61 +147,59 @@ class AccountJwtJwksPublicationRepositoryTest {
   void immutableEvidenceRejectsChangedDigestAndNonAdvancingRemoteReadback() {
     PrepublicationIntent intent = intent();
 
-    assertThatThrownBy(
-            () ->
-                new PrepublicationIntent(
-                    intent.operationId(),
-                    intent.binding(),
-                    intent.operationDigest(),
-                    intent.generationRequestDigest(),
-                    intent.generationReceiptDigest(),
-                    intent.desiredStateVersion(),
-                    intent.trustFence(),
-                    intent.apiBindingDigest(),
-                    intent.apiConfigRevision(),
-                    intent.configMapName(),
-                    intent.configMapUid(),
-                    intent.expectedResourceVersion(),
-                    intent.expectedSnapshotDigest(),
-                    intent.targetGeneration(),
-                    intent.targetKid(),
-                    intent.publicKeyFingerprint(),
-                    intent.expectedDurableActive(),
-                    intent.expectedPublishedActive(),
-                    intent.jwksJson(),
-                    intent.generationMarkerJson(),
-                    intent.publicDataDigest(),
-                    intent.generationMarkerDigest(),
-                    "f".repeat(64)))
+    assertThatThrownBy(() ->
+            new PrepublicationIntent(
+                intent.operationId(),
+                intent.binding(),
+                intent.operationDigest(),
+                intent.generationRequestDigest(),
+                intent.generationReceiptDigest(),
+                intent.desiredStateVersion(),
+                intent.trustFence(),
+                intent.apiBindingDigest(),
+                intent.apiConfigRevision(),
+                intent.configMapName(),
+                intent.configMapUid(),
+                intent.expectedResourceVersion(),
+                intent.expectedSnapshotDigest(),
+                intent.targetGeneration(),
+                intent.targetKid(),
+                intent.publicKeyFingerprint(),
+                intent.expectedDurableActive(),
+                intent.expectedPublishedActive(),
+                intent.jwksJson(),
+                intent.generationMarkerJson(),
+                intent.publicDataDigest(),
+                intent.generationMarkerDigest(),
+                "f".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("intent digest");
 
-    assertThatThrownBy(
-            () ->
-                new PrepublicationIntent(
-                    intent.operationId(),
-                    intent.binding(),
-                    intent.operationDigest(),
-                    intent.generationRequestDigest(),
-                    intent.generationReceiptDigest(),
-                    intent.desiredStateVersion(),
-                    intent.trustFence(),
-                    intent.apiBindingDigest(),
-                    intent.apiConfigRevision(),
-                    intent.configMapName(),
-                    intent.configMapUid(),
-                    intent.expectedResourceVersion(),
-                    intent.expectedSnapshotDigest(),
-                    intent.targetGeneration(),
-                    intent.targetKid(),
-                    intent.publicKeyFingerprint(),
-                    intent.expectedDurableActive(),
-                    intent.expectedPublishedActive(),
-                    intent.jwksJson(),
-                    intent.generationMarkerJson(),
-                    intent.publicDataDigest(),
-                    intent.generationMarkerDigest(),
-                    "0".repeat(64)))
+    assertThatThrownBy(() ->
+            new PrepublicationIntent(
+                intent.operationId(),
+                intent.binding(),
+                intent.operationDigest(),
+                intent.generationRequestDigest(),
+                intent.generationReceiptDigest(),
+                intent.desiredStateVersion(),
+                intent.trustFence(),
+                intent.apiBindingDigest(),
+                intent.apiConfigRevision(),
+                intent.configMapName(),
+                intent.configMapUid(),
+                intent.expectedResourceVersion(),
+                intent.expectedSnapshotDigest(),
+                intent.targetGeneration(),
+                intent.targetKid(),
+                intent.publicKeyFingerprint(),
+                intent.expectedDurableActive(),
+                intent.expectedPublishedActive(),
+                intent.jwksJson(),
+                intent.generationMarkerJson(),
+                intent.publicDataDigest(),
+                intent.generationMarkerDigest(),
+                "0".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("intent digest");
 

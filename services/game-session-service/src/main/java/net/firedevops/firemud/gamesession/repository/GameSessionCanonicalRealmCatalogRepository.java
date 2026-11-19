@@ -1234,18 +1234,17 @@ public class GameSessionCanonicalRealmCatalogRepository {
       throw new IllegalStateException(
           "Canonical realm catalog creation requires a read-write transaction");
     }
-    dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()) {
-            throw new IllegalStateException(
-                "Canonical realm catalog DSL connection must join the owner transaction");
-          }
-          if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Canonical realm catalog creation requires READ COMMITTED isolation");
-          }
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()) {
+        throw new IllegalStateException(
+            "Canonical realm catalog DSL connection must join the owner transaction");
+      }
+      if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Canonical realm catalog creation requires READ COMMITTED isolation");
+      }
+      return null;
+    });
     Record isolationRow = dsl.fetchOne("SHOW transaction_isolation");
     if (isolationRow == null
         || !"read committed".equalsIgnoreCase(isolationRow.get(0, String.class).trim())) {
@@ -1442,37 +1441,36 @@ public class GameSessionCanonicalRealmCatalogRepository {
           "Fixture source differs from configured owner namespace");
     }
     CanonicalRealmCatalogSnapshot committed =
-        writeTransaction.execute(
-            status -> {
-              FreshTenantAssociation association =
-                  new GameSessionFreshTenantAssociationRepository(dsl)
-                      .associateVerifiedFixtureInOwnerTransaction(evidence);
-              UUID requestId = UUID.fromString(evidence.fixtureCapability().operationId());
-              IntakeReceipt intake =
-                  new GameSessionAuthoredWorldSourceRepository(dsl)
-                      .register(requestId, evidence.sourceEvidence());
-              var cap = evidence.fixtureCapability();
-              var request =
-                  new CreateCanonicalRealmCatalogRequest(
-                      requestId,
-                      workloadNamespace,
-                      association.canonicalTenantId(),
-                      intake.operationId(),
-                      cap.realmSlug(),
-                      cap.realmDisplayName(),
-                      cap.visible(),
-                      cap.publicProductionRealm(),
-                      cap.stateScope(),
-                      cap.characterCreationPolicy(),
-                      null,
-                      null);
-              return createInitialPublicProduction(
-                  new PreparedInitialPublicProduction(
-                      request,
-                      intake,
-                      new FixturePolicy(evidence),
-                      evidence.fixturePolicyRequestBytes()));
-            });
+        writeTransaction.execute(status -> {
+          FreshTenantAssociation association =
+              new GameSessionFreshTenantAssociationRepository(dsl)
+                  .associateVerifiedFixtureInOwnerTransaction(evidence);
+          UUID requestId = UUID.fromString(evidence.fixtureCapability().operationId());
+          IntakeReceipt intake =
+              new GameSessionAuthoredWorldSourceRepository(dsl)
+                  .register(requestId, evidence.sourceEvidence());
+          var cap = evidence.fixtureCapability();
+          var request =
+              new CreateCanonicalRealmCatalogRequest(
+                  requestId,
+                  workloadNamespace,
+                  association.canonicalTenantId(),
+                  intake.operationId(),
+                  cap.realmSlug(),
+                  cap.realmDisplayName(),
+                  cap.visible(),
+                  cap.publicProductionRealm(),
+                  cap.stateScope(),
+                  cap.characterCreationPolicy(),
+                  null,
+                  null);
+          return createInitialPublicProduction(
+              new PreparedInitialPublicProduction(
+                  request,
+                  intake,
+                  new FixturePolicy(evidence),
+                  evidence.fixturePolicyRequestBytes()));
+        });
     Objects.requireNonNull(committed, "Fixture catalog owner returned no committed result");
     return readVerifiedFixtureRealm(evidence);
   }
@@ -1597,10 +1595,9 @@ public class GameSessionCanonicalRealmCatalogRepository {
       FreshTenantAssociation association =
           new GameSessionFreshTenantAssociationRepository(dsl)
               .readCanonicalTenantAssociationSnapshot(source.targetNamespace(), canonicalTenantId)
-              .orElseThrow(
-                  () ->
-                      new InvalidCatalogEvidenceException(
-                          "Fresh canonical realm requires an existing complete Game Session tenant association"));
+              .orElseThrow(() ->
+                  new InvalidCatalogEvidenceException(
+                      "Fresh canonical realm requires an existing complete Game Session tenant association"));
       FreshTenantCreationEvidence creation = association.sourceEvidence();
       if (!creation.targetNamespace().equals(source.targetNamespace())
           || !creation.canonicalTenantId().equals(source.canonicalTenantId())
@@ -1636,10 +1633,8 @@ public class GameSessionCanonicalRealmCatalogRepository {
     }
     List<RealmPolicyPublishedEvidence.Policy> publicPolicies =
         publishedSet.policies().stream()
-            .filter(
-                policy ->
-                    policy.source().policy().visible()
-                        && policy.source().policy().publicProduction())
+            .filter(policy ->
+                policy.source().policy().visible() && policy.source().policy().publicProduction())
             .toList();
     if (publishedSet.policyCount() != publishedSet.policies().size()
         || publicPolicies.size() != 1) {

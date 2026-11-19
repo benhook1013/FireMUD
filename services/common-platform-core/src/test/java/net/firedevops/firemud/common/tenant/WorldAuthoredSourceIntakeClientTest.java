@@ -97,17 +97,16 @@ class WorldAuthoredSourceIntakeClientTest {
       assertThatThrownBy(() -> client.intake(INTAKE_REQUEST))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("not initialized and available");
-      assertThatThrownBy(
-              () ->
-                  client.intake(
-                      new WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest(
-                          1,
-                          "other",
-                          INTAKE_REQUEST.intakeRequestId(),
-                          INTAKE_REQUEST.canonicalTenantId(),
-                          INTAKE_REQUEST.worldSlug(),
-                          INTAKE_REQUEST.sourceOperationId(),
-                          INTAKE_REQUEST.expectedSourceEvidenceDigest())))
+      assertThatThrownBy(() ->
+              client.intake(
+                  new WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest(
+                      1,
+                      "other",
+                      INTAKE_REQUEST.intakeRequestId(),
+                      INTAKE_REQUEST.canonicalTenantId(),
+                      INTAKE_REQUEST.worldSlug(),
+                      INTAKE_REQUEST.sourceOperationId(),
+                      INTAKE_REQUEST.expectedSourceEvidenceDigest())))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("configured workload namespace");
       assertThatThrownBy(() -> client.read(READ_REQUEST))
@@ -116,15 +115,14 @@ class WorldAuthoredSourceIntakeClientTest {
       assertThatThrownBy(() -> client.readById(BY_ID_READ_REQUEST))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("not initialized and available");
-      assertThatThrownBy(
-              () ->
-                  client.readById(
-                      new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
-                          1,
-                          "other",
-                          BY_ID_READ_REQUEST.readRequestId(),
-                          BY_ID_READ_REQUEST.intakeRequestId(),
-                          BY_ID_READ_REQUEST.canonicalTenantId())))
+      assertThatThrownBy(() ->
+              client.readById(
+                  new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
+                      1,
+                      "other",
+                      BY_ID_READ_REQUEST.readRequestId(),
+                      BY_ID_READ_REQUEST.intakeRequestId(),
+                      BY_ID_READ_REQUEST.canonicalTenantId())))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("configured workload namespace");
       verifyNoInteractions(channelFactory);

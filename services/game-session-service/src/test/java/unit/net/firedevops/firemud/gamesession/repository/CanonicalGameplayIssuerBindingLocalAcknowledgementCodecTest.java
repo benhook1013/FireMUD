@@ -63,22 +63,19 @@ class CanonicalGameplayIssuerBindingLocalAcknowledgementCodecTest {
     ObjectNode unissuedAcknowledgement = original.deepCopy();
     unissuedAcknowledgement.put("issuerBindingLocalAcknowledgementGeneration", "NOT_YET_ISSUED");
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.decode(
-                    JSON.writeValueAsBytes(unknown)))
+    assertThatThrownBy(() ->
+            CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.decode(
+                JSON.writeValueAsBytes(unknown)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("missing or unknown fields");
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.decode(
-                    JSON.writeValueAsBytes(globalCoverage)))
+    assertThatThrownBy(() ->
+            CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.decode(
+                JSON.writeValueAsBytes(globalCoverage)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("version or scope");
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.decode(
-                    JSON.writeValueAsBytes(unissuedAcknowledgement)))
+    assertThatThrownBy(() ->
+            CanonicalGameplayIssuerBindingLocalAcknowledgementCodec.decode(
+                JSON.writeValueAsBytes(unissuedAcknowledgement)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -98,26 +95,25 @@ class CanonicalGameplayIssuerBindingLocalAcknowledgementCodecTest {
             original.reservation().inventorySnapshotRevision().add(BigInteger.ONE),
             original.reservation().inventoryRevision());
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayIssuerBindingLocalAcknowledgement.Evidence(
-                    original.operationId(),
-                    original.issuerBindingLocalAcknowledgementGeneration(),
-                    original.requestId(),
-                    original.transitionId(),
-                    original.candidateAccountIndexFence(),
-                    original.issuerId(),
-                    original.bindingRef(),
-                    original.bindingGeneration(),
-                    original.memberValueBytes(),
-                    original.memberValueDigest(),
-                    changedReservation,
-                    original.anchor(),
-                    original.memberOperation(),
-                    original.currentSource(),
-                    original.physicalReadback(),
-                    original.capacity(),
-                    original.sqlCurrentnessDigest()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayIssuerBindingLocalAcknowledgement.Evidence(
+                original.operationId(),
+                original.issuerBindingLocalAcknowledgementGeneration(),
+                original.requestId(),
+                original.transitionId(),
+                original.candidateAccountIndexFence(),
+                original.issuerId(),
+                original.bindingRef(),
+                original.bindingGeneration(),
+                original.memberValueBytes(),
+                original.memberValueDigest(),
+                changedReservation,
+                original.anchor(),
+                original.memberOperation(),
+                original.currentSource(),
+                original.physicalReadback(),
+                original.capacity(),
+                original.sqlCurrentnessDigest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact member and proof tuples");
   }

@@ -201,13 +201,11 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
 
       byte[] conflictingBytes = canonicalEmptyResult(requestBytes, "different exact result");
       Candidate conflict = candidate(launch, attempt, requestBytes, conflictingBytes);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .transactions()
-                      .execute(
-                          status ->
-                              fixture.retentionRepository().retainInOwnerTransaction(conflict)))
+      assertThatThrownBy(() ->
+              fixture
+                  .transactions()
+                  .execute(
+                      status -> fixture.retentionRepository().retainInOwnerTransaction(conflict)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("conflicts with its first exact result");
       assertThat(
@@ -225,32 +223,29 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
               + "' AND control_plane_request_id = '"
               + launch.tuple().controlPlaneRequestId()
               + "'";
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "UPDATE gs_original_start_session_authored_actor_core_retention"
-                              + " SET source_result_digest = 'sha256:' || repeat('0', 64)"
-                              + where))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "UPDATE gs_original_start_session_authored_actor_core_retention"
+                          + " SET source_result_digest = 'sha256:' || repeat('0', 64)"
+                          + where))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining(
               "Game Session authored-core source retention is immutable and append-only");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "DELETE FROM gs_original_start_session_authored_actor_core_retention"
-                              + where))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "DELETE FROM gs_original_start_session_authored_actor_core_retention"
+                          + where))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining(
               "Game Session authored-core source retention is immutable and append-only");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute("TRUNCATE gs_original_start_session_authored_actor_core_retention"))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute("TRUNCATE gs_original_start_session_authored_actor_core_retention"))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("Game Session authored-core source retention cannot be truncated");
     }
@@ -315,38 +310,35 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
       var attemptRepository =
           new GameSessionStartSessionOperatorAttemptRepository(
               fixture.dsl(), Duration.ofMinutes(5));
-      assertThatThrownBy(
-              () ->
-                  attemptRepository.readHistoricalOwnerAttempt(
-                      tuple, UUID.randomUUID(), owner.ownerFence()))
+      assertThatThrownBy(() ->
+              attemptRepository.readHistoricalOwnerAttempt(
+                  tuple, UUID.randomUUID(), owner.ownerFence()))
           .isInstanceOf(
               GameSessionStartSessionOperatorAttemptRepository
                   .StaleStartSessionOperatorAttemptClaimException.class)
           .hasMessage("Historical owner read does not match the original owner attempt and fence");
-      assertThatThrownBy(
-              () ->
-                  attemptRepository.readHistoricalOwnerAttempt(
-                      tuple, owner.ownerAttemptId(), owner.ownerFence() + 1))
+      assertThatThrownBy(() ->
+              attemptRepository.readHistoricalOwnerAttempt(
+                  tuple, owner.ownerAttemptId(), owner.ownerFence() + 1))
           .isInstanceOf(
               GameSessionStartSessionOperatorAttemptRepository
                   .StaleStartSessionOperatorAttemptClaimException.class)
           .hasMessage("Historical owner read does not match the original owner attempt and fence");
 
       UUID wrongTenantId = UUID.randomUUID();
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
-                      UUID.randomUUID(),
-                      exactSelector.targetNamespace(),
-                      wrongTenantId,
-                      exactSelector.worldSlug(),
-                      exactSelector.gameInstanceUuid(),
-                      exactSelector.controlPlaneRequestId(),
-                      exactSelector.launchDescriptorId(),
-                      exactSelector.expectedDescriptorRequestDigest(),
-                      exactSelector.expectedDescriptorResultDigest(),
-                      exactSelector.expectedReleaseAttestationEvidenceDigest(),
-                      exactSelector.originalOperation()))
+      assertThatThrownBy(() ->
+              new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+                  UUID.randomUUID(),
+                  exactSelector.targetNamespace(),
+                  wrongTenantId,
+                  exactSelector.worldSlug(),
+                  exactSelector.gameInstanceUuid(),
+                  exactSelector.controlPlaneRequestId(),
+                  exactSelector.launchDescriptorId(),
+                  exactSelector.expectedDescriptorRequestDigest(),
+                  exactSelector.expectedDescriptorResultDigest(),
+                  exactSelector.expectedReleaseAttestationEvidenceDigest(),
+                  exactSelector.originalOperation()))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Original operation differs from the exact independent launch selector");
 
@@ -439,9 +431,8 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
               exactSelector.expectedDescriptorResultDigest(),
               exactSelector.expectedReleaseAttestationEvidenceDigest(),
               exactSelector.originalOperation());
-      assertThatThrownBy(
-              () ->
-                  associationReadRepository.readOriginalStartSessionAssociation(wrongWorldSelector))
+      assertThatThrownBy(() ->
+              associationReadRepository.readOriginalStartSessionAssociation(wrongWorldSelector))
           .isInstanceOf(
               CanonicalGameInstanceLaunchAssociationRepository
                   .LaunchAssociationOwnerReadMismatchException.class)
@@ -454,65 +445,51 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
               + "' AND control_plane_request_id = '"
               + operationId
               + "'";
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_start_session_template_association_pin"
-                              + " SET association_response_digest = 'sha256:' || repeat('0', 64)"
-                              + where))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_start_session_template_association_pin"
+                          + " SET association_response_digest = 'sha256:' || repeat('0', 64)"
+                          + where))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("StartSession template association pins are immutable");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_start_session_launch_descriptor_pin"
-                              + " SET descriptor_response_digest = 'sha256:' || repeat('0', 64)"
-                              + where))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_start_session_launch_descriptor_pin"
+                          + " SET descriptor_response_digest = 'sha256:' || repeat('0', 64)"
+                          + where))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("StartSession launch descriptor pins are immutable");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "DELETE FROM game_session_start_session_launch_descriptor_pin" + where))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute("DELETE FROM game_session_start_session_launch_descriptor_pin" + where))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("StartSession launch descriptor pins are immutable");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "DELETE FROM game_session_start_session_template_association_pin"
-                              + where))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute(
+                      "DELETE FROM game_session_start_session_template_association_pin" + where))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("StartSession template association pins are immutable");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute("TRUNCATE game_session_start_session_launch_descriptor_pin"))
+      assertThatThrownBy(() ->
+              fixture.dsl().execute("TRUNCATE game_session_start_session_launch_descriptor_pin"))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("StartSession launch descriptor pins are immutable");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute("TRUNCATE game_session_start_session_template_association_pin"))
+      assertThatThrownBy(() ->
+              fixture.dsl().execute("TRUNCATE game_session_start_session_template_association_pin"))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("cannot truncate a table referenced in a foreign key constraint")
           .hasStackTraceContaining("game_session_start_session_launch_descriptor_pin")
           .hasStackTraceContaining("game_session_start_session_template_association_pin");
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .dsl()
-                      .execute(
-                          "TRUNCATE game_session_start_session_template_association_pin CASCADE"))
+      assertThatThrownBy(() ->
+              fixture
+                  .dsl()
+                  .execute("TRUNCATE game_session_start_session_template_association_pin CASCADE"))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("pins are immutable");
 
@@ -1062,15 +1039,14 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
       StartingInstance starting =
           Objects.requireNonNull(
               transactions()
-                  .execute(
-                      status ->
-                          startingRepository.createStarting(
-                              fresh.tenantAssociation(),
-                              binding,
-                              tuple.preAuthorizationTuple().action().target().ownerAccountId(),
-                              tuple.controlPlaneRequestId(),
-                              tuple.mutationDigest(),
-                              tuple)),
+                  .execute(status ->
+                      startingRepository.createStarting(
+                          fresh.tenantAssociation(),
+                          binding,
+                          tuple.preAuthorizationTuple().action().target().ownerAccountId(),
+                          tuple.controlPlaneRequestId(),
+                          tuple.mutationDigest(),
+                          tuple)),
               "created original Human StartSession instance");
       var attempts = new GameSessionStartSessionOperatorAttemptRepository(dsl, leaseDuration);
       AttemptSnapshot attempt =
@@ -1083,10 +1059,9 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
           associationReadRepository
               .readOriginalStartSessionAssociation(
                   originalSelector(starting.launchAssociation(), tuple, claim))
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Canonical Human launch association must read back with its original owner"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Canonical Human launch association must read back with its original owner"));
       assertThat(original.association()).isEqualTo(starting.launchAssociation());
       assertThat(original.postAuthorizationExecutionTuple().canonicalBytes())
           .containsExactly(tuple.canonicalBytes());
@@ -1116,13 +1091,12 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
       FreshGameSessionTenantAssociation tenantAssociation =
           Objects.requireNonNull(
               transactions()
-                  .execute(
-                      status ->
-                          tenantRepository.associateFresh(
-                              UUID.randomUUID(),
-                              NAMESPACE,
-                              sourceReceipt,
-                              CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source))),
+                  .execute(status ->
+                      tenantRepository.associateFresh(
+                          UUID.randomUUID(),
+                          NAMESPACE,
+                          sourceReceipt,
+                          CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source))),
               "created canonical fresh tenant association");
       return new FreshAssociationInputs(sourceReceipt, tenantAssociation);
     }

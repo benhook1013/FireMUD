@@ -99,9 +99,8 @@ class GameTenantCreationRepositoryTest {
           evidenceDigest(NAMESPACE, REQUEST_ID, changedRequestDigest, TENANT_ID, 91L, SOURCE_KEY));
       GameRepository gameRepository = mock(GameRepository.class);
 
-      assertThatThrownBy(
-              () ->
-                  new GameTenantCreationRepository(dsl, gameRepository).read(REQUEST_ID, NAMESPACE))
+      assertThatThrownBy(() ->
+              new GameTenantCreationRepository(dsl, gameRepository).read(REQUEST_ID, NAMESPACE))
           .isInstanceOf(GameTenantCreationRepository.InvalidCreationEvidenceException.class)
           .hasMessageContaining("request digest does not match");
       verifyNoInteractions(gameRepository);
@@ -131,9 +130,8 @@ class GameTenantCreationRepositoryTest {
                       91L,
                       SOURCE_KEY)));
 
-      assertThatThrownBy(
-              () ->
-                  new GameTenantCreationRepository(dsl, gameRepository).read(REQUEST_ID, NAMESPACE))
+      assertThatThrownBy(() ->
+              new GameTenantCreationRepository(dsl, gameRepository).read(REQUEST_ID, NAMESPACE))
           .isInstanceOf(GameTenantCreationRepository.InvalidCreationEvidenceException.class)
           .hasMessageContaining("source tuple no longer matches");
       verify(gameRepository).findRuntimeTenantIdentityByTenantKey(SOURCE_KEY);

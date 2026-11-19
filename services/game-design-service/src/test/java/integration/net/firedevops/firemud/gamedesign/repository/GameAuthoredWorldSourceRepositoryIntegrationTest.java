@@ -127,14 +127,13 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
                 original.targetNamespace()))
         .contains(original);
 
-    assertThatThrownBy(
-            () ->
-                fixture.register(
-                    requestId,
-                    fixture.freshCanonicalTenantId(),
-                    "stable-tenant",
-                    "first-world",
-                    "Changed World"))
+    assertThatThrownBy(() ->
+            fixture.register(
+                requestId,
+                fixture.freshCanonicalTenantId(),
+                "stable-tenant",
+                "first-world",
+                "Changed World"))
         .isInstanceOf(GameAuthoredWorldSourceRepository.RegistrationConflictException.class)
         .hasMessageContaining("reused with changed input");
     assertThat(gameXmin(fixture.dsl, "fresh-authored-tenant")).isEqualTo(gameXmin);
@@ -146,26 +145,20 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
   @Test
   void registrationRequiresOwnerTransactionAndReadRequiresCommittedOutcome() {
     Fixture fixture = fixtureWithRetainedAndFreshGame();
-    assertThatThrownBy(
-            () ->
-                fixture.repository.register(
-                    NAMESPACE,
-                    uuid(11),
-                    fixture.freshCanonicalTenantId(),
-                    "transaction-tenant",
-                    "transaction-world",
-                    "Transaction World"))
+    assertThatThrownBy(() ->
+            fixture.repository.register(
+                NAMESPACE,
+                uuid(11),
+                fixture.freshCanonicalTenantId(),
+                "transaction-tenant",
+                "transaction-world",
+                "Transaction World"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("active Game Design owner transaction");
-    assertThatThrownBy(
-            () ->
-                fixture.transactionTemplate.execute(
-                    status ->
-                        fixture.repository.read(
-                            uuid(12),
-                            fixture.freshCanonicalTenantId(),
-                            "transaction-world",
-                            NAMESPACE)))
+    assertThatThrownBy(() ->
+            fixture.transactionTemplate.execute(status ->
+                fixture.repository.read(
+                    uuid(12), fixture.freshCanonicalTenantId(), "transaction-world", NAMESPACE)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("committed-outcome owner read");
     assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isZero();
@@ -178,27 +171,25 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
     fixture.register(
         uuid(20), fixture.freshCanonicalTenantId(), "claimed-tenant", "one-world", "One World");
 
-    assertThatThrownBy(
-            () ->
-                fixture.register(
-                    uuid(21),
-                    fixture.retainedCanonicalTenantId(),
-                    "claimed-tenant",
-                    "other-world",
-                    "Other World"))
+    assertThatThrownBy(() ->
+            fixture.register(
+                uuid(21),
+                fixture.retainedCanonicalTenantId(),
+                "claimed-tenant",
+                "other-world",
+                "Other World"))
         .isInstanceOf(GameAuthoredWorldSourceRepository.RegistrationConflictException.class)
         .hasMessageContaining("already owned");
     assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isEqualTo(1);
     assertThat(fixture.dsl.fetchCount(OPERATIONS)).isEqualTo(1);
 
-    assertThatThrownBy(
-            () ->
-                fixture.register(
-                    uuid(22),
-                    fixture.freshCanonicalTenantId(),
-                    "claimed-tenant",
-                    "one-world",
-                    "Different world metadata"))
+    assertThatThrownBy(() ->
+            fixture.register(
+                uuid(22),
+                fixture.freshCanonicalTenantId(),
+                "claimed-tenant",
+                "one-world",
+                "Different world metadata"))
         .isInstanceOf(GameAuthoredWorldSourceRepository.RegistrationConflictException.class)
         .hasMessageContaining("selector is already owned");
     assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isEqualTo(1);
@@ -209,19 +200,17 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
   @Test
   void failedOwnerCommitRollsBackBothTenantSelectorAndWorldSource() {
     Fixture fixture = fixtureWithRetainedAndFreshGame();
-    assertThatThrownBy(
-            () ->
-                fixture.transactionTemplate.execute(
-                    status -> {
-                      fixture.repository.register(
-                          NAMESPACE,
-                          uuid(30),
-                          fixture.freshCanonicalTenantId(),
-                          "rollback-tenant",
-                          "rollback-world",
-                          "Rollback World");
-                      throw new IllegalStateException("simulate failed owner commit");
-                    }))
+    assertThatThrownBy(() ->
+            fixture.transactionTemplate.execute(status -> {
+              fixture.repository.register(
+                  NAMESPACE,
+                  uuid(30),
+                  fixture.freshCanonicalTenantId(),
+                  "rollback-tenant",
+                  "rollback-world",
+                  "Rollback World");
+              throw new IllegalStateException("simulate failed owner commit");
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("simulate failed owner commit");
 
@@ -240,28 +229,26 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
   @Test
   void databaseRejectsSelectorClaimsWithoutAnAtomicWorldSourceOperation() {
     Fixture fixture = fixtureWithRetainedAndFreshGame();
-    assertThatThrownBy(
-            () ->
-                fixture.transactionTemplate.execute(
-                    status -> {
-                      fixture
-                          .dsl
-                          .insertInto(TENANT_BINDINGS)
-                          .set(DSL.field(DSL.name("target_namespace"), String.class), NAMESPACE)
-                          .set(
-                              DSL.field(DSL.name("canonical_tenant_id"), UUID.class),
-                              fixture.freshCanonicalTenantId())
-                          .set(DSL.field(DSL.name("tenant_slug"), String.class), "orphan-tenant")
-                          .set(
-                              DSL.field(DSL.name("source_game_row_id"), Long.class),
-                              fixture.freshGameRowId())
-                          .set(
-                              DSL.field(DSL.name("source_game_tenant_key"), String.class),
-                              "fresh-authored-tenant")
-                          .set(DSL.field(DSL.name("provenance_kind"), String.class), "NEW_GAME_ROW")
-                          .execute();
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            fixture.transactionTemplate.execute(status -> {
+              fixture
+                  .dsl
+                  .insertInto(TENANT_BINDINGS)
+                  .set(DSL.field(DSL.name("target_namespace"), String.class), NAMESPACE)
+                  .set(
+                      DSL.field(DSL.name("canonical_tenant_id"), UUID.class),
+                      fixture.freshCanonicalTenantId())
+                  .set(DSL.field(DSL.name("tenant_slug"), String.class), "orphan-tenant")
+                  .set(
+                      DSL.field(DSL.name("source_game_row_id"), Long.class),
+                      fixture.freshGameRowId())
+                  .set(
+                      DSL.field(DSL.name("source_game_tenant_key"), String.class),
+                      "fresh-authored-tenant")
+                  .set(DSL.field(DSL.name("provenance_kind"), String.class), "NEW_GAME_ROW")
+                  .execute();
+              return null;
+            }))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("cannot commit without a world source");
 
@@ -272,29 +259,26 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
   @Test
   void databaseRejectsTenantSelectorBoundToContradictoryGameProvenance() {
     Fixture fixture = fixtureWithRetainedAndFreshGame();
-    assertThatThrownBy(
-            () ->
-                fixture.transactionTemplate.execute(
-                    status -> {
-                      fixture
-                          .dsl
-                          .insertInto(TENANT_BINDINGS)
-                          .set(DSL.field(DSL.name("target_namespace"), String.class), NAMESPACE)
-                          .set(
-                              DSL.field(DSL.name("canonical_tenant_id"), UUID.class),
-                              fixture.freshCanonicalTenantId())
-                          .set(
-                              DSL.field(DSL.name("tenant_slug"), String.class), "mismatched-tenant")
-                          .set(
-                              DSL.field(DSL.name("source_game_row_id"), Long.class),
-                              fixture.freshGameRowId())
-                          .set(
-                              DSL.field(DSL.name("source_game_tenant_key"), String.class),
-                              "retained-authored-tenant")
-                          .set(DSL.field(DSL.name("provenance_kind"), String.class), "NEW_GAME_ROW")
-                          .execute();
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            fixture.transactionTemplate.execute(status -> {
+              fixture
+                  .dsl
+                  .insertInto(TENANT_BINDINGS)
+                  .set(DSL.field(DSL.name("target_namespace"), String.class), NAMESPACE)
+                  .set(
+                      DSL.field(DSL.name("canonical_tenant_id"), UUID.class),
+                      fixture.freshCanonicalTenantId())
+                  .set(DSL.field(DSL.name("tenant_slug"), String.class), "mismatched-tenant")
+                  .set(
+                      DSL.field(DSL.name("source_game_row_id"), Long.class),
+                      fixture.freshGameRowId())
+                  .set(
+                      DSL.field(DSL.name("source_game_tenant_key"), String.class),
+                      "retained-authored-tenant")
+                  .set(DSL.field(DSL.name("provenance_kind"), String.class), "NEW_GAME_ROW")
+                  .execute();
+              return null;
+            }))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("does not match its game row");
 
@@ -331,28 +315,26 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
                 "other-namespace"))
         .isEmpty();
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl
-                    .update(OPERATIONS)
-                    .set(WORLD_DISPLAY_NAME, "Mutated")
-                    .where(OPERATION_ID.eq(receipt.operationId()))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl
+                .update(OPERATIONS)
+                .set(WORLD_DISPLAY_NAME, "Mutated")
+                .where(OPERATION_ID.eq(receipt.operationId()))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("evidence is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl
-                    .deleteFrom(TENANT_BINDINGS)
-                    .where(
-                        DSL.field(DSL.name("target_namespace"), String.class)
-                            .eq(receipt.targetNamespace())
-                            .and(
-                                DSL.field(DSL.name("canonical_tenant_id"), UUID.class)
-                                    .eq(receipt.canonicalTenantId())))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl
+                .deleteFrom(TENANT_BINDINGS)
+                .where(
+                    DSL.field(DSL.name("target_namespace"), String.class)
+                        .eq(receipt.targetNamespace())
+                        .and(
+                            DSL.field(DSL.name("canonical_tenant_id"), UUID.class)
+                                .eq(receipt.canonicalTenantId())))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("binding is immutable");
     assertThat(
@@ -372,13 +354,11 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<AuthoredWorldSourceEvidence> first =
-          executor.submit(
-              () ->
-                  concurrentRegister(fixture, ready, start, uuid(45), "same-tenant", "same-world"));
+          executor.submit(() ->
+              concurrentRegister(fixture, ready, start, uuid(45), "same-tenant", "same-world"));
       Future<AuthoredWorldSourceEvidence> second =
-          executor.submit(
-              () ->
-                  concurrentRegister(fixture, ready, start, uuid(45), "same-tenant", "same-world"));
+          executor.submit(() ->
+              concurrentRegister(fixture, ready, start, uuid(45), "same-tenant", "same-world"));
       assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
       start.countDown();
 
@@ -409,27 +389,25 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<RegistrationOutcome> freshTenant =
-          executor.submit(
-              () ->
-                  raceRegister(
-                      fixture,
-                      ready,
-                      start,
-                      uuid(50),
-                      fixture.freshCanonicalTenantId(),
-                      "racing-tenant",
-                      "fresh-world"));
+          executor.submit(() ->
+              raceRegister(
+                  fixture,
+                  ready,
+                  start,
+                  uuid(50),
+                  fixture.freshCanonicalTenantId(),
+                  "racing-tenant",
+                  "fresh-world"));
       Future<RegistrationOutcome> secondTenant =
-          executor.submit(
-              () ->
-                  raceRegister(
-                      fixture,
-                      ready,
-                      start,
-                      uuid(51),
-                      secondCanonicalTenantId,
-                      "racing-tenant",
-                      "second-world"));
+          executor.submit(() ->
+              raceRegister(
+                  fixture,
+                  ready,
+                  start,
+                  uuid(51),
+                  secondCanonicalTenantId,
+                  "racing-tenant",
+                  "second-world"));
       assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
       start.countDown();
 
@@ -599,15 +577,14 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
         String worldSlug,
         String worldDisplayName) {
       AuthoredWorldSourceEvidence receipt =
-          transactionTemplate.execute(
-              status ->
-                  repository.register(
-                      NAMESPACE,
-                      requestId,
-                      canonicalTenantId,
-                      tenantSlug,
-                      worldSlug,
-                      worldDisplayName));
+          transactionTemplate.execute(status ->
+              repository.register(
+                  NAMESPACE,
+                  requestId,
+                  canonicalTenantId,
+                  tenantSlug,
+                  worldSlug,
+                  worldDisplayName));
       return java.util.Objects.requireNonNull(receipt);
     }
 

@@ -74,33 +74,31 @@ class WorldManagementClientTest {
 
   @Test
   void initialAdmissionHoldRequestRejectsUnspecifiedScopeAndIncompleteTuple() {
-    assertThatThrownBy(
-            () ->
-                WorldManagementClient.buildAcquireInitialAdmissionBindHoldRequest(
-                    7L,
-                    42L,
-                    11L,
-                    4L,
-                    "request-id",
-                    "a".repeat(64),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED,
-                    3L))
+    assertThatThrownBy(() ->
+            WorldManagementClient.buildAcquireInitialAdmissionBindHoldRequest(
+                7L,
+                42L,
+                11L,
+                4L,
+                "request-id",
+                "a".repeat(64),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED,
+                3L))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldManagementClient.buildAcquireInitialAdmissionBindHoldRequest(
-                    7L,
-                    42L,
-                    11L,
-                    4L,
-                    "request-id",
-                    "a".repeat(64),
-                    null,
-                    UUID.randomUUID(),
-                    PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    3L))
+    assertThatThrownBy(() ->
+            WorldManagementClient.buildAcquireInitialAdmissionBindHoldRequest(
+                7L,
+                42L,
+                11L,
+                4L,
+                "request-id",
+                "a".repeat(64),
+                null,
+                UUID.randomUUID(),
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+                3L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

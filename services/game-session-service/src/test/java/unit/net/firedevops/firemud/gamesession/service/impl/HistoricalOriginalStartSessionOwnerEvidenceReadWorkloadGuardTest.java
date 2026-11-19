@@ -23,63 +23,54 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadWorkloadGuardTest {
 
   @Test
   void allowsOnlyExactSameNamespaceWorldAndAccountWorkloads() {
-    assertThatCode(
-            () ->
-                withPeer(
-                    "world-management-service",
-                    NAMESPACE,
-                    () -> {
-                      guard.requireHistoricalOwnerReadCaller();
-                      guard.requireConfiguredTargetNamespace(NAMESPACE);
-                    }))
+    assertThatCode(() ->
+            withPeer(
+                "world-management-service",
+                NAMESPACE,
+                () -> {
+                  guard.requireHistoricalOwnerReadCaller();
+                  guard.requireConfiguredTargetNamespace(NAMESPACE);
+                }))
         .doesNotThrowAnyException();
-    assertThatCode(
-            () ->
-                withPeer(
-                    "account-service",
-                    NAMESPACE,
-                    () -> {
-                      guard.requireHistoricalOwnerReadCaller();
-                      guard.requireConfiguredTargetNamespace(NAMESPACE);
-                    }))
+    assertThatCode(() ->
+            withPeer(
+                "account-service",
+                NAMESPACE,
+                () -> {
+                  guard.requireHistoricalOwnerReadCaller();
+                  guard.requireConfiguredTargetNamespace(NAMESPACE);
+                }))
         .doesNotThrowAnyException();
   }
 
   @Test
   void refusesOtherNamespacesWrongServicesAndAuthenticatedEndUserContext() {
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    "world-management-service", "other", guard::requireHistoricalOwnerReadCaller))
+    assertThatThrownBy(() ->
+            withPeer("world-management-service", "other", guard::requireHistoricalOwnerReadCaller))
         .isInstanceOf(AdminAuthorizationException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    "entity-management-service",
-                    NAMESPACE,
-                    guard::requireHistoricalOwnerReadCaller))
+    assertThatThrownBy(() ->
+            withPeer(
+                "entity-management-service", NAMESPACE, guard::requireHistoricalOwnerReadCaller))
         .isInstanceOf(AdminAuthorizationException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    "world-management-service",
-                    NAMESPACE,
-                    () -> {
-                      SessionContext.setContext(
-                          "42", java.util.List.of("tenantAdmin"), java.util.Map.of());
-                      guard.requireHistoricalOwnerReadCaller();
-                    }))
+    assertThatThrownBy(() ->
+            withPeer(
+                "world-management-service",
+                NAMESPACE,
+                () -> {
+                  SessionContext.setContext(
+                      "42", java.util.List.of("tenantAdmin"), java.util.Map.of());
+                  guard.requireHistoricalOwnerReadCaller();
+                }))
         .isInstanceOf(AdminAuthorizationException.class);
   }
 
   @Test
   void rejectsInconsistentPeerIdentityBeforeGuardInvocation() {
-    assertThatThrownBy(
-            () ->
-                new GrpcPeerIdentity(
-                    "spiffe://firemud/ns/other/sa/world-management-service",
-                    NAMESPACE,
-                    "world-management-service"))
+    assertThatThrownBy(() ->
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/other/sa/world-management-service",
+                NAMESPACE,
+                "world-management-service"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

@@ -30,10 +30,9 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest {
   void keytoolTimeoutTerminatesAndReapsTheStalledChild() throws Exception {
     Process process = keytoolAwaitingPassword();
     try {
-      assertThatThrownBy(
-              () ->
-                  ActivationProtectionGrpcMtlsTestSupport.TestPki.awaitKeytoolExit(
-                      process, 1, TimeUnit.SECONDS))
+      assertThatThrownBy(() ->
+              ActivationProtectionGrpcMtlsTestSupport.TestPki.awaitKeytoolExit(
+                  process, 1, TimeUnit.SECONDS))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("execution deadline");
       assertThat(process.isAlive()).isFalse();
@@ -49,10 +48,9 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest {
     Process process = keytoolAwaitingPassword();
     try {
       Thread.currentThread().interrupt();
-      assertThatThrownBy(
-              () ->
-                  ActivationProtectionGrpcMtlsTestSupport.TestPki.awaitKeytoolExit(
-                      process, 30, TimeUnit.SECONDS))
+      assertThatThrownBy(() ->
+              ActivationProtectionGrpcMtlsTestSupport.TestPki.awaitKeytoolExit(
+                  process, 30, TimeUnit.SECONDS))
           .isInstanceOf(InterruptedException.class);
       assertThat(Thread.currentThread().isInterrupted()).isTrue();
       Thread.interrupted();
@@ -141,11 +139,10 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest {
         var client =
             ActivationProtectionGrpcMtlsTestSupport.clientWithoutIdentity(
                 pki, temporaryDirectory, server.getPort())) {
-      assertThatThrownBy(
-              () ->
-                  acquire(
-                      client.channel(),
-                      AcquireOriginalStartSessionActivationProtectionRequest.getDefaultInstance()))
+      assertThatThrownBy(() ->
+              acquire(
+                  client.channel(),
+                  AcquireOriginalStartSessionActivationProtectionRequest.getDefaultInstance()))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());

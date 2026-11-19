@@ -128,10 +128,9 @@ class GameDesignFreshTenantCreationClientMtlsIntegrationTest {
       assertThatThrownBy(
               () -> client.resolveCreation(CREATION_REQUEST_ID, expected.requestDigest()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
 
       assertThat(rpcStarts).hasValue(0);
       assertThat(applicationCalls).hasValue(0);

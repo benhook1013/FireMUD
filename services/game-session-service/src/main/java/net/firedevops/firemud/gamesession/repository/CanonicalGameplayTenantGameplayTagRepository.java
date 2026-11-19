@@ -45,32 +45,30 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
   /** Loads or allocates a mapping only for the persisted candidate of this exact transition. */
   public Assignment assignmentForTransition(UUID transitionId) {
     requireNonNil(transitionId, "transitionId");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          // Issuer barrier claims take this clock before locking the mapping and source rows.
-          // Keep the same order so a retained claim cannot deadlock with tag resolution.
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          BindingTarget source = loadBindingTarget(transaction, transitionId);
-          requireTenantClaim(transaction, source.tenantId());
-          return resolveMapping(
-              transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      // Issuer barrier claims take this clock before locking the mapping and source rows.
+      // Keep the same order so a retained claim cannot deadlock with tag resolution.
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      BindingTarget source = loadBindingTarget(transaction, transitionId);
+      requireTenantClaim(transaction, source.tenantId());
+      return resolveMapping(
+          transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
+    });
   }
 
   /** Topology-only retained lookup for one irreversibly selected original negative continuation. */
   Assignment assignmentForOriginalNewAbandonment(UUID transitionId, UUID abandonmentId) {
     requireNonNil(transitionId, "transitionId");
     requireNonNil(abandonmentId, "abandonmentId");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          BindingTarget source = loadBindingTarget(transaction, transitionId, abandonmentId);
-          requireTenantClaim(transaction, source.tenantId());
-          return resolveMapping(
-              transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      BindingTarget source = loadBindingTarget(transaction, transitionId, abandonmentId);
+      requireTenantClaim(transaction, source.tenantId());
+      return resolveMapping(
+          transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
+    });
   }
 
   /**
@@ -82,154 +80,149 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     if (targetOrdinal < 0) {
       throw new IllegalArgumentException("targetOrdinal must not be negative");
     }
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          Record lockedControl =
-              transaction.fetchOne(
-                  "SELECT control.account_id"
-                      + " FROM game_session_canonical_account_admission_fence_intent intent"
-                      + " JOIN game_session_canonical_account_coverage_control control"
-                      + " ON control.account_id = intent.account_id"
-                      + " WHERE intent.operation_id = ?"
-                      + " AND intent.intent_state = 'ACQUISITION_INTENT'"
-                      + " AND control.state = 'ACQUISITION_INTENT'"
-                      + " AND control.current_operation_id IS NULL"
-                      + " AND control.current_fence_intent_id = intent.operation_id"
-                      + " AND control.current_operation_fence = intent.operation_fence"
-                      + " AND control.last_operation_fence = intent.operation_fence"
-                      + " AND control.account_admission_fence = intent.planned_account_admission_fence"
-                      + " AND control.inventory_snapshot_revision = intent.inventory_snapshot_revision"
-                      + " AND control.coverage_fence IS NULL AND control.coverage_generation IS NULL"
-                      + " FOR UPDATE OF control",
-                  operationId);
-          if (lockedControl == null) {
-            throw conflict("The exact current acquisition-intent barrier target is unavailable");
-          }
-          Record row =
-              transaction.fetchOne(
-                  "SELECT target.operation_id, target.target_ordinal, target.account_id,"
-                      + " target.tenant_id, target.playable_state_namespace_id"
-                      + " FROM game_session_canonical_account_admission_fence_intent_barrier_target target"
-                      + " JOIN game_session_canonical_account_admission_fence_intent intent"
-                      + " ON intent.operation_id = target.operation_id"
-                      + " AND intent.account_id = target.account_id"
-                      + " JOIN game_session_canonical_account_coverage_control control"
-                      + " ON control.account_id = intent.account_id"
-                      + " WHERE target.operation_id = ? AND target.target_ordinal = ?"
-                      + " AND target.target_state = 'REQUIRED'"
-                      + " AND intent.intent_state = 'ACQUISITION_INTENT'"
-                      + " AND control.state = 'ACQUISITION_INTENT'"
-                      + " AND control.current_operation_id IS NULL"
-                      + " AND control.current_fence_intent_id = intent.operation_id"
-                      + " AND control.current_operation_fence = intent.operation_fence"
-                      + " AND control.last_operation_fence = intent.operation_fence"
-                      + " AND control.account_admission_fence = intent.planned_account_admission_fence"
-                      + " AND control.inventory_snapshot_revision = intent.inventory_snapshot_revision"
-                      + " AND control.coverage_fence IS NULL AND control.coverage_generation IS NULL"
-                      + " FOR SHARE OF target, intent",
-                  operationId,
-                  targetOrdinal);
-          if (row == null) {
-            throw conflict("The exact current acquisition-intent barrier target is unavailable");
-          }
-          BarrierTarget source =
-              new BarrierTarget(
-                  requiredUuid(row, "operation_id"),
-                  requiredLong(row, "target_ordinal"),
-                  requiredUuid(row, "account_id"),
-                  requiredUuid(row, "tenant_id"),
-                  requiredUuid(row, "playable_state_namespace_id"));
-          requireTenantClaim(transaction, source.tenantId());
-          return resolveMapping(
-              transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      Record lockedControl =
+          transaction.fetchOne(
+              "SELECT control.account_id"
+                  + " FROM game_session_canonical_account_admission_fence_intent intent"
+                  + " JOIN game_session_canonical_account_coverage_control control"
+                  + " ON control.account_id = intent.account_id"
+                  + " WHERE intent.operation_id = ?"
+                  + " AND intent.intent_state = 'ACQUISITION_INTENT'"
+                  + " AND control.state = 'ACQUISITION_INTENT'"
+                  + " AND control.current_operation_id IS NULL"
+                  + " AND control.current_fence_intent_id = intent.operation_id"
+                  + " AND control.current_operation_fence = intent.operation_fence"
+                  + " AND control.last_operation_fence = intent.operation_fence"
+                  + " AND control.account_admission_fence = intent.planned_account_admission_fence"
+                  + " AND control.inventory_snapshot_revision = intent.inventory_snapshot_revision"
+                  + " AND control.coverage_fence IS NULL AND control.coverage_generation IS NULL"
+                  + " FOR UPDATE OF control",
+              operationId);
+      if (lockedControl == null) {
+        throw conflict("The exact current acquisition-intent barrier target is unavailable");
+      }
+      Record row =
+          transaction.fetchOne(
+              "SELECT target.operation_id, target.target_ordinal, target.account_id,"
+                  + " target.tenant_id, target.playable_state_namespace_id"
+                  + " FROM game_session_canonical_account_admission_fence_intent_barrier_target target"
+                  + " JOIN game_session_canonical_account_admission_fence_intent intent"
+                  + " ON intent.operation_id = target.operation_id"
+                  + " AND intent.account_id = target.account_id"
+                  + " JOIN game_session_canonical_account_coverage_control control"
+                  + " ON control.account_id = intent.account_id"
+                  + " WHERE target.operation_id = ? AND target.target_ordinal = ?"
+                  + " AND target.target_state = 'REQUIRED'"
+                  + " AND intent.intent_state = 'ACQUISITION_INTENT'"
+                  + " AND control.state = 'ACQUISITION_INTENT'"
+                  + " AND control.current_operation_id IS NULL"
+                  + " AND control.current_fence_intent_id = intent.operation_id"
+                  + " AND control.current_operation_fence = intent.operation_fence"
+                  + " AND control.last_operation_fence = intent.operation_fence"
+                  + " AND control.account_admission_fence = intent.planned_account_admission_fence"
+                  + " AND control.inventory_snapshot_revision = intent.inventory_snapshot_revision"
+                  + " AND control.coverage_fence IS NULL AND control.coverage_generation IS NULL"
+                  + " FOR SHARE OF target, intent",
+              operationId,
+              targetOrdinal);
+      if (row == null) {
+        throw conflict("The exact current acquisition-intent barrier target is unavailable");
+      }
+      BarrierTarget source =
+          new BarrierTarget(
+              requiredUuid(row, "operation_id"),
+              requiredLong(row, "target_ordinal"),
+              requiredUuid(row, "account_id"),
+              requiredUuid(row, "tenant_id"),
+              requiredUuid(row, "playable_state_namespace_id"));
+      requireTenantClaim(transaction, source.tenantId());
+      return resolveMapping(
+          transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
+    });
   }
 
   /** Resolves topology only for the persisted exact original-attempt INITIAL target. */
   Assignment assignmentForInitialBarrierTarget(UUID originalRequestId) {
     requireNonNil(originalRequestId, "originalRequestId");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          // Match the initializer owner: inventory clock, account control, initializer/target.
-          Record inventoryClock =
-              transaction.fetchOne(
-                  "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
-                      + " WHERE singleton_id = 1 FOR UPDATE");
-          if (inventoryClock == null)
-            throw conflict("Canonical binding inventory clock is missing");
-          Record locator =
-              transaction.fetchOne(
-                  "SELECT account_id FROM game_session_canonical_initial_account_barrier_initializer"
-                      + " WHERE original_request_id = ?",
-                  originalRequestId);
-          if (locator == null) throw conflict("Exact original INITIAL account target is missing");
-          UUID locatedAccountId = requiredUuid(locator, "account_id");
-          Record control =
-              transaction.fetchOne(
-                  "SELECT account_id FROM game_session_canonical_account_coverage_control"
-                      + " WHERE account_id = ? FOR UPDATE",
-                  locatedAccountId);
-          if (control == null) throw conflict("Account coverage control row is missing");
-          Record row =
-              transaction.fetchOne(
-                  "SELECT i.initializer_id, i.account_id, i.source_control_epoch,"
-                      + " t.target_ordinal, t.tenant_id,"
-                      + " t.playable_state_namespace_id, t.target_state, control.state AS control_state,"
-                      + " control.last_operation_fence, control.current_operation_id,"
-                      + " control.current_fence_intent_id, control.current_operation_fence,"
-                      + " control.account_admission_fence, control.historical_account_admission_fence,"
-                      + " control.coverage_fence, control.inventory_snapshot_revision,"
-                      + " control.coverage_generation"
-                      + " FROM game_session_canonical_initial_account_barrier_initializer i"
-                      + " JOIN game_session_canonical_initial_account_barrier_target t"
-                      + " ON t.initializer_id = i.initializer_id"
-                      + " AND t.original_request_id = i.original_request_id"
-                      + " JOIN game_session_canonical_account_coverage_control control"
-                      + " ON control.account_id = i.account_id"
-                      + " WHERE i.original_request_id = ? AND t.target_ordinal = 0"
-                      + " FOR UPDATE OF i, t, control",
-                  originalRequestId);
-          if (row == null
-              || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(row.get("control_state", String.class))
-              || row.get("last_operation_fence", java.math.BigDecimal.class) == null
-              || row.get("last_operation_fence", java.math.BigDecimal.class)
-                      .toBigIntegerExact()
-                      .signum()
-                  < 0
-              || row.get("source_control_epoch", java.math.BigDecimal.class) == null
-              || !row.get("source_control_epoch", java.math.BigDecimal.class)
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      // Match the initializer owner: inventory clock, account control, initializer/target.
+      Record inventoryClock =
+          transaction.fetchOne(
+              "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock"
+                  + " WHERE singleton_id = 1 FOR UPDATE");
+      if (inventoryClock == null) throw conflict("Canonical binding inventory clock is missing");
+      Record locator =
+          transaction.fetchOne(
+              "SELECT account_id FROM game_session_canonical_initial_account_barrier_initializer"
+                  + " WHERE original_request_id = ?",
+              originalRequestId);
+      if (locator == null) throw conflict("Exact original INITIAL account target is missing");
+      UUID locatedAccountId = requiredUuid(locator, "account_id");
+      Record control =
+          transaction.fetchOne(
+              "SELECT account_id FROM game_session_canonical_account_coverage_control"
+                  + " WHERE account_id = ? FOR UPDATE",
+              locatedAccountId);
+      if (control == null) throw conflict("Account coverage control row is missing");
+      Record row =
+          transaction.fetchOne(
+              "SELECT i.initializer_id, i.account_id, i.source_control_epoch,"
+                  + " t.target_ordinal, t.tenant_id,"
+                  + " t.playable_state_namespace_id, t.target_state, control.state AS control_state,"
+                  + " control.last_operation_fence, control.current_operation_id,"
+                  + " control.current_fence_intent_id, control.current_operation_fence,"
+                  + " control.account_admission_fence, control.historical_account_admission_fence,"
+                  + " control.coverage_fence, control.inventory_snapshot_revision,"
+                  + " control.coverage_generation"
+                  + " FROM game_session_canonical_initial_account_barrier_initializer i"
+                  + " JOIN game_session_canonical_initial_account_barrier_target t"
+                  + " ON t.initializer_id = i.initializer_id"
+                  + " AND t.original_request_id = i.original_request_id"
+                  + " JOIN game_session_canonical_account_coverage_control control"
+                  + " ON control.account_id = i.account_id"
+                  + " WHERE i.original_request_id = ? AND t.target_ordinal = 0"
+                  + " FOR UPDATE OF i, t, control",
+              originalRequestId);
+      if (row == null
+          || !"NO_ACTIVE_ACCOUNT_WIDE_FLOW".equals(row.get("control_state", String.class))
+          || row.get("last_operation_fence", java.math.BigDecimal.class) == null
+          || row.get("last_operation_fence", java.math.BigDecimal.class)
                   .toBigIntegerExact()
-                  .equals(
-                      row.get("last_operation_fence", java.math.BigDecimal.class)
-                          .toBigIntegerExact())
-              || row.get("current_operation_id", UUID.class) != null
-              || row.get("current_fence_intent_id", UUID.class) != null
-              || row.get("current_operation_fence") != null
-              || row.get("account_admission_fence", UUID.class) != null
-              || row.get("historical_account_admission_fence", UUID.class) != null
-              || row.get("coverage_fence", UUID.class) != null
-              || row.get("inventory_snapshot_revision") != null
-              || row.get("coverage_generation") != null) {
-            throw conflict(
-                "The exact INITIAL target or its positive NO_ACTIVE control is unavailable");
-          }
-          UUID initializerId = requiredUuid(row, "initializer_id");
-          UUID accountId = requiredUuid(row, "account_id");
-          UUID tenantId = requiredUuid(row, "tenant_id");
-          UUID namespaceId = requiredUuid(row, "playable_state_namespace_id");
-          if (requiredLong(row, "target_ordinal") != 0L
-              || !Set.of("NEVER_DISPATCHED", "DISPATCH_POSSIBLE", "OPEN_INSTALLED")
-                  .contains(requiredString(row, "target_state"))) {
-            throw conflict("The INITIAL target state is not a retained original-attempt state");
-          }
-          requireTenantClaim(transaction, tenantId);
-          InitialTarget source =
-              new InitialTarget(initializerId, originalRequestId, accountId, tenantId, namespaceId);
-          return resolveMapping(
-              transaction, source, allocationVersion, tagFor(tenantId, allocationVersion));
-        });
+                  .signum()
+              < 0
+          || row.get("source_control_epoch", java.math.BigDecimal.class) == null
+          || !row.get("source_control_epoch", java.math.BigDecimal.class)
+              .toBigIntegerExact()
+              .equals(
+                  row.get("last_operation_fence", java.math.BigDecimal.class).toBigIntegerExact())
+          || row.get("current_operation_id", UUID.class) != null
+          || row.get("current_fence_intent_id", UUID.class) != null
+          || row.get("current_operation_fence") != null
+          || row.get("account_admission_fence", UUID.class) != null
+          || row.get("historical_account_admission_fence", UUID.class) != null
+          || row.get("coverage_fence", UUID.class) != null
+          || row.get("inventory_snapshot_revision") != null
+          || row.get("coverage_generation") != null) {
+        throw conflict("The exact INITIAL target or its positive NO_ACTIVE control is unavailable");
+      }
+      UUID initializerId = requiredUuid(row, "initializer_id");
+      UUID accountId = requiredUuid(row, "account_id");
+      UUID tenantId = requiredUuid(row, "tenant_id");
+      UUID namespaceId = requiredUuid(row, "playable_state_namespace_id");
+      if (requiredLong(row, "target_ordinal") != 0L
+          || !Set.of("NEVER_DISPATCHED", "DISPATCH_POSSIBLE", "OPEN_INSTALLED")
+              .contains(requiredString(row, "target_state"))) {
+        throw conflict("The INITIAL target state is not a retained original-attempt state");
+      }
+      requireTenantClaim(transaction, tenantId);
+      InitialTarget source =
+          new InitialTarget(initializerId, originalRequestId, accountId, tenantId, namespaceId);
+      return resolveMapping(
+          transaction, source, allocationVersion, tagFor(tenantId, allocationVersion));
+    });
   }
 
   /**
@@ -242,14 +235,13 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     requireNonNil(transitionId, "transitionId");
     requirePositive(candidateVersion, "candidateVersion");
     requireCanonicalTag(candidateTag);
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          BindingTarget source = loadBindingTarget(transaction, transitionId);
-          requireTenantClaim(transaction, source.tenantId());
-          return resolveMapping(transaction, source, candidateVersion, candidateTag);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      BindingTarget source = loadBindingTarget(transaction, transitionId);
+      requireTenantClaim(transaction, source.tenantId());
+      return resolveMapping(transaction, source, candidateVersion, candidateTag);
+    });
   }
 
   private BindingTarget loadBindingTarget(DSLContext transaction, UUID transitionId) {

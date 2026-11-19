@@ -210,13 +210,12 @@ public class GrpcTransportBundleGenerator {
 
   public static List<String> grpcDnsNames(EnvironmentIdentityPlan plan) {
     return plan.grpcConsumers().stream()
-        .flatMap(
-            service ->
-                java.util.stream.Stream.of(
-                    service,
-                    service + "." + plan.runtimeNamespace(),
-                    service + "." + plan.runtimeNamespace() + ".svc",
-                    service + "." + plan.runtimeNamespace() + ".svc.cluster.local"))
+        .flatMap(service ->
+            java.util.stream.Stream.of(
+                service,
+                service + "." + plan.runtimeNamespace(),
+                service + "." + plan.runtimeNamespace() + ".svc",
+                service + "." + plan.runtimeNamespace() + ".svc.cluster.local"))
         .distinct()
         .sorted()
         .toList();

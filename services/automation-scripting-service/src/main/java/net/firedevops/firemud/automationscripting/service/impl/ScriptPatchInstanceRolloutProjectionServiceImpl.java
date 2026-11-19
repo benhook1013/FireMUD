@@ -70,11 +70,10 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
             : repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
                 tenantId, gameInstanceId, scriptPatchVersion);
     return projection
-        .filter(
-            value ->
-                scriptPinEpoch <= 0
-                    || normalize(lastObservedControlPlaneRequestId)
-                        .equals(normalize(value.getLastObservedControlPlaneRequestId())))
+        .filter(value ->
+            scriptPinEpoch <= 0
+                || normalize(lastObservedControlPlaneRequestId)
+                    .equals(normalize(value.getLastObservedControlPlaneRequestId())))
         .map(this::toSummary);
   }
 
@@ -104,25 +103,22 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
                 .findByTenantIdAndGameInstanceIdOrderByLastChangedAtDescScriptPatchVersionAsc(
                     tenantId, gameInstanceId);
     return projections.stream()
-        .filter(
-            projection ->
-                scriptPatchVersion == null
-                    || scriptPatchVersion.isBlank()
-                    || projection.getScriptPatchVersion().equals(scriptPatchVersion))
+        .filter(projection ->
+            scriptPatchVersion == null
+                || scriptPatchVersion.isBlank()
+                || projection.getScriptPatchVersion().equals(scriptPatchVersion))
         .filter(
             projection -> scriptPinEpoch <= 0 || projection.getScriptPinEpoch() == scriptPinEpoch)
-        .filter(
-            projection ->
-                scriptPinEpoch <= 0
-                    || normalize(lastObservedControlPlaneRequestId)
-                        .equals(normalize(projection.getLastObservedControlPlaneRequestId())))
+        .filter(projection ->
+            scriptPinEpoch <= 0
+                || normalize(lastObservedControlPlaneRequestId)
+                    .equals(normalize(projection.getLastObservedControlPlaneRequestId())))
         .map(this::toSummary)
-        .filter(
-            summary ->
-                rolloutStatus
-                        == ScriptPatchInstanceRolloutStatus
-                            .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED
-                    || summary.rolloutStatus() == rolloutStatus)
+        .filter(summary ->
+            rolloutStatus
+                    == ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED
+                || summary.rolloutStatus() == rolloutStatus)
         .filter(summary -> changedAfterMs <= 0 || summary.lastChangedAtMs() > changedAfterMs)
         .filter(summary -> changedBeforeMs <= 0 || summary.lastChangedAtMs() < changedBeforeMs)
         .sorted(
@@ -194,12 +190,11 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     pinProjectionService
         .getPinConvergence(tenantId, gameInstanceId)
         .summary()
-        .ifPresent(
-            pin -> {
-              if (!pin.observedPinnedScriptPatchVersion().isBlank()) {
-                patchVersions.add(pin.observedPinnedScriptPatchVersion());
-              }
-            });
+        .ifPresent(pin -> {
+          if (!pin.observedPinnedScriptPatchVersion().isBlank()) {
+            patchVersions.add(pin.observedPinnedScriptPatchVersion());
+          }
+        });
     patchVersions.forEach(
         patchVersion -> refreshProjection(tenantId, gameInstanceId, patchVersion));
   }
@@ -413,15 +408,13 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
 
   private static boolean priorRollbackObserved(Optional<String> existingRolloutStatus) {
     return existingRolloutStatus
-        .map(
-            status ->
-                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK
-                        .name()
-                        .equals(status)
-                    || ScriptPatchInstanceRolloutStatus
-                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
-                        .name()
-                        .equals(status))
+        .map(status ->
+            ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK
+                    .name()
+                    .equals(status)
+                || ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
+                    .name()
+                    .equals(status))
         .orElse(false);
   }
 

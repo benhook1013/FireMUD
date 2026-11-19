@@ -89,50 +89,41 @@ class GameLogicIntakeSourceReadTransportTest {
       var response = GameLogicIntakeSourceReadProtoCodec.toResponse(request);
       assertThat(GameLogicIntakeSourceReadProtoCodec.fromResponse(request, response).request())
           .isEqualTo(request);
-      assertThatThrownBy(
-              () ->
-                  GameLogicIntakeSourceReadProtoCodec.fromResponse(
-                      request,
-                      response.toBuilder()
-                          .setRequest(
-                              wire.toBuilder().setReadRequestId(UUID.randomUUID().toString()))
-                          .build()))
+      assertThatThrownBy(() ->
+              GameLogicIntakeSourceReadProtoCodec.fromResponse(
+                  request,
+                  response.toBuilder()
+                      .setRequest(wire.toBuilder().setReadRequestId(UUID.randomUUID().toString()))
+                      .build()))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  GameLogicIntakeSourceReadProtoCodec.fromResponse(
-                      request, response.toBuilder().setPermitted(false).build()))
+      assertThatThrownBy(() ->
+              GameLogicIntakeSourceReadProtoCodec.fromResponse(
+                  request, response.toBuilder().setPermitted(false).build()))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  GameLogicIntakeSourceReadProtoCodec.fromRequest(
-                      wire.toBuilder().clearAuthorizationProof().build()))
+      assertThatThrownBy(() ->
+              GameLogicIntakeSourceReadProtoCodec.fromRequest(
+                  wire.toBuilder().clearAuthorizationProof().build()))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  GameLogicIntakeSourceReadProtoCodec.fromRequest(
-                      wire.toBuilder()
-                          .setAuthorizationProofDigest("sha256:" + "0".repeat(64))
-                          .build()))
+      assertThatThrownBy(() ->
+              GameLogicIntakeSourceReadProtoCodec.fromRequest(
+                  wire.toBuilder().setAuthorizationProofDigest("sha256:" + "0".repeat(64)).build()))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  GameLogicIntakeSourceReadProtoCodec.fromRequest(
-                      wire.toBuilder().setPurpose("PUBLICATION").build()))
+      assertThatThrownBy(() ->
+              GameLogicIntakeSourceReadProtoCodec.fromRequest(
+                  wire.toBuilder().setPurpose("PUBLICATION").build()))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  GameLogicIntakeSourceReadProtoCodec.fromRequest(
-                      wire.toBuilder()
-                          .setUnknownFields(
-                              com.google.protobuf.UnknownFieldSet.newBuilder()
-                                  .addField(
-                                      99,
-                                      com.google.protobuf.UnknownFieldSet.Field.newBuilder()
-                                          .addVarint(1)
-                                          .build())
-                                  .build())
-                          .build()))
+      assertThatThrownBy(() ->
+              GameLogicIntakeSourceReadProtoCodec.fromRequest(
+                  wire.toBuilder()
+                      .setUnknownFields(
+                          com.google.protobuf.UnknownFieldSet.newBuilder()
+                              .addField(
+                                  99,
+                                  com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                      .addVarint(1)
+                                      .build())
+                              .build())
+                      .build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -196,18 +187,13 @@ class GameLogicIntakeSourceReadTransportTest {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GrpcGameLogicIntakeSourceReadClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcGameLogicIntakeSourceReadClient(
+                endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GrpcGameLogicIntakeSourceReadClient(
-                    endpoints,
-                    new CommonGrpcClientProperties(),
-                    new GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcGameLogicIntakeSourceReadClient(
+                endpoints, new CommonGrpcClientProperties(), new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
     start(pki.server());
     client = newClient(pki.client());
@@ -244,10 +230,9 @@ class GameLogicIntakeSourceReadTransportTest {
     client.init();
     assertThatThrownBy(() -> client.read(requests().getFirst()))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
   }
 
   @Test
@@ -265,10 +250,9 @@ class GameLogicIntakeSourceReadTransportTest {
     client.init();
     assertThatThrownBy(() -> client.read(requests().getFirst()))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.PERMISSION_DENIED));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.PERMISSION_DENIED));
     assertThat(calls).hasValue(0);
   }
 
@@ -576,12 +560,10 @@ class GameLogicIntakeSourceReadTransportTest {
   private static void assertUnavailable(ThrowingCallable call) {
     assertThatThrownBy(call)
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              assertThat(Status.fromThrowable(failure).getCode())
-                  .isEqualTo(Status.Code.UNAVAILABLE);
-              assertThat(Status.fromThrowable(failure).getDescription()).isNull();
-              assertThat(failure.getCause()).isNull();
-            });
+        .satisfies(failure -> {
+          assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+          assertThat(Status.fromThrowable(failure).getDescription()).isNull();
+          assertThat(failure.getCause()).isNull();
+        });
   }
 }

@@ -150,10 +150,9 @@ class AccountSelectedPublicationOrderGrpcCodecTest {
             "n".repeat(AccountSelectedPublicationOrderGrpcCodec.MAX_SELECTION_BYTES));
     assertThat(oversizedSelection.canonicalBytes())
         .hasSizeGreaterThan(AccountSelectedPublicationOrderGrpcCodec.MAX_SELECTION_BYTES);
-    assertThatThrownBy(
-            () ->
-                AccountSelectedPublicationOrderGrpcCodec.Request.create(
-                    "test", oversizedSelection, CREDENTIAL))
+    assertThatThrownBy(() ->
+            AccountSelectedPublicationOrderGrpcCodec.Request.create(
+                "test", oversizedSelection, CREDENTIAL))
         .isInstanceOf(IllegalArgumentException.class)
         .hasNoCause();
   }

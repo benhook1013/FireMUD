@@ -333,14 +333,13 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
     var definitions = org.mockito.ArgumentCaptor.forClass(TransactionDefinition.class);
     verify(transactions, org.mockito.Mockito.times(3)).getTransaction(definitions.capture());
     assertThat(definitions.getAllValues())
-        .allSatisfy(
-            definition -> {
-              assertThat(definition.getPropagationBehavior())
-                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-              assertThat(definition.getIsolationLevel())
-                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-              assertThat(definition.isReadOnly()).isFalse();
-            });
+        .allSatisfy(definition -> {
+          assertThat(definition.getPropagationBehavior())
+              .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+          assertThat(definition.getIsolationLevel())
+              .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+          assertThat(definition.isReadOnly()).isFalse();
+        });
     verify(repository).findExpiredPreliminarySourceReadScopes(128, "test", null);
     verify(repository).abortExpiredPreliminarySourceRead(first, "test");
     verify(repository).abortExpiredPreliminarySourceRead(second, "test");
@@ -388,14 +387,13 @@ class AccountSelectedOwnerIntakeSourceReservationServiceTest {
     var definitions = org.mockito.ArgumentCaptor.forClass(TransactionDefinition.class);
     verify(transactions, times(3)).getTransaction(definitions.capture());
     assertThat(definitions.getAllValues())
-        .allSatisfy(
-            definition -> {
-              assertThat(definition.getPropagationBehavior())
-                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-              assertThat(definition.getIsolationLevel())
-                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-              assertThat(definition.isReadOnly()).isFalse();
-            });
+        .allSatisfy(definition -> {
+          assertThat(definition.getPropagationBehavior())
+              .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+          assertThat(definition.getIsolationLevel())
+              .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+          assertThat(definition.isReadOnly()).isFalse();
+        });
   }
 
   @Test

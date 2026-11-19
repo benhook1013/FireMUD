@@ -71,10 +71,9 @@ final class AdmittedCommandDefinitionReader {
       return gameInstanceRepository
           .findById(context.gameInstanceId())
           .filter(instance -> matchesContext(instance, context))
-          .flatMap(
-              instance ->
-                  readBundle(bundleKey(context.tenantId(), instance))
-                      .flatMap(response -> admissionFromBundle(instance, commandId, response)));
+          .flatMap(instance ->
+              readBundle(bundleKey(context.tenantId(), instance))
+                  .flatMap(response -> admissionFromBundle(instance, commandId, response)));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Unable to resolve admitted command declaration tenantId={} gameInstanceId={} commandId={}",
@@ -120,10 +119,9 @@ final class AdmittedCommandDefinitionReader {
     try {
       BundleKey bundleKey = bundleKey(tenantId, instance);
       return readBundle(bundleKey)
-          .map(
-              response ->
-                  definitionsByBundle.computeIfAbsent(
-                      bundleKey, ignored -> parseDefinitions(response)));
+          .map(response ->
+              definitionsByBundle.computeIfAbsent(
+                  bundleKey, ignored -> parseDefinitions(response)));
     } catch (RuntimeException ex) {
       LOG.warn(
           "Unable to read admitted command definitions tenantId={} versionId={} releaseBundleId={}",

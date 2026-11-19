@@ -138,10 +138,8 @@ class ProtectedPodUidProjectionTest {
   void rejectsWrongOwner() throws IOException {
     Projection projection = createProjection(POD_UID);
 
-    assertThatThrownBy(
-            () ->
-                ProtectedPodUidProjection.readForTesting(
-                    projection.root(), projection.ownerUid() + 1))
+    assertThatThrownBy(() ->
+            ProtectedPodUidProjection.readForTesting(projection.root(), projection.ownerUid() + 1))
         .isInstanceOf(ProtectedPodUidProjection.ProtectedPodUidUnavailableException.class);
   }
 
@@ -185,9 +183,8 @@ class ProtectedPodUidProjectionTest {
   }
 
   private void assertUnavailable(Projection projection) {
-    assertThatThrownBy(
-            () ->
-                ProtectedPodUidProjection.readForTesting(projection.root(), projection.ownerUid()))
+    assertThatThrownBy(() ->
+            ProtectedPodUidProjection.readForTesting(projection.root(), projection.ownerUid()))
         .isInstanceOf(ProtectedPodUidProjection.ProtectedPodUidUnavailableException.class);
   }
 

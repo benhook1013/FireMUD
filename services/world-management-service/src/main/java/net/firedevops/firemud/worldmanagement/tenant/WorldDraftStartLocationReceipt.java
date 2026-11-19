@@ -38,10 +38,9 @@ public record WorldDraftStartLocationReceipt(
             .plan()
             .graph()
             .freshGraphDeclaration()
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "World start-location receipt requires an original graph declaration"))
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "World start-location receipt requires an original graph declaration"))
             .startLocation();
     String graphDigest = WorldDraftGraphAppliedResult.digest(graphBytes);
     var evidence =

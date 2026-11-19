@@ -61,12 +61,11 @@ class InitialAdmissionBindPostgresIntegrationTest {
             gameInstanceRepository);
 
     InitialAdmissionBindCatalogSnapshot catalog =
-        transactionTemplate.execute(
-            status ->
-                toSnapshot(
-                    service.registerPublicSharedFixtureCatalog(
-                        new InitialAdmissionBindCatalogDescriptor(
-                            41L, 810L, "smoke", "Smoke World", "production", "Live Realm", true))));
+        transactionTemplate.execute(status ->
+            toSnapshot(
+                service.registerPublicSharedFixtureCatalog(
+                    new InitialAdmissionBindCatalogDescriptor(
+                        41L, 810L, "smoke", "Smoke World", "production", "Live Realm", true))));
     var request =
         new InitialAdmissionBindRequest(
             41L,

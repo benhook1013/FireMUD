@@ -129,12 +129,11 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
             1L, "demo", "production"))
         .thenReturn(Optional.empty());
     when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
-        .thenAnswer(
-            invocation -> {
-              GameplayAdmissionPointer pointer = invocation.getArgument(0);
-              pointer.setId(11L);
-              return pointer;
-            });
+        .thenAnswer(invocation -> {
+          GameplayAdmissionPointer pointer = invocation.getArgument(0);
+          pointer.setId(11L);
+          return pointer;
+        });
     when(eventRepository.save(any(GameplayAdmissionPointerEvent.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -560,22 +559,20 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
             7L, "demo", "production"))
         .thenAnswer(invocation -> Optional.ofNullable(currentPointer.get()));
     when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
-        .thenAnswer(
-            invocation -> {
-              GameplayAdmissionPointer pointer = invocation.getArgument(0);
-              if (pointer.getId() == null) {
-                pointer.setId(11L);
-              }
-              currentPointer.set(pointer);
-              return pointer;
-            });
+        .thenAnswer(invocation -> {
+          GameplayAdmissionPointer pointer = invocation.getArgument(0);
+          if (pointer.getId() == null) {
+            pointer.setId(11L);
+          }
+          currentPointer.set(pointer);
+          return pointer;
+        });
     when(pointerRepository.updateExisting(any(GameplayAdmissionPointer.class), any(), any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayAdmissionPointer pointer = invocation.getArgument(0);
-              currentPointer.set(pointer);
-              return pointer;
-            });
+        .thenAnswer(invocation -> {
+          GameplayAdmissionPointer pointer = invocation.getArgument(0);
+          currentPointer.set(pointer);
+          return pointer;
+        });
     when(eventRepository.save(any(GameplayAdmissionPointerEvent.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -604,29 +601,27 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     java.util.concurrent.atomic.AtomicReference<GameplayAdmissionPointer> current =
         new java.util.concurrent.atomic.AtomicReference<>(existingPointerForTenant(7L));
     when(pointerRepository.updateExisting(any(GameplayAdmissionPointer.class), any(), any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayAdmissionPointer requested = invocation.getArgument(0);
-              Long expectedPointerVersion = invocation.getArgument(1);
-              Long expectedCatalogRevision = invocation.getArgument(2);
-              GameplayAdmissionPointer committed = current.get();
-              if (!java.util.Objects.equals(committed.getPointerVersion(), expectedPointerVersion)
-                  || !java.util.Objects.equals(
-                      committed.getCatalogRevision(), expectedCatalogRevision)) {
-                throw new AdmissionPointerVersionMismatchException(
-                    "Admission pointer changed before the requested version could be committed");
-              }
-              current.set(requested);
-              return requested;
-            });
+        .thenAnswer(invocation -> {
+          GameplayAdmissionPointer requested = invocation.getArgument(0);
+          Long expectedPointerVersion = invocation.getArgument(1);
+          Long expectedCatalogRevision = invocation.getArgument(2);
+          GameplayAdmissionPointer committed = current.get();
+          if (!java.util.Objects.equals(committed.getPointerVersion(), expectedPointerVersion)
+              || !java.util.Objects.equals(
+                  committed.getCatalogRevision(), expectedCatalogRevision)) {
+            throw new AdmissionPointerVersionMismatchException(
+                "Admission pointer changed before the requested version could be committed");
+          }
+          current.set(requested);
+          return requested;
+        });
     java.util.List<GameplayAdmissionPointerEvent> events = new java.util.ArrayList<>();
     when(eventRepository.save(any(GameplayAdmissionPointerEvent.class)))
-        .thenAnswer(
-            invocation -> {
-              GameplayAdmissionPointerEvent event = invocation.getArgument(0);
-              events.add(event);
-              return event;
-            });
+        .thenAnswer(invocation -> {
+          GameplayAdmissionPointerEvent event = invocation.getArgument(0);
+          events.add(event);
+          return event;
+        });
 
     GameplayAdmissionPointerSnapshot winner =
         service.upsertPointer(pointerMutation(45L, false, 1L, 1L, "concurrent-winner"));

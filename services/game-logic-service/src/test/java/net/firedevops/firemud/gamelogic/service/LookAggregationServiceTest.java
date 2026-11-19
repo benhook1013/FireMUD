@@ -183,13 +183,12 @@ class LookAggregationServiceTest {
   @Test
   void resolveAddsGameplayLoggingContext() {
     when(worldStub.getRoomSnapshot(any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(MDC.get("tenantId")).isEqualTo("tenant-1");
-              assertThat(MDC.get("characterId")).isEqualTo("player-1");
-              assertThat(MDC.get("gameInstanceId")).isEqualTo("game-1");
-              return GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build();
-            });
+        .thenAnswer(ignored -> {
+          assertThat(MDC.get("tenantId")).isEqualTo("tenant-1");
+          assertThat(MDC.get("characterId")).isEqualTo("player-1");
+          assertThat(MDC.get("gameInstanceId")).isEqualTo("game-1");
+          return GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build();
+        });
 
     service.resolve(request);
 

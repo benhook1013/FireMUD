@@ -142,9 +142,8 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
             wire.toBuilder().setReadRequestUuid(0, new UUID(0, 0).toString()).build(),
             wire.toBuilder().setTargetNamespace(0, "bad/namespace").build(),
             wire.toBuilder().setUnknownFields(unknown).build())) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(malformed))
+      assertThatThrownBy(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(malformed))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var response =
@@ -158,10 +157,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
                 .build(),
             response.toBuilder().setRequest(0, wire.toBuilder().addTargetNamespace("test")).build(),
             response.toBuilder().setUnknownFields(unknown).build())) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                      request, malformed))
+      assertThatThrownBy(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                  request, malformed))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -201,10 +199,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
                 .setCurrentTargets(
                     0, wire.toBuilder().setHoldBindingDigest(0, "sha256:" + "f".repeat(64)))
                 .build())) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                      request, malformed))
+      assertThatThrownBy(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                  request, malformed))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -222,10 +219,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
         response.getCurrentTargets(0).toBuilder()
             .setWorldDisplayName(0, "x".repeat(64 * 1024))
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                    request, response.toBuilder().setCurrentTargets(0, oversizedTarget).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                request, response.toBuilder().setCurrentTargets(0, oversizedTarget).build()))
         .isInstanceOf(IllegalArgumentException.class);
     var boundary = response.toBuilder().clearCurrentTargets();
     for (int index = 0; index < 63; index++) {
@@ -247,19 +243,17 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
     last.setWorldDisplayName(0, last.getWorldDisplayName(0) + "x");
     var oversized = complete.toBuilder().setCurrentTargets(63, last).build();
     assertThat(oversized.getSerializedSize()).isEqualTo(4 * 1024 * 1024 + 1);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                    request, oversized))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                request, oversized))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("discovery response");
     var oneMore = CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetEvidence(last.build());
     var tooLargeTargets = new java.util.ArrayList<>(accepted.targets());
     tooLargeTargets.set(63, oneMore);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
-                    request, tooLargeTargets))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                request, tooLargeTargets))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("discovery response");
     assertThat(CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_DISCOVERY_RESPONSE_WIRE_BYTES)
@@ -347,10 +341,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
             request.toBuilder().setUnknownFields(unknown).build(),
             request.toBuilder().setCatalogRevision(0, "01").build(),
             request.toBuilder().setPlayableStateScope(0, "ISOLATED").build())) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
-                      malformed))
+      assertThatThrownBy(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
+                  malformed))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var response =
@@ -363,10 +356,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
                 .setRequest(0, request.toBuilder().setAccountUuid(0, OTHER.toString()))
                 .build(),
             response.toBuilder().setUnknownFields(unknown).build())) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
-                      selector, malformed))
+      assertThatThrownBy(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+                  selector, malformed))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -399,10 +391,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
     for (var change : changes) {
       var changed = response.getCurrentTarget(0).toBuilder();
       change.accept(changed);
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
-                      selector, response.toBuilder().setCurrentTarget(0, changed).build()))
+      assertThatThrownBy(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+                  selector, response.toBuilder().setCurrentTarget(0, changed).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -447,10 +438,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
             response.toBuilder()
                 .setWorldLifecycleEvidence(0, ByteString.copyFromUtf8("{}"))
                 .build())) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                      request, malformed))
+      assertThatThrownBy(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                  request, malformed))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var original = lifecycle.request();
@@ -475,14 +465,12 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
             copyWorld(lifecycle, original, "TERMINATING", lifecycle.lifecycleEpoch()),
             copyWorld(lifecycle, original, "ACTIVE", lifecycle.lifecycleEpoch() + 1),
             copyWorld(lifecycle, changedRequest, "ACTIVE", lifecycle.lifecycleEpoch()))) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                      request,
-                      response.toBuilder()
-                          .setWorldLifecycleEvidence(
-                              0, ByteString.copyFrom(changed.canonicalBytes()))
-                          .build()))
+      assertThatThrownBy(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                  request,
+                  response.toBuilder()
+                      .setWorldLifecycleEvidence(0, ByteString.copyFrom(changed.canonicalBytes()))
+                      .build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
     assertThat(
@@ -658,20 +646,17 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(
-                    wireRequest.toBuilder().clearExpectedLeaseEvidenceUtf8().build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(
+                wireRequest.toBuilder().clearExpectedLeaseEvidenceUtf8().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(
-                    wireRequest.toBuilder().addSchemaVersion(1).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(
+                wireRequest.toBuilder().addSchemaVersion(1).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(
-                    wireRequest.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(
+                wireRequest.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     assertRejected(request, response.toBuilder().clearBindingGeneration().build());
@@ -759,111 +744,96 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
         UnknownFieldSet.newBuilder()
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                    wireRequest.toBuilder().addSchemaVersion(1).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+                wireRequest.toBuilder().addSchemaVersion(1).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                    wireRequest.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+                wireRequest.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                    wireRequest.toBuilder()
-                        .setSelector(
-                            0, wireRequest.getSelector(0).toBuilder().setUnknownFields(unknown))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+                wireRequest.toBuilder()
+                    .setSelector(
+                        0, wireRequest.getSelector(0).toBuilder().setUnknownFields(unknown))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                    wireRequest.toBuilder().addSelector(wireRequest.getSelector(0)).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+                wireRequest.toBuilder().addSelector(wireRequest.getSelector(0)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                    wireRequest.toBuilder()
-                        .setSelector(0, wireRequest.getSelector(0).toBuilder().clearWorldSlug())
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+                wireRequest.toBuilder()
+                    .setSelector(0, wireRequest.getSelector(0).toBuilder().clearWorldSlug())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                    wireRequest.toBuilder().clearSelector().build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+                wireRequest.toBuilder().clearSelector().build()))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest, response.toBuilder().addSchemaVersion(1).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest, response.toBuilder().addSchemaVersion(1).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest, response.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest, response.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest,
-                    response.toBuilder()
-                        .setPublishedSource(
-                            0, response.getPublishedSource(0).toBuilder().setUnknownFields(unknown))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest,
+                response.toBuilder()
+                    .setPublishedSource(
+                        0, response.getPublishedSource(0).toBuilder().setUnknownFields(unknown))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest, response.toBuilder().clearPublishedSource().build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest, response.toBuilder().clearPublishedSource().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest,
-                    response.toBuilder()
-                        .setPublishedSource(
-                            0, response.getPublishedSource(0).toBuilder().clearRequest())
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest,
+                response.toBuilder()
+                    .setPublishedSource(
+                        0, response.getPublishedSource(0).toBuilder().clearRequest())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest,
-                    response.toBuilder().addCurrentTarget(response.getCurrentTarget(0)).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest,
+                response.toBuilder().addCurrentTarget(response.getCurrentTarget(0)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest,
-                    response.toBuilder()
-                        .setCurrentTarget(
-                            0, response.getCurrentTarget(0).toBuilder().setUnknownFields(unknown))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest,
+                response.toBuilder()
+                    .setCurrentTarget(
+                        0, response.getCurrentTarget(0).toBuilder().setUnknownFields(unknown))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest,
-                    response.toBuilder()
-                        .setCurrentTarget(
-                            0, response.getCurrentTarget(0).toBuilder().addPointerVersion("74"))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest,
+                response.toBuilder()
+                    .setCurrentTarget(
+                        0, response.getCurrentTarget(0).toBuilder().addPointerVersion("74"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest,
-                    response.toBuilder()
-                        .setPublishedSource(
-                            0,
-                            response.getPublishedSource(0).toBuilder()
-                                .setRequest(
-                                    response.getPublishedSource(0).getRequest().toBuilder()
-                                        .setCanonicalTenantUuid(OTHER.toString())))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest,
+                response.toBuilder()
+                    .setPublishedSource(
+                        0,
+                        response.getPublishedSource(0).toBuilder()
+                            .setRequest(
+                                response.getPublishedSource(0).getRequest().toBuilder()
+                                    .setCanonicalTenantUuid(OTHER.toString())))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -886,10 +856,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
             targetEvidence.toBuilder().setAdmissionPointerSnapshotDigest(0, "f".repeat(64)).build(),
             targetEvidence.toBuilder().setOwnerProofDigest(0, "sha256:" + "f".repeat(64)).build(),
             targetEvidence.toBuilder().setCharacterCreationPolicy(0, "PLAYER_CREATED").build())) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                      request, response.toBuilder().setCurrentTarget(0, changed).build()))
+      assertThatThrownBy(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                  request, response.toBuilder().setCurrentTarget(0, changed).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -900,10 +869,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
             CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmRequest(
                 changedSelector));
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    changedRequest, response))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                changedRequest, response))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -916,10 +884,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
         request.toBuilder()
             .setSelector(0, request.getSelector(0).toBuilder().setWorldSlug("x".repeat(3_000)))
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                    oversizedRequest))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+                oversizedRequest))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
 
@@ -942,10 +909,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
                                 [CanonicalGameplayAdmissionDecisionReadGrpcCodec
                                     .MAX_PUBLISHED_REALM_RESPONSE_WIRE_BYTES])))
             .build();
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                    parsedRequest, oversizedResponse))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                parsedRequest, oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
   }
@@ -1138,18 +1104,17 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
             null);
     var participants =
         content.participantDigests().stream()
-            .map(
-                p ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        p.participantKey(),
-                        p.scopeValue(),
-                        p.baseVersionId() != null,
-                        p.baseVersionId(),
-                        p.appliedCommitId(),
-                        p.contentDigest(),
-                        p.digestSchemaVersion(),
-                        p.abilitySchemaDigest() != null,
-                        p.abilitySchemaDigest()))
+            .map(p ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    p.participantKey(),
+                    p.scopeValue(),
+                    p.baseVersionId() != null,
+                    p.baseVersionId(),
+                    p.appliedCommitId(),
+                    p.contentDigest(),
+                    p.digestSchemaVersion(),
+                    p.abilitySchemaDigest() != null,
+                    p.abilitySchemaDigest()))
             .toList();
     var release =
         AuthoredWorldReleaseAttestationEvidence.create(
@@ -1344,25 +1309,19 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
     var request = operation.world().request();
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new Participant(
-                        owner,
-                        Long.toString(
-                            operation
-                                .account()
-                                .input()
-                                .selection()
-                                .target()
-                                .gameDesignVersionRowId()),
-                        null,
-                        request.appliedCommitId(),
-                        owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        owner.equals("GAME_LOGIC") ? DIGEST : null,
-                        null,
-                        null))
+            .map(owner ->
+                new Participant(
+                    owner,
+                    Long.toString(
+                        operation.account().input().selection().target().gameDesignVersionRowId()),
+                    null,
+                    request.appliedCommitId(),
+                    owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    owner.equals("GAME_LOGIC") ? DIGEST : null,
+                    null,
+                    null))
             .toList();
     return new ReleaseContent(
         request.canonicalTenantId(),

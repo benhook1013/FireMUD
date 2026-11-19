@@ -89,12 +89,11 @@ class RealmPolicySourceTest {
             payload.replace(
                 "\"revisionKind\":",
                 "\"revisionKind\":\"REALM_ENTRY_POLICY\",\"revisionKind\":"))) {
-      assertThatThrownBy(
-              () ->
-                  RealmPolicySource.revision(
-                      binding,
-                      new DraftCommitBinding.RevisionPayload(
-                          "0", input.revisionId(), input.owner(), malformed)))
+      assertThatThrownBy(() ->
+              RealmPolicySource.revision(
+                  binding,
+                  new DraftCommitBinding.RevisionPayload(
+                      "0", input.revisionId(), input.owner(), malformed)))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -154,29 +153,27 @@ class RealmPolicySourceTest {
 
     assertThat(RealmPolicySource.effective(List.of(retained, unrelated), List.of(deletion, moved)))
         .containsExactly(moved, unrelated);
-    assertThatThrownBy(
-            () ->
-                RealmPolicySource.effective(
-                    List.of(retained),
-                    List.of(
-                        new RealmPolicySource.Deletion(
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            "authored-delete-missing",
-                            "old-world",
-                            "missing"))))
+    assertThatThrownBy(() ->
+            RealmPolicySource.effective(
+                List.of(retained),
+                List.of(
+                    new RealmPolicySource.Deletion(
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        "authored-delete-missing",
+                        "old-world",
+                        "missing"))))
         .hasMessageContaining("absent policy selector");
-    assertThatThrownBy(
-            () ->
-                RealmPolicySource.effective(
-                    List.of(retained),
-                    List.of(
-                        new RealmPolicySource.Deletion(
-                            UUID.randomUUID(),
-                            UUID.randomUUID(),
-                            "different-logical-identity",
-                            "old-world",
-                            "main"))))
+    assertThatThrownBy(() ->
+            RealmPolicySource.effective(
+                List.of(retained),
+                List.of(
+                    new RealmPolicySource.Deletion(
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        "different-logical-identity",
+                        "old-world",
+                        "main"))))
         .hasMessageContaining("logical revision identity does not match");
     assertThatThrownBy(() -> RealmPolicySource.effective(List.of(retained), List.of(moved)))
         .hasMessageContaining("Duplicate tenant realm selector");

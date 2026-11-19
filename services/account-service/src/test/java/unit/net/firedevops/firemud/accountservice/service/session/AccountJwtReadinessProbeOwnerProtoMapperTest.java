@@ -107,40 +107,35 @@ class AccountJwtReadinessProbeOwnerProtoMapperTest {
 
     assertThat(parsed.projectedPodUid()).isEqualTo("66666666-6666-4666-8666-666666666666");
     assertThat(parsed.serverLeafSpkiSha256()).isEqualTo("a".repeat(64));
-    assertThatThrownBy(
-            () ->
-                mapper.parseReceiverMetadataRequest(
-                    GetCurrentReadinessReceiverMetadataRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            mapper.parseReceiverMetadataRequest(
+                GetCurrentReadinessReceiverMetadataRequest.getDefaultInstance()))
         .isInstanceOf(
             AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
-    assertThatThrownBy(
-            () ->
-                mapper.parseReceiverMetadataRequest(
-                    request.toBuilder()
-                        .setProjectedPodUid("66666666-6666-4666-8666-66666666666A")
-                        .build()))
+    assertThatThrownBy(() ->
+            mapper.parseReceiverMetadataRequest(
+                request.toBuilder()
+                    .setProjectedPodUid("66666666-6666-4666-8666-66666666666A")
+                    .build()))
         .isInstanceOf(
             AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
-    assertThatThrownBy(
-            () ->
-                mapper.parseReceiverMetadataRequest(
-                    request.toBuilder().setServerLeafSpkiSha256("A".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            mapper.parseReceiverMetadataRequest(
+                request.toBuilder().setServerLeafSpkiSha256("A".repeat(64)).build()))
         .isInstanceOf(
             AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
-    assertThatThrownBy(
-            () ->
-                mapper.parseReceiverMetadataRequest(
-                    request.toBuilder().setProjectedPodUid("6".repeat(4096)).build()))
+    assertThatThrownBy(() ->
+            mapper.parseReceiverMetadataRequest(
+                request.toBuilder().setProjectedPodUid("6".repeat(4096)).build()))
         .isInstanceOf(
             AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
     UnknownFieldSet unknown =
         UnknownFieldSet.newBuilder()
             .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                mapper.parseReceiverMetadataRequest(
-                    request.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            mapper.parseReceiverMetadataRequest(
+                request.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(
             AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
   }

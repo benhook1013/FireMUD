@@ -117,11 +117,10 @@ class AccountJwtSignerMaterializationServiceTest {
     Observer<GetCurrentPromotionRequestResponse> observer = new Observer<>();
 
     authenticate(TRUST)
-        .run(
-            () ->
-                service.getCurrentPromotionRequest(
-                    GetCurrentPromotionRequestRequest.newBuilder().setSchemaVersion(1).build(),
-                    observer));
+        .run(() ->
+            service.getCurrentPromotionRequest(
+                GetCurrentPromotionRequestRequest.newBuilder().setSchemaVersion(1).build(),
+                observer));
 
     assertFailedPrecondition(observer.failure);
     verify(repository, never()).readPreparedGenerationForRecovery(any(), any());
@@ -215,9 +214,8 @@ class AccountJwtSignerMaterializationServiceTest {
     assertThat(observer.value.getPublicReceiptDigest()).isEqualTo(receipt.receiptDigest());
     verify(coordinator)
         .reconcilePreparedPromotionOnce(
-            org.mockito.ArgumentMatchers.argThat(
-                (PrivatePromotionObservation observation) ->
-                    observation.promotionOperationId().equals(promotionOperationId)),
+            org.mockito.ArgumentMatchers.argThat((PrivatePromotionObservation observation) ->
+                observation.promotionOperationId().equals(promotionOperationId)),
             org.mockito.ArgumentMatchers.eq(receipt));
   }
 

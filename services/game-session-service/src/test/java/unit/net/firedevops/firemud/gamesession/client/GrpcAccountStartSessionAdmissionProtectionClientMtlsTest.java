@@ -112,10 +112,9 @@ class GrpcAccountStartSessionAdmissionProtectionClientMtlsTest {
 
     assertThat(failure)
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            thrown ->
-                assertThat(((StatusRuntimeException) thrown).getStatus().getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(thrown ->
+            assertThat(((StatusRuntimeException) thrown).getStatus().getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(rpcCalls).hasValue(0);
     assertThat(receivedRequest.get()).isNull();
   }

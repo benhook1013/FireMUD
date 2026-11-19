@@ -133,14 +133,13 @@ public class AccountJwtSignerMaterializationService
       validateRequest(request.getSchemaVersion(), request.getUnknownFields().asMap().isEmpty());
       Binding binding = requireCurrentAuthenticatedBinding();
       GenerationRequest current =
-          accountTransaction.execute(
-              status -> {
-                GenerationRequest requested =
-                    repository.ensureCurrentGenerationRequest(
-                        binding.accountBinding(), trustFence(binding));
-                requireUnchangedTrustBinding(binding);
-                return requested;
-              });
+          accountTransaction.execute(status -> {
+            GenerationRequest requested =
+                repository.ensureCurrentGenerationRequest(
+                    binding.accountBinding(), trustFence(binding));
+            requireUnchangedTrustBinding(binding);
+            return requested;
+          });
       if (current == null) {
         throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
             "JWT signer generation request is unavailable");
@@ -175,19 +174,18 @@ public class AccountJwtSignerMaterializationService
       UUID operationId = parseOperationId(request.getOperationId());
       Binding binding = requireCurrentAuthenticatedBinding();
       GenerationRequest current =
-          accountTransaction.execute(
-              status -> {
-                GenerationRequest observed =
-                    repository.recordSecretObservation(
-                        binding.accountBinding(),
-                        trustFence(binding),
-                        operationId,
-                        request.getOperationDigest(),
-                        request.getSecretUid(),
-                        request.getObservedResourceVersion());
-                requireUnchangedTrustBinding(binding);
-                return observed;
-              });
+          accountTransaction.execute(status -> {
+            GenerationRequest observed =
+                repository.recordSecretObservation(
+                    binding.accountBinding(),
+                    trustFence(binding),
+                    operationId,
+                    request.getOperationDigest(),
+                    request.getSecretUid(),
+                    request.getObservedResourceVersion());
+            requireUnchangedTrustBinding(binding);
+            return observed;
+          });
       if (current == null) {
         throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
             "JWT signer Secret observation is unavailable");
@@ -209,21 +207,20 @@ public class AccountJwtSignerMaterializationService
       UUID operationId = parseOperationId(request.getOperationId());
       Binding binding = requireCurrentAuthenticatedBinding();
       GenerationResult result =
-          accountTransaction.execute(
-              status -> {
-                GenerationResult persisted =
-                    repository.recordGenerationResult(
-                        binding.accountBinding(),
-                        trustFence(binding),
-                        operationId,
-                        request.getGenerationRequestDigest(),
-                        request.getSecretUid(),
-                        request.getExpectedPriorResourceVersion(),
-                        request.getObservedResourceVersion(),
-                        request.getPublicJwkJson());
-                requireUnchangedTrustBinding(binding);
-                return persisted;
-              });
+          accountTransaction.execute(status -> {
+            GenerationResult persisted =
+                repository.recordGenerationResult(
+                    binding.accountBinding(),
+                    trustFence(binding),
+                    operationId,
+                    request.getGenerationRequestDigest(),
+                    request.getSecretUid(),
+                    request.getExpectedPriorResourceVersion(),
+                    request.getObservedResourceVersion(),
+                    request.getPublicJwkJson());
+            requireUnchangedTrustBinding(binding);
+            return persisted;
+          });
       if (result == null) {
         throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
             "JWT signer generation receipt is unavailable");
@@ -254,10 +251,9 @@ public class AccountJwtSignerMaterializationService
       PreparedGenerationEvidence preparedForObservation;
       try {
         preparedForObservation =
-            accountTransaction.execute(
-                status ->
-                    repository.readPreparedGenerationForRecovery(
-                        binding.accountBinding(), trustFence(binding)));
+            accountTransaction.execute(status ->
+                repository.readPreparedGenerationForRecovery(
+                    binding.accountBinding(), trustFence(binding)));
       } catch (AccountJwtSignerDesiredStateRepository.NoPreparedPromotionException notPrepared) {
         var preparation = coordinator.prepareCurrentPromotionOnce();
         requireUnchangedTrustBinding(binding);
@@ -270,10 +266,9 @@ public class AccountJwtSignerMaterializationService
               "Account has no complete owner-verified promotion proof");
         }
         preparedForObservation =
-            accountTransaction.execute(
-                status ->
-                    repository.readPreparedGenerationForRecovery(
-                        binding.accountBinding(), trustFence(binding)));
+            accountTransaction.execute(status ->
+                repository.readPreparedGenerationForRecovery(
+                    binding.accountBinding(), trustFence(binding)));
       }
       if (preparedForObservation == null) {
         throw new AccountJwtSignerDesiredStateRepository.PromotionPrerequisitesIncompleteException(
@@ -286,35 +281,34 @@ public class AccountJwtSignerMaterializationService
       InventorySnapshot liveInventory = observeCurrentValidatorInventory(observationContext);
       requireUnchangedTrustBinding(binding);
       PreparedGenerationEvidence prepared =
-          accountTransaction.execute(
-              status -> {
-                PreparedGenerationEvidence current =
-                    repository.readPreparedGenerationForRecovery(
-                        binding.accountBinding(), trustFence(binding));
-                if (!observationContext.equals(observationContext(current))) {
-                  throw new AccountJwtSignerDesiredStateRepository
-                      .PromotionPrerequisitesIncompleteException(
-                      "Prepared signer operation changed during validator inventory proof");
-                }
-                boolean completeProof =
-                    readinessRepository
-                        .readPromotionProof(
-                            binding.accountBinding(),
-                            trustFence(binding),
-                            current.promotion().generationOperationId(),
-                            liveInventory)
-                        .isPresent();
-                if (!completeProof) {
-                  throw new AccountJwtSignerDesiredStateRepository
-                      .PromotionPrerequisitesIncompleteException(
-                      "Complete Account readiness proof is unavailable");
-                }
-                PreparedGenerationEvidence evidence =
-                    repository.readAndMarkPreparedPromotionDispatched(
-                        binding.accountBinding(), trustFence(binding));
-                requireUnchangedTrustBinding(binding);
-                return evidence;
-              });
+          accountTransaction.execute(status -> {
+            PreparedGenerationEvidence current =
+                repository.readPreparedGenerationForRecovery(
+                    binding.accountBinding(), trustFence(binding));
+            if (!observationContext.equals(observationContext(current))) {
+              throw new AccountJwtSignerDesiredStateRepository
+                  .PromotionPrerequisitesIncompleteException(
+                  "Prepared signer operation changed during validator inventory proof");
+            }
+            boolean completeProof =
+                readinessRepository
+                    .readPromotionProof(
+                        binding.accountBinding(),
+                        trustFence(binding),
+                        current.promotion().generationOperationId(),
+                        liveInventory)
+                    .isPresent();
+            if (!completeProof) {
+              throw new AccountJwtSignerDesiredStateRepository
+                  .PromotionPrerequisitesIncompleteException(
+                  "Complete Account readiness proof is unavailable");
+            }
+            PreparedGenerationEvidence evidence =
+                repository.readAndMarkPreparedPromotionDispatched(
+                    binding.accountBinding(), trustFence(binding));
+            requireUnchangedTrustBinding(binding);
+            return evidence;
+          });
       if (prepared == null) {
         throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
             "JWT signer promotion request is unavailable");
@@ -364,14 +358,13 @@ public class AccountJwtSignerMaterializationService
                   : java.util.Optional.empty(),
               request.getResultingSlotsList());
       PrivatePromotionReceipt receipt =
-          accountTransaction.execute(
-              status -> {
-                PrivatePromotionReceipt persisted =
-                    repository.recordPrivatePromotionResult(
-                        binding.accountBinding(), trustFence(binding), observation);
-                requireUnchangedTrustBinding(binding);
-                return persisted;
-              });
+          accountTransaction.execute(status -> {
+            PrivatePromotionReceipt persisted =
+                repository.recordPrivatePromotionResult(
+                    binding.accountBinding(), trustFence(binding), observation);
+            requireUnchangedTrustBinding(binding);
+            return persisted;
+          });
       if (receipt == null) {
         throw new AccountJwtSignerDesiredStateRepository.StorageUnavailableException(
             "JWT signer private promotion receipt is unavailable");
@@ -489,9 +482,8 @@ public class AccountJwtSignerMaterializationService
       return unselectedInitialEnrollment;
     }
     GenerationRequest current =
-        accountTransaction.execute(
-            status ->
-                repository.readCurrentGenerationRequest(binding.accountBinding(), currentTrust));
+        accountTransaction.execute(status ->
+            repository.readCurrentGenerationRequest(binding.accountBinding(), currentTrust));
     requireUnchangedTrustBinding(binding);
     return current != null
         && (current.phase() == GenerationPhase.OBSERVE_PRIVATE_SECRET
@@ -643,13 +635,12 @@ public class AccountJwtSignerMaterializationService
             .addAllowedPrivateSlots("previous.key");
     promotion
         .expectedPreviousActive()
-        .ifPresent(
-            previous -> {
-              response.setExpectedPreviousGeneration(previous.generation());
-              response.setExpectedPreviousKid(previous.kid());
-              response.setExpectedPreviousPublicKeyFingerprint(
-                  promotion.expectedPreviousPublicKeyFingerprint().orElseThrow());
-            });
+        .ifPresent(previous -> {
+          response.setExpectedPreviousGeneration(previous.generation());
+          response.setExpectedPreviousKid(previous.kid());
+          response.setExpectedPreviousPublicKeyFingerprint(
+              promotion.expectedPreviousPublicKeyFingerprint().orElseThrow());
+        });
     return response.build();
   }
 

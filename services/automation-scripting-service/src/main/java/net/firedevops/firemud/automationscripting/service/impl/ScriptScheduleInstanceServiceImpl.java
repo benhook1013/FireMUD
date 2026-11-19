@@ -218,10 +218,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
                 tenantKey, scriptPatchVersion);
     if (definitions.stream()
-        .anyMatch(
-            definition ->
-                definition.getBaseVersionId() == null
-                    || definition.getBaseVersionId() != pinnedScriptPatchBaseVersionId)) {
+        .anyMatch(definition ->
+            definition.getBaseVersionId() == null
+                || definition.getBaseVersionId() != pinnedScriptPatchBaseVersionId)) {
       markRetainedSchedulesPending(tenantId, gameInstanceId);
       return;
     }
@@ -306,17 +305,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
     List<ScriptScheduleInstance> deletes =
         existing.stream()
-            .filter(
-                instance ->
-                    !desiredKeys.contains(
-                        scopeKey(
-                            instance.getPlayableStateScope(),
-                            instance.getPluginId(),
-                            instance.getPluginVersionId(),
-                            applicableBindingId(instance),
-                            instance.getScheduleDefinitionId(),
-                            instance.getTargetScopeType(),
-                            instance.getTargetScopeId())))
+            .filter(instance ->
+                !desiredKeys.contains(
+                    scopeKey(
+                        instance.getPlayableStateScope(),
+                        instance.getPluginId(),
+                        instance.getPluginVersionId(),
+                        applicableBindingId(instance),
+                        instance.getScheduleDefinitionId(),
+                        instance.getTargetScopeType(),
+                        instance.getTargetScopeId())))
             .toList();
     if (!deletes.isEmpty()) {
       scheduleInstanceRepository.deleteAll(deletes);
@@ -783,10 +781,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
                 tenantId, scriptPatchVersion);
     if (patchBindings.stream()
-        .anyMatch(
-            binding ->
-                binding.getBaseVersionId() == null
-                    || binding.getBaseVersionId() != baseVersionId)) {
+        .anyMatch(binding ->
+            binding.getBaseVersionId() == null || binding.getBaseVersionId() != baseVersionId)) {
       return null;
     }
     for (ScriptEventBinding binding : patchBindings) {
@@ -1066,13 +1062,12 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                     instance.getCadenceValue(),
                     perScheduleCandidateLimit)
                 .stream()
-                .map(
-                    dueTick ->
-                        TimerFiringCandidate.suppressedTick(
-                            instance,
-                            dueTick,
-                            blankToEmpty(instance.getRuntimeRegionId()),
-                            instance.getRuntimeRegionEpoch()))
+                .map(dueTick ->
+                    TimerFiringCandidate.suppressedTick(
+                        instance,
+                        dueTick,
+                        blankToEmpty(instance.getRuntimeRegionId()),
+                        instance.getRuntimeRegionEpoch()))
                 .toList()
             : List.of();
     List<Long> fireDueTicks =
@@ -1349,12 +1344,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     Map<String, List<TimerFiringCandidate>> bySchedule = new java.util.LinkedHashMap<>();
     candidates.stream()
         .sorted(timerCandidateComparator())
-        .forEach(
-            candidate ->
-                bySchedule
-                    .computeIfAbsent(
-                        scheduleKey(candidate.instance()), ignored -> new ArrayList<>())
-                    .add(candidate));
+        .forEach(candidate ->
+            bySchedule
+                .computeIfAbsent(scheduleKey(candidate.instance()), ignored -> new ArrayList<>())
+                .add(candidate));
     List<TimerFiringCandidate> selected = new ArrayList<>();
     int pass = 0;
     while (selected.size() < maxFirings) {

@@ -91,15 +91,14 @@ public final class AccountGameplayDelegationCommittedIssuanceOwner {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     try {
       CommittedCandidateVerificationData evidence =
-          accountTransaction.execute(
-              status -> {
-                CommittedCandidateVerificationData current =
-                    issuanceRepository
-                        .readCurrentCommittedCandidateByJti(tokenJti)
-                        .orElseThrow(AccountGameplayDelegationCommittedIssuanceOwner::unavailable);
-                signer.requireCurrentCommittedRecoverySigner(current);
-                return current;
-              });
+          accountTransaction.execute(status -> {
+            CommittedCandidateVerificationData current =
+                issuanceRepository
+                    .readCurrentCommittedCandidateByJti(tokenJti)
+                    .orElseThrow(AccountGameplayDelegationCommittedIssuanceOwner::unavailable);
+            signer.requireCurrentCommittedRecoverySigner(current);
+            return current;
+          });
       if (evidence == null
           || !tokenJti.equals(evidence.identity().tokenJti())
           || Math.floorDiv(clock.millis(), 1_000L) >= evidence.identity().expiresAtEpochSecond()) {
@@ -153,13 +152,12 @@ public final class AccountGameplayDelegationCommittedIssuanceOwner {
   }
 
   private CheckedObservation readCurrentOwnerEvidence(UUID requestId) {
-    return accountTransaction.execute(
-        status -> {
-          CommittedCandidateVerificationData evidence =
-              issuanceRepository.readCurrentCommittedCandidate(requestId);
-          signer.requireCurrentCommittedSigner(evidence);
-          return new CheckedObservation(evidence, clock.millis());
-        });
+    return accountTransaction.execute(status -> {
+      CommittedCandidateVerificationData evidence =
+          issuanceRepository.readCurrentCommittedCandidate(requestId);
+      signer.requireCurrentCommittedSigner(evidence);
+      return new CheckedObservation(evidence, clock.millis());
+    });
   }
 
   /**
@@ -168,13 +166,12 @@ public final class AccountGameplayDelegationCommittedIssuanceOwner {
    */
   private CheckedObservation readCurrentRecoveryOwnerEvidence(UUID requestId) {
     CheckedObservation checked =
-        accountTransaction.execute(
-            status -> {
-              CommittedCandidateVerificationData evidence =
-                  issuanceRepository.readCurrentCommittedCandidate(requestId);
-              signer.requireCurrentCommittedRecoverySigner(evidence);
-              return new CheckedObservation(evidence, clock.millis());
-            });
+        accountTransaction.execute(status -> {
+          CommittedCandidateVerificationData evidence =
+              issuanceRepository.readCurrentCommittedCandidate(requestId);
+          signer.requireCurrentCommittedRecoverySigner(evidence);
+          return new CheckedObservation(evidence, clock.millis());
+        });
     if (checked == null) return null;
     signer.requireRetainedCommittedPublicKey(checked.evidence());
     return checked;

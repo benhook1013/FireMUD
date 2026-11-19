@@ -720,10 +720,9 @@ public class AccountTenantAuthorityEventRepository {
     FreshTenantCreationEvidence source =
         tenantIdentity
             .read(tenantId)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Exact fresh Account tenant source evidence is unavailable"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Exact fresh Account tenant source evidence is unavailable"));
     ScopeState authority =
         generations.read(AccountAuthorityGenerationRepository.AuthorityScope.tenant(tenantId));
     Record current =

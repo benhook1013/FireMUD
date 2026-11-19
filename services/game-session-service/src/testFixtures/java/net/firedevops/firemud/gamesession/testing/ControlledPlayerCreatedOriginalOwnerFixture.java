@@ -212,14 +212,13 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
         new AuthoredInitialActorCoreReadEvidence.ReadResult(
             exactRequest, exact, upstream.descriptor(), upstream.projections());
     var descriptors = new GameSessionStartSessionLaunchDescriptorRepository(dsl, selections);
-    transactions.execute(
-        ignored ->
-            descriptors.pin(
-                claim,
-                new StartSessionLaunchDescriptorGrpcCodec.Resolved(
-                    exact,
-                    new StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome(
-                        authored.descriptor()))));
+    transactions.execute(ignored ->
+        descriptors.pin(
+            claim,
+            new StartSessionLaunchDescriptorGrpcCodec.Resolved(
+                exact,
+                new StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome(
+                    authored.descriptor()))));
     var source = association.worldReceipt().source();
     var intakeRepository = new GameSessionAuthoredWorldSourceRepository(dsl);
     var intake =
@@ -227,11 +226,10 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
             transactions.execute(ignored -> intakeRepository.register(UUID.randomUUID(), source)));
     var tenantAssociation =
         Objects.requireNonNull(
-            transactions.execute(
-                ignored ->
-                    new GameSessionFreshTenantAssociationRepository(dsl)
-                        .associateFresh(
-                            UUID.randomUUID(), namespace, intake, creationEvidence(source))));
+            transactions.execute(ignored ->
+                new GameSessionFreshTenantAssociationRepository(dsl)
+                    .associateFresh(
+                        UUID.randomUUID(), namespace, intake, creationEvidence(source))));
     var policySet = supplied.policySet();
     var realmPolicy =
         policySet.policies().stream()
@@ -336,72 +334,68 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
             StartSessionTemplateAssociationReadGrpcCodec.toRequest(exactRequest).toByteArray(),
             authored.canonicalBytes(),
             authored.digest());
-    transactions.execute(
-        ignored -> {
-          attempts.readCurrentOriginalAttempt(currentAttemptRequest);
-          return retention.retainInOwnerTransaction(retained);
-        });
+    transactions.execute(ignored -> {
+      attempts.readCurrentOriginalAttempt(currentAttemptRequest);
+      return retention.retainInOwnerTransaction(retained);
+    });
     migrateLatest();
     routeReader = new CanonicalPlayerRouteReadService(namespace, catalogs, admissions, launches);
     var gameDesign = mock(AuthoredInitialActorCoreReadClient.class);
     when(gameDesign.read(any()))
-        .thenAnswer(
-            call -> {
-              requireOutsideSql();
-              if (!new AuthoredInitialActorCoreReadEvidence.ReadRequest(authored.request())
-                  .equals(call.getArgument(0)))
-                throw new IllegalArgumentException("Controlled authored replay selector changed");
-              return authored;
-            });
+        .thenAnswer(call -> {
+          requireOutsideSql();
+          if (!new AuthoredInitialActorCoreReadEvidence.ReadRequest(authored.request())
+              .equals(call.getArgument(0)))
+            throw new IllegalArgumentException("Controlled authored replay selector changed");
+          return authored;
+        });
     var world = mock(WorldCanonicalInstanceLifecycleClient.class);
     when(world.read(any()))
-        .thenAnswer(
-            call -> {
-              requireOutsideSql();
-              controlledWorldLifecycleReads.incrementAndGet();
-              var requested = (WorldCanonicalInstanceLifecycleEvidence.Request) call.getArgument(0);
-              var base = supplied.world();
-              var expected = base.request();
-              if (!requested.equals(
-                  new WorldCanonicalInstanceLifecycleEvidence.Request(
-                      expected.schemaVersion(),
-                      requested.readRequestId(),
-                      expected.targetNamespace(),
-                      expected.canonicalTenantId(),
-                      expected.worldSlug(),
-                      expected.canonicalGameInstanceId(),
-                      expected.playableStateNamespaceId(),
-                      expected.playableStateScope(),
-                      expected.publicProduction(),
-                      expected.controlPlaneRequestId(),
-                      expected.canonicalVersionId(),
-                      expected.expectedDescriptorRequestDigest(),
-                      expected.expectedDescriptorResultDigest(),
-                      expected.expectedReleaseAttestationDigest())))
-                throw new IllegalArgumentException("Controlled World selector changed");
-              return new WorldCanonicalInstanceLifecycleEvidence(
-                  requested,
-                  base.launchBinding(),
-                  base.startLocation(),
-                  base.runtimeRoomInstanceId(),
-                  base.lifecycleStatus(),
-                  base.lifecycleEpoch(),
-                  base.rowVersion(),
-                  base.captureId(),
-                  base.graphSha256(),
-                  base.preparationInputDigest(),
-                  base.operationalRegionAssignments());
-            });
+        .thenAnswer(call -> {
+          requireOutsideSql();
+          controlledWorldLifecycleReads.incrementAndGet();
+          var requested = (WorldCanonicalInstanceLifecycleEvidence.Request) call.getArgument(0);
+          var base = supplied.world();
+          var expected = base.request();
+          if (!requested.equals(
+              new WorldCanonicalInstanceLifecycleEvidence.Request(
+                  expected.schemaVersion(),
+                  requested.readRequestId(),
+                  expected.targetNamespace(),
+                  expected.canonicalTenantId(),
+                  expected.worldSlug(),
+                  expected.canonicalGameInstanceId(),
+                  expected.playableStateNamespaceId(),
+                  expected.playableStateScope(),
+                  expected.publicProduction(),
+                  expected.controlPlaneRequestId(),
+                  expected.canonicalVersionId(),
+                  expected.expectedDescriptorRequestDigest(),
+                  expected.expectedDescriptorResultDigest(),
+                  expected.expectedReleaseAttestationDigest())))
+            throw new IllegalArgumentException("Controlled World selector changed");
+          return new WorldCanonicalInstanceLifecycleEvidence(
+              requested,
+              base.launchBinding(),
+              base.startLocation(),
+              base.runtimeRoomInstanceId(),
+              base.lifecycleStatus(),
+              base.lifecycleEpoch(),
+              base.rowVersion(),
+              base.captureId(),
+              base.graphSha256(),
+              base.preparationInputDigest(),
+              base.operationalRegionAssignments());
+        });
     var policies = mock(GameDesignPublishedRealmPolicyClient.class);
     when(policies.listPublishedRealmEntryPolicies(any(), any()))
-        .thenAnswer(
-            call -> {
-              requireOutsideSql();
-              if (!source.canonicalTenantId().equals(call.getArgument(0))
-                  || !association.canonicalVersionId().equals(call.getArgument(1)))
-                throw new IllegalArgumentException("Controlled published policy selector changed");
-              return policySet;
-            });
+        .thenAnswer(call -> {
+          requireOutsideSql();
+          if (!source.canonicalTenantId().equals(call.getArgument(0))
+              || !association.canonicalVersionId().equals(call.getArgument(1)))
+            throw new IllegalArgumentException("Controlled published policy selector changed");
+          return policySet;
+        });
     sourceReader =
         new GameSessionCharacterCreatePublicSourceService(
             namespace,
@@ -602,16 +596,15 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
         set.policyCount(),
         set.policySetDigest(),
         set.policies().stream()
-            .map(
-                item ->
-                    new RealmPolicyPublishedEvidence.Policy(
-                        item.policyId(),
-                        new RealmPolicySource.Policy(
-                            item.sourceCommitId(),
-                            item.sourceRevisionId(),
-                            item.logicalRevisionId(),
-                            item.policy()),
-                        item.policyDigest()))
+            .map(item ->
+                new RealmPolicyPublishedEvidence.Policy(
+                    item.policyId(),
+                    new RealmPolicySource.Policy(
+                        item.sourceCommitId(),
+                        item.sourceRevisionId(),
+                        item.logicalRevisionId(),
+                        item.policy()),
+                    item.policyDigest()))
             .toList());
   }
 
@@ -731,61 +724,60 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
             source.provenanceKind(),
             "source_evidence_digest",
             source.evidenceDigest());
-    transactions.executeWithoutResult(
-        ignored -> {
-          var shared = new LinkedHashMap<>(sourceColumns);
-          shared.putAll(
-              map(
-                  "tenant_id",
-                  null,
-                  "playable_state_namespace_id",
-                  playableNamespace,
-                  "canonical_tenant_id",
-                  request.canonicalTenantId(),
-                  "target_namespace",
-                  request.targetNamespace()));
-          insert("gameplay_tenant_shared_playable_state_namespace", shared);
-          var catalog = new LinkedHashMap<>(sourceColumns);
-          catalog.putAll(
-              map(
-                  "target_namespace",
-                  request.targetNamespace(),
-                  "canonical_tenant_id",
-                  request.canonicalTenantId(),
-                  "tenant_slug",
-                  source.tenantSlug(),
-                  "world_slug",
-                  source.worldSlug(),
-                  "realm_id",
-                  realm,
-                  "realm_slug",
-                  request.realmSlug(),
-                  "realm_display_name",
-                  request.realmDisplayName(),
-                  "visible",
-                  true,
-                  "public_production",
-                  true,
-                  "state_scope",
-                  "SHARED",
-                  "playable_state_namespace_id",
-                  playableNamespace,
-                  "character_creation_policy",
-                  "PLAYER_CREATED",
-                  "catalog_revision",
-                  1L,
-                  "creation_request_id",
-                  request.requestId(),
-                  "request_digest",
-                  requestDigest,
-                  "receipt_digest",
-                  receipt,
-                  "source_world_display_name",
-                  source.worldDisplayName(),
-                  "complete_policy_set_evidence",
-                  policyBytes));
-          insert("game_session_canonical_realm_catalog", catalog);
-        });
+    transactions.executeWithoutResult(ignored -> {
+      var shared = new LinkedHashMap<>(sourceColumns);
+      shared.putAll(
+          map(
+              "tenant_id",
+              null,
+              "playable_state_namespace_id",
+              playableNamespace,
+              "canonical_tenant_id",
+              request.canonicalTenantId(),
+              "target_namespace",
+              request.targetNamespace()));
+      insert("gameplay_tenant_shared_playable_state_namespace", shared);
+      var catalog = new LinkedHashMap<>(sourceColumns);
+      catalog.putAll(
+          map(
+              "target_namespace",
+              request.targetNamespace(),
+              "canonical_tenant_id",
+              request.canonicalTenantId(),
+              "tenant_slug",
+              source.tenantSlug(),
+              "world_slug",
+              source.worldSlug(),
+              "realm_id",
+              realm,
+              "realm_slug",
+              request.realmSlug(),
+              "realm_display_name",
+              request.realmDisplayName(),
+              "visible",
+              true,
+              "public_production",
+              true,
+              "state_scope",
+              "SHARED",
+              "playable_state_namespace_id",
+              playableNamespace,
+              "character_creation_policy",
+              "PLAYER_CREATED",
+              "catalog_revision",
+              1L,
+              "creation_request_id",
+              request.requestId(),
+              "request_digest",
+              requestDigest,
+              "receipt_digest",
+              receipt,
+              "source_world_display_name",
+              source.worldDisplayName(),
+              "complete_policy_set_evidence",
+              policyBytes));
+      insert("game_session_canonical_realm_catalog", catalog);
+    });
     return new CanonicalRealmCatalogSnapshot(
         request.targetNamespace(),
         source.canonicalTenantId(),
@@ -819,122 +811,121 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
     var tupleSource = catalog.sourceIntakeReceipt();
     String bindingJson = JSON.writeValueAsString(binding);
     return Objects.requireNonNull(
-        transactions.execute(
-            ignored -> {
-              var runtime =
-                  map(
-                      "tenant_id",
-                      tenantId,
-                      "runtime_version",
-                      Long.toString(descriptor.versionId()),
-                      "owner_account_uuid",
-                      tuple.preAuthorizationTuple().actor().accountId(),
-                      "status",
-                      "STARTING",
-                      "row_version",
-                      0L,
-                      "game_template_id",
-                      descriptor.gameTemplateId(),
-                      "launch_descriptor_id",
-                      descriptor.launchDescriptorId(),
-                      "version_id",
-                      descriptor.versionId(),
-                      "release_bundle_id",
-                      descriptor.releaseBundleId(),
-                      "version_state_epoch",
-                      descriptor.versionStateEpoch(),
-                      "generation_config_revision",
-                      descriptor.generationConfigRevision(),
-                      "run_owned_start_request_id",
-                      tuple.controlPlaneRequestId(),
-                      "run_owned_start_request_digest",
-                      tuple.mutationDigest(),
-                      "run_owned_start_published_release_bundle_ref",
-                      descriptor.publishedReleaseBundleRef(),
-                      "game_instance_uuid",
-                      instance);
-              var fields = new LinkedHashMap<Field<?>, Object>();
-              runtime.forEach((key, value) -> fields.put(DSL.field(DSL.name(key)), value));
-              long allocated =
-                  dsl.insertInto(DSL.table("game_instances"))
-                      .set(fields)
-                      .returning(DSL.field("id", Long.class))
-                      .fetchSingle()
-                      .get("id", Long.class);
-              insert(
-                  "game_session_canonical_instance_launch",
-                  map(
-                      "target_namespace",
-                      catalog.targetNamespace(),
-                      "control_plane_request_id",
-                      tuple.controlPlaneRequestId(),
-                      "game_session_tenant_id",
-                      tenantId,
-                      "canonical_tenant_id",
-                      catalog.tenantId(),
-                      "tenant_association_operation_id",
-                      associationOperation,
-                      "tenant_association_request_id",
-                      tenantSource.requestId(),
-                      "tenant_source_schema_version",
-                      tenantSource.schemaVersion(),
-                      "tenant_source_target_namespace",
-                      tenantSource.targetNamespace(),
-                      "tenant_source_request_id",
-                      tenantSource.requestId(),
-                      "tenant_source_canonical_tenant_id",
-                      tenantSource.canonicalTenantId(),
-                      "tenant_source_game_row_id",
-                      tenantSource.sourceGameRowId(),
-                      "tenant_source_game_tenant_key",
-                      tenantSource.sourceGameTenantKey(),
-                      "tenant_source_provenance_kind",
-                      tenantSource.provenanceKind(),
-                      "tenant_association_kind",
-                      "FRESH_SOURCE_BOUND",
-                      "game_instance_id",
-                      allocated,
-                      "game_instance_uuid",
-                      instance,
-                      "canonical_realm_id",
-                      catalog.realmId(),
-                      "world_slug",
-                      catalog.worldSlug(),
-                      "playable_state_namespace_id",
-                      catalog.playableStateNamespaceId(),
-                      "playable_state_scope",
-                      "SHARED",
-                      "public_production",
-                      true,
-                      "captured_starting_row_version",
-                      0L,
-                      "game_template_id",
-                      descriptor.gameTemplateId(),
-                      "launch_descriptor_id",
-                      descriptor.launchDescriptorId(),
-                      "version_id",
-                      descriptor.versionId(),
-                      "release_bundle_id",
-                      descriptor.releaseBundleId(),
-                      "generation_config_revision",
-                      descriptor.generationConfigRevision(),
-                      "version_state_epoch",
-                      descriptor.versionStateEpoch(),
-                      "complete_launch_binding_evidence",
-                      org.jooq.JSONB.valueOf(bindingJson),
-                      "original_start_session_tuple",
-                      tuple.canonicalBytes(),
-                      "catalog_creation_request_id",
-                      catalog.creationRequestId(),
-                      "catalog_revision",
-                      catalog.catalogRevision(),
-                      "catalog_source_intake_operation_id",
-                      tupleSource.operationId(),
-                      "catalog_source_intake_request_id",
-                      tupleSource.intakeRequestId()));
-              dsl.execute("UPDATE game_instances SET status='RUNNING' WHERE id=?", allocated);
-              return allocated;
-            }));
+        transactions.execute(ignored -> {
+          var runtime =
+              map(
+                  "tenant_id",
+                  tenantId,
+                  "runtime_version",
+                  Long.toString(descriptor.versionId()),
+                  "owner_account_uuid",
+                  tuple.preAuthorizationTuple().actor().accountId(),
+                  "status",
+                  "STARTING",
+                  "row_version",
+                  0L,
+                  "game_template_id",
+                  descriptor.gameTemplateId(),
+                  "launch_descriptor_id",
+                  descriptor.launchDescriptorId(),
+                  "version_id",
+                  descriptor.versionId(),
+                  "release_bundle_id",
+                  descriptor.releaseBundleId(),
+                  "version_state_epoch",
+                  descriptor.versionStateEpoch(),
+                  "generation_config_revision",
+                  descriptor.generationConfigRevision(),
+                  "run_owned_start_request_id",
+                  tuple.controlPlaneRequestId(),
+                  "run_owned_start_request_digest",
+                  tuple.mutationDigest(),
+                  "run_owned_start_published_release_bundle_ref",
+                  descriptor.publishedReleaseBundleRef(),
+                  "game_instance_uuid",
+                  instance);
+          var fields = new LinkedHashMap<Field<?>, Object>();
+          runtime.forEach((key, value) -> fields.put(DSL.field(DSL.name(key)), value));
+          long allocated =
+              dsl.insertInto(DSL.table("game_instances"))
+                  .set(fields)
+                  .returning(DSL.field("id", Long.class))
+                  .fetchSingle()
+                  .get("id", Long.class);
+          insert(
+              "game_session_canonical_instance_launch",
+              map(
+                  "target_namespace",
+                  catalog.targetNamespace(),
+                  "control_plane_request_id",
+                  tuple.controlPlaneRequestId(),
+                  "game_session_tenant_id",
+                  tenantId,
+                  "canonical_tenant_id",
+                  catalog.tenantId(),
+                  "tenant_association_operation_id",
+                  associationOperation,
+                  "tenant_association_request_id",
+                  tenantSource.requestId(),
+                  "tenant_source_schema_version",
+                  tenantSource.schemaVersion(),
+                  "tenant_source_target_namespace",
+                  tenantSource.targetNamespace(),
+                  "tenant_source_request_id",
+                  tenantSource.requestId(),
+                  "tenant_source_canonical_tenant_id",
+                  tenantSource.canonicalTenantId(),
+                  "tenant_source_game_row_id",
+                  tenantSource.sourceGameRowId(),
+                  "tenant_source_game_tenant_key",
+                  tenantSource.sourceGameTenantKey(),
+                  "tenant_source_provenance_kind",
+                  tenantSource.provenanceKind(),
+                  "tenant_association_kind",
+                  "FRESH_SOURCE_BOUND",
+                  "game_instance_id",
+                  allocated,
+                  "game_instance_uuid",
+                  instance,
+                  "canonical_realm_id",
+                  catalog.realmId(),
+                  "world_slug",
+                  catalog.worldSlug(),
+                  "playable_state_namespace_id",
+                  catalog.playableStateNamespaceId(),
+                  "playable_state_scope",
+                  "SHARED",
+                  "public_production",
+                  true,
+                  "captured_starting_row_version",
+                  0L,
+                  "game_template_id",
+                  descriptor.gameTemplateId(),
+                  "launch_descriptor_id",
+                  descriptor.launchDescriptorId(),
+                  "version_id",
+                  descriptor.versionId(),
+                  "release_bundle_id",
+                  descriptor.releaseBundleId(),
+                  "generation_config_revision",
+                  descriptor.generationConfigRevision(),
+                  "version_state_epoch",
+                  descriptor.versionStateEpoch(),
+                  "complete_launch_binding_evidence",
+                  org.jooq.JSONB.valueOf(bindingJson),
+                  "original_start_session_tuple",
+                  tuple.canonicalBytes(),
+                  "catalog_creation_request_id",
+                  catalog.creationRequestId(),
+                  "catalog_revision",
+                  catalog.catalogRevision(),
+                  "catalog_source_intake_operation_id",
+                  tupleSource.operationId(),
+                  "catalog_source_intake_request_id",
+                  tupleSource.intakeRequestId()));
+          dsl.execute("UPDATE game_instances SET status='RUNNING' WHERE id=?", allocated);
+          return allocated;
+        }));
   }
 
   private void seedPriorCommittedAdmission(
@@ -979,122 +970,121 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
             UUID.randomUUID(),
             UUID.randomUUID(),
             "sha256:" + "e".repeat(64));
-    transactions.executeWithoutResult(
-        ignored -> {
-          var pendingAt = dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class);
-          insert(
-              "game_session_canonical_initial_admission_attempt",
-              map(
-                  "target_namespace",
-                  request.targetNamespace(),
-                  "initial_admission_request_id",
-                  requestId,
-                  "request_digest",
-                  digest,
-                  "canonical_tenant_id",
-                  catalog.tenantId(),
-                  "world_slug",
-                  catalog.worldSlug(),
-                  "realm_id",
-                  catalog.realmId(),
-                  "playable_state_namespace_id",
-                  catalog.playableStateNamespaceId(),
-                  "playable_state_scope",
-                  "SHARED",
-                  "canonical_game_instance_id",
-                  association.gameInstanceUuid(),
-                  "game_session_tenant_id",
-                  association.gameSessionTenantId(),
-                  "game_instance_id",
-                  launch.gameInstanceId(),
-                  "canonical_version_id",
-                  version,
-                  "runtime_version_id",
-                  launch.runtimeVersionId(),
-                  "expected_catalog_revision",
-                  1L,
-                  "origin_kind",
-                  request.originKind().name(),
-                  "active_lifecycle_epoch",
-                  epoch,
-                  "hold_id",
-                  request.holdId(),
-                  "hold_fence",
-                  request.holdFence(),
-                  "hold_binding_digest",
-                  request.holdBindingDigest(),
-                  "status",
-                  "PENDING",
-                  "created_at",
-                  pendingAt,
-                  "updated_at",
-                  pendingAt));
-          var now =
-              dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant();
-          long audit =
-              events.appendCanonicalInitialAdmissionOpen(request, catalog, launch, 1L, 1L, now);
-          String columns =
-              "world_slug,realm_slug,world_display_name,realm_display_name,tenant_id,game_instance_id,"
-                  + "pointer_version,visible,requires_character_selection,state_scope,character_creation_policy,last_updated_by,"
-                  + "last_update_reason,created_at,updated_at,public_production_realm,catalog_revision,realm_id,"
-                  + "playable_state_namespace_id,representation_version,target_namespace,canonical_tenant_id,admission_state,"
-                  + "canonical_game_instance_id,canonical_version_id,runtime_version_id,initial_admission_request_id,"
-                  + "initial_admission_request_digest,initial_admission_origin_kind,initial_admission_prior_pointer_version,"
-                  + "initial_admission_active_epoch,initial_admission_hold_id,initial_admission_hold_fence,initial_admission_hold_binding_digest";
-          String eventColumns =
-              columns
-                  .replace("last_updated_by", "actor_principal")
-                  .replace("last_update_reason", "reason")
-                  .replace("created_at", "occurred_at")
-                  .replace("updated_at", "occurred_at");
-          long pointer =
-              dsl.fetchSingle(
-                      "INSERT INTO gameplay_admission_pointer ("
-                          + columns
-                          + ") SELECT "
-                          + eventColumns
-                          + " FROM gameplay_admission_pointer_event WHERE id=? RETURNING id",
-                      audit)
-                  .get("id", Long.class);
-          String proof =
-              binaryFrame(
-                  "gs-canonical-initial-admission-commit-proof/v1",
-                  digest,
-                  requestId,
-                  request.targetNamespace(),
-                  catalog.tenantId().toString(),
-                  catalog.worldSlug(),
-                  catalog.realmId().toString(),
-                  catalog.playableStateNamespaceId().toString(),
-                  "SHARED",
-                  association.gameInstanceUuid().toString(),
-                  version.toString(),
-                  Long.toString(launch.runtimeVersionId()),
-                  Long.toString(epoch),
-                  "1",
-                  request.originKind().name(),
-                  "",
-                  request.holdId().toString(),
-                  request.holdFence().toString(),
-                  request.holdBindingDigest(),
-                  "1",
-                  Long.toString(audit),
-                  "",
-                  "",
-                  "",
-                  now.toString());
-          dsl.execute(
-              "UPDATE game_session_canonical_initial_admission_attempt SET status='COMMITTED',pointer_id=?,"
-                  + "pointer_version=1,audit_event_id=?,commit_proof_digest=?,terminal_at=?::timestamptz,updated_at=?::timestamptz "
-                  + "WHERE target_namespace=? AND initial_admission_request_id=?",
-              pointer,
-              audit,
-              proof,
-              now.atOffset(ZoneOffset.UTC),
-              now.atOffset(ZoneOffset.UTC),
+    transactions.executeWithoutResult(ignored -> {
+      var pendingAt = dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class);
+      insert(
+          "game_session_canonical_initial_admission_attempt",
+          map(
+              "target_namespace",
               request.targetNamespace(),
-              requestId);
-        });
+              "initial_admission_request_id",
+              requestId,
+              "request_digest",
+              digest,
+              "canonical_tenant_id",
+              catalog.tenantId(),
+              "world_slug",
+              catalog.worldSlug(),
+              "realm_id",
+              catalog.realmId(),
+              "playable_state_namespace_id",
+              catalog.playableStateNamespaceId(),
+              "playable_state_scope",
+              "SHARED",
+              "canonical_game_instance_id",
+              association.gameInstanceUuid(),
+              "game_session_tenant_id",
+              association.gameSessionTenantId(),
+              "game_instance_id",
+              launch.gameInstanceId(),
+              "canonical_version_id",
+              version,
+              "runtime_version_id",
+              launch.runtimeVersionId(),
+              "expected_catalog_revision",
+              1L,
+              "origin_kind",
+              request.originKind().name(),
+              "active_lifecycle_epoch",
+              epoch,
+              "hold_id",
+              request.holdId(),
+              "hold_fence",
+              request.holdFence(),
+              "hold_binding_digest",
+              request.holdBindingDigest(),
+              "status",
+              "PENDING",
+              "created_at",
+              pendingAt,
+              "updated_at",
+              pendingAt));
+      var now =
+          dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant();
+      long audit =
+          events.appendCanonicalInitialAdmissionOpen(request, catalog, launch, 1L, 1L, now);
+      String columns =
+          "world_slug,realm_slug,world_display_name,realm_display_name,tenant_id,game_instance_id,"
+              + "pointer_version,visible,requires_character_selection,state_scope,character_creation_policy,last_updated_by,"
+              + "last_update_reason,created_at,updated_at,public_production_realm,catalog_revision,realm_id,"
+              + "playable_state_namespace_id,representation_version,target_namespace,canonical_tenant_id,admission_state,"
+              + "canonical_game_instance_id,canonical_version_id,runtime_version_id,initial_admission_request_id,"
+              + "initial_admission_request_digest,initial_admission_origin_kind,initial_admission_prior_pointer_version,"
+              + "initial_admission_active_epoch,initial_admission_hold_id,initial_admission_hold_fence,initial_admission_hold_binding_digest";
+      String eventColumns =
+          columns
+              .replace("last_updated_by", "actor_principal")
+              .replace("last_update_reason", "reason")
+              .replace("created_at", "occurred_at")
+              .replace("updated_at", "occurred_at");
+      long pointer =
+          dsl.fetchSingle(
+                  "INSERT INTO gameplay_admission_pointer ("
+                      + columns
+                      + ") SELECT "
+                      + eventColumns
+                      + " FROM gameplay_admission_pointer_event WHERE id=? RETURNING id",
+                  audit)
+              .get("id", Long.class);
+      String proof =
+          binaryFrame(
+              "gs-canonical-initial-admission-commit-proof/v1",
+              digest,
+              requestId,
+              request.targetNamespace(),
+              catalog.tenantId().toString(),
+              catalog.worldSlug(),
+              catalog.realmId().toString(),
+              catalog.playableStateNamespaceId().toString(),
+              "SHARED",
+              association.gameInstanceUuid().toString(),
+              version.toString(),
+              Long.toString(launch.runtimeVersionId()),
+              Long.toString(epoch),
+              "1",
+              request.originKind().name(),
+              "",
+              request.holdId().toString(),
+              request.holdFence().toString(),
+              request.holdBindingDigest(),
+              "1",
+              Long.toString(audit),
+              "",
+              "",
+              "",
+              now.toString());
+      dsl.execute(
+          "UPDATE game_session_canonical_initial_admission_attempt SET status='COMMITTED',pointer_id=?,"
+              + "pointer_version=1,audit_event_id=?,commit_proof_digest=?,terminal_at=?::timestamptz,updated_at=?::timestamptz "
+              + "WHERE target_namespace=? AND initial_admission_request_id=?",
+          pointer,
+          audit,
+          proof,
+          now.atOffset(ZoneOffset.UTC),
+          now.atOffset(ZoneOffset.UTC),
+          request.targetNamespace(),
+          requestId);
+    });
   }
 
   private void insert(String table, Map<String, Object> values) {

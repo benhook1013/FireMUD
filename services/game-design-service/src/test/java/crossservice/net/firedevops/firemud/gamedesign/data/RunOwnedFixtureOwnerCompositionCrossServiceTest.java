@@ -111,10 +111,9 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
     var applicationNameOrigin =
         environment.getPropertySources().stream()
             .filter(source -> source.containsProperty("spring.application.name"))
-            .map(
-                source ->
-                    org.springframework.boot.origin.OriginLookup.getOrigin(
-                        source, "spring.application.name"))
+            .map(source ->
+                org.springframework.boot.origin.OriginLookup.getOrigin(
+                    source, "spring.application.name"))
             .filter(java.util.Objects::nonNull)
             .findFirst()
             .orElseThrow(
@@ -337,19 +336,18 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
       org.mockito.Mockito.doReturn(java.util.Optional.of(changedSource))
           .when(authoredWorldSourceRepository)
           .read(any(UUID.class), any(UUID.class), any(String.class), any(String.class));
-      org.assertj.core.api.Assertions.assertThatThrownBy(
-              () ->
-                  withControlledGameSessionPeer(
-                      fixture,
-                      () ->
-                          controlledInstallation.withLaunchOwners(
-                              starting.gameInstanceUuid(),
-                              () ->
-                                  ReflectionTestUtils.invokeMethod(
-                                      initialCommands,
-                                      PREPARE_RUN_OWNED_FIXTURE,
-                                      request,
-                                      worldEvidence))))
+      org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+              withControlledGameSessionPeer(
+                  fixture,
+                  () ->
+                      controlledInstallation.withLaunchOwners(
+                          starting.gameInstanceUuid(),
+                          () ->
+                              ReflectionTestUtils.invokeMethod(
+                                  initialCommands,
+                                  PREPARE_RUN_OWNED_FIXTURE,
+                                  request,
+                                  worldEvidence))))
           .isInstanceOf(RuntimeException.class);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(emptyWorldRows);
       org.mockito.Mockito.verify(authoredWorldSourceRepository)
@@ -512,19 +510,18 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               request.publishedReleaseBundleRef(),
               request.versionStateEpoch(),
               request.remapSetId());
-      org.assertj.core.api.Assertions.assertThatThrownBy(
-              () ->
-                  withControlledGameSessionPeer(
-                      fixture,
-                      () ->
-                          controlledInstallation.withLaunchOwners(
-                              starting.gameInstanceUuid(),
-                              () ->
-                                  ReflectionTestUtils.invokeMethod(
-                                      initialCommands,
-                                      PREPARE_RUN_OWNED_FIXTURE,
-                                      mismatchedRequest,
-                                      worldEvidence))))
+      org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+              withControlledGameSessionPeer(
+                  fixture,
+                  () ->
+                      controlledInstallation.withLaunchOwners(
+                          starting.gameInstanceUuid(),
+                          () ->
+                              ReflectionTestUtils.invokeMethod(
+                                  initialCommands,
+                                  PREPARE_RUN_OWNED_FIXTURE,
+                                  mismatchedRequest,
+                                  worldEvidence))))
           .isInstanceOf(IllegalArgumentException.class);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(worldRows);
       org.mockito.Mockito.verifyNoInteractions(entityClient);
@@ -597,10 +594,9 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
       var otherGsLeaf =
           issueFixedReadLeaf(fixture, "different-game-session-client", SESSION_URI_SAN, false);
       var wrongSessionCertificate = readCertificate(otherGsLeaf.certificate());
-      org.assertj.core.api.Assertions.assertThatThrownBy(
-              () ->
-                  withControlledPeer(
-                      wrongSessionCertificate, replayProvider::requireAuthenticatedEvidence))
+      org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+              withControlledPeer(
+                  wrongSessionCertificate, replayProvider::requireAuthenticatedEvidence))
           .isInstanceOf(
               RunOwnedCanonicalWorldLaunchEvidenceProvider
                   .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class);

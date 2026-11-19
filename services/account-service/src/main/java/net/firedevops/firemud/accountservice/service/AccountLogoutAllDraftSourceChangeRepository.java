@@ -323,16 +323,15 @@ public final class AccountLogoutAllDraftSourceChangeRepository {
     return latest
         .latestEvent()
         .map(Event::payload)
-        .orElseGet(
-            () ->
-                framed(
-                    List.of(
-                        "account-draft-source-baseline/v1",
-                        account.getAccountUuid().toString(),
-                        Long.toString(current.generation()),
-                        Long.toString(current.sourceVersion()),
-                        stream,
-                        "0")));
+        .orElseGet(() ->
+            framed(
+                List.of(
+                    "account-draft-source-baseline/v1",
+                    account.getAccountUuid().toString(),
+                    Long.toString(current.generation()),
+                    Long.toString(current.sourceVersion()),
+                    stream,
+                    "0")));
   }
 
   private static byte[] requestBytes(

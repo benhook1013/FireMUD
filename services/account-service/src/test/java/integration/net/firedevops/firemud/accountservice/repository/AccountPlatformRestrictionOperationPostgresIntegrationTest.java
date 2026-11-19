@@ -68,15 +68,12 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     assertThat(
             context.dsl().fetchCount(DSL.table("account_platform_restriction_current_projections")))
         .isZero();
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            restrictionRepository(context.dsl())
-                                .readCurrent(
-                                    account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK)))
         .isInstanceOf(
             AccountPlatformRestrictionOperationRepository.RestrictionProjectionUnavailableException
                 .class);
@@ -93,32 +90,30 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     AccountPlatformRestrictionMutationRequest fabricated =
         context
             .transaction()
-            .execute(
-                status -> {
-                  var birth =
-                      new AccountPlatformRestrictionBirthRepository(context.dsl())
-                          .readCurrentBirthSource(account.getAccountUuid());
-                  var category = birth.accountSecurityLock();
-                  return new AccountPlatformRestrictionMutationRequest(
-                      UUID.randomUUID(),
-                      account.getAccountUuid(),
-                      Category.ACCOUNT_SECURITY_LOCK,
-                      birth.currentAuthority().generation(),
-                      birth.currentAuthority().sourceVersion(),
-                      category.revision(),
-                      category.enforcementEpoch(),
-                      category.resultId(),
-                      RestrictionState.RESTRICTED,
-                      SourceKind.ACCOUNT_SECURITY_POLICY,
-                      UUID.randomUUID(),
-                      "sha256:" + "0".repeat(64));
-                });
+            .execute(status -> {
+              var birth =
+                  new AccountPlatformRestrictionBirthRepository(context.dsl())
+                      .readCurrentBirthSource(account.getAccountUuid());
+              var category = birth.accountSecurityLock();
+              return new AccountPlatformRestrictionMutationRequest(
+                  UUID.randomUUID(),
+                  account.getAccountUuid(),
+                  Category.ACCOUNT_SECURITY_LOCK,
+                  birth.currentAuthority().generation(),
+                  birth.currentAuthority().sourceVersion(),
+                  category.revision(),
+                  category.enforcementEpoch(),
+                  category.resultId(),
+                  RestrictionState.RESTRICTED,
+                  SourceKind.ACCOUNT_SECURITY_POLICY,
+                  UUID.randomUUID(),
+                  "sha256:" + "0".repeat(64));
+            });
 
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(status -> restrictionRepository(context.dsl()).commit(fabricated)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status -> restrictionRepository(context.dsl()).commit(fabricated)))
         .isInstanceOf(
             AccountPlatformRestrictionOperationRepository.OwnerAuthorizationUnresolvedException
                 .class);
@@ -127,15 +122,12 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     assertThat(
             context.dsl().fetchCount(DSL.table("account_platform_restriction_current_projections")))
         .isZero();
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            restrictionRepository(context.dsl())
-                                .readCurrent(
-                                    account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK)))
         .isInstanceOf(
             AccountPlatformRestrictionOperationRepository.RestrictionProjectionUnavailableException
                 .class);
@@ -175,15 +167,12 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     assertThat(
             context.dsl().fetchCount(DSL.table("account_platform_restriction_current_projections")))
         .isZero();
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            restrictionRepository(context.dsl())
-                                .readCurrent(
-                                    account.getAccountUuid(), Category.PLATFORM_ACCESS_BAN)))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.PLATFORM_ACCESS_BAN)))
         .isInstanceOf(
             AccountPlatformRestrictionOperationRepository.RestrictionProjectionUnavailableException
                 .class);
@@ -255,10 +244,9 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     assertThat(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        restrictionRepository(context.dsl())
-                            .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
+                .execute(status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
                 .state())
         .isEqualTo(RestrictionState.NONRESTRICTED);
 
@@ -267,10 +255,9 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     assertThat(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        restrictionRepository(context.dsl())
-                            .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
+                .execute(status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
                 .revision())
         .isEqualTo(3L);
 
@@ -280,10 +267,9 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     assertThat(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        restrictionRepository(context.dsl())
-                            .readCurrent(account.getAccountUuid(), Category.PLATFORM_ACCESS_BAN))
+                .execute(status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.PLATFORM_ACCESS_BAN))
                 .state())
         .isEqualTo(RestrictionState.RESTRICTED);
   }
@@ -302,10 +288,9 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     assertThat(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        restrictionRepository(context.dsl())
-                            .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
+                .execute(status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
                 .state())
         .isEqualTo(RestrictionState.RESTRICTED);
 
@@ -315,10 +300,9 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     assertThat(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        restrictionRepository(context.dsl())
-                            .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
+                .execute(status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
                 .state())
         .isEqualTo(RestrictionState.NONRESTRICTED);
   }
@@ -361,10 +345,9 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     commitDraft(context, account, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.RESTRICTED);
     Map<String, Object> before = restrictionWriteSnapshot(context.dsl());
 
-    assertThatThrownBy(
-            () ->
-                transitionLifecycleWithLegacyAuthorityReceipt(
-                    context, account, AccountLifecycleState.DEACTIVATED_PENDING_DELETE))
+    assertThatThrownBy(() ->
+            transitionLifecycleWithLegacyAuthorityReceipt(
+                context, account, AccountLifecycleState.DEACTIVATED_PENDING_DELETE))
         .isInstanceOf(TransactionSystemException.class)
         .rootCause()
         .isInstanceOf(org.postgresql.util.PSQLException.class)
@@ -390,10 +373,9 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     var retainedProjection =
         context
             .transaction()
-            .execute(
-                status ->
-                    restrictionRepository(context.dsl())
-                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK));
+            .execute(status ->
+                restrictionRepository(context.dsl())
+                    .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK));
     assertThat(retainedProjection.state()).isEqualTo(RestrictionState.NONRESTRICTED);
     assertThat(retainedProjection.revision()).isEqualTo(4L);
 
@@ -403,10 +385,9 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     var pendingDeletionProjection =
         context
             .transaction()
-            .execute(
-                status ->
-                    restrictionRepository(context.dsl())
-                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK));
+            .execute(status ->
+                restrictionRepository(context.dsl())
+                    .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK));
     assertThat(pendingDeletionProjection).isEqualTo(retainedProjection);
 
     transitionLifecycleWithLegacyAuthorityReceipt(context, account, AccountLifecycleState.DELETED);
@@ -414,10 +395,9 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     var deletedProjection =
         context
             .transaction()
-            .execute(
-                status ->
-                    restrictionRepository(context.dsl())
-                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK));
+            .execute(status ->
+                restrictionRepository(context.dsl())
+                    .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK));
     assertThat(deletedProjection).isEqualTo(retainedProjection);
   }
 
@@ -433,23 +413,21 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<?> lifecycleTransition =
-          executor.submit(
-              () ->
-                  transitionLifecycleWithLegacyAuthorityReceipt(
-                      context,
-                      account,
-                      AccountLifecycleState.DEACTIVATED_PENDING_DELETE,
-                      lifecycleReceiptReady,
-                      allowLifecycleCommit));
+          executor.submit(() ->
+              transitionLifecycleWithLegacyAuthorityReceipt(
+                  context,
+                  account,
+                  AccountLifecycleState.DEACTIVATED_PENDING_DELETE,
+                  lifecycleReceiptReady,
+                  allowLifecycleCommit));
       assertThat(lifecycleReceiptReady.await(10, TimeUnit.SECONDS)).isTrue();
 
       CountDownLatch restrictionAttemptStarted = new CountDownLatch(1);
       Future<?> restrictedDraft =
-          executor.submit(
-              () -> {
-                restrictionAttemptStarted.countDown();
-                attemptRestrictedDraft(context, account);
-              });
+          executor.submit(() -> {
+            restrictionAttemptStarted.countDown();
+            attemptRestrictedDraft(context, account);
+          });
       assertThat(restrictionAttemptStarted.await(10, TimeUnit.SECONDS)).isTrue();
       allowLifecycleCommit.countDown();
       lifecycleTransition.get(10, TimeUnit.SECONDS);
@@ -486,28 +464,24 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
             status -> new AccountRepository(projectionContext.dsl()).save(projectionAccount));
     Map<String, Object> projectionBefore = restrictionWriteSnapshot(projectionContext.dsl());
 
-    assertThatThrownBy(
-            () ->
-                projectionContext
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          commitDraft(
-                              projectionContext,
-                              projectionAccount,
-                              Category.ACCOUNT_SECURITY_LOCK,
-                              RestrictionState.NONRESTRICTED);
-                          transitionLifecycleWithLegacyAuthorityReceipt(
-                              projectionContext,
-                              projectionAccount,
-                              AccountLifecycleState.SECURITY_LOCKED);
-                          projectionContext
-                              .dsl()
-                              .execute(
-                                  "SET CONSTRAINTS "
-                                      + "account_platform_restriction_current_lifecycle_consistency "
-                                      + "IMMEDIATE");
-                        }))
+    assertThatThrownBy(() ->
+            projectionContext
+                .transaction()
+                .executeWithoutResult(status -> {
+                  commitDraft(
+                      projectionContext,
+                      projectionAccount,
+                      Category.ACCOUNT_SECURITY_LOCK,
+                      RestrictionState.NONRESTRICTED);
+                  transitionLifecycleWithLegacyAuthorityReceipt(
+                      projectionContext, projectionAccount, AccountLifecycleState.SECURITY_LOCKED);
+                  projectionContext
+                      .dsl()
+                      .execute(
+                          "SET CONSTRAINTS "
+                              + "account_platform_restriction_current_lifecycle_consistency "
+                              + "IMMEDIATE");
+                }))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Current Account security-lock projection and lifecycle disagree");
     assertThat(restrictionWriteSnapshot(projectionContext.dsl()))
@@ -523,21 +497,19 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
         accountContext, account, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED);
     Map<String, Object> accountBefore = restrictionWriteSnapshot(accountContext.dsl());
 
-    assertThatThrownBy(
-            () ->
-                accountContext
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          transitionLifecycleWithLegacyAuthorityReceipt(
-                              accountContext, account, AccountLifecycleState.SECURITY_LOCKED);
-                          accountContext
-                              .dsl()
-                              .execute(
-                                  "SET CONSTRAINTS "
-                                      + "account_platform_restriction_account_lifecycle_consistency "
-                                      + "IMMEDIATE");
-                        }))
+    assertThatThrownBy(() ->
+            accountContext
+                .transaction()
+                .executeWithoutResult(status -> {
+                  transitionLifecycleWithLegacyAuthorityReceipt(
+                      accountContext, account, AccountLifecycleState.SECURITY_LOCKED);
+                  accountContext
+                      .dsl()
+                      .execute(
+                          "SET CONSTRAINTS "
+                              + "account_platform_restriction_account_lifecycle_consistency "
+                              + "IMMEDIATE");
+                }))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Current Account security-lock projection and lifecycle disagree");
     assertThat(restrictionWriteSnapshot(accountContext.dsl()))
@@ -549,63 +521,62 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
       Context context, Account account, Category category, RestrictionState state) {
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              var birthSource = new AccountPlatformRestrictionBirthRepository(context.dsl());
-              var birth = birthSource.readCurrentBirthSource(account.getAccountUuid());
-              var categoryBirth =
-                  category == Category.ACCOUNT_SECURITY_LOCK
-                      ? birth.accountSecurityLock()
-                      : birth.platformAccessBan();
-              var currentProjection =
-                  context
-                      .dsl()
-                      .fetchOne(
-                          "SELECT revision, enforcement_epoch, result_id FROM "
-                              + "account_platform_restriction_current_projections "
-                              + "WHERE account_uuid = ? AND category = ?",
-                          account.getAccountUuid(),
-                          category.storageValue());
-              long expectedRevision =
-                  currentProjection == null
-                      ? categoryBirth.revision()
-                      : currentProjection.get("revision", Long.class);
-              long expectedEpoch =
-                  currentProjection == null
-                      ? categoryBirth.enforcementEpoch()
-                      : currentProjection.get("enforcement_epoch", Long.class);
-              UUID expectedResult =
-                  currentProjection == null
-                      ? categoryBirth.resultId()
-                      : currentProjection.get("result_id", UUID.class);
-              var sourceKind =
-                  category == Category.ACCOUNT_SECURITY_LOCK
-                      ? (state == RestrictionState.RESTRICTED
-                          ? SourceKind.ACCOUNT_SECURITY_POLICY
-                          : SourceKind.ACCOUNT_SECURITY_RECOVERY)
-                      : SourceKind.LOGGING_ADMIN_MODERATION;
-              var request =
-                  new AccountPlatformRestrictionMutationRequest(
-                      UUID.randomUUID(),
+        .executeWithoutResult(status -> {
+          var birthSource = new AccountPlatformRestrictionBirthRepository(context.dsl());
+          var birth = birthSource.readCurrentBirthSource(account.getAccountUuid());
+          var categoryBirth =
+              category == Category.ACCOUNT_SECURITY_LOCK
+                  ? birth.accountSecurityLock()
+                  : birth.platformAccessBan();
+          var currentProjection =
+              context
+                  .dsl()
+                  .fetchOne(
+                      "SELECT revision, enforcement_epoch, result_id FROM "
+                          + "account_platform_restriction_current_projections "
+                          + "WHERE account_uuid = ? AND category = ?",
                       account.getAccountUuid(),
-                      category,
-                      birth.currentAuthority().generation(),
-                      birth.currentAuthority().sourceVersion(),
-                      expectedRevision,
-                      expectedEpoch,
-                      expectedResult,
-                      state,
-                      sourceKind,
-                      UUID.randomUUID(),
-                      "sha256:" + "1".repeat(64));
-              try {
-                var repository = restrictionRepository(context.dsl());
-                invokeDraftPersistence(repository, request);
-              } catch (ReflectiveOperationException failure) {
-                throw new IllegalStateException(
-                    "Could not invoke the closed restriction draft", failure);
-              }
-            });
+                      category.storageValue());
+          long expectedRevision =
+              currentProjection == null
+                  ? categoryBirth.revision()
+                  : currentProjection.get("revision", Long.class);
+          long expectedEpoch =
+              currentProjection == null
+                  ? categoryBirth.enforcementEpoch()
+                  : currentProjection.get("enforcement_epoch", Long.class);
+          UUID expectedResult =
+              currentProjection == null
+                  ? categoryBirth.resultId()
+                  : currentProjection.get("result_id", UUID.class);
+          var sourceKind =
+              category == Category.ACCOUNT_SECURITY_LOCK
+                  ? (state == RestrictionState.RESTRICTED
+                      ? SourceKind.ACCOUNT_SECURITY_POLICY
+                      : SourceKind.ACCOUNT_SECURITY_RECOVERY)
+                  : SourceKind.LOGGING_ADMIN_MODERATION;
+          var request =
+              new AccountPlatformRestrictionMutationRequest(
+                  UUID.randomUUID(),
+                  account.getAccountUuid(),
+                  category,
+                  birth.currentAuthority().generation(),
+                  birth.currentAuthority().sourceVersion(),
+                  expectedRevision,
+                  expectedEpoch,
+                  expectedResult,
+                  state,
+                  sourceKind,
+                  UUID.randomUUID(),
+                  "sha256:" + "1".repeat(64));
+          try {
+            var repository = restrictionRepository(context.dsl());
+            invokeDraftPersistence(repository, request);
+          } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException(
+                "Could not invoke the closed restriction draft", failure);
+          }
+        });
   }
 
   private static long currentRevision(Context context, Account account, Category category) {
@@ -643,44 +614,43 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
       CountDownLatch allowCommit) {
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              AccountsRecord beforeRecord =
-                  context
-                      .dsl()
-                      .selectFrom(ACCOUNTS)
-                      .where(ACCOUNTS.ACCOUNT_UUID.eq(account.getAccountUuid()))
-                      .fetchOne();
-              if (beforeRecord == null) {
-                throw new AssertionError("Expected Account before legacy lifecycle update");
-              }
+        .executeWithoutResult(status -> {
+          AccountsRecord beforeRecord =
               context
                   .dsl()
-                  .execute(
-                      "UPDATE accounts SET lifecycle_state = ? WHERE account_uuid = ?",
-                      nextLifecycle.storageValue(),
-                      account.getAccountUuid());
-              AccountsRecord afterRecord =
-                  context
-                      .dsl()
-                      .selectFrom(ACCOUNTS)
-                      .where(ACCOUNTS.ACCOUNT_UUID.eq(account.getAccountUuid()))
-                      .fetchOne();
-              if (afterRecord == null) {
-                throw new AssertionError("Expected Account after legacy lifecycle update");
-              }
-              var evidence =
-                  legacyAccountUpdateEvidence(
-                      beforeRecord, afterRecord, account.getId(), account.getAccountUuid());
-              var generations = new AccountAuthorityGenerationRepository(context.dsl());
-              var outbox = new AccountAuthorityOutboxRepository(context.dsl());
-              new AccountAuthoritySourceEvidenceRepository(context.dsl(), generations, outbox)
-                  .recordAccountUpdate(evidence);
-              if (receiptReady != null && allowCommit != null) {
-                receiptReady.countDown();
-                awaitCommitGate(allowCommit);
-              }
-            });
+                  .selectFrom(ACCOUNTS)
+                  .where(ACCOUNTS.ACCOUNT_UUID.eq(account.getAccountUuid()))
+                  .fetchOne();
+          if (beforeRecord == null) {
+            throw new AssertionError("Expected Account before legacy lifecycle update");
+          }
+          context
+              .dsl()
+              .execute(
+                  "UPDATE accounts SET lifecycle_state = ? WHERE account_uuid = ?",
+                  nextLifecycle.storageValue(),
+                  account.getAccountUuid());
+          AccountsRecord afterRecord =
+              context
+                  .dsl()
+                  .selectFrom(ACCOUNTS)
+                  .where(ACCOUNTS.ACCOUNT_UUID.eq(account.getAccountUuid()))
+                  .fetchOne();
+          if (afterRecord == null) {
+            throw new AssertionError("Expected Account after legacy lifecycle update");
+          }
+          var evidence =
+              legacyAccountUpdateEvidence(
+                  beforeRecord, afterRecord, account.getId(), account.getAccountUuid());
+          var generations = new AccountAuthorityGenerationRepository(context.dsl());
+          var outbox = new AccountAuthorityOutboxRepository(context.dsl());
+          new AccountAuthoritySourceEvidenceRepository(context.dsl(), generations, outbox)
+              .recordAccountUpdate(evidence);
+          if (receiptReady != null && allowCommit != null) {
+            receiptReady.countDown();
+            awaitCommitGate(allowCommit);
+          }
+        });
   }
 
   private static void awaitCommitGate(CountDownLatch allowCommit) {
@@ -737,15 +707,14 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
             "sha256:" + "2".repeat(64));
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              try {
-                invokeDraftPersistence(restrictionRepository(context.dsl()), request);
-              } catch (ReflectiveOperationException failure) {
-                throw new IllegalStateException(
-                    "Could not invoke the closed restriction draft", failure);
-              }
-            });
+        .executeWithoutResult(status -> {
+          try {
+            invokeDraftPersistence(restrictionRepository(context.dsl()), request);
+          } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException(
+                "Could not invoke the closed restriction draft", failure);
+          }
+        });
   }
 
   private static void invokeDraftPersistence(

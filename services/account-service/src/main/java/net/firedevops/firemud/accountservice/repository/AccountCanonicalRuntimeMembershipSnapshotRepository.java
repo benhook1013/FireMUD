@@ -257,12 +257,11 @@ public final class AccountCanonicalRuntimeMembershipSnapshotRepository {
             currentSources
                 .account()
                 .accountSecurityCutoff()
-                .map(
-                    cutoff ->
-                        new AccountSecurityCutoff(
-                            cutoff.accountAuthorityGeneration(),
-                            cutoff.outboxStreamKey(),
-                            cutoff.outboxSequence())),
+                .map(cutoff ->
+                    new AccountSecurityCutoff(
+                        cutoff.accountAuthorityGeneration(),
+                        cutoff.outboxStreamKey(),
+                        cutoff.outboxSequence())),
             Optional.of(
                 Map.of(
                     tenantUuid.toString(),

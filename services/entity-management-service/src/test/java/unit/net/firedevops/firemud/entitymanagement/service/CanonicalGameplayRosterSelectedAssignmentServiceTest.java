@@ -273,11 +273,9 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
     CanonicalGameplayRosterSelectedAssignmentService service =
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
 
-    assertThatThrownBy(
-            () ->
-                service.read(
-                    request(
-                        withPolicy(target(), CanonicalGameplayRosterEntryPolicy.AUTO_PROVISIONED))))
+    assertThatThrownBy(() ->
+            service.read(
+                request(withPolicy(target(), CanonicalGameplayRosterEntryPolicy.AUTO_PROVISIONED))))
         .isInstanceOf(UnsupportedOperationException.class);
     verifyNoInteractions(ownerPort, repository);
   }
