@@ -7,11 +7,20 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.protocol.CommandType;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -473,5 +482,217 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     assertThat(admin.type(ascii(capacityKey))).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(sqlBefore);
     assertThat(physicalImage()).isEqualTo(physicalBefore);
+  }
+
+  @Test
+  void acknowledgedOriginInstallResumesExactFinalWithoutRedisInstallReplay() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var origin = prepareControlledOrigin(source);
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var bound = template.bindCapacityExecution(controlledCapacity)) {
+      capacityOwner()
+          .authorizeWithOrigin(
+              source, bound, account, issuer, controlledCapacity, deadline(), origin);
+      var assignment = tags.assignmentForTransition(fixture.transitionId());
+      var executionKey = ascii(capacityKey(assignment));
+      assertThat(admin.hget(executionKey, ascii("state"))).containsExactly(ascii("AUTHORIZED"));
+      assertThat(admin.get(ascii(installation.sessionKey())))
+          .containsExactly(source.candidate().canonicalBytes());
+      var executionBeforeRetry =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT status, xmin::text AS revision FROM"
+                      + " game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                  controlledCapacity.digest());
+      assertThat(executionBeforeRetry.get("status", String.class)).isEqualTo("AUTHORIZED");
+
+      // A recreated owner resumes after acknowledged INSTALL and before the first FINAL.
+      var restarted = capacityOwner();
+      String retainedBeforeOrdinary = sqlImage();
+      Map<String, String> physicalBeforeOrdinary = physicalImage();
+      assertThatThrownBy(() -> restarted.requireOrdinaryAdmission(origin.request(), deadline()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact capacity origin custody unavailable");
+      assertThatThrownBy(
+              () ->
+                  restarted.authorize(
+                      source, bound, account, issuer, controlledCapacity, deadline()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact capacity origin custody unavailable");
+      assertThat(sqlImage()).isEqualTo(retainedBeforeOrdinary);
+      assertThat(physicalImage()).isEqualTo(physicalBeforeOrdinary);
+      admin.aclSetuser(PRINCIPAL, new AclSetuserArgs().removeCommand(CommandType.EVALSHA));
+      try {
+        byte[] originKey = ascii(origin.redisKey());
+        admin.pexpire(originKey, 60_000);
+        assertThatThrownBy(
+                () ->
+                    restarted.authorizeWithOrigin(
+                        source, bound, account, issuer, controlledCapacity, deadline(), origin))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(admin.persist(originKey)).isTrue();
+        restarted.authorizeWithOrigin(
+            source, bound, account, issuer, controlledCapacity, deadline(), origin);
+      } finally {
+        admin.aclSetuser(PRINCIPAL, new AclSetuserArgs().addCommand(CommandType.EVALSHA));
+      }
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status, xmin::text AS revision FROM"
+                          + " game_session_original_new_capacity_execution WHERE execution_digest ="
+                          + " ?",
+                      controlledCapacity.digest()))
+          .isEqualTo(executionBeforeRetry);
+      regionBinding.owner().revalidateOriginalNewFinalBinding(regionBinding.installation(), source);
+      var finalOwner =
+          restarted.bindFinalOwnerToOrigin(
+              new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                  ownerClient, catalog, CLOCK, tags),
+              origin,
+              deadline());
+      try (var actual =
+          finalOwner.finalizeOriginalNewOnce(
+              source, bound, account, issuer, controlledCapacity, deadline())) {
+        inventory.commitOriginalNewFinalAdmission(actual);
+        assertThat(admin.get(ascii(installation.sessionKey())))
+            .containsExactly(actual.exactCanonicalBytes());
+        assertThat(admin.hget(executionKey, ascii("state"))).containsExactly(ascii("COMMITTED"));
+      }
+    }
+  }
+
+  @Test
+  void expiredRedisBudgetCannotDispatchOriginWithLongerCallerDeadline() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var origin = prepareControlledOrigin(source);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    Clock skewedClock = Clock.offset(CLOCK, Duration.ofSeconds(-10));
+    var account = controlledAccountOpen(skewedClock);
+    var issuer = issuerOpen();
+    var skewedOwner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            fixture.dsl(), ownerClient, catalog, skewedClock, tags);
+    long callerDeadline = CLOCK.millis() + 30_000L;
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var bound = template.bindCapacityExecution(controlledCapacity)) {
+      assertThatThrownBy(
+              () ->
+                  skewedOwner.authorizeWithOrigin(
+                      source, bound, account, issuer, controlledCapacity, callerDeadline, origin))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThat(admin.hget(ascii(origin.redisKey()), ascii("state"))).containsExactly(ascii("OPEN"));
+    assertThat(admin.exists(ascii(capacityKey(assignment)))).isZero();
+    var repository = new CanonicalGameplayCapacityOriginRepository(fixture.dsl());
+    assertThat(repository.read(origin).state())
+        .isEqualTo(CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE"
+                        + " execution_digest=?",
+                    controlledCapacity.digest())
+                .get(0, String.class))
+        .isEqualTo("INSTALL_DISPATCHED");
+  }
+
+  @Test
+  void originRecoveryUsesTheTwoBackgroundSlotsAndTheFourOperationCeiling() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var origin = prepareControlledOrigin(source);
+    var owner = capacityOwner();
+    var permit = owner.beginOriginObservation(origin.request(), deadline());
+    var refusal =
+        new AccountCapacityOriginResolution(
+            origin.request(),
+            AccountCapacityOriginResolution.Status.NO_ACCEPT_RETAINED,
+            null,
+            UUID.randomUUID());
+    var backgroundEntered = new CountDownLatch(2);
+    var foregroundEntered = new CountDownLatch(2);
+    var release = new CompletableFuture<Void>();
+    try (var callers = Executors.newFixedThreadPool(4)) {
+      java.util.function.Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, Boolean>
+          background =
+              budget -> {
+                backgroundEntered.countDown();
+                release.join();
+                return true;
+              };
+      java.util.function.Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, Boolean>
+          foreground =
+              budget -> {
+                foregroundEntered.countDown();
+                release.join();
+                return true;
+              };
+      var firstBackground =
+          callers.submit(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                      CLOCK, deadline(), background));
+      var secondBackground =
+          callers.submit(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                      CLOCK, deadline(), background));
+      try {
+        assertThat(backgroundEntered.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> owner.beginOriginObservation(origin.request(), deadline()))
+            .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> owner.receiveOriginResolution(refusal, permit, deadline()))
+            .isInstanceOf(IllegalStateException.class);
+        var firstForeground =
+            callers.submit(
+                () ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                        CLOCK, deadline(), foreground));
+        var secondForeground =
+            callers.submit(
+                () ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                        CLOCK, deadline(), foreground));
+        assertThat(foregroundEntered.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(
+                () ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                        CLOCK, deadline(), budget -> true))
+            .isInstanceOf(IllegalStateException.class);
+        release.complete(null);
+        assertThat(firstForeground.get(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(secondForeground.get(2, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        release.complete(null);
+      }
+      assertThat(firstBackground.get(2, TimeUnit.SECONDS)).isTrue();
+      assertThat(secondBackground.get(2, TimeUnit.SECONDS)).isTrue();
+    }
+    Clock afterPermit =
+        Clock.offset(CLOCK, Duration.between(CLOCK.instant(), permit.deadline()).plusMillis(1));
+    var resumedOwner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            fixture.dsl(), ownerClient, catalog, afterPermit, tags);
+    long resumedDeadline = afterPermit.millis() + 10_000L;
+    var nextPermit = resumedOwner.beginOriginObservation(origin.request(), resumedDeadline);
+    assertThat(nextPermit.ordinal()).isEqualTo(permit.ordinal() + 1);
+    resumedOwner.receiveOriginResolution(refusal, nextPermit, resumedDeadline);
+    assertThat(admin.hget(ascii(origin.redisKey()), ascii("state")))
+        .containsExactly(ascii("DENIED"));
   }
 }

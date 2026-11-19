@@ -701,6 +701,7 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
           barrier.beginFenceIntent(
               source.candidate().bindingIdentity().accountId(), UUID.randomUUID());
       assertThat(intent.state().name()).isEqualTo("ACQUISITION_INTENT");
+      assertThat(barrier.readFinalObservation(intent.operationId())).isEmpty();
       assertThat(intent.cohortRows())
           .filteredOn(
               row ->
