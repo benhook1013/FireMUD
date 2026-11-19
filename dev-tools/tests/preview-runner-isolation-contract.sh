@@ -106,30 +106,47 @@ active_filter = re.search(
 def active_ids(row: dict[str, Any]) -> str:
     return subprocess.check_output([
         "jq", "-r", "--arg", "workflow_name", "PR Preview Environment",
-        "--arg", "trusted_workflow_name", "Trusted Hosted Identity Request",
+        "--argjson", "workflow_id", "173511323", "--arg", "repository", "benhook1013/FireMUD",
         "--arg", "default_branch", "develop", "--arg", "pr_title", "PR preview 7",
         "--argjson", "pr_number", "7", "--arg", "head_sha", "a" * 40,
         "--arg", "run_name", "Preview dispatch pr-7-base-b-head-a-merge-c",
-        "(" + active_filter + ") | .id",
+        "(" + active_filter + ") | [.id, .exact] | @tsv",
     ], input=json.dumps([row]), text=True).strip()
 active_run = {
-    "id": 1, "name": "PR Preview Environment", "path": ".github/workflows/preview.yml",
+    "id": 1, "name": "PR preview 7", "path": ".github/workflows/preview.yml",
+    "workflow_id": 173511323, "repository": {"full_name": "benhook1013/FireMUD"},
+    "head_repository": {"full_name": "benhook1013/FireMUD"},
     "head_branch": "feature", "head_sha": "a" * 40, "pull_requests": [{"number": 7}],
     "display_title": "PR preview 7", "status": "in_progress", "run_attempt": 1, "event": "pull_request",
     "firemud_reconciler_branch_filtered": False,
 }
-assert active_ids(active_run) == "1"
+assert active_ids(active_run) == "1\tfalse"
 assert active_ids({key: value for key, value in active_run.items() if key != "run_attempt"}) == ""
-assert active_ids({**active_run, "pull_requests": [{"number": 8}, {"number": 7}]}) == "1"
+assert active_ids({**active_run, "pull_requests": [{"number": 8}, {"number": 7}]}) == "1\tfalse"
 assert active_ids({**active_run, "pull_requests": [{"number": 7}, {"number": 7}]}) == ""
 for fields in (
     {"path": ".github/workflows/unrelated.yml"},
     {"head_sha": "b" * 40},
+    {"workflow_id": 170000000},
+    {"head_repository": {"full_name": "fork/FireMUD"}},
+    {"repository": {"full_name": "fork/FireMUD"}},
     {"pull_requests": [{"number": 8}]},
 ):
     assert active_ids({**active_run, **fields}) == ""
-assert active_ids({**active_run, "display_title": "Preview dispatch pr-7-base-b-head-a-merge-c",
-                   "pull_requests": [], "head_branch": "develop"}) == "1"
+assert active_ids({**active_run, "event": "pull_request_target"}) == "1\tfalse"
+assert active_ids({**active_run, "event": "pull_request_target", "path": ".github/workflows/unrelated.yml"}) == ""
+dispatch_title = "Preview dispatch pr-7-base-b-head-a-merge-c"
+dispatch = {**active_run, "name": dispatch_title, "display_title": dispatch_title,
+            "pull_requests": [], "head_branch": "develop"}
+assert active_ids(dispatch) == ""
+assert active_ids({**dispatch, "pull_requests": [{"number": 7}]}) == "1\tfalse"
+assert active_ids({**dispatch, "event": "repository_dispatch"}) == "1\ttrue"
+assert active_ids({**dispatch, "event": "repository_dispatch", "head_branch": "feature"}) == ""
+assert active_ids({**dispatch, "event": "repository_dispatch", "workflow_id": 170000000}) == ""
+assert active_ids({**dispatch, "event": "repository_dispatch", "path": ".github/workflows/other.yml"}) == ""
+assert active_ids({**dispatch, "event": "pull_request_target", "pull_requests": [{"number": 7}]}) == ""
+assert active_ids({**dispatch, "event": "workflow_run", "name": "Trusted Hosted Identity Request",
+                   "path": ".github/workflows/hosted-identity-request.yml"}) == ""
 
 preview = load(preview_path)
 trusted = load(trusted_path)

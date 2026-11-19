@@ -80,7 +80,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .load();
     assertThat(flyway.info().all())
         .extracting(info -> info.getScript())
-        .containsExactly("V1__initial_gameplay_release_journal.sql");
+        .containsExactlyInAnyOrder(
+            "V1__initial_gameplay_release_journal.sql",
+            "V2__retain_initial_gameplay_release_attempt_closure.sql");
     flyway.migrate();
     connection =
         DriverManager.getConnection(
@@ -101,7 +103,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   @BeforeEach
   void clearJournal() {
     dsl.execute(
-        "TRUNCATE TABLE recovery_control.initial_gameplay_release_outbox, "
+        "TRUNCATE TABLE recovery_control.initial_gameplay_release_attempt_closure, "
+            + "recovery_control.initial_gameplay_release_outbox, "
             + "recovery_control.initial_gameplay_release_transition, "
             + "recovery_control.initial_gameplay_release_operation");
   }
@@ -943,6 +946,247 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(retried.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(retried.lastAttemptId()).isEqualTo(attemptId);
     assertThat(retried.attemptCount()).isEqualTo(dispatched.attemptCount() + 1);
+  }
+
+  @Test
+  void transitionReplaysRejectCorruptRetainedPayloadAndPhasesWithoutWrites() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    Scope scope = scope();
+    journal.create(scope, UUID.randomUUID());
+    InitialGameplayReleaseEvidence proof = evidence(scope);
+    Operation ready =
+        journal.bindVerifiedEvidence(
+            scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), base);
+    PublicTransitionTuple continuing = transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY);
+    Operation awaiting = journal.transition(continuing, base.plusSeconds(1));
+    PublicTransitionTuple resuming = transitionTuple(awaiting, TransitionVerb.RESUME);
+    Operation authorized = journal.transition(resuming, base.plusSeconds(2));
+    OutboxEntry pending = journal.findNextEffect(scope.operationId()).orElseThrow();
+    String outbox = storedOutbox(scope.operationId(), pending.effect().effectId());
+
+    for (PublicTransitionTuple tuple : List.of(continuing, resuming)) {
+      var canonical = tupleCodec.toJson(tuple);
+      var withExtra = canonical.substring(0, canonical.length() - 1) + ",\"unknownField\":true}";
+
+      assertThat(journal.findTransition(tuple)).contains(authorized);
+      assertThat(journal.transition(tuple, base.plusSeconds(3))).isEqualTo(authorized);
+      for (String corruption :
+          List.of(
+              "tuple_payload=jsonb_set(tuple_payload, '{maintenanceLockIdentity}', to_jsonb(CAST(? AS text)))",
+              "tuple_payload=CAST(? AS jsonb)",
+              "tuple_payload=tuple_payload || CAST(? AS jsonb)",
+              "expected_phase=?",
+              "result_phase=?")) {
+        Object broken =
+            corruption.contains("jsonb_set")
+                ? UUID.randomUUID().toString()
+                : corruption.contains("||")
+                    ? withExtra
+                    : corruption.contains("jsonb") ? "{}" : "collecting";
+        dsl.execute(
+            "UPDATE recovery_control.initial_gameplay_release_transition SET "
+                + corruption
+                + " WHERE operation_id=? AND verb=?",
+            broken,
+            scope.operationId(),
+            tuple.verb().wireValue());
+        assertThatThrownBy(() -> journal.findTransition(tuple))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("retained public transition tuple changed");
+        assertThatThrownBy(() -> journal.transition(tuple, base.plusSeconds(4)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("retained public transition tuple changed");
+        assertThat(journal.find(scope.operationId())).contains(authorized);
+        assertThat(storedOutbox(scope.operationId(), pending.effect().effectId()))
+            .isEqualTo(outbox);
+        dsl.execute(
+            "UPDATE recovery_control.initial_gameplay_release_transition "
+                + "SET tuple_payload=CAST(? AS jsonb), expected_phase=?, result_phase=? "
+                + "WHERE operation_id=? AND verb=?",
+            tupleCodec.toJson(tuple),
+            tuple.expectedPhase().databaseValue(),
+            tuple.verb().resultPhase().databaseValue(),
+            scope.operationId(),
+            tuple.verb().wireValue());
+      }
+    }
+  }
+
+  @Test
+  void claimAndReadbackRejectEffectFromAnotherMaintenanceLockWithoutWrites() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatched = authorizedDispatch(base);
+    UUID operationId = dispatched.effect().operationId();
+    UUID effectId = dispatched.effect().effectId();
+    UUID attemptId = dispatched.lastAttemptId();
+    EffectReadback readback =
+        readbackFor(
+            dispatched,
+            attemptId,
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared",
+            base.plusSeconds(5));
+    assertThat(
+            dsl.execute(
+                "UPDATE recovery_control.initial_gameplay_release_operation SET maintenance_lock_identity=? WHERE operation_id=?",
+                UUID.randomUUID(),
+                operationId))
+        .isEqualTo(1);
+    Operation corrupted = journal.find(operationId).orElseThrow();
+    String outbox = storedOutbox(operationId, effectId);
+
+    assertThatThrownBy(
+            () -> journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(5)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("retained effect does not match the operation-owned tuple");
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                operationId, effectId, attemptId, readback, base.plusSeconds(6)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("retained effect does not match the operation-owned tuple");
+    assertThat(journal.find(operationId)).contains(corrupted);
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(outbox);
+    assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+        .isEmpty();
+  }
+
+  @Test
+  void durableClosureRejectsReclaimAndLetsOnlyExactDelayedDispatchBecomeSuperseded() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry a = authorizedDispatch(base);
+    UUID operationId = a.effect().operationId();
+    UUID effectId = a.effect().effectId();
+    journal.recordEffectReadback(
+        operationId,
+        effectId,
+        a.lastAttemptId(),
+        readbackFor(
+            a,
+            a.lastAttemptId(),
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "closed-a",
+            base.plusSeconds(5)),
+        base.plusSeconds(5));
+    OutboxEntry b =
+        journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(6));
+    String before = storedOutbox(operationId, effectId);
+    assertThat(
+            journal.recordRetryableEffectForDispatch(a, "DELAYED_NO_EFFECT", base.plusSeconds(7)))
+        .isFalse();
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, effectId, a.lastAttemptId(), base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+    journal.recordEffectReadback(
+        operationId,
+        effectId,
+        b.lastAttemptId(),
+        readbackFor(
+            b,
+            b.lastAttemptId(),
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "closed-b",
+            base.plusSeconds(8)),
+        base.plusSeconds(8));
+    before = storedOutbox(operationId, effectId);
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, effectId, a.lastAttemptId(), base.plusSeconds(9)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+    OutboxEntry c =
+        journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(10));
+    assertThat(c.state()).isEqualTo(EffectOutboxState.DISPATCHED);
+    assertThat(c.lastAttemptId()).isNotIn(a.lastAttemptId(), b.lastAttemptId());
+  }
+
+  @Test
+  void delayedTransportOnlyGenerationCannotMutateSameIdRetry() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry original = authorizedDispatch(base);
+    UUID operationId = original.effect().operationId();
+    UUID effectId = original.effect().effectId();
+    UUID attemptId = original.lastAttemptId();
+    assertThat(
+            journal.recordRetryableEffectForDispatch(
+                original, "TRANSPORT_REFUSED", base.plusSeconds(5)))
+        .isTrue();
+    OutboxEntry retry = journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(6));
+    assertThat(retry.attemptCount()).isEqualTo(original.attemptCount() + 1);
+    String before = storedOutbox(operationId, effectId);
+    assertThatThrownBy(() ->
+            journal.recordRetryableEffectForDispatch(
+                original, "STALE_TRANSPORT_REFUSED", base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("effect dispatch generation changed");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+    assertThat(
+            journal.recordRetryableEffectForDispatch(
+                retry, "CURRENT_TRANSPORT_REFUSED", base.plusSeconds(8)))
+        .isTrue();
+  }
+
+  @Test
+  void migrationRefusesClaimedLegacyOutboxAndRollsBack() throws Exception {
+    String database = "legacy_closure_" + UUID.randomUUID().toString().replace("-", "");
+    dsl.execute("CREATE DATABASE " + database);
+    String canonicalUrl = POSTGRES.getJdbcUrl();
+    String legacyUrl = canonicalUrl.substring(0, canonicalUrl.lastIndexOf('/') + 1) + database;
+    try {
+      Flyway.configure()
+          .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+          .schemas(SCHEMA)
+          .defaultSchema(SCHEMA)
+          .locations("classpath:db/recovery-control-migration")
+          .target("1")
+          .load()
+          .migrate();
+      try (Connection legacyConnection =
+          DriverManager.getConnection(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        DSLContext legacyDsl = DSL.using(legacyConnection, SQLDialect.POSTGRES);
+        InitialGameplayReleaseJournal legacy =
+            new JooqInitialGameplayReleaseJournal(legacyDsl, tupleCodec);
+        Instant base = Instant.parse("2026-09-01T00:00:00Z");
+        Scope scope = scope();
+        legacy.create(scope, UUID.randomUUID());
+        InitialGameplayReleaseEvidence proof = evidence(scope);
+        Operation ready =
+            legacy.bindVerifiedEvidence(
+                scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), base);
+        Operation awaiting =
+            legacy.transition(transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base);
+        legacy.transition(transitionTuple(awaiting, TransitionVerb.RESUME), base);
+        OutboxEntry pending = legacy.findNextEffect(scope.operationId()).orElseThrow();
+        UUID legacyAttempt = UUID.randomUUID();
+        assertThat(
+                legacyDsl.execute(
+                    "UPDATE recovery_control.initial_gameplay_release_outbox "
+                        + "SET state='dispatched', attempt_count=1, last_attempt_id=?, "
+                        + "last_dispatched_at=now() WHERE outbox_id=?",
+                    legacyAttempt,
+                    pending.outboxId()))
+            .isEqualTo(1);
+        OutboxEntry before = legacy.findNextEffect(scope.operationId()).orElseThrow();
+        Flyway upgrade =
+            Flyway.configure()
+                .dataSource(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+                .schemas(SCHEMA)
+                .defaultSchema(SCHEMA)
+                .locations("classpath:db/recovery-control-migration")
+                .load();
+        assertThatThrownBy(() -> upgrade.migrate())
+            .hasStackTraceContaining("requires no prior claims");
+        assertThat(legacy.findNextEffect(scope.operationId())).contains(before);
+        assertThat(
+                legacyDsl
+                    .fetchSingle(
+                        "SELECT to_regclass('recovery_control.initial_gameplay_release_attempt_closure')")
+                    .get(0))
+            .isNull();
+        assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("1");
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
   }
 
   private static OutboxEntry authorizedDispatch(Instant base) {

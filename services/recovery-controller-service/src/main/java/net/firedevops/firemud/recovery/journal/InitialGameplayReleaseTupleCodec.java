@@ -97,6 +97,20 @@ public final class InitialGameplayReleaseTupleCodec {
     }
   }
 
+  InitialGameplayReleaseModel.PublicTransitionTuple readPublicTransition(String json) {
+    try {
+      var tuple =
+          objectMapper.readValue(json, InitialGameplayReleaseModel.PublicTransitionTuple.class);
+      // JSONB may reorder object properties, but stored fields and JSON value types must be exact.
+      if (tuple == null || !objectMapper.readTree(json).equals(objectMapper.valueToTree(tuple))) {
+        throw new IllegalStateException("Persisted public transition has a noncanonical shape");
+      }
+      return tuple;
+    } catch (JacksonException exception) {
+      throw new IllegalStateException("Unable to read persisted public transition", exception);
+    }
+  }
+
   InitialGameplayReleaseModel.EffectReadback readEffectReadback(String json) {
     try {
       return objectMapper.readValue(json, InitialGameplayReleaseModel.EffectReadback.class);

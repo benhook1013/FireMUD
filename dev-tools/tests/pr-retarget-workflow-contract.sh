@@ -2305,6 +2305,15 @@ for conclusion in [None, ""]:
 base = {"id": 202, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101", "created_at": "2026-07-24T00:04:00Z"}
 repository = {"full_name": "example/FireMUD"}
 (root / "duplicate-inventory.json").write_text(json.dumps({"workflow_runs": [pending_duplicate, source]}))
+terminal_duplicate = {**pending_duplicate, "status": "completed", "conclusion": "failure"}
+intermediate_duplicate = {**source, "id": 103, "created_at": "2026-07-24T00:04:30Z"}
+for name, runs in {
+    "terminal": [terminal_duplicate, source],
+    "multi": [pending_duplicate, intermediate_duplicate, source],
+    "terminal-no-proof": [terminal_duplicate, intermediate_duplicate],
+}.items():
+    (root / f"duplicate-{name}.json").write_text(json.dumps({"workflow_runs": runs}))
+
 (root / "duplicate-source.json").write_text(json.dumps({**source, "run_attempt": 1,
     "repository": repository, "head_repository": repository}))
 publisher_path = ".github/workflows/publish-pr-runtime-images.yml"
@@ -2361,6 +2370,22 @@ for conclusion in success skipped; do
     [[ "$conclusion" == "skipped" ]] || { cat "$contract_fixture_dir/duplicate-$conclusion.error" >&2; exit 1; }
     require_contains "$contract_fixture_dir/duplicate-$conclusion.output" 'Waiting for runtime-images workflow 104'
     require_contains "$contract_fixture_dir/duplicate-$conclusion.error" 'Timed out waiting for runtime-images workflow'
+  fi
+done
+for variant in terminal multi terminal-no-proof; do
+  if CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-$variant.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=6 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/competing-$variant.output" 2>"$contract_fixture_dir/competing-$variant.error"; then
+    [[ "$variant" != "terminal-no-proof" ]]
+    require_contains "$contract_fixture_dir/competing-$variant.output" 'Trusted PR image publisher 202 succeeded'
+  else
+    [[ "$variant" == "terminal-no-proof" ]] || { cat "$contract_fixture_dir/competing-$variant.error" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/competing-$variant.error" 'completed with failure'
   fi
 done
 for variant in qualified wrong-ref wrong-head full-ref wrong-workflow fork; do

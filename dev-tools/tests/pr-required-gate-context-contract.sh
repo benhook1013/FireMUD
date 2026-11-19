@@ -271,6 +271,8 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     result_steps = [step for step in gate.get("steps", []) if step.get("name") == result_step]
     if len(result_steps) != 1 or result_steps[0].get("env", {}).get("CHANGES_RESULT") != "${{ needs.changes.result }}":
         raise SystemExit(f"{workflow} {gate_name} must enforce through one {result_step!r} step reading CHANGES_RESULT")
+    if result_steps[0].get("continue-on-error", "false") != "false":
+        raise SystemExit(f"{workflow} {gate_name} result step cannot ignore failures")
     if "if" in result_steps[0]:
         raise SystemExit(f"{workflow} {gate_name} result step must run unconditionally")
     if any("if" in step and "edited" in step["if"] for step in gate.get("steps", [])):

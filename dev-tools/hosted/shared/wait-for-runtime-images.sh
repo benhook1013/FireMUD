@@ -63,7 +63,8 @@ import re
 from datetime import datetime, timezone
 
 wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:6]
-exclude_pending_id = sys.argv[6] if len(sys.argv) > 6 else ""
+excluded_id = sys.argv[6] if len(sys.argv) > 6 else ""
+alternates = len(sys.argv) > 7 and sys.argv[7] == "alternates"
 try:
     payload = json.load(sys.stdin)
 except json.JSONDecodeError:
@@ -109,49 +110,58 @@ def is_matching_run(run):
     )
 
 matching_runs = [run for run in workflow_runs if is_matching_run(run)]
-if exclude_pending_id:
-    matching_runs = [run for run in matching_runs if str(run.get("id")) != exclude_pending_id
+if excluded_id:
+    matching_runs = [run for run in matching_runs if str(run.get("id")) != excluded_id
                      and run.get("status") == "completed" and run.get("conclusion") == "success"]
 if not matching_runs:
     print("missing")
     raise SystemExit(0)
 
-run = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse=True)[0]
+ranked = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse=True)
 # Every tab-delimited field must be nonempty so Bash IFS cannot shift positions.
 def clean_field(value):
     return isinstance(value, str) and bool(value) and not any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
 
-run_id = run.get("id")
-if type(run_id) is not int or run_id <= 0:
-    raise SystemExit(1)
-if not all(clean_field(run.get(field)) for field in ("status", "html_url", "event")):
-    raise SystemExit(1)
-conclusion = run.get("conclusion")
-if conclusion is None or conclusion == "":
-    if run["status"] == "completed":
+def format_run(run):
+    run_id = run.get("id")
+    if type(run_id) is not int or run_id <= 0:
         raise SystemExit(1)
-    conclusion = "pending"
-elif not clean_field(conclusion):
-    raise SystemExit(1)
-created_at = run.get("created_at")
-if not isinstance(created_at, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", created_at):
-    raise SystemExit(1)
-try:
-    created = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-except ValueError:
-    raise SystemExit(1)
-if created > datetime.now(timezone.utc):
-    raise SystemExit(1)
-print(
-    "found\t{}\t{}\t{}\t{}\t{}\t{}".format(
-        run_id,
-        run["status"],
-        conclusion,
-        run["html_url"],
-        run["event"],
-        created_at,
+    if not all(clean_field(run.get(field)) for field in ("status", "html_url", "event")):
+        raise SystemExit(1)
+    conclusion = run.get("conclusion")
+    if conclusion is None or conclusion == "":
+        if run["status"] == "completed":
+            raise SystemExit(1)
+        conclusion = "pending"
+    elif not clean_field(conclusion):
+        raise SystemExit(1)
+    created_at = run.get("created_at")
+    if not isinstance(created_at, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", created_at):
+        raise SystemExit(1)
+    try:
+        created = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise SystemExit(1)
+    if created > datetime.now(timezone.utc):
+        raise SystemExit(1)
+    return (
+        "found\t{}\t{}\t{}\t{}\t{}\t{}".format(
+            run_id,
+            run["status"],
+            conclusion,
+            run["html_url"],
+            run["event"],
+            created_at,
+        )
     )
-)
+
+# Bound positive native lookups per polling pass and avoid duplicate API work.
+seen = set()
+for run in ranked[:8] if alternates else ranked[:1]:
+    line = format_run(run)
+    if run["id"] not in seen:
+        print(line)
+        seen.add(run["id"])
 ' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$@"
 }
 
@@ -282,7 +292,7 @@ print(
 }
 
 # Only a source-ID-bound typed callback with positive native publication proof
-# can finish the wait ahead of a pending producer. Skipped publication cannot.
+# can finish the wait ahead of a competing producer. Skipped publication cannot.
 use_completed_duplicate_publication() {
   local state older_id older_created inventory upper line publisher_id run attempt jobs latest publisher_path default_branch repository_info
   IFS=$'\t' read -r state older_id _ _ _ _ older_created <<<"$1"
@@ -454,10 +464,14 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  if [[ "$wait_mode" == "pull-request" && "$run_status" != "completed" ]] &&
-    older_state="$(read_run_state "$run_id" <<<"$workflow_payload")" &&
-    use_completed_duplicate_publication "$older_state"; then
-    exit 0
+  if [[ "$wait_mode" == "pull-request" && "$SECONDS" -lt "$deadline" ]] &&
+    older_states="$(read_run_state "$run_id" alternates <<<"$workflow_payload")"; then
+    while IFS= read -r older_state; do
+      [[ "$SECONDS" -lt "$deadline" ]] || break
+      if use_completed_duplicate_publication "$older_state"; then
+        exit 0
+      fi
+    done <<<"$older_states"
   fi
 
   if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then

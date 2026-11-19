@@ -158,12 +158,9 @@ public final class InitialGameplayReleaseController {
     }
     if (applyResult.status() == ApplyStatus.RETRYABLE_NO_EFFECT
         || applyResult.status() == ApplyStatus.NOT_DISPATCHED) {
-      journal.recordRetryableEffect(
-          operation.scope().operationId(),
-          dispatched.effect().effectId(),
-          attemptId,
-          applyResult.outcomeCode(),
-          clock.instant());
+      // An exact, durably closed prior dispatch can be superseded while the apply call was pending.
+      journal.recordRetryableEffectForDispatch(
+          dispatched, applyResult.outcomeCode(), clock.instant());
       return requireOperation(operation.scope().operationId());
     }
     if (applyResult.status() == ApplyStatus.AMBIGUOUS) {
