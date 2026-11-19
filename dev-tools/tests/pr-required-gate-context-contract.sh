@@ -4222,13 +4222,15 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     },
     pulls: {get: async () => { tupleReads++; return {data: {state: "open",
       mergeable: kind === "merge-conflict" ? false : kind === "merge-unknown" || kind === "merge-drift" || kind === "merge-pending" && tupleReads === 1 ? null : true,
-      merge_commit_sha: merge,
-      head: {sha: head, ref: "feature", repo: {full_name: repository}},
-      base: {ref: "develop", sha: (kind === "late-drift" || kind === "merge-drift") && tupleReads > 1 ? head : base, repo: {full_name: repository}}}};}},
-    git: {getRef: async () => ({data: {object: {sha: base}}})},
+      merge_commit_sha: kind === "merge-moved" ? head : merge,
+      head: {sha: kind === "head-moved" ? base : head, ref: "feature", repo: {full_name: repository}},
+      base: {ref: kind === "base-ref-moved" && tupleReads > 1 ? "main" : "develop", sha: kind === "cached-base-stale" || kind === "merge-drift" && tupleReads > 1 ? head : base, repo: {full_name: repository}}}};}},
+    git: {getRef: async ({ref}) => ({data: {ref: `refs/${kind === "wrong-ref" ? "heads/main" : ref}`, object: {sha: kind === "ref-moved" || kind === "late-drift" && tupleReads > 1 ? head : base}}})},
     repos: {
-      getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}}),
-      createDispatchEvent: async () => {
+      getCommit: async () => ({data: {sha: merge, parents: kind === "parents-reversed" ? [{sha: head}, {sha: base}] : [{sha: base}, {sha: head}]}}),
+      createDispatchEvent: async (request) => {
+        assert.deepEqual(request, {owner: "example", repo: "firemud", event_type: "pr-runtime-base-refresh",
+          client_payload: {pr_number: "42", base_ref: "develop", base_sha: base, head_sha: head, merge_sha: merge}});
         shared.posts++;
         if (kind === "ambiguous-post") throw new Error("unknown POST outcome");
         if (kind !== "invisible") shared.visible = true;
@@ -4278,6 +4280,10 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   for (const scenario of ["new-meta-only", "new-meta-wrong-attempt", "new-meta-wrong-head", "new-meta-wrong-url",
     "new-meta-pending", "new-meta-success", "new-meta-unknown", "new-meta-duplicate", "new-meta-mixed", "new-meta-rerun",
     "old-meta-rerun", "new-meta-open-wrapper", "new-meta-close-wrapper"]) {
+    assert.equal(await run(scenario), 0, scenario);
+  }
+  assert.equal(await run("cached-base-stale"), 1, "live ref and ordered parents override cached PR base SHA");
+  for (const scenario of ["head-moved", "merge-moved", "ref-moved", "wrong-ref", "parents-reversed", "base-ref-moved"]) {
     assert.equal(await run(scenario), 0, scenario);
   }
   assert.equal(await run("merge-pending"), 1, "mergeability may converge without tuple changes");

@@ -65,16 +65,16 @@ jobs:
               let pr;
               for (let attempt = 0; attempt < 6; attempt++) {
                 ({data: pr} = await github.rest.pulls.get({...context.repo, pull_number: Number(number)}));
-                if (pr.state !== "open" || pr.head?.sha !== head || pr.base?.sha !== base ||
+                if (pr.state !== "open" || pr.head?.sha !== head ||
                     pr.mergeable !== null || attempt === 5) break;
                 await new Promise(resolve => setTimeout(resolve, 2000));
               }
               if (pr.state !== "open" || pr.head?.repo?.full_name !== repository || pr.base?.repo?.full_name !== repository ||
-                  pr.head?.sha !== head || pr.head?.ref !== event.head_branch || pr.base?.sha !== base ||
+                  pr.head?.sha !== head || pr.head?.ref !== event.head_branch ||
                   typeof pr.base?.ref !== "string" || !pr.base.ref || pr.mergeable !== true || pr.merge_commit_sha !== merge) return null;
               const {data: ref} = await github.rest.git.getRef({...context.repo, ref: `heads/${pr.base.ref}`});
               const {data: commit} = await github.rest.repos.getCommit({...context.repo, ref: merge});
-              if (ref.object?.sha !== base || commit.sha !== merge || commit.parents?.length !== 2 ||
+              if (ref.ref !== `refs/heads/${pr.base.ref}` || ref.object?.sha !== base || commit.sha !== merge || commit.parents?.length !== 2 ||
                   commit.parents[0]?.sha !== base || commit.parents[1]?.sha !== head) return null;
               return pr.base.ref;
             };
