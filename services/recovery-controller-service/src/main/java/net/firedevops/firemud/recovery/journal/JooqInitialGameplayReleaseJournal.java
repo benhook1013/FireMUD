@@ -367,7 +367,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               || current.state() == EffectOutboxState.RETRYABLE) {
             Record stored =
                 tx.fetchOne(
-                    "SELECT readback_digest, readback_payload FROM "
+                    "SELECT readback_digest, readback_payload, last_dispatched_at FROM "
                         + OUTBOX_TABLE
                         + " WHERE operation_id = ? AND effect_id = ?",
                     operationId,
@@ -377,11 +377,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             if (current.state() == EffectOutboxState.ACKNOWLEDGED) {
               if (readbackDigest.equals(storedDigest)) {
                 requireValidExactStoredReadback(readback, stored, storedDigest, current);
+                requireTerminalReplayWithinAttempt(readback, stored, now);
                 return operation;
               }
-              if (stored != null
-                  && !readback.observedAt().isAfter(now)
-                  && sameAcknowledgedOutcome(readback, stored, storedDigest)) {
+              if (stored != null && sameRetainedOutcome(readback, stored, storedDigest)) {
+                requireTerminalReplayWithinAttempt(readback, stored, now);
                 return operation;
               }
               throw conflict("effect readback changed after acknowledgement");
@@ -389,6 +389,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
                 && readbackDigest.equals(storedDigest)) {
               requireValidExactStoredReadback(readback, stored, storedDigest, current);
+              requireTerminalReplayWithinAttempt(readback, stored, now);
+              return operation;
+            }
+            if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
+                && stored != null
+                && sameRetainedOutcome(readback, stored, storedDigest)) {
+              requireTerminalReplayWithinAttempt(readback, stored, now);
               return operation;
             }
             if (readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
@@ -763,8 +770,21 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     return true;
   }
 
-  private boolean sameAcknowledgedOutcome(
-      EffectReadback readback, Record stored, String storedDigest) {
+  private void requireTerminalReplayWithinAttempt(
+      EffectReadback readback, Record stored, Instant now) {
+    OffsetDateTime dispatchTime = stored.get("last_dispatched_at", OffsetDateTime.class);
+    if (dispatchTime == null) {
+      throw conflict("effect dispatch timestamp is unavailable");
+    }
+    if (readback.observedAt().isBefore(dispatchTime.toInstant())) {
+      throw conflict("effect readback is stale");
+    }
+    if (readback.observedAt().isAfter(now)) {
+      throw conflict("effect readback observation is in the future");
+    }
+  }
+
+  private boolean sameRetainedOutcome(EffectReadback readback, Record stored, String storedDigest) {
     JSONB payload = stored.get("readback_payload", JSONB.class);
     if (payload == null || storedDigest == null) {
       return false;
@@ -773,7 +793,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (!storedDigest.equals(tupleCodec.digest(acknowledged))) {
       return false;
     }
-    // A new observation time does not replace the first durable receipt.
+    // The authenticated outcome identifies the durable closure, not the read clock.
+    // A valid new observation time never replaces the first durable receipt.
     return acknowledged.equals(
         new EffectReadback(
             readback.operationId(),
