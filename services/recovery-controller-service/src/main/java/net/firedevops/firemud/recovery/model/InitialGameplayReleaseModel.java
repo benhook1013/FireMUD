@@ -779,6 +779,9 @@ public final class InitialGameplayReleaseModel {
     if (value.isBlank()) {
       throw new IllegalArgumentException(name + " must not be blank");
     }
+    if (value.indexOf(0) >= 0) {
+      throw new IllegalArgumentException(name + " must not contain NUL");
+    }
     return value;
   }
 

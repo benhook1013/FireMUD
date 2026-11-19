@@ -25,6 +25,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterF
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterInventory;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 class InitialGameplayReleaseModelTest {
   private static final String DIGEST = "a".repeat(64);
@@ -478,15 +479,58 @@ class InitialGameplayReleaseModelTest {
 
   @Test
   void persistedPartitionAcknowledgementRequiresExplicitNonNullPartitionId() {
-    InitialGameplayReleaseTupleCodec codec =
-        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
-    String json = codec.toJson(evidence(scope(UUID.randomUUID())));
-    assertThat(json).contains("\"partitionId\":0");
-    assertThatThrownBy(() -> codec.readEvidence(json.replace("\"partitionId\":0,", "")))
-        .isInstanceOf(RuntimeException.class);
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
+    var original = evidence(scope(UUID.randomUUID()));
+    String json = codec.toJson(original);
+    assertThat(codec.readEvidence(json)).isEqualTo(original);
+    ObjectNode missing = (ObjectNode) mapper.readTree(json);
+    ObjectNode explicitNull = missing.deepCopy();
+    ((ObjectNode) missing.at("/issuerLayout/acknowledgements/0")).remove("partitionId");
+    ((ObjectNode) explicitNull.at("/issuerLayout/acknowledgements/0")).putNull("partitionId");
+    String missingJson = mapper.writeValueAsString(missing);
+    String nullJson = mapper.writeValueAsString(explicitNull);
+
+    assertThatThrownBy(() -> codec.readEvidence(missingJson))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> codec.readEvidence(nullJson))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void persistedEvidenceRejectsFractionalOperationFence() {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec(mapper);
+    var original = evidence(scope(UUID.randomUUID()));
+    String json = codec.toJson(original);
+    assertThat(codec.readEvidence(json)).isEqualTo(original);
+    ObjectNode altered = (ObjectNode) mapper.readTree(json);
+    ((ObjectNode) altered.get("issuerLayout")).put("operationFence", 21.9);
+    String fractionalJson = mapper.writeValueAsString(altered);
+
+    assertThatThrownBy(() -> codec.readEvidence(fractionalJson))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void journalReadbackRejectsNulInIdentityBeforePersistence() {
     assertThatThrownBy(
-            () -> codec.readEvidence(json.replace("\"partitionId\":0", "\"partitionId\":null")))
-        .isInstanceOf(RuntimeException.class);
+            () ->
+                new InitialGameplayReleaseModel.EffectReadback(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+                    DIGEST,
+                    DIGEST,
+                    InitialGameplayReleaseModel.EffectReadbackState.PREPARED_FENCED,
+                    InitialGameplayReleaseModel.EffectReadbackAuthority
+                        .GAME_SESSION_DURABLE_CURRENT_STATE,
+                    "readback" + Character.toString(0) + "identity",
+                    java.time.Instant.EPOCH))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("readbackIdentity")
+        .hasMessageContaining("NUL");
   }
 
   private static Scope scope(UUID playableNamespace) {

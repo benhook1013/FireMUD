@@ -23,8 +23,7 @@ function fixture() {
     base: {object: {sha: B}}, merge: {sha: A, parents: [{sha: B}, {sha: C}]},
   };
 }
-async function execute(f) {
-  const sent = [];
+async function execute(f, sent = []) {
   const github = {request: async (route, args) => {
     assert.equal(route, 'GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs');
     assert.equal(args.run_id, 99); assert.equal(args.attempt_number, 2);
@@ -42,7 +41,10 @@ async function execute(f) {
           (f.producers ?? []).filter(run => run.status === args.status)}};
       },
     },
-    pulls: {get: async () => ({data: f.pr})},
+    pulls: {get: async ({pull_number}) => {
+      assert.equal(pull_number, f.pr.number);
+      return {data: f.pr};
+    }},
     git: {getRef: async ({ref}) => {
       assert.equal(ref, 'heads/' + f.pr.base.ref);
       return {data: f.base};
@@ -135,7 +137,10 @@ test('canonical non-runtime base image selection does not dispatch', async () =>
   const f = fixture(); f.imageTag = B; assert.deepEqual(await execute(f), []);
 });
 test('unexpected canonical image selection fails closed', async () => {
-  const f = fixture(); f.imageTag = 'untrusted'; await assert.rejects(execute(f), /Unexpected image/);
+  const f = fixture(); f.imageTag = 'untrusted';
+  const sent = [];
+  await assert.rejects(execute(f, sent), /Unexpected image/);
+  assert.deepEqual(sent, []);
 });
 
 test('qualified canonical workflow path remains eligible', async () => {
@@ -224,7 +229,9 @@ for (const [name, mutate] of Object.entries({
 });
 test('bounded inventory saturation fails without dispatch or polling', async () => {
   const f = fixture(); f.fullInventory = Array.from({length: 100}, () => ({}));
-  await assert.rejects(execute(f), /exceeds bounded lookup/);
+  const sent = [];
+  await assert.rejects(execute(f, sent), /exceeds bounded lookup/);
+  assert.deepEqual(sent, []);
   assert.equal(f.lookups, 3);
 });
 test('qualified trusted default workflow path suppresses exact dispatch', async () => {
@@ -257,6 +264,8 @@ test('immutable title repairs base despite current mutable association', async (
 test('truncated or oversized attempt inventory is refused', async () => {
   for (const inventory of [{total_count: 301, jobs: []}, {total_count: 2, jobs: []}]) {
     const f = fixture(); f.inventory = inventory;
-    await assert.rejects(execute(f), /inventory/);
+    const sent = [];
+    await assert.rejects(execute(f, sent), /inventory/);
+    assert.deepEqual(sent, []);
   }
 });
