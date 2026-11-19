@@ -135,10 +135,13 @@ jobs:
               ["CodeQL gate", "CodeQL Gate", "codeql"],
               ["License gate", "License Gate", "license"],
             ];
+            const terminalFailure = new Set([
+              "failure", "cancelled", "timed_out", "action_required", "startup_failure",
+            ]);
             const statusIcon = (value) => {
               if (value === "success") return "✅";
-              if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
+              if (terminalFailure.has(value)) return "❌";
               if (value === "pending" || value === "in_progress" || value === "queued" || value === "unavailable") return "⏳";
               return "⏭️";
             };
@@ -216,7 +219,15 @@ jobs:
                   (job.name === metadataName || String(job.name || "").includes("'" + metadataName + "'")));
                 const substantive = data.jobs.some(job => job.name === gateName);
                 if (metadata && !substantive) continue;
-                if (!substantive) return { ...candidate, status: "in_progress", conclusion: null, jobs: data.jobs };
+                if (!substantive) {
+                  if (candidate.status === "completed" && terminalFailure.has(candidate.conclusion)) {
+                    return { ...candidate, jobs: data.jobs };
+                  }
+                  const status = ["queued", "in_progress", "pending", "requested", "waiting"].includes(candidate.status)
+                    ? "in_progress"
+                    : "unavailable";
+                  return { ...candidate, status, conclusion: null, jobs: data.jobs };
+                }
                 return { ...candidate, jobs: data.jobs };
               }
               return null;
@@ -266,7 +277,7 @@ jobs:
             const detailResults = checks.slice(gateChecks.length);
 
             const failedChecks = gateResults.filter(([, result]) =>
-              ["failure", "cancelled", "timed_out", "action_required"].includes(result)
+              terminalFailure.has(result)
             );
             const pendingChecks = gateResults.filter(([, result]) =>
               ["pending", "in_progress", "queued"].includes(result)

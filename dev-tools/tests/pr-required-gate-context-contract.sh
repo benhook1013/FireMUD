@@ -129,6 +129,44 @@ def effective_group(group, base_ref):
     return re.sub(r"\$\{\{(.*?)\}\}", render, group)
 
 
+def can_reuse_required_name(name, required_names):
+    if not name:
+        return False
+    # These current matrix templates have fixed delimiters that can never
+    # render any required context. Do not assume arbitrary dynamics are safe.
+    matrix_prefixes = (
+        "Build and Test (${{ matrix.module }} / ${{ matrix.partition }})",
+        "Build and Test (account-service / ${{ matrix.partition }})",
+        "Build and Test (game-session-service / ${{ matrix.partition }})",
+        "Build and Test (world-management-service / ${{ matrix.partition }})",
+        "CodeQL Analysis (${{ matrix.language }})",
+    )
+    if name in matrix_prefixes and all(
+        not gate.startswith(("Build and Test (", "CodeQL Analysis (")) for gate in required_names
+    ):
+        return False
+    dynamic = re.fullmatch(r"\$\{\{(.*?)\}\}", name)
+    if not dynamic:
+        return "${{" in name or name in required_names
+    body = dynamic[1].strip()
+    # Limit dynamic names to the existing exact metadata ternary shape or a
+    # constant literal; other shapes need an explicitly reviewed model.
+    if re.fullmatch(r"'[^']*'", body):
+        return body[1:-1] in required_names
+    summary = re.fullmatch(
+        re.escape("github.event.action == 'edited' && github.event.changes.base.ref == null")
+        + r" && '([^']*)' \|\| '([^']*)'",
+        body,
+    )
+    return not summary or any(option in required_names for option in summary.groups())
+
+
+assert can_reuse_required_name("${{ 'CodeQL Gate' }}", {"CodeQL Gate"})
+assert not can_reuse_required_name("${{ 'Auxiliary Report' }}", {"CodeQL Gate"})
+assert can_reuse_required_name("${{ matrix.language }}", {"CodeQL Gate"})
+assert not can_reuse_required_name("CodeQL Analysis (${{ matrix.language }})", {"CodeQL Gate"})
+
+
 def isolates_metadata_group(group, run_scoped):
     metadata = effective_group(group, None)
     retarget = effective_group(group, "develop")
@@ -246,8 +284,8 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
         condition = job.get("if", "")
         if not excludes_metadata(condition):
             raise SystemExit(f"{workflow} job {job_id} can run for a metadata-only edit")
-        if job.get("name") in {name for _, _, name, *_ in gates.values()}:
-            raise SystemExit(f"{workflow} job {job_id} must not reuse a required gate name")
+        if can_reuse_required_name(job.get("name", job_id), {name for _, _, name, *_ in gates.values()}):
+            raise SystemExit(f"{workflow} job {job_id} has a possible required gate name collision")
 
     # Metadata runs never cancel or replace the substantive run.
     concurrency = data["concurrency"]
@@ -606,9 +644,11 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const liveFallback = kind.startsWith("trusted-current-base");
   const h0 = kind.startsWith("optional-final-read-");
   const cancelledPrimary = kind === "optional-final-read-cancelled-primary";
+  const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement";
+  const finalAttemptError = kind.startsWith("optional-final-read-attempt-");
   const duplicatePrimary = kind === "optional-final-read-duplicate";
   const badStatus = kind.endsWith("-forbidden") ? 403 : kind.endsWith("-missing") ? 404 : 503;
-  const primaryCanRecover = h0 && !cancelledPrimary && badStatus === 503;
+  const primaryCanRecover = h0 && !cancelledPrimary && !cancelledWithReplacement && badStatus === 503;
   const primaryReady = () => primaryCanRecover && primaryInventoryReads > 1;
   let alternativeJobsReads = 0, primaryInventoryReads = 0, lookupFailure;
   const nextBase = "e".repeat(40), nextMerge = "f".repeat(40);
@@ -627,6 +667,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     status: "completed", conclusion: "success", pull_requests: []};
   const exactPrimary = {...source, id: 43, event: "pull_request", head_sha: head,
     created_at: "2026-09-01T00:00:01Z"};
+  const dispatchPrimary = {...source, id: 44, created_at: "2026-09-01T00:00:02Z"};
   const incompleteSnapshot = kind.startsWith("incomplete-snapshot-");
   let snapshotRerunVisible = false;
   const job = {id: 100, run_id: 42, run_attempt: 1, head_sha: source.head_sha,
@@ -676,7 +717,11 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
       getWorkflowRun: async ({run_id: runId}) => {
         if (runId === 43 && primaryReady()) return {data: exactPrimary};
+        if (runId === 44 && cancelledWithReplacement) return {data: dispatchPrimary};
         currentRunReads += 1;
+        if (finalAttemptError && currentRunReads >= 2) {
+          throw Object.assign(new Error(`alternative final workflow-run HTTP ${badStatus}`), {status: badStatus});
+        }
         if (incompleteSnapshot) {
           snapshotRerunVisible = kind === "incomplete-snapshot-superseded";
           return {data: {...source, run_attempt: snapshotRerunVisible ? 2 : 1}};
@@ -688,7 +733,8 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
     if (input.run_id === 43 && primaryReady()) return {data: exactPrimary};
-    if (cancelledPrimary && input.run_id === 43) {
+    if (cancelledWithReplacement && input.run_id === 44) return {data: dispatchPrimary};
+    if ((cancelledPrimary || cancelledWithReplacement) && input.run_id === 43) {
       return {data: {...source, id: 43, event: "pull_request", status: "completed", conclusion: "cancelled"}};
     }
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
@@ -700,10 +746,18 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       return [{...job, run_id: 43, head_sha: head, steps: [...job.steps,
         {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
     }
+    if (cancelledWithReplacement && input.run_id === 44) {
+      return [{...job, run_id: 44, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+    }
     assert.equal(input.run_id, 42);
-    if (h0 && ++alternativeJobsReads > (cancelledPrimary ? 0 : 2)) {
+    if (h0 && ++alternativeJobsReads > (cancelledPrimary ? 0 : 2) && !finalAttemptError) {
       if (kind.endsWith("-malformed")) return null;
       throw Object.assign(new Error(`H0 alternative final attempt jobs HTTP ${badStatus}`), {status: badStatus});
+    }
+    if (finalAttemptError && alternativeJobsReads > 2) {
+      return [{...job, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
     }
     if (incompleteSnapshot) {
       snapshots += 1;
@@ -726,10 +780,15 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     assert.equal(method, listRuns);
     if (h0 && input.event === "pull_request") {
       primaryInventoryReads += 1;
-      const primary = {...exactPrimary, status: cancelledPrimary || primaryReady() ? "completed" : "queued",
-        conclusion: cancelledPrimary ? "cancelled" : primaryReady() ? "success" : null};
+      const primary = {...exactPrimary, status: cancelledPrimary || cancelledWithReplacement || primaryReady() ? "completed" : "queued",
+        conclusion: cancelledPrimary || cancelledWithReplacement ? "cancelled" : primaryReady() ? "success" : null};
       yield {data: duplicatePrimary ? [primary, source] : [primary]};
       return;
+    }
+    if (cancelledWithReplacement && input.event === "repository_dispatch") {
+      refreshInventoryReads += 1;
+      const next = refreshInventoryReads > 1 ? dispatchPrimary : {...dispatchPrimary, status: "queued", conclusion: null};
+      yield {data: [next, source]}; return;
     }
     if (event === "repository_dispatch" && input.event === "pull_request") {
       yield {data: [{...source, id: kind.startsWith("pending-native") ? 43 : source.id, event: "pull_request", head_sha: head,
@@ -796,6 +855,19 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     assert.equal(result.primaryInventoryReads, 1, kind);
     assert.equal(result.lookupFailure?.status ?? result.lookupFailure?.cause?.status, status, kind);
     if (status === undefined) assert(result.lookupFailure instanceof TypeError, kind);
+  }
+  const cancelledReplacement = await scenario("optional-final-read-cancelled-with-replacement", "repository_dispatch");
+  assert.equal(cancelledReplacement.alternativeJobsReads, 6, "old dispatch proof exhausts final jobs retries");
+  assert(cancelledReplacement.info.some(line => line.includes("Found runtime-images run 44 with status=completed")));
+  assert.deepEqual(cancelledReplacement.failures, []);
+  const finalAttempt = await scenario("optional-final-read-attempt-transient", "repository_dispatch");
+  assert.equal(finalAttempt.primaryInventoryReads, 2, "failed final attempt read resumes the native producer");
+  assert(finalAttempt.info.some(line => line.includes("Found runtime-images run 43 with status=completed")));
+  assert.deepEqual(finalAttempt.failures, []);
+  for (const [kind, code] of [["optional-final-read-attempt-forbidden", 403], ["optional-final-read-attempt-missing", 404]]) {
+    const result = await scenario(kind, "repository_dispatch", true);
+    assert.equal(result.lookupFailure?.status ?? result.lookupFailure?.cause?.status, code, kind);
+    assert.equal(result.primaryInventoryReads, 1, kind);
   }
   const unavailable = await scenario("pending-native-inventory-unavailable", "repository_dispatch");
   assert(unavailable.refreshInventoryReads >= 4, "temporary inventory errors exhaust the normal retries");

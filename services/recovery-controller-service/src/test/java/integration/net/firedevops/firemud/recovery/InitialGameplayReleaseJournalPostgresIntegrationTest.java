@@ -795,9 +795,16 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               EffectReadbackState.PROVEN_NO_EFFECT,
               "same-instant",
               dispatchInstant);
-      journal.recordEffectReadback(
-          operationId, effectId, dispatched.lastAttemptId(), closure, base.plusSeconds(5));
-      assertThat(storedOutbox(operationId, effectId)).contains(tupleCodec.digest(closure));
+      Operation recorded =
+          journal.recordEffectReadback(
+              operationId, effectId, dispatched.lastAttemptId(), closure, base.plusSeconds(5));
+      String retained = storedOutbox(operationId, effectId);
+      assertThat(retained).contains(tupleCodec.digest(closure));
+      assertThat(
+              journal.recordEffectReadback(
+                  operationId, effectId, dispatched.lastAttemptId(), closure, base.plusSeconds(6)))
+          .isEqualTo(recorded);
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
     }
   }
 

@@ -702,6 +702,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                 + " WHERE operation_id = ? AND effect_id = ?",
             current.effect().operationId(),
             current.effect().effectId());
+    if (stored == null) {
+      throw conflict("effect outbox row disappeared while checking retained readback");
+    }
     JSONB payload = stored.get("readback_payload", JSONB.class);
     String digest = stored.get("readback_digest", String.class);
     if (payload == null && digest == null) {

@@ -9,7 +9,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.UUID;
+import javax.sql.DataSource;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.AuditReason;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.AuditReasonCode;
@@ -31,10 +34,42 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Transit
 import net.firedevops.firemud.recovery.model.MaintenanceLockCredential;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.ResolutionStatus;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 class InitialGameplayReleaseControllerTest {
   private static final String DIGEST = "c".repeat(64);
+
+  @Test
+  void reconcileRefusesCallerTransactionBeforeClaimOrOwnerInteraction() throws SQLException {
+    DataSource dataSource = mock(DataSource.class);
+    Connection connection = mock(Connection.class);
+    when(dataSource.getConnection()).thenReturn(connection);
+    when(connection.getAutoCommit()).thenReturn(true);
+    var caller = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var evidence = mock(InitialGameplayReleaseEvidenceProvider.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            evidence,
+            port);
+
+    caller.executeWithoutResult(
+        status -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThatThrownBy(() -> controller.reconcileNextEffect(UUID.randomUUID()))
+              .isInstanceOf(OwnerBoundaryUnavailableException.class)
+              .hasMessage("INITIAL_GAMEPLAY_RELEASE_RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
+          status.setRollbackOnly();
+        });
+    verify(connection).rollback();
+    verifyNoInteractions(journal, evidence, port);
+  }
 
   @Test
   void ownerResultsRejectMissingStatus() {

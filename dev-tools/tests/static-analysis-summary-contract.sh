@@ -697,15 +697,37 @@ run(github, context, core).then(async () => {
                     rerunWrites.some(row => row.body.includes("checks passed"))) {
                   throw new Error("a prior attempt's status cannot replace the selected running rerun");
                 }
-                github.request = async (_, input) => ({ data: { total_count: 1, jobs: [{
-                  id: 1, run_id: input.run_id, run_attempt: input.attempt_number, head_sha: currentHeadSha,
-                  name: "Unrelated job", status: "completed", conclusion: "success",
-                }] } });
-                const unknownStart = calls.updated.length;
-                await run(github, context, core);
-                const unknownWrites = calls.updated.slice(unknownStart);
-                if (!unknownWrites.length || unknownWrites.some(row => row.body.includes("checks passed"))) throw new Error("unclassified successful jobs must not yield a green summary");
-                if (!unknownWrites.some(row => row.body.includes("in_progress"))) throw new Error("unclassified candidate must remain pending");
+                github.request = async (route, input) => {
+                  if (input.run_id !== 270) return savedRequest(route, input);
+                  return {data: {total_count: 1, jobs: [{
+                    id: 2701, run_id: input.run_id, run_attempt: input.attempt_number,
+                    head_sha: currentHeadSha, name: "Unrelated job",
+                    status: "completed", conclusion: "success",
+                  }]}};
+                };
+                for (const [status, conclusion, shown, headline] of [
+                  ["in_progress", null, "in_progress", "still running"],
+                  ["completed", "success", "unavailable", "evidence is unavailable"],
+                  ["completed", "skipped", "unavailable", "evidence is unavailable"],
+                  ["completed", null, "unavailable", "evidence is unavailable"],
+                  ...["failure", "cancelled", "timed_out", "action_required", "startup_failure"]
+                    .map(value => ["completed", value, value, "checks failed"]),
+                ]) {
+                  github.paginate = async (method, input) => {
+                    const rows = await savedPaginate(method, input);
+                    return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
+                      ? rows.map(row => row.id === 270 ? {...row, status, conclusion} : row)
+                      : rows;
+                  };
+                  const start = calls.updated.length;
+                  await run(github, context, core);
+                  const writes = calls.updated.slice(start);
+                  if (!writes.some(row => row.body.includes("CodeQL gate: \`" + shown + "\`") && row.body.includes(headline)) ||
+                      writes.some(row => row.body.includes("checks passed"))) {
+                    throw new Error(`no-gate candidate ${status}/${conclusion} must display ${shown} and ${headline}`);
+                  }
+                }
+                github.paginate = savedPaginate;
                 const savedActions = github.rest.actions;
                 let currentAttempt = 1;
                 github.rest.actions = {...savedActions, getWorkflowRun: async ({run_id}) => ({data: {

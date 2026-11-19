@@ -25,6 +25,7 @@ import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort.
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort.EffectReadbackResolution;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.EvidenceResolution;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.ResolutionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Narrow initial-gameplay-release owner. It has no HTTP ingress or autonomous effect dispatcher.
@@ -110,9 +111,13 @@ public final class InitialGameplayReleaseController {
   /**
    * Performs one outbox attempt or reconciles its exact prior attempt by owner readback. This
    * method is deliberately not scheduled or exposed as a network endpoint in this source-only
-   * stage.
+   * stage. Reconciliation must run without a caller-owned transaction so a successful claim is
+   * durable before an owner effect can be dispatched.
    */
   public Operation reconcileNextEffect(UUID operationId) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw unavailable("INITIAL_GAMEPLAY_RELEASE_RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
+    }
     Operation operation = requireOperation(operationId);
     Optional<OutboxEntry> next = journal.findNextEffect(operationId);
     if (next.isEmpty()) {

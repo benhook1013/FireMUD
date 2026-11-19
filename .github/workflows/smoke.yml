@@ -1199,7 +1199,8 @@ jobs:
                 const replacement = await findMatchingRuntimeImagesRun(
                   "repository_dispatch",
                   expectedDisplayTitle,
-                  currentIdentity
+                  currentIdentity,
+                  selection
                 );
                 if (!replacement) {
                   if (Date.now() - cancelledRunObservedAt >= cancelledReplacementTimeoutMs) {
@@ -1514,10 +1515,24 @@ jobs:
                 }
                 // Job proof belongs to the selected immutable attempt, never the latest
                 // attempt's jobs. Recheck after mutable PR identity before accepting it.
-                const { data: currentAttempt } = await withTransientGitHubRetry(
-                  "final successful runtime attempt lookup",
-                  () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
-                );
+                let currentAttempt;
+                try {
+                  ({ data: currentAttempt } = await withTransientGitHubRetry(
+                    "final successful runtime attempt lookup",
+                    () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                  ));
+                } catch (error) {
+                  const status = error?.status ?? error?.response?.status;
+                  if (!selection.pendingPrimary || !retryableStatuses.has(status)) throw error;
+                  core.warning(`Runtime alternative ${matching.id} final attempt is temporarily unavailable; retry exact primary selection.`);
+                  retryPrimary = {
+                    id: selection.pendingPrimary.id,
+                    run_attempt: selection.pendingPrimary.run_attempt,
+                    identity: identityKey(currentIdentity),
+                  };
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue smokeGatePolling;
+                }
                 if (!positiveInteger(matching.run_attempt) || currentAttempt.id !== matching.id ||
                     currentAttempt.run_attempt !== matching.run_attempt ||
                     currentAttempt.status !== "completed" || currentAttempt.conclusion !== "success") {
