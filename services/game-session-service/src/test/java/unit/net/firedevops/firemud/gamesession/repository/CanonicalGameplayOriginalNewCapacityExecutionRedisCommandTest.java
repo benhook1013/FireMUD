@@ -70,11 +70,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
   void unscopedCloseUsesOneAbsoluteDeadlineForEveryCommand() throws Exception {
     var fixture = new Fixture();
     var clock = mock(Clock.class);
-    AtomicLong now = new AtomicLong(fixture.deadline - 100);
+    AtomicLong now = new AtomicLong(fixture.deadline - 2_000);
     when(clock.millis()).thenAnswer(ignored -> now.get());
     when(fixture.redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(fixture.connection);
-    fixture.completeWhoami(() -> now.addAndGet(30));
-    fixture.completeScriptLoad(() -> now.addAndGet(50));
+    fixture.completeWhoami(() -> now.addAndGet(600));
+    fixture.completeScriptLoad(() -> now.addAndGet(1_000));
     fixture.completeEvaluation();
     var owner =
         new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
@@ -85,15 +85,15 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
         .isEqualTo(4);
     verify(fixture.whoami)
         .get(
-            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 100),
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 2_000),
             eq(TimeUnit.MILLISECONDS));
     verify(fixture.scriptLoad)
         .get(
-            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 70),
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 1_400),
             eq(TimeUnit.MILLISECONDS));
     verify(fixture.evaluation)
         .get(
-            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 20),
+            org.mockito.ArgumentMatchers.longThat(value -> value > 0 && value <= 400),
             eq(TimeUnit.MILLISECONDS));
   }
 

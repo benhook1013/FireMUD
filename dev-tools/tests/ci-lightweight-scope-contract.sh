@@ -760,6 +760,10 @@ require_equal(
 spotbugs_reports_step = find_step(
     module_ci, "build-and-test", "Upload SpotBugs Reports if Failed", "ci workflow"
 )
+gradle_checks_step = find_step(module_ci, "build-and-test", "Run Gradle Checks", "ci workflow")
+module_steps = module_ci["jobs"]["build-and-test"]["steps"]
+if module_steps.index(spotbugs_reports_step) <= module_steps.index(gradle_checks_step):
+    raise AssertionError("ci workflow: SpotBugs reports upload must follow Run Gradle Checks")
 require_equal(
     spotbugs_reports_step, ("if",), "${{ failure() || cancelled() }}", "ci workflow"
 )

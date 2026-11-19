@@ -2084,7 +2084,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(installedGuards.get(trigger))
           .contains(event)
           .contains("EXECUTE FUNCTION")
-          .contains(routine.substring(0, routine.indexOf('(')));
+          .contains(routine.substring(0, routine.indexOf('(')))
+          .matches("(?s).*:[OA]$");
     });
     var current = f.owner().capture(request());
     assertThat(current.catalog().catalogEpoch()).isEqualTo(priorEpoch + 1);

@@ -519,7 +519,21 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
 
   protected Map<String, String> physicalImage() {
     Map<String, String> image = new java.util.TreeMap<>();
-    for (byte[] key : admin.keys("session:game:*")) {
+    addPhysicalImage(image, "session:game:*");
+    if (regionBinding != null) {
+      var source = regionBinding.installation().source;
+      addPhysicalImage(
+          image,
+          "tick:{"
+              + CanonicalGameplayRegionRedisKeys.tenantRegionTag(
+                  source.tenantId(), source.gameInstanceId(), source.regionId())
+              + "}:*");
+    }
+    return image;
+  }
+
+  private void addPhysicalImage(Map<String, String> image, String pattern) {
+    for (byte[] key : admin.keys(pattern)) {
       image.put(
           new String(key, StandardCharsets.US_ASCII),
           java.util.Base64.getEncoder()
@@ -527,7 +541,6 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
                   CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
                       admin, key)));
     }
-    return image;
   }
 
   protected static Candidate candidate() {

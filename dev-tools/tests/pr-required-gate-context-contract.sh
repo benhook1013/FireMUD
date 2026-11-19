@@ -3528,9 +3528,16 @@ const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
-const previousRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Previous trusted refresh definition\n")]);
-const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256")
-  .update(previousRefreshBytes).digest("hex");
+const compatibleRefreshBytes = Array.from({length: 3}, (_, index) =>
+  Buffer.concat([bytes, Buffer.from(`\n# Retained trusted refresh definition ${index}\n`)]));
+const digest = source => require("node:crypto").createHash("sha256").update(source).digest("hex");
+const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set(compatibleRefreshBytes.map(digest));
+const checkedInCompatibility = script.match(/const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set\(\[([\s\S]*?)\]\);/)[1];
+assert.deepEqual([...checkedInCompatibility.matchAll(/"([0-9a-f]{64})"/g)].map(match => match[1]), [
+  "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
+  "107a7bc895f890173161ea09f707ce93d8e170093aa8c8c528fc5f98430e1bac",
+  "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112",
+]);
 // Separate test authority lets the same verifier exercise both immutable modes.
 const canonicalLegacyRuntimeWorkflowSha256 = "0".repeat(64);
 const canonicalPlayClassifierSha256 = JSON.parse(script.match(/const canonicalPlayClassifierSha256 = (\{[\s\S]*?\});/)[1]);
@@ -3584,10 +3591,10 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
       }}}};
   const verifier = knownPlay ? "verifyKnownPlayFailure" : "verifyCanonicalSmokeProducer";
   const accepted = await new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
-    "canonicalRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
+    "canonicalRuntimeWorkflowSha256", "canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
     `${fn}; return ${verifier}(data.run, data.candidate, data.identity, ${allowIncompleteSteps}, ${allowOrdinary});`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
-      canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
+      canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256,
       data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {repository: {default_branch: "develop"}, pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}},
@@ -4228,14 +4235,27 @@ function markerAccepted(overrides = {}) {
     }, event), true, "exact old fail-red default-branch producer remains a diagnostic exception only");
   }
   assert.equal(await verify(() => {}, "repository_dispatch"), true);
-  const usePreviousRefresh = data => Object.assign(data.definitions[workflowPath], {
-    content: previousRefreshBytes.toString("base64"), size: previousRefreshBytes.length,
-  });
-  for (const knownPlay of [true, false]) {
-    assert.equal(await verify(usePreviousRefresh, "repository_dispatch", knownPlay), true,
-      "trusted refresh may retain the previous successful producer proof");
-    assert.equal(await verify(usePreviousRefresh, "pull_request", knownPlay), false,
-      "the previous successful definition cannot attest a PR producer");
+  for (const definition of compatibleRefreshBytes) {
+    const usePriorRefresh = data => Object.assign(data.definitions[workflowPath], {
+      content: definition.toString("base64"), size: definition.length,
+    });
+    for (const knownPlay of [true, false]) {
+      assert.equal(await verify(usePriorRefresh, "repository_dispatch", knownPlay), true,
+        "authenticated default-branch refresh may use a retained successful definition");
+      assert.equal(await verify(usePriorRefresh, "pull_request", knownPlay), false,
+        "a retained success digest cannot attest a native PR producer");
+      assert.equal(await verify(data => {
+        usePriorRefresh(data);
+        data.source.head_branch = "untrusted-feature";
+      }, "repository_dispatch", knownPlay), false,
+        "a retained success digest does not grant feature branches authority");
+    }
+  }
+  const arbitraryBytes = Buffer.concat([bytes, Buffer.from("\n# Independently rehashed, not allowlisted\n")]);
+  for (const event of ["pull_request", "repository_dispatch"]) {
+    assert.equal(await verify(data => Object.assign(data.definitions[workflowPath], {
+      content: arbitraryBytes.toString("base64"), size: arbitraryBytes.length,
+    }), event), false, "an arbitrary recomputed digest is not authority");
   }
   for (const path of Object.keys(classifierDefinitions)) {
     assert.equal(await verify(d => {
