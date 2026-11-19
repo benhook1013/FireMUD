@@ -120,13 +120,13 @@ class AccountTenantCapacityGrpcServiceTest {
     }
   }
 
-  @Test
-  void typedOwnerEvidenceUnavailableKeepsItsPublicFailure() {
+  @ParameterizedTest
+  @MethodSource("ownerUnavailableFailures")
+  void unavailableOwnerFailureKeepsItsPublicNonOkStatus(RuntimeException failure) {
     var request = CapacityAdmissionTestFixture.playerRequest();
     try (var guards = authenticatedCaller()) {
       AccountTenantCapacityOwner owner = mock();
-      when(owner.commit(request, CapacityAdmissionTestFixture.PEER))
-          .thenThrow(new CapacityException(Failure.ENTITLEMENT_UNAVAILABLE));
+      when(owner.commit(request, CapacityAdmissionTestFixture.PEER)).thenThrow(failure);
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
       new AccountTenantCapacityGrpcService(owner, "prod")
           .commitTenantCapacityAdmission(
@@ -179,6 +179,18 @@ class AccountTenantCapacityGrpcServiceTest {
       verify(observer, never()).onError(any());
       verifyNoMoreInteractions(observer);
     }
+  }
+
+  private static Stream<RuntimeException> ownerUnavailableFailures() {
+    return Stream.of(
+        new CapacityException(Failure.ENTITLEMENT_UNAVAILABLE),
+        new org.jooq.exception.DataAccessException(
+            "Controlled retained refusal failure",
+            new java.sql.SQLException("constraint", "23514")),
+        new org.springframework.dao.DataAccessResourceFailureException(
+            "Controlled storage failure"),
+        new org.springframework.transaction.TransactionSystemException(
+            "Controlled transaction failure"));
   }
 
   private static Stream<RuntimeException> ownerEvidenceFailures() {

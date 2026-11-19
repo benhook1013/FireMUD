@@ -6,7 +6,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,10 +26,12 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
@@ -124,7 +129,7 @@ class AbstractReloadingBlockingGrpcClientTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void selectedChannelSurvivesReplacementOrCloseUntilTheBlockingCallReturns(boolean close)
+  void selectedChannelSurvivesReplacementOrCloseUntilBothBlockingCallsReturn(boolean close)
       throws Exception {
     var calls = new AtomicInteger();
     var expectedResponse = PingResponse.getDefaultInstance();
@@ -152,28 +157,32 @@ class AbstractReloadingBlockingGrpcClientTest {
         var factory = mock(GrpcChannelFactory.class);
         when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
             .thenReturn(previous, replacement);
-        var selected = new CountDownLatch(1);
-        var startCall = new CountDownLatch(1);
+        var selected = new CountDownLatch(2);
+        var startFirst = new CountDownLatch(1);
+        var startSecond = new CountDownLatch(1);
         try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
-            var executor = Executors.newSingleThreadExecutor()) {
+            var executor = Executors.newFixedThreadPool(2)) {
           client.initExplicit();
-          var result =
-              executor.submit(
-                  () ->
-                      client.withPublishedInitializedStub(
-                          "test client has no stub",
-                          stub -> {
-                            assertThat(stub.getChannel()).isSameAs(previous);
-                            selected.countDown();
-                            try {
-                              assertThat(startCall.await(5, TimeUnit.SECONDS)).isTrue();
-                            } catch (InterruptedException interrupted) {
-                              Thread.currentThread().interrupt();
-                              throw new AssertionError(interrupted);
-                            }
-                            return stub.withDeadlineAfter(5, TimeUnit.SECONDS)
-                                .ping(PingRequest.getDefaultInstance());
-                          }));
+          Function<CountDownLatch, Future<PingResponse>> submitCall =
+              ready ->
+                  executor.submit(
+                      () ->
+                          client.withPublishedInitializedStub(
+                              "test client has no stub",
+                              stub -> {
+                                assertThat(stub.getChannel()).isSameAs(previous);
+                                selected.countDown();
+                                try {
+                                  assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+                                } catch (InterruptedException interrupted) {
+                                  Thread.currentThread().interrupt();
+                                  throw new AssertionError(interrupted);
+                                }
+                                return stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                                    .ping(PingRequest.getDefaultInstance());
+                              }));
+          var first = submitCall.apply(startFirst);
+          var second = submitCall.apply(startSecond);
           try {
             assertThat(selected.await(5, TimeUnit.SECONDS)).isTrue();
             if (close) {
@@ -186,12 +195,18 @@ class AbstractReloadingBlockingGrpcClientTest {
             }
             assertThat(previous.isShutdown()).isFalse();
             assertThat(calls).hasValue(0);
+            startFirst.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
+            assertThat(calls).hasValue(1);
+            assertThat(previous.isShutdown()).isFalse();
+            startSecond.countDown();
+            assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
+            assertThat(calls).hasValue(2);
+            assertThat(previous.isShutdown()).isTrue();
           } finally {
-            startCall.countDown();
+            startFirst.countDown();
+            startSecond.countDown();
           }
-          assertThat(result.get(5, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
-          assertThat(calls).hasValue(1);
-          assertThat(previous.isShutdown()).isTrue();
         } finally {
           replacement.shutdownNow();
         }
@@ -324,6 +339,37 @@ class AbstractReloadingBlockingGrpcClientTest {
     client.reloadChannel();
 
     assertThat(factory.buildAttempts.get()).isEqualTo(1);
+  }
+
+  @Test
+  void watcherStartFailureRetainsChannelShutdownFailure(@TempDir Path directory) throws Exception {
+    var grpc = new CommonGrpcClientProperties();
+    grpc.setCertChain(directory.resolve("tls.crt").toString());
+    grpc.setPrivateKey(directory.resolve("tls.key").toString());
+    grpc.setCaCert(directory.resolve("ca.crt").toString());
+    var factory = mock(GrpcChannelFactory.class);
+    var channel = mock(ManagedChannel.class);
+    when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean())).thenReturn(channel);
+    var startup = new IllegalStateException("watcher start failed");
+    var shutdown = new IllegalStateException("channel shutdown failed");
+    when(channel.shutdown()).thenThrow(shutdown);
+
+    try (var policy = mockStatic(GrpcTlsReloadPolicy.class);
+        var watchers =
+            mockConstruction(
+                TlsCertificateWatcher.class,
+                (watcher, context) -> doThrow(startup).when(watcher).start());
+        var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory)) {
+      policy.when(GrpcTlsReloadPolicy::isEnabled).thenReturn(true);
+      assertThatThrownBy(client::initExplicit)
+          .isSameAs(startup)
+          .satisfies(failure -> assertThat(failure.getSuppressed()).containsExactly(shutdown));
+      assertThat(client.currentStub()).isNull();
+      assertThatThrownBy(client::requirePublishedExplicitStub)
+          .isInstanceOf(IllegalStateException.class);
+      verify(watchers.constructed().getFirst()).close();
+      verify(channel).shutdown();
+    }
   }
 
   @Test

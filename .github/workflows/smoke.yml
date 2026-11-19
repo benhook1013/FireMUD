@@ -1306,17 +1306,19 @@ jobs:
                   expectedDisplayTitle,
                   currentIdentity
                 );
+                // Only native same-repository originals eligible for the trusted
+                // Validation dispatcher reuse its existing prerequisite allowance.
+                const recoverableCancellation = matching.event === "pull_request" &&
+                  matching.repository?.full_name === repositoryName &&
+                  matching.head_repository?.full_name === repositoryName &&
+                  matching.path === workflowPath && positiveInteger(matching.workflow_id) &&
+                  positiveInteger(matching.id) && positiveInteger(matching.run_attempt) &&
+                  matching.head_sha === currentIdentity.headSha && matching.display_title === expectedDisplayTitle &&
+                  typeof matching.head_branch === "string" && matching.head_branch.length > 0 &&
+                  matching.head_branch === context.payload.pull_request.head.ref;
+                const cancellationDiscoveryMs = recoverableCancellation
+                  ? refreshDiscoveryTimeoutMs : cancelledReplacementTimeoutMs;
                 if (!replacement) {
-                  // Only native same-repository originals eligible for the trusted
-                  // Validation dispatcher reuse its existing prerequisite allowance.
-                  const recoverableCancellation = matching.event === "pull_request" &&
-                    matching.repository?.full_name === repositoryName &&
-                    matching.head_repository?.full_name === repositoryName &&
-                    matching.path === workflowPath && positiveInteger(matching.workflow_id) &&
-                    positiveInteger(matching.id) && positiveInteger(matching.run_attempt) &&
-                    matching.head_sha === currentIdentity.headSha && matching.display_title === expectedDisplayTitle &&
-                    typeof matching.head_branch === "string" && matching.head_branch.length > 0 &&
-                    matching.head_branch === context.payload.pull_request.head.ref;
                   if (recoverableCancellation && (pollIteration === 1 || pollIteration % pullRequestCheckInterval === 0)) {
                     const liveIdentity = await resolveCurrentIdentity("Resolving live cancelled-run recovery tuple", true);
                     if (liveIdentity?.obsolete) return;
@@ -1328,8 +1330,6 @@ jobs:
                       continue smokeGatePolling;
                     }
                   }
-                  const cancellationDiscoveryMs = recoverableCancellation
-                    ? refreshDiscoveryTimeoutMs : cancelledReplacementTimeoutMs;
                   if (Date.now() - cancelledRunObservedAt >= cancellationDiscoveryMs) {
                     if (await isCurrentPullRequestObsolete("Stopping obsolete cancelled-run smoke gate for")) {
                       return;
@@ -1346,6 +1346,27 @@ jobs:
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue;
                 }
+                // A typed replacement follows the live base, even if its old event
+                // tuple already has a producer. Never switch the native original's
+                // immutable comparison; this fence applies only to the replacement.
+                const liveIdentity = await resolveCurrentIdentity("Fencing listed cancelled-run replacement", true);
+                if (liveIdentity?.obsolete) return;
+                if (!liveIdentity) {
+                  if (Date.now() - cancelledRunObservedAt >= cancellationDiscoveryMs) {
+                    core.setFailed("Cancelled runtime replacement lacks a verified live PR tuple.");
+                    return;
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue smokeGatePolling;
+                }
+                const liveEventComparison = {...liveIdentity, sourceEvent: currentIdentity.sourceEvent};
+                requireCurrentIdentity = true;
+                if (identityKey(liveEventComparison) !== identityKey(currentIdentity)) {
+                  cancelledRecoveryMoved = true;
+                  currentIdentity = liveIdentity;
+                  continue smokeGatePolling;
+                }
+                currentIdentity = liveIdentity;
                 core.info(
                   `Exact pull_request runtime-images run ${matching.id} was cancelled; checking exact repository_dispatch replacement ${replacement.id}.`
                 );
@@ -1595,6 +1616,7 @@ jobs:
                 let fullSmokeJob = null;
                 let fullSmokeStep = null;
                 let canonicalProducerVerified = false;
+                let ordinaryMarkerProof = false;
                 async function failNonTerminalSnapshot(reason) {
                   if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
                     return;
@@ -1692,11 +1714,16 @@ jobs:
                   const markers = (fullSmokeJob.steps ?? []).filter((step) =>
                     step.name === "Known canonical transition PLAY failure with successful authenticated cleanup"
                   );
+                  let markerProof = false;
                   if (matching.event === "repository_dispatch" &&
                       (markers.length === 0 || (markers.length === 1 && markers[0].status !== "completed"))) {
-                    const markerProof = await verifyKnownPlayFailure(
+                    markerProof = await verifyKnownPlayFailure(
                       matching, fullSmokeJob, currentIdentity, true, true);
-                    if (["snapshot-pending", "ordinary", true].includes(markerProof)) {
+                    if (markerProof === "ordinary") {
+                      ordinaryMarkerProof = true;
+                      canonicalProducerVerified = true;
+                    }
+                    if (markerProof === "snapshot-pending") {
                       const snapshotKey = `marker:${matching.id}:${matching.run_attempt}:${identityKey(currentIdentity)}`;
                       if (incompleteRefreshKey !== snapshotKey) {
                         incompleteRefreshKey = snapshotKey;
@@ -1708,11 +1735,11 @@ jobs:
                       }
                     }
                   }
-                  if (markers.length === 1 && markers[0].status === "completed" &&
-                      markers[0].conclusion === "success") {
-                    let knownPlayVerified = false;
+                  if (markerProof === true || (markers.length === 1 && markers[0].status === "completed" &&
+                      markers[0].conclusion === "success")) {
+                    let knownPlayVerified = markerProof === true;
                     try {
-                      knownPlayVerified = await verifyKnownPlayFailure(
+                      if (!knownPlayVerified) knownPlayVerified = await verifyKnownPlayFailure(
                         matching, fullSmokeJob, currentIdentity, matching.event === "repository_dispatch");
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;
@@ -1799,6 +1826,10 @@ jobs:
                   core.info(
                     `Runtime images run ${matching.id} was not accepted because the current PR identity changed after its smoke snapshot; waiting for a fresh exact run.`
                   );
+                  continue smokeGatePolling;
+                }
+                if (ordinaryMarkerProof && !await isCurrentCanonicalAttempt(matching)) {
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
                 }
                 return;
