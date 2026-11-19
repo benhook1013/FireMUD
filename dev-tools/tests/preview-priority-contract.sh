@@ -40,6 +40,20 @@ Path(sys.argv[3]).write_text(body, encoding="utf-8")
 PY
 }
 
+python3 - "$ROOT_DIR/.github/workflows/preview.yml" <<'PY'
+import sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["preview-plan"]["steps"]
+resolved = [(i, s) for i, s in enumerate(steps) if s.get("name", "").startswith("Preview resolved tuple ")]
+assert len(resolved) == 1
+index, marker = resolved[0]
+assert marker["run"] == ":"
+assert marker["if"] == "${{ github.event_name == 'pull_request' && steps.derive.outputs.action == 'deploy' && steps.eligibility.outputs.eligible == 'true' }}"
+assert marker["name"] == "Preview resolved tuple pr-${{ steps.derive.outputs.pr_number }} base-${{ steps.derive.outputs.base_sha }} head-${{ steps.derive.outputs.head_sha }} merge-${{ steps.derive.outputs.merge_sha }}"
+assert index > next(i for i,s in enumerate(steps) if s.get("id") == "derive")
+assert index > next(i for i,s in enumerate(steps) if s.get("id") == "eligibility")
+assert sum(s.get("name", "").startswith("Preview event tuple ") for s in steps) == 1
+PY
+
 cardinality_workflow="$TEMP_DIR/step-cardinality.yml"
 cat >"$cardinality_workflow" <<'YAML'
 jobs:
@@ -444,10 +458,12 @@ if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == 
   exit 0
 fi
 if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5254/attempts/2/jobs?per_page=100' ]]; then
+  [[ "${FAKE_PREVIEW_PLAN_JOBS_FAIL:-false}" != true ]] || exit 1
   printf '%s' "${FAKE_PREVIEW_PLAN_JOBS_JSON:-null}"
   exit 0
 fi
 if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5254' ]]; then
+  [[ "${FAKE_PREVIEW_SOURCE_LATEST_FAIL:-false}" != true ]] || exit 1
   printf '%s' "${FAKE_PREVIEW_SOURCE_LATEST_JSON:-null}"
   exit 0
 fi
@@ -2540,37 +2556,52 @@ grep -Fqx \
 test -s "$FAKE_DISPATCH_LOG"
 
 # An automatic run must prove exactly this tuple in its current native attempt.
-for tuple_case in current qualified old_merge missing ambiguous stale_attempt wrong_list_path wrong_latest_path; do
+for tuple_case in current qualified old_merge missing ambiguous stale_attempt wrong_list_path wrong_latest_path jobs_unavailable latest_unavailable old_event_current_plan event_only latest_missing_head latest_missing_path jobs_incomplete jobs_malformed stale_attempt_old_tuple; do
   reset_case
   reconciler_pull_request_output="$TEMP_DIR/reconciler-pull-request-$tuple_case.out"
-  tuple_name="Preview event tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}"
-  old_tuple_name="Preview event tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-dddddddddddddddddddddddddddddddddddddddd"
+  tuple_name="Preview resolved tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}"
+  old_tuple_name="Preview resolved tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-dddddddddddddddddddddddddddddddddddddddd"
   plan_jobs="$(jq -cn --arg tuple "$tuple_name" --arg old "$old_tuple_name" \
     --arg head "$preview_head_sha" --arg variant "$tuple_case" '
       def step($name): {name:$name,status:"completed",conclusion:"success"};
       [{name:"Preview Plan",run_id:5254,run_attempt:2,head_sha:$head,status:"completed",conclusion:"success",
-        steps:(if $variant == "old_merge" then [step($old)]
+        steps:(if $variant == "old_merge" or $variant == "stale_attempt_old_tuple" then [step($old)]
                elif $variant == "ambiguous" then [step($tuple),step($old)]
-               else [step($tuple)] end)}] |
-      if $variant == "missing" then {jobs:[],total_count:0} else {jobs:.,total_count:length} end')"
+               elif $variant == "event_only" then [step($tuple | sub("resolved"; "event"))]
+               elif $variant == "old_event_current_plan" then [step($old | sub("resolved"; "event")),step($tuple)]
+               else [step($tuple),step($tuple | sub("resolved"; "event"))] end)}] |
+      if $variant == "missing" then {jobs:[],total_count:0}
+      elif $variant == "jobs_incomplete" then {jobs:.,total_count:2}
+      elif $variant == "jobs_malformed" then {jobs:null,total_count:1}
+      else {jobs:.,total_count:length} end')"
   latest_source="$(jq -cn --arg head "$preview_head_sha" --arg variant "$tuple_case" '
-    {id:5254,run_attempt:(if $variant == "stale_attempt" then 3 else 2 end),
-     head_sha:$head,event:"pull_request",path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_latest_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),status:"in_progress"}')"
+    {id:5254,run_attempt:(if $variant == "stale_attempt" or $variant == "stale_attempt_old_tuple" then 3 else 2 end),
+     head_sha:$head,event:"pull_request",path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_latest_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),status:"in_progress"}
+     | if $variant == "latest_missing_head" then del(.head_sha)
+       elif $variant == "latest_missing_path" then del(.path) else . end')"
   (
     cd "$ROOT_DIR"
     FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
       FAKE_PR_901_HEAD=head-901 \
       FAKE_PR_901_REQUESTED_HEAD=head-901 \
       FAKE_PR_901_PROOF_COMPLETE=false \
+      FAKE_PREVIEW_PLAN_JOBS_FAIL="$([[ "$tuple_case" == jobs_unavailable ]] && echo true || echo false)" \
+      FAKE_PREVIEW_SOURCE_LATEST_FAIL="$([[ "$tuple_case" == latest_unavailable ]] && echo true || echo false)" \
       FAKE_PREVIEW_PLAN_JOBS_JSON="$plan_jobs" \
       FAKE_PREVIEW_SOURCE_LATEST_JSON="$latest_source" \
       FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn --arg variant "$tuple_case" '[{workflow_runs:[{id:5254,run_attempt:2,event:"pull_request",path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_list_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",pull_requests:[{number:901}],name:"PR Preview Environment",head_branch:"feature-preview",display_title:"PR preview 901",status:"in_progress"}]}]')" \
       PREVIEW_MAX_ACTIVE=2 \
       bash "$RECONCILER_RUN"
   ) > "$reconciler_pull_request_output"
-  if [[ "$tuple_case" == current || "$tuple_case" == qualified ]]; then
+  if [[ "$tuple_case" == current || "$tuple_case" == qualified || "$tuple_case" == old_event_current_plan ]]; then
     grep -Fqx \
       "Skipping proof retry for PR #901: preview source or trusted consumer run 5254 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+      "$reconciler_pull_request_output"
+    test ! -e "$FAKE_ANNOTATE_LOG"
+    test ! -e "$FAKE_DISPATCH_LOG"
+  elif [[ "$tuple_case" == missing || "$tuple_case" == ambiguous || "$tuple_case" == jobs_unavailable || "$tuple_case" == latest_unavailable || "$tuple_case" == event_only || "$tuple_case" == stale_attempt || "$tuple_case" == latest_missing_head || "$tuple_case" == latest_missing_path || "$tuple_case" == jobs_incomplete || "$tuple_case" == jobs_malformed || "$tuple_case" == stale_attempt_old_tuple ]]; then
+    grep -Fqx \
+      "Skipping proof retry for PR #901: active preview tuple lookup unavailable; retry budget unchanged." \
       "$reconciler_pull_request_output"
     test ! -e "$FAKE_ANNOTATE_LOG"
     test ! -e "$FAKE_DISPATCH_LOG"

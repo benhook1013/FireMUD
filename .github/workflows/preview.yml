@@ -375,6 +375,10 @@ jobs:
             --author "$TARGET_AUTHOR" \
             --labels-json "$TARGET_LABELS_JSON" >> "$GITHUB_OUTPUT"
 
+      - name: Preview resolved tuple pr-${{ steps.derive.outputs.pr_number }} base-${{ steps.derive.outputs.base_sha }} head-${{ steps.derive.outputs.head_sha }} merge-${{ steps.derive.outputs.merge_sha }}
+        if: ${{ github.event_name == 'pull_request' && steps.derive.outputs.action == 'deploy' && steps.eligibility.outputs.eligible == 'true' }}
+        run: ':'
+
       - name: Explain preview skip
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}
         run: |

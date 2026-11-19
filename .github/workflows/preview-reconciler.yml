@@ -342,25 +342,48 @@ jobs:
           dispatch_sent=false
           automatic_preview_has_tuple() {
             local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" jobs latest
-            jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || return 1
-            jq -e --argjson id "$run_id" --argjson attempt "$attempt" \
-              --arg head "$head" --arg tuple "$tuple" '
+            # 0: exact active tuple, 1: proven nonmatch, 2: unavailable/unfinished proof.
+            jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || return 2
+            jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" '
                 .jobs as $jobs
                 | (($jobs | type) == "array") and (.total_count == ($jobs | length))
+                  and (.total_count < 100)
                   and ([$jobs[] | select(.name == "Preview Plan")] | length == 1)
                   and any($jobs[];
                     .name == "Preview Plan" and .run_id == $id and .run_attempt == $attempt
                     and .head_sha == $head and .status == "completed" and .conclusion == "success"
-                    and ([.steps[]? | select(.name | startswith("Preview event tuple "))] | length == 1)
-                    and any(.steps[]?; .name == $tuple and .status == "completed" and .conclusion == "success"))
-              ' <<<"$jobs" >/dev/null || return 1
-            latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 1
+                    and ([.steps[]? | select(.name | startswith("Preview resolved tuple "))] | length == 1)
+                    and any(.steps[]?;
+                      (.name | test("^Preview resolved tuple pr-[1-9][0-9]* base-[0-9a-f]{40} head-[0-9a-f]{40} merge-[0-9a-f]{40}$"))
+                      and .status == "completed" and .conclusion == "success"))
+              ' <<<"$jobs" >/dev/null || return 2
+            latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
+            jq -e '
+              type == "object"
+              and (.id | type == "number" and . > 0 and . == floor)
+              and (.run_attempt | type == "number" and . > 0 and . == floor)
+              and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+              and (.event | type == "string" and length > 0)
+              and (.path | type == "string" and length > 0)
+              and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
+              ' <<<"$latest" >/dev/null || return 2
+            if jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" --arg pr "$pr" '
+              .id == $id and .run_attempt != $attempt and .head_sha == $head
+              and .event == "pull_request"
+              and (.path == ".github/workflows/preview.yml" or .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge"))
+              and (.status | IN("requested", "queued", "in_progress", "waiting", "pending"))
+              ' <<<"$latest" >/dev/null; then
+              return 2
+            fi
             jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" --arg pr "$pr" '
               .id == $id and .run_attempt == $attempt and .head_sha == $head
               and .event == "pull_request"
               and (.path == ".github/workflows/preview.yml" or .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge"))
               and (.status | IN("requested", "queued", "in_progress", "waiting", "pending"))
-            ' <<<"$latest" >/dev/null
+            ' <<<"$latest" >/dev/null || return 1
+            jq -e --arg tuple "$tuple" '
+              any(.jobs[] | select(.name == "Preview Plan") | .steps[]; .name == $tuple)
+              ' <<<"$jobs" >/dev/null || return 1
           }
 
           dispatch_candidates() {
@@ -604,20 +627,30 @@ jobs:
             fi
 
             active_preview_run_id="$(jq -rs '[.[] | select(.exact)][0].id // empty' <<<"$preview_candidates")"
+            active_preview_lookup_unknown=false
             if [[ -z "$active_preview_run_id" ]]; then
               # A same-head title is not proof: the base can move independently.
-              tuple_step="Preview event tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
+              tuple_step="Preview resolved tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
               while IFS=$'\t' read -r run_id run_attempt; do
                 [[ -n "$run_id" ]] || continue
                 if automatic_preview_has_tuple "$run_id" "$run_attempt" "$head_sha" "$tuple_step" "$pr_number"; then
                   active_preview_run_id="$run_id"
                   break
+                else
+                  lookup_status=$?
+                  if [[ "$lookup_status" -eq 2 ]]; then
+                    active_preview_lookup_unknown=true
+                  fi
                 fi
               done < <(jq -rs '[.[] | select(.exact | not)] | sort_by(.id) | reverse | .[:3][] | [.id, .run_attempt] | @tsv' <<<"$preview_candidates")
             fi
 
             if [[ -n "${active_preview_run_id}" ]]; then
               echo "Skipping proof retry for PR #${pr_number}: preview source or trusted consumer run ${active_preview_run_id} for ${base_sha}/${head_sha}/${merge_sha} is already queued or in progress."
+              continue
+            fi
+            if [[ "$active_preview_lookup_unknown" == true ]]; then
+              echo "Skipping proof retry for PR #${pr_number}: active preview tuple lookup unavailable; retry budget unchanged."
               continue
             fi
 
