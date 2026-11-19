@@ -1544,6 +1544,25 @@ async function runDispatcher({
     "broad preflight still checks native producers");
   assert(manyInvisible.inventoryCalls.some(request => request.event === "repository_dispatch" && request.created !== visibilityFloor),
     "broad preflight still checks existing dispatch producers");
+  const transientTuples = [tuple, tupleFor(102, "a", "c")];
+  let transientReads = 0;
+  const transient = await runDispatcher({tuples: transientTuples, visibilityResponse: (_request, posted) => {
+    if (++transientReads === 1) throw Object.assign(new Error("temporarily unavailable"), {status: 502});
+    return {total_count: posted.length, workflow_runs: posted};
+  }});
+  assert.deepEqual(numbers(transient), ["101", "102"], "retry visibility only, never either accepted POST");
+  assert.equal(transientReads, 2);
+  assert.equal(transient.waitedMillis, 5000);
+  assert.deepEqual(transient.errors, []);
+  for (const [failure, reason] of [
+    [() => { throw Object.assign(new Error("visibility forbidden"), {status: 403}); }, "visibility forbidden"],
+    [() => ({total_count: 1, workflow_runs: []}), "recent run inventory is incomplete"],
+  ]) {
+    const terminal = await runDispatcher({tuples: transientTuples, visibilityResponse: failure});
+    assert.deepEqual(numbers(terminal), ["101", "102"]);
+    assert.equal(terminal.waitedMillis, 0, "untrusted or unauthorized snapshot is terminal");
+    assert(terminal.errors.some(message => message.includes(reason)));
+  }
   const multiPageObservation = await runDispatcher({tuples: [tuple], visibilityResponse: ({page}, [posted]) => ({
     total_count: 101,
     workflow_runs: page === 1 ? Array.from({length: 100}, (_, index) => ({
