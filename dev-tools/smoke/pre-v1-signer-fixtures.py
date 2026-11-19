@@ -11,6 +11,7 @@ Compose smoke only, under the pre-v1 gate waiver (ADR 0185). Writes, under OUTPU
   materializer-binding/ Account's protected materializer trust binding (binding.properties)
   readiness-binding/ Account's protected readiness trust binding (binding.properties); the
                    self-attested readiness driver presents its harness identity
+  keyrings/        Account LOGIN request-digest and response-envelope keyrings
   identity.json    The fixed environment identity the stand-ins share
 
 The init container copies these into root-owned volumes. Real cluster identity, Kubernetes RBAC
@@ -43,6 +44,10 @@ def canonical_json(value):
 
 def sha256_hex(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def b64url_raw(data):
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
 def run(*args):
@@ -227,6 +232,19 @@ def main():
     inventory["bindingDigest"] = sha256_hex(canonical_json(inventory))
     # AccountJwtValidatorInventoryBinding reads one fixed path beside the API binding.
     (api / "validator-inventory.json").write_text(json.dumps(inventory, indent=2) + "\n")
+
+    keyrings = out / "keyrings"
+    for name in ("request-digest", "response-envelope"):
+        (keyrings / name).mkdir(parents=True, exist_ok=True)
+    key = lambda: b64url_raw(secrets.token_bytes(32))
+    retained_until = (int(time.time()) + 30 * 24 * 3600) * 1000
+    (keyrings / "request-digest" / "keyring").write_text(
+        "firemud-account-credential-request-digest-keyring-v1\n"
+        f"active compose-1 {retained_until} {key()}\n"
+    )
+    (keyrings / "response-envelope" / "keyring").write_text(
+        "firemud-account-response-envelope-keyring-v1\n" f"active compose-1 {key()}\n"
+    )
 
     (out / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     os.chmod(out, 0o755)

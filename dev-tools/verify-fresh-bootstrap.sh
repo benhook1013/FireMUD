@@ -6,6 +6,7 @@ COMPOSE_FILES=(
   -f "$ROOT_DIR/docker/docker-compose.yml"
   -f "$ROOT_DIR/docker/docker-compose.override.yml"
   -f "$ROOT_DIR/docker/docker-compose.grpc-mtls.override.yml"
+  -f "$ROOT_DIR/docker/docker-compose.pre-v1-login.override.yml"
 )
 TCP_SMOKE_SCRIPT="$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
 WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
@@ -69,7 +70,7 @@ if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
     fi
   done <<<"$FIREMUD_SMOKE_COMPOSE_SERVICES"
 else
-  if ! compose_services_output="$(FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH=/tmp/firemud-compose-authored-world-source-config-only docker compose "${COMPOSE_FILES[@]}" config --services)"; then
+  if ! compose_services_output="$(FIREMUD_PRE_V1_SIGNER_FIXTURES=/tmp/firemud-pre-v1-config-only FIREMUD_PRE_V1_NAMESPACE_UID=config-only FIREMUD_PRE_V1_CLUSTER_UID=config-only FIREMUD_PRE_V1_CONFIG_MAP_UID=config-only FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH=/tmp/firemud-compose-authored-world-source-config-only docker compose "${COMPOSE_FILES[@]}" config --services)"; then
     echo "Docker Compose service discovery failed." >&2
     exit 1
   fi
@@ -122,6 +123,9 @@ FIREMUD_SMOKE_PROOF_CLAIMED=true
 export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 ensure_run_owned_initial_admission_capability "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" create-or-verify
+# shellcheck source=dev-tools/smoke/pre-v1-signer-fixtures.sh
+source "$ROOT_DIR/dev-tools/smoke/pre-v1-signer-fixtures.sh"
+prepare_pre_v1_signer_fixtures "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 bash "$BUILD_JARS_SCRIPT"
 if [[ "$FIREMUD_SMOKE_SERIAL_BUILD" == "1" ]]; then
