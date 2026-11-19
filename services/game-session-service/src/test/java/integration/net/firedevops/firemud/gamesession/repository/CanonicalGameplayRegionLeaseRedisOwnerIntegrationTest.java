@@ -201,8 +201,12 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       assertThat(redis.admin().get(leaseKey)).isNull();
 
       Clock current = Clock.systemUTC();
-      var timely = owner.forHandoffDeadline(current, current.millis() + 4_000);
+      long handoffDeadline = current.millis() + 4_000;
+      var timely = owner.forHandoffDeadline(current, handoffDeadline);
       var grant = timely.acquire(source, 7L, Duration.ofSeconds(30), identity("timely"));
+      assertThat(redis.admin().pexpiretime(leaseKey))
+          .isPositive()
+          .isLessThanOrEqualTo(handoffDeadline);
       timely.requireCurrent(grant);
       timely.renew(grant, Duration.ofSeconds(30));
       byte[] token = redis.admin().get(leaseKey);

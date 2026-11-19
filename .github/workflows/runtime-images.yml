@@ -1130,8 +1130,16 @@ jobs:
                   }
                 }
               } catch (error) {
-                core.setFailed(`Runtime refresh visibility is uncertain; no retry issued: ${error.message || error}`);
-                break;
+                const status = error?.status ?? error?.response?.status;
+                const code = error?.code ?? error?.cause?.code;
+                const transient = [408, 425, 429, 500, 502, 503, 504].includes(status) ||
+                  (status == null && ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH",
+                    "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code));
+                if (!transient) {
+                  core.setFailed(`Runtime refresh visibility is uncertain; no retry issued: ${error.message || error}`);
+                  break;
+                }
+                core.warning("Runtime refresh visibility read is temporarily unavailable; keep observing without retrying any POST.");
               }
               if (pendingVisibility.length === 0) break;
               if (Date.now() >= visibilityDeadline) {
@@ -1139,7 +1147,7 @@ jobs:
                 core.setFailed(`Refresh dispatch ${dispatchState} but visibility is unknown for PRs ${pendingVisibility.map(item => item.tuple.prNumber).join(", ")}; no retry issued`);
                 break;
               }
-              await new Promise(resolve => setTimeout(resolve, 5000));
+              await new Promise(resolve => setTimeout(resolve, Math.min(5000, visibilityDeadline - Date.now())));
             }
 
   build-base-image:
