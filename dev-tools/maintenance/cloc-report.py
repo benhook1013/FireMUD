@@ -47,7 +47,9 @@ DEFAULT_BAR_WIDTH = 16
 REMOTE_COMMAND_TIMEOUT_SECONDS = 120
 PR_COMMAND_DESCRIPTION = "compare merge-base and immutable head snapshots for a GitHub PR"
 PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid"
-PR_UPDATE_FIELDS = "baseRefOid,headRefOid,body"
+PR_UPDATE_FIELDS = "state,baseRefName,baseRefOid,headRefName,headRefOid,body"
+CODERABBIT_LOGIN = "coderabbitai[bot]"
+CODERABBIT_PROCESSING_MARKER = "<!-- This is an auto-generated comment: review in progress by coderabbit.ai -->"
 PR_REPORT_START = "<!-- firemud:cloc-report:start -->"
 PR_REPORT_END = "<!-- firemud:cloc-report:end -->"
 PR_REPORT_METADATA_PREFIX = "<!-- firemud:cloc-report:metadata "
@@ -72,6 +74,10 @@ PR_SECTION_LABELS = {
 
 class ReportError(RuntimeError):
     """A user-facing report failure."""
+
+
+class HostedReviewActive(RuntimeError):
+    """A CodeRabbit review is in progress on the PR head; the body edit is skipped, not failed."""
 
 
 @dataclass(frozen=True)
@@ -1050,7 +1056,10 @@ def replace_pr_report_block(body: str, snippet: str) -> str:
     return validated_pr_body(f"{body[:start]}{snippet}{body[end:]}")
 
 
-def pull_request_update_state(root: Path, number: int, repository: str) -> tuple[str, str, str]:
+def pull_request_update_state(
+    root: Path, number: int, repository: str, base_ref: str, head_ref: str
+) -> tuple[str, str, str]:
+    """Read the PR's body, base and head, refusing unless it is still open on the counted refs."""
     require_tool("gh")
     result = run_command(
         (
@@ -1077,7 +1086,43 @@ def pull_request_update_state(root: Path, number: int, repository: str) -> tuple
         body = ""
     if not isinstance(body, str):
         raise ReportError("GitHub PR body was not text")
+    if payload.get("state") != "OPEN":
+        raise ReportError("PR is no longer open; refusing body update")
+    if payload.get("baseRefName") != base_ref or payload.get("headRefName") != head_ref:
+        raise ReportError("PR base or head branch changed while the LOC report was being generated; refusing body update")
     return body, valid_object_id(payload.get("baseRefOid"), "base"), valid_object_id(payload.get("headRefOid"), "head")
+
+
+def gh_api_lines(root: Path, endpoint: str, jq: str) -> list[str]:
+    result = run_command(
+        ("gh", "api", "--paginate", endpoint, "--jq", jq), root, timeout=REMOTE_COMMAND_TIMEOUT_SECONDS
+    )
+    return [line for line in result.stdout.decode(errors="replace").splitlines() if line.strip()]
+
+
+def hosted_review_in_progress(root: Path, number: int, repository: str, head_oid: str) -> bool:
+    """Mirror FireController's view of an active CodeRabbit review: a pending status, an
+    incomplete check run, or CodeRabbit's "review in progress" comment on the PR."""
+    statuses = gh_api_lines(
+        root,
+        f"repos/{repository}/commits/{head_oid}/statuses?per_page=100",
+        '.[] | select(.context == "CodeRabbit") | .state',
+    )
+    if statuses and statuses[0] == "pending":
+        return True
+    if gh_api_lines(
+        root,
+        f"repos/{repository}/commits/{head_oid}/check-runs?check_name=CodeRabbit&per_page=100",
+        '.check_runs[] | select(.status != "completed") | .id',
+    ):
+        return True
+    return bool(
+        gh_api_lines(
+            root,
+            f"repos/{repository}/issues/{number}/comments?per_page=100",
+            f'.[] | select(.user.login == "{CODERABBIT_LOGIN}" and ((.body // "") | contains("{CODERABBIT_PROCESSING_MARKER}"))) | .id',
+        )
+    )
 
 
 def update_pull_request_body(
@@ -1085,6 +1130,9 @@ def update_pull_request_body(
     number: int,
     report: dict[str, object],
     body_draft: str | None = None,
+    *,
+    expect_base: str | None = None,
+    skip_while_hosted_review: bool = False,
 ) -> bool:
     repository = report.get("repository")
     base = report.get("base")
@@ -1099,9 +1147,11 @@ def update_pull_request_body(
     counted_merge_base = valid_object_id(base.get("merge_base"), "merge-base")
     counted_head = valid_object_id(head.get("oid"), "head")
 
-    remote_body, current_base, current_head = pull_request_update_state(root, number, repository)
+    remote_body, current_base, current_head = pull_request_update_state(root, number, repository, base_ref, head_ref)
     if current_head != counted_head:
         raise ReportError("PR head changed while the LOC report was being generated; refusing body update")
+    if expect_base is not None and current_base != expect_base:
+        raise ReportError("PR base does not match --expect-base; refusing body update")
     current_metadata = PullRequestMetadata(
         number=number,
         repository=repository,
@@ -1124,7 +1174,11 @@ def update_pull_request_body(
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as body_file:
             body_path = Path(body_file.name)
             body_file.write(updated_body)
-        latest_state = pull_request_update_state(root, number, repository)
+        # Checked last so the window between these reads and the edit stays small. GitHub's
+        # body update has no atomic precondition, so the edit remains best effort.
+        if skip_while_hosted_review and hosted_review_in_progress(root, number, repository, current_head):
+            raise HostedReviewActive(f"CodeRabbit review in progress on PR #{number}; LOC section not updated")
+        latest_state = pull_request_update_state(root, number, repository, base_ref, head_ref)
         if latest_state != (remote_body, current_base, current_head):
             raise ReportError("PR body, base, or head changed before the LOC report update; refusing body update")
         run_command(
@@ -1356,6 +1410,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="use an absolute UTF-8 file as the complete draft PR body before inserting the marked LOC section",
     )
+    pr.add_argument("--expect-head", help="refuse unless the PR head is exactly this commit")
+    pr.add_argument("--expect-base", help="refuse unless the PR base is exactly this commit")
+    pr.add_argument(
+        "--skip-while-hosted-review",
+        action="store_true",
+        help="with --update-pr, skip the edit (exit 0) while a CodeRabbit review is in progress",
+    )
 
     classify = commands.add_parser("classify", help="show source/test classification for tracked files")
     classify.add_argument("--json", action="store_true", help="emit structured JSON")
@@ -1400,6 +1461,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not args.update_pr:
                 raise ReportError("--body-file requires --update-pr")
             body_draft = read_pr_body_file(args.body_file)
+        if args.command == "pr":
+            if args.skip_while_hosted_review and not args.update_pr:
+                raise ReportError("--skip-while-hosted-review requires --update-pr")
+            if args.expect_head is not None:
+                args.expect_head = valid_object_id(args.expect_head, "--expect-head")
+            if args.expect_base is not None:
+                args.expect_base = valid_object_id(args.expect_base, "--expect-base")
 
         root = repository_root()
         if args.command == "classify":
@@ -1416,12 +1484,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.number <= 0:
                 raise ReportError("pull request number must be positive")
             report = build_pr_report(root, args.number, args.repo)
+            for label, expected in (("head", args.expect_head), ("base", args.expect_base)):
+                section = report.get(label)
+                if expected is not None and (not isinstance(section, dict) or section.get("oid") != expected):
+                    raise ReportError(f"PR {label} does not match --expect-{label}; refusing to report")
             print_json(report) if args.json else print(render_pr_report(report))
             if args.update_pr:
-                if args.body_file is not None:
-                    updated = update_pull_request_body(root, args.number, report, body_draft)
-                else:
-                    updated = update_pull_request_body(root, args.number, report)
+                guards = {}
+                if args.expect_base is not None:
+                    guards["expect_base"] = args.expect_base
+                if args.skip_while_hosted_review:
+                    guards["skip_while_hosted_review"] = True
+                try:
+                    if args.body_file is not None:
+                        updated = update_pull_request_body(root, args.number, report, body_draft, **guards)
+                    else:
+                        updated = update_pull_request_body(root, args.number, report, **guards)
+                except HostedReviewActive as skipped:
+                    print(f"Skipping: {skipped}.", file=sys.stderr)
+                    return 0
                 if args.body_file is not None:
                     status = (
                         "Updated the PR body with the marked LOC section"

@@ -696,6 +696,12 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0184-emergency-tcp-proxy-identity-withdrawal.md": adr_allocation(
         "SF-1", "Accepted", "PO-2", "PO-3", "PO-4"
     ),
+    "design/architecture/decisions/adr-0185-no-data-carry-over-before-v1.md": adr_allocation(
+        "SF-2", "Proposed - Pending Human Review", "AR-1", "PO-4"
+    ),
+    "design/architecture/decisions/adr-0186-volatile-combat-bookkeeping-and-per-tick-hp.md": adr_allocation(
+        "GR-4", "Accepted", "GR-1", "GR-3", "SF-2"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

@@ -30,7 +30,7 @@ An individual contributor, or the human signing for a legal entity, must be at l
 
 The agreement preserves contributor ownership while granting the rights needed to use accepted contributions in FireMUD. Its detailed grant terms govern inbound contributions; the repository's outbound terms remain governed by [LICENSE.md](LICENSE.md). Contributions must contain only material the contributor owns or is authorized to submit. Third-party or mixed material must be identified and reviewed in the pull request or through the licensing contact. Contributor-authored portions remain subject to the CLA when the contributor owns or controls the rights needed for its grant; third-party portions remain under their own terms or a separate direct grant from the relevant rights holder and are not made Contributions by approval. Documented permission and written approval from Benjamin James Hook or a Permitted Successor must be on file before third-party portions are merged or accepted into Repository Material.
 
-Work authored by Benjamin James Hook in his current rights-holder capacity does not require a new CLA. Rights-cleared repository metadata or mechanical output produced by configured dependency or workflow automation is also exempt from the CLA signature workflow. This automation exception does not create an inbound-rights grant: automation-produced source, documentation, assets, or other copyright-bearing or external material requires documented provenance and a compatible licence or written approval before merge. A bot cannot sign a CLA. The PR template records these exceptions; checking that box alone does not execute a CLA.
+Work authored by Benjamin James Hook in his current rights-holder capacity does not require a new CLA. Rights-cleared repository metadata or mechanical output produced by configured dependency or workflow automation is also exempt from the CLA signature workflow. This automation exception does not create an inbound-rights grant: automation-produced source, documentation, assets, or other copyright-bearing or external material requires documented provenance and a compatible licence or written approval before merge. A bot cannot sign a CLA. Benjamin James Hook confirms CLA status for external pull requests before merge; nothing in the PR template records or executes a CLA.
 
 ## Code Style Summary
 
@@ -65,7 +65,7 @@ Hooks run `spotlessApply` on commit and then run file-scoped fixes/checks for Ma
 ## How to Submit a PR
 
 1. Fork the repository and clone your fork locally.
-2. Create your feature branch: `git checkout -b feature/my-change`.
+2. Create your feature branch: `git switch -c feature/my-change`.
 3. Make your code and documentation changes.
 4. Run the test suite locally and ensure all checks pass.
 5. Commit using clear, descriptive messages and push your branch to your fork.
