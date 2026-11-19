@@ -2938,7 +2938,7 @@ let eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
 let currentMergeParents = [{ sha: baseSha }, { sha: headSha }];
 let availableRuns = [];
 let requestedCommitRefs = [];
-let forbiddenCurrentBaseLookups = 0;
+let currentBaseLookups = 0;
 let fakeNow = 1000;
 let onSmokeSleep = null;
 Date.now = () => fakeNow;
@@ -3017,7 +3017,7 @@ const github = {
     },
     git: {
       getRef: async () => {
-        forbiddenCurrentBaseLookups += 1;
+        currentBaseLookups += 1;
         return { data: { object: { sha: liveBaseSha } } };
       },
     },
@@ -3178,6 +3178,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
     const queryStart = workflowRunQueries.length;
     const jobStart = jobQueries.length;
     const dispatchQueryStart = repositoryDispatchQueryCount;
+    const currentBaseLookupStart = currentBaseLookups;
     availableRuns = [eventRun];
     onRepositoryDispatchQuery = (queryCount) => {
       const replacementPoll = queryCount - dispatchQueryStart;
@@ -3201,6 +3202,9 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       }
       if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 602) {
         throw new Error("Smoke Gate must wait for and validate the exact dispatch replacement smoke job");
+      }
+      if (currentBaseLookups <= currentBaseLookupStart) {
+        throw new Error("Smoke Gate must verify the live base before accepting a typed replacement");
       }
     });
   })
@@ -3269,6 +3273,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
     eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
     const queryStart = workflowRunQueries.length;
     const jobStart = jobQueries.length;
+    const currentBaseLookupStart = currentBaseLookups;
     availableRuns = [
       runtimeRun(303, runtimeTitle(currentBaseSha, headSha, currentMergeSha)),
       runtimeRun(304, `Build Runtime Images secure-pr-artifact pr-42 head-${headSha} mode-required`),
@@ -3288,7 +3293,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 202) {
         throw new Error("Smoke Gate must select the exact successful event base/head/merge tuple");
       }
-      if (forbiddenCurrentBaseLookups !== 0) {
+      if (currentBaseLookups !== currentBaseLookupStart) {
         throw new Error("Smoke Gate must not require the live base SHA to accept event-tuple smoke");
       }
     });
