@@ -109,12 +109,11 @@ public final class GameSessionStartSessionOperatorAuthorizationCoordinator {
     AccountRedemptionProjection projection = redemption.projection();
 
     AttemptSnapshot attached =
-        ownerTransaction.execute(
-            status -> {
-              AttemptSnapshot current = attemptRepository.validateCurrentClaim(claim);
-              requireSameCurrentAttempt(reservation.snapshot(), current, claim, tuple);
-              return attemptRepository.attachAccountRedemptionProjection(claim, projection);
-            });
+        ownerTransaction.execute(status -> {
+          AttemptSnapshot current = attemptRepository.validateCurrentClaim(claim);
+          requireSameCurrentAttempt(reservation.snapshot(), current, claim, tuple);
+          return attemptRepository.attachAccountRedemptionProjection(claim, projection);
+        });
     if (attached == null) {
       throw new IllegalStateException("Account projection attachment returned no owner snapshot");
     }

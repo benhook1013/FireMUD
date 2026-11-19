@@ -336,11 +336,10 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     AttemptClaim claim = attemptClaim(request);
     AttemptSnapshot attempt = attemptSnapshot(tuple, accountProjection(tuple));
     when(attemptRepository.validateCurrentClaim(claim))
-        .thenAnswer(
-            ignored -> {
-              assertOwnerTransaction();
-              return attempt;
-            });
+        .thenAnswer(ignored -> {
+          assertOwnerTransaction();
+          return attempt;
+        });
     when(preparationRepository.readByControlPlaneRequestId(NAMESPACE, CONTROL_PLANE_REQUEST))
         .thenReturn(Optional.of(original));
 
@@ -396,28 +395,24 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     when(attemptRepository.validateCurrentClaim(claim)).thenReturn(authorizedAttempt);
     GameSessionCanonicalLaunchPreparationService authorizedService = authorizedService();
 
-    assertThatThrownBy(
-            () ->
-                authorizedService.prepareAuthorized(
-                    claim, requestVariant(request, uuid(98), TENANT, 71L, false, null)))
+    assertThatThrownBy(() ->
+            authorizedService.prepareAuthorized(
+                claim, requestVariant(request, uuid(98), TENANT, 71L, false, null)))
         .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
         .hasMessageContaining("actor, tenant, or template");
-    assertThatThrownBy(
-            () ->
-                authorizedService.prepareAuthorized(
-                    claim, requestVariant(request, ACTOR, uuid(97), 71L, false, null)))
+    assertThatThrownBy(() ->
+            authorizedService.prepareAuthorized(
+                claim, requestVariant(request, ACTOR, uuid(97), 71L, false, null)))
         .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
         .hasMessageContaining("actor, tenant, or template");
-    assertThatThrownBy(
-            () ->
-                authorizedService.prepareAuthorized(
-                    claim, requestVariant(request, ACTOR, TENANT, 72L, false, null)))
+    assertThatThrownBy(() ->
+            authorizedService.prepareAuthorized(
+                claim, requestVariant(request, ACTOR, TENANT, 72L, false, null)))
         .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
         .hasMessageContaining("actor, tenant, or template");
-    assertThatThrownBy(
-            () ->
-                authorizedService.prepareAuthorized(
-                    claim, requestVariant(request, ACTOR, TENANT, 71L, true, 72L)))
+    assertThatThrownBy(() ->
+            authorizedService.prepareAuthorized(
+                claim, requestVariant(request, ACTOR, TENANT, 71L, true, 72L)))
         .isInstanceOf(LaunchPreparationConflictException.class)
         .hasMessageContaining("does not authorize launch descriptor overrides");
 
@@ -466,11 +461,10 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     CanonicalLaunchPreparationSnapshot prepared = snapshot(request, catalog, intake, descriptor);
     AttemptSnapshot exactAttempt = attemptSnapshot(tuple, accountProjection(tuple));
     when(attemptRepository.validateCurrentClaim(claim))
-        .thenAnswer(
-            ignored -> {
-              assertOwnerTransaction();
-              return exactAttempt;
-            });
+        .thenAnswer(ignored -> {
+          assertOwnerTransaction();
+          return exactAttempt;
+        });
     stubNewPreparation(request, source, intake, catalog, descriptor, prepared, true);
 
     assertThat(authorizedService().prepareAuthorized(claim, request)).isEqualTo(prepared);
@@ -687,17 +681,15 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     when(sourceRepository.read(SOURCE_INTAKE_OPERATION, TENANT, catalog.worldSlug(), NAMESPACE))
         .thenReturn(Optional.of(intake));
     when(descriptorClient.resolve(resolved.request()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return resolved;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return resolved;
+        });
     when(descriptorClient.get(any(GetRequest.class)))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return changedReadback;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return changedReadback;
+        });
 
     assertThatThrownBy(() -> service.prepare(request))
         .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
@@ -1024,35 +1016,31 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     when(sourceRepository.read(SOURCE_INTAKE_OPERATION, TENANT, catalog.worldSlug(), NAMESPACE))
         .thenReturn(Optional.of(intake));
     when(descriptorClient.resolve(descriptor.request()))
-        .thenAnswer(
-            ignored -> {
-              if (verifyAuthorizedClaimRevalidation) {
-                verify(attemptRepository, times(1)).validateCurrentClaim(attemptClaim(request));
-              }
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return descriptor;
-            });
+        .thenAnswer(ignored -> {
+          if (verifyAuthorizedClaimRevalidation) {
+            verify(attemptRepository, times(1)).validateCurrentClaim(attemptClaim(request));
+          }
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return descriptor;
+        });
     when(descriptorClient.get(any(GetRequest.class)))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return descriptor;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return descriptor;
+        });
     when(preparationRepository.persistPrepared(request, catalog, intake, descriptor))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                  .isFalse();
-              assertThat(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
-                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-              assertThat(descriptor.authoredWorldSourceOperationId())
-                  .isEqualTo(sourceEvidence.operationId());
-              if (verifyAuthorizedClaimRevalidation) {
-                verify(attemptRepository, times(2)).validateCurrentClaim(attemptClaim(request));
-              }
-              return snapshot;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+          assertThat(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
+              .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+          assertThat(descriptor.authoredWorldSourceOperationId())
+              .isEqualTo(sourceEvidence.operationId());
+          if (verifyAuthorizedClaimRevalidation) {
+            verify(attemptRepository, times(2)).validateCurrentClaim(attemptClaim(request));
+          }
+          return snapshot;
+        });
   }
 
   private void resetRepositories() {
@@ -1207,19 +1195,17 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     String publishCommitId = "publish-commit-902";
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        publishCommitId,
-                        "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? digest("d") : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    Long.toString(descriptor.versionId()),
+                    false,
+                    null,
+                    publishCommitId,
+                    "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(owner),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? digest("d") : null))
             .toList();
     AuthoredWorldReleaseAttestationEvidence releaseAttestation =
         AuthoredWorldReleaseAttestationEvidence.create(

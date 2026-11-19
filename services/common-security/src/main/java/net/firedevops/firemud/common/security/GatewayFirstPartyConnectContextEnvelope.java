@@ -453,11 +453,10 @@ public final class GatewayFirstPartyConnectContextEnvelope {
       throw new IllegalArgumentException("Missing " + field);
     }
     Map<String, String> result = new LinkedHashMap<>();
-    source.forEach(
-        (key, value) -> {
-          requireCanonicalUuidText(key, field + " key");
-          result.put(key, requirePositiveLongDecimal(value, field));
-        });
+    source.forEach((key, value) -> {
+      requireCanonicalUuidText(key, field + " key");
+      result.put(key, requirePositiveLongDecimal(value, field));
+    });
     return Collections.unmodifiableMap(result);
   }
 
@@ -1279,11 +1278,10 @@ public final class GatewayFirstPartyConnectContextEnvelope {
       throw new IllegalArgumentException("Missing " + field);
     }
     Map<String, TenantBillingCutoff> result = new LinkedHashMap<>();
-    source.forEach(
-        (key, value) -> {
-          requireCanonicalUuidText(key, field + " key");
-          result.put(key, Objects.requireNonNull(value, field + " value"));
-        });
+    source.forEach((key, value) -> {
+      requireCanonicalUuidText(key, field + " key");
+      result.put(key, Objects.requireNonNull(value, field + " value"));
+    });
     return Collections.unmodifiableMap(result);
   }
 

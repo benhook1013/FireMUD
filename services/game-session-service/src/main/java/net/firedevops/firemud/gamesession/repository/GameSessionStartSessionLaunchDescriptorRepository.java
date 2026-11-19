@@ -113,10 +113,9 @@ public final class GameSessionStartSessionLaunchDescriptorRepository {
     GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot association =
         associationRepository
             .findPinned(claim)
-            .orElseThrow(
-                () ->
-                    new StartSessionLaunchDescriptorConflictException(
-                        "An original template association pin is required before descriptor pinning"));
+            .orElseThrow(() ->
+                new StartSessionLaunchDescriptorConflictException(
+                    "An original template association pin is required before descriptor pinning"));
     PreparedCandidate prepared = prepareCandidate(association, candidate);
     Record existing = selectPin(claim.targetNamespace(), claim.controlPlaneRequestId(), true);
     if (existing != null) {
@@ -221,10 +220,9 @@ public final class GameSessionStartSessionLaunchDescriptorRepository {
     GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot association =
         associationRepository
             .findPinned(continuation)
-            .orElseThrow(
-                () ->
-                    new StartSessionLaunchDescriptorConflictException(
-                        "An existing template association pin is required before descriptor continuation"));
+            .orElseThrow(() ->
+                new StartSessionLaunchDescriptorConflictException(
+                    "An existing template association pin is required before descriptor continuation"));
     PreparedCandidate prepared = prepareCandidate(association, candidate);
     Record existing = selectPin(continuation, true);
     association =

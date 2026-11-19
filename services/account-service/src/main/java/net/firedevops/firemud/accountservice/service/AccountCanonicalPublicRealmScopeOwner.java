@@ -185,26 +185,24 @@ public final class AccountCanonicalPublicRealmScopeOwner {
       throw new AuthenticationException(
           "CONNECT_CONTEXT_INVALID", "Direct caller expired or malformed");
     }
-    return inTransaction(
-        () -> {
-          requireDirectPeer();
-          Account account =
-              accounts
-                  .findByAccountUuidForUpdate(context.accountId())
-                  .orElseThrow(
-                      () ->
-                          new AuthenticationException(
-                              "CONNECT_CONTEXT_INVALID", "Direct caller Account is unknown"));
-          if (account.getId() == null
-              || account.getId() <= 0L
-              || !context.accountId().equals(account.getAccountUuid())
-              || !Objects.equals(account.getId(), account.getAccountUuidSourceNumericId())
-              || !AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance())
-              || account.getLifecycleState() != AccountLifecycleState.ACTIVE) {
-            throw authUnavailable("Direct Account owner is unavailable or ineligible", null);
-          }
-          return new Caller(account.getId(), account.getAccountUuid(), issuedAt, deadline);
-        });
+    return inTransaction(() -> {
+      requireDirectPeer();
+      Account account =
+          accounts
+              .findByAccountUuidForUpdate(context.accountId())
+              .orElseThrow(() ->
+                  new AuthenticationException(
+                      "CONNECT_CONTEXT_INVALID", "Direct caller Account is unknown"));
+      if (account.getId() == null
+          || account.getId() <= 0L
+          || !context.accountId().equals(account.getAccountUuid())
+          || !Objects.equals(account.getId(), account.getAccountUuidSourceNumericId())
+          || !AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance())
+          || account.getLifecycleState() != AccountLifecycleState.ACTIVE) {
+        throw authUnavailable("Direct Account owner is unavailable or ineligible", null);
+      }
+      return new Caller(account.getId(), account.getAccountUuid(), issuedAt, deadline);
+    });
   }
 
   private void requireDirectPeer() {
@@ -266,48 +264,45 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     requireSameCaller(original, authenticate.get());
     requireFresh(entitlement);
     RealmScope retained =
-        inTransaction(
-            () -> {
-              Prepared current = readSources(original, target, entitlement);
-              if (!prepared.tenant().equals(current.tenant())
-                  || !prepared.membership().equals(current.membership())) {
-                throw authUnavailable("Account discovery sources changed", null);
-              }
-              if (prepared.head().kind() != current.head().kind()
-                  || !prepared.head().matches(current.head().checkpoint())) {
-                throw entitlementUnavailable(null);
-              }
-              requireFresh(entitlement);
-              Instant evaluatedAt = now();
-              Instant expiresAt = evaluatedAt.plusMillis(scopeLifetimeMillis);
-              if (original.expiresAt().isBefore(expiresAt)) expiresAt = original.expiresAt();
-              // JWT NumericDate has second precision. The persisted preimage uses that exact
-              // expiry.
-              expiresAt = expiresAt.truncatedTo(ChronoUnit.SECONDS);
-              if (!evaluatedAt.isBefore(expiresAt)) {
-                throw new AuthenticationException(
-                    "CONNECT_CONTEXT_INVALID", "Bootstrap credential expired");
-              }
-              CanonicalJoinScopeV2 scope = mintScope(original, target, evaluatedAt, expiresAt);
-              VerifiedTenantProvenance provenance =
-                  new VerifiedTenantProvenance(
-                      null,
-                      TenantProvenanceKind.FRESH_GAME_DESIGN,
-                      current.tenant().operationId(),
-                      current.tenant().evidenceDigest());
-              scopes.insertCanonical(original.accountId(), scope, provenance);
-              if (!scope.equals(scopes.findCanonical(scope.connectScopeId()).orElse(null))) {
-                throw authUnavailable("Canonical scope readback differs", null);
-              }
-              CanonicalConnectScopeEvidence expected = evidence(original, scope, provenance);
-              if (!expected.equals(
-                  scopes
-                      .findCanonicalEvidenceByTokenHash(expected.scopeTokenHash())
-                      .orElse(null))) {
-                throw authUnavailable("Canonical scope evidence readback differs", null);
-              }
-              return new RealmScope(target, scope, current.membership(), entitlement);
-            });
+        inTransaction(() -> {
+          Prepared current = readSources(original, target, entitlement);
+          if (!prepared.tenant().equals(current.tenant())
+              || !prepared.membership().equals(current.membership())) {
+            throw authUnavailable("Account discovery sources changed", null);
+          }
+          if (prepared.head().kind() != current.head().kind()
+              || !prepared.head().matches(current.head().checkpoint())) {
+            throw entitlementUnavailable(null);
+          }
+          requireFresh(entitlement);
+          Instant evaluatedAt = now();
+          Instant expiresAt = evaluatedAt.plusMillis(scopeLifetimeMillis);
+          if (original.expiresAt().isBefore(expiresAt)) expiresAt = original.expiresAt();
+          // JWT NumericDate has second precision. The persisted preimage uses that exact
+          // expiry.
+          expiresAt = expiresAt.truncatedTo(ChronoUnit.SECONDS);
+          if (!evaluatedAt.isBefore(expiresAt)) {
+            throw new AuthenticationException(
+                "CONNECT_CONTEXT_INVALID", "Bootstrap credential expired");
+          }
+          CanonicalJoinScopeV2 scope = mintScope(original, target, evaluatedAt, expiresAt);
+          VerifiedTenantProvenance provenance =
+              new VerifiedTenantProvenance(
+                  null,
+                  TenantProvenanceKind.FRESH_GAME_DESIGN,
+                  current.tenant().operationId(),
+                  current.tenant().evidenceDigest());
+          scopes.insertCanonical(original.accountId(), scope, provenance);
+          if (!scope.equals(scopes.findCanonical(scope.connectScopeId()).orElse(null))) {
+            throw authUnavailable("Canonical scope readback differs", null);
+          }
+          CanonicalConnectScopeEvidence expected = evidence(original, scope, provenance);
+          if (!expected.equals(
+              scopes.findCanonicalEvidenceByTokenHash(expected.scopeTokenHash()).orElse(null))) {
+            throw authUnavailable("Canonical scope evidence readback differs", null);
+          }
+          return new RealmScope(target, scope, current.membership(), entitlement);
+        });
     // No value escapes a failed commit or a caller/source observation that expired during commit.
     requireSameCaller(original, authenticate.get());
     requireFresh(entitlement);
@@ -374,10 +369,9 @@ public final class AccountCanonicalPublicRealmScopeOwner {
       List<Target> complete, String tenantSlug, String worldSlug, boolean tenantQualified) {
     List<Target> matches =
         complete.stream()
-            .filter(
-                target ->
-                    worldSlug.equals(target.worldSlug())
-                        && (!tenantQualified || tenantSlug.equals(target.tenantSlug())))
+            .filter(target ->
+                worldSlug.equals(target.worldSlug())
+                    && (!tenantQualified || tenantSlug.equals(target.tenantSlug())))
             .toList();
     if (matches.size() > 1) throw pointerUnavailable(null);
     for (Target target : matches) {
@@ -459,32 +453,31 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     Optional<AccountTenantMembership> member =
         memberships.findFreshMembershipForUpdate(caller.accountUuid(), target.canonicalTenantId());
     Optional<ExistingMembership> current =
-        member.map(
-            value -> {
-              if (value.getId() == null
-                  || value.getId() <= 0L
-                  || value.getAccount() == null
-                  || !Objects.equals(account.getId(), value.getAccount().getId())
-                  || !account.getAccountUuid().equals(value.getAccount().getAccountUuid())
-                  || value.getTenantId() != null
-                  || !target.canonicalTenantId().equals(value.getTenantUuid())
-                  || !TenantProvenanceKind.FRESH_GAME_DESIGN
-                      .name()
-                      .equals(value.getTenantProvenanceKind())
-                  || !tenant.operationId().equals(value.getTenantSourceOperationId())
-                  || !tenant.evidenceDigest().equals(value.getTenantProvenanceDigest())
-                  || value.getMembershipVersion() <= 0L
-                  || value.getMembershipAuthorityGeneration() <= 0L
-                  || !List.of("ACTIVE", "INACTIVE").contains(value.getLifecycleState())) {
-                throw authUnavailable("Canonical membership evidence is malformed", null);
-              }
-              return new ExistingMembership(
-                  value.getId(),
-                  value.getLifecycleState(),
-                  value.isGameplayAdmissionAllowed(),
-                  value.getMembershipVersion(),
-                  value.getMembershipAuthorityGeneration());
-            });
+        member.map(value -> {
+          if (value.getId() == null
+              || value.getId() <= 0L
+              || value.getAccount() == null
+              || !Objects.equals(account.getId(), value.getAccount().getId())
+              || !account.getAccountUuid().equals(value.getAccount().getAccountUuid())
+              || value.getTenantId() != null
+              || !target.canonicalTenantId().equals(value.getTenantUuid())
+              || !TenantProvenanceKind.FRESH_GAME_DESIGN
+                  .name()
+                  .equals(value.getTenantProvenanceKind())
+              || !tenant.operationId().equals(value.getTenantSourceOperationId())
+              || !tenant.evidenceDigest().equals(value.getTenantProvenanceDigest())
+              || value.getMembershipVersion() <= 0L
+              || value.getMembershipAuthorityGeneration() <= 0L
+              || !List.of("ACTIVE", "INACTIVE").contains(value.getLifecycleState())) {
+            throw authUnavailable("Canonical membership evidence is malformed", null);
+          }
+          return new ExistingMembership(
+              value.getId(),
+              value.getLifecycleState(),
+              value.isGameplayAdmissionAllowed(),
+              value.getMembershipVersion(),
+              value.getMembershipAuthorityGeneration());
+        });
     return new Prepared(
         tenant,
         new MembershipFacts(account.getAccountUuid(), target.canonicalTenantId(), current),
@@ -583,14 +576,13 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     requireSourceContext();
     try {
       return Objects.requireNonNull(
-          transaction.execute(
-              status -> {
-                if (!TransactionSynchronizationManager.isActualTransactionActive()
-                    || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
-                  throw authUnavailable("Writable Account source transaction required", null);
-                }
-                return action.get();
-              }));
+          transaction.execute(status -> {
+            if (!TransactionSynchronizationManager.isActualTransactionActive()
+                || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+              throw authUnavailable("Writable Account source transaction required", null);
+            }
+            return action.get();
+          }));
     } catch (AuthenticationException failure) {
       throw failure;
     } catch (RuntimeException failure) {

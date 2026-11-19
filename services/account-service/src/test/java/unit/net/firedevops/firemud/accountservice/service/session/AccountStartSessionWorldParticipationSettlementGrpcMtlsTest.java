@@ -87,10 +87,9 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
 
       assertThatThrownBy(() -> client.settle(input()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAVAILABLE));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE));
 
       assertThat(server.handlerCalls()).hasValue(1);
       verify(owner).settle(PARTICIPATION_ID, PARTICIPATION_FENCE);
@@ -108,11 +107,10 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
 
         assertThatThrownBy(() -> client.settle(input()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .as(identity.alias())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .as(identity.alias())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
 
         assertThat(server.handlerCalls()).as(identity.alias()).hasValue(1);
         verifyNoInteractions(owner);
@@ -131,13 +129,10 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
 
       assertThatThrownBy(() -> client.settle(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
-                      .as(
-                          "missing client certificate must fail during TLS negotiation: %s",
-                          failure)
-                      .isTrue());
+          .satisfies(failure ->
+              assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
+                  .as("missing client certificate must fail during TLS negotiation: %s", failure)
+                  .isTrue());
 
       assertThat(server.handlerCalls()).hasValue(0);
       verifyNoInteractions(owner);
@@ -153,10 +148,9 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
 
       assertThatThrownBy(() -> client.settle(input()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
 
       assertThat(server.handlerCalls()).hasValue(1);
       verifyNoInteractions(owner);

@@ -132,10 +132,9 @@ class SelectedOwnerIntakeSourceReadScopeTest {
     var scope = scope(Owner.ENTITY_MANAGEMENT);
     for (Owner owner :
         List.of(Owner.WORLD_MANAGEMENT, Owner.GAME_LOGIC, Owner.GAME_DESIGN_CONTROL_PLANE))
-      assertThatThrownBy(
-              () ->
-                  new SelectedOwnerIntakeSourceReadScope(
-                      owner, "test", OPERATION, FENCE, INTAKE, ACTOR, scope.selected()))
+      assertThatThrownBy(() ->
+              new SelectedOwnerIntakeSourceReadScope(
+                  owner, "test", OPERATION, FENCE, INTAKE, ACTOR, scope.selected()))
           .isInstanceOf(IllegalArgumentException.class);
     for (String[] changed :
         List.of(
@@ -269,17 +268,15 @@ class SelectedOwnerIntakeSourceReadScopeTest {
             scope.purpose());
     assertThatThrownBy(() -> SelectedOwnerIntakeSourceReadScope.fromStored(padded))
         .isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(
-            () ->
-                new SelectedOwnerIntakeSourceReadScope(
-                    scope.owner(),
-                    "test",
-                    OPERATION,
-                    FENCE,
-                    INTAKE,
-                    ACTOR,
-                    binding(
-                        REQUEST, COMMIT, "x".repeat(SelectedOwnerIntakeSourceReadScope.MAX_BYTES))))
+    assertThatThrownBy(() ->
+            new SelectedOwnerIntakeSourceReadScope(
+                scope.owner(),
+                "test",
+                OPERATION,
+                FENCE,
+                INTAKE,
+                ACTOR,
+                binding(REQUEST, COMMIT, "x".repeat(SelectedOwnerIntakeSourceReadScope.MAX_BYTES))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -293,21 +290,19 @@ class SelectedOwnerIntakeSourceReadScopeTest {
             List.of(OPERATION, nil, INTAKE, ACTOR),
             List.of(OPERATION, FENCE, nil, ACTOR),
             List.of(OPERATION, FENCE, INTAKE, nil)))
-      assertThatThrownBy(
-              () ->
-                  new SelectedOwnerIntakeSourceReadScope(
-                      Owner.ENTITY_MANAGEMENT,
-                      "test",
-                      ids.get(0),
-                      ids.get(1),
-                      ids.get(2),
-                      ids.get(3),
-                      selected))
+      assertThatThrownBy(() ->
+              new SelectedOwnerIntakeSourceReadScope(
+                  Owner.ENTITY_MANAGEMENT,
+                  "test",
+                  ids.get(0),
+                  ids.get(1),
+                  ids.get(2),
+                  ids.get(3),
+                  selected))
           .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new SelectedOwnerIntakeSourceReadScope(
-                    null, "test", OPERATION, FENCE, INTAKE, ACTOR, selected))
+    assertThatThrownBy(() ->
+            new SelectedOwnerIntakeSourceReadScope(
+                null, "test", OPERATION, FENCE, INTAKE, ACTOR, selected))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

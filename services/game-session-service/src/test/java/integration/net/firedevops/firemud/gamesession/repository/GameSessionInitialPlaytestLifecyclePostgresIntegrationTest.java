@@ -132,10 +132,9 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var currentRead =
         context
             .transaction()
-            .execute(
-                status ->
-                    owner.readForWorldPreparation(
-                        result.preparationRequestId(), result.playtestLifecycleId()));
+            .execute(status ->
+                owner.readForWorldPreparation(
+                    result.preparationRequestId(), result.playtestLifecycleId()));
     assertThat(currentRead).contains(result);
     assertThat(
             retainedRowWithXmin(
@@ -204,11 +203,10 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var absentRead =
         context
             .transaction()
-            .execute(
-                status ->
-                    owner.readForWorldPreparation(
-                        fixture.target().preparationRequestId(),
-                        fixture.target().playtestLifecycleId()));
+            .execute(status ->
+                owner.readForWorldPreparation(
+                    fixture.target().preparationRequestId(),
+                    fixture.target().playtestLifecycleId()));
     assertThat(absentRead).isEmpty();
     assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isZero();
     var first = allocateRuntime(context, fixture.request());
@@ -301,11 +299,9 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
               GameSessionPrivateFreshRuntimeAllocationRepository.IdempotencyConflictException
                   .class);
     }
-    assertThatThrownBy(
-            () ->
-                allocateRuntime(
-                    context,
-                    runtimeRequest(UUID.randomUUID(), fixture.target(), fixture.selection())))
+    assertThatThrownBy(() ->
+            allocateRuntime(
+                context, runtimeRequest(UUID.randomUUID(), fixture.target(), fixture.selection())))
         .isInstanceOf(
             GameSessionPrivateFreshRuntimeAllocationRepository.IdempotencyConflictException.class);
     assertThat(owner.readByRequest(r.requestId())).contains(first.snapshot());
@@ -367,14 +363,12 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         retainedRowWithXmin(context, RUNTIME_ALLOCATIONS, "request_id", firstRequest.requestId());
     var later = context.advancePrivateRevision(revision.advanceRequest()).snapshot();
     // Catalog advancement and workflow selection are distinct authorities; a mismatch refuses.
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            owner.readForWorldPreparation(
-                                initial.preparationRequestId(), initial.playtestLifecycleId())))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    owner.readForWorldPreparation(
+                        initial.preparationRequestId(), initial.playtestLifecycleId())))
         .isInstanceOf(IllegalStateException.class);
     var wrongSelectionRequest = runtimeRequest(UUID.randomUUID(), later, firstSelection);
     assertThatThrownBy(() -> allocateRuntime(context, wrongSelectionRequest))
@@ -393,10 +387,8 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         .isEqualTo(
             new GameSessionPrivateFreshRuntimeAllocationRepository.Allocation(
                 first.snapshot(), true));
-    assertThatThrownBy(
-            () ->
-                allocateRuntime(
-                    context, runtimeRequest(UUID.randomUUID(), initial, firstSelection)))
+    assertThatThrownBy(() ->
+            allocateRuntime(context, runtimeRequest(UUID.randomUUID(), initial, firstSelection)))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
             retainedRowWithXmin(
@@ -421,21 +413,17 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         .isEqualTo(
             new GameSessionPrivateFreshRuntimeAllocationRepository.Allocation(
                 first.snapshot(), true));
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            owner.readForWorldPreparation(
-                                first.snapshot().preparationRequestId(),
-                                first.snapshot().playtestLifecycleId())))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    owner.readForWorldPreparation(
+                        first.snapshot().preparationRequestId(),
+                        first.snapshot().playtestLifecycleId())))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                allocateRuntime(
-                    context,
-                    runtimeRequest(UUID.randomUUID(), fixture.target(), fixture.selection())))
+    assertThatThrownBy(() ->
+            allocateRuntime(
+                context, runtimeRequest(UUID.randomUUID(), fixture.target(), fixture.selection())))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
             retainedRowWithXmin(
@@ -452,38 +440,30 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   void privateRuntimeFinalCommitRejectsExpiryOrSourceChangeAndRollsBackAllocation() {
     var expiring = runtimeFixture(5);
     Throwable expired =
-        catchThrowable(
-            () ->
-                expiring
-                    .context()
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status -> {
-                          new GameSessionPrivateFreshRuntimeAllocationRepository(
-                                  expiring.context().dsl())
-                              .allocate(expiring.request());
-                          awaitExpiry(
-                              expiring.context(), expiring.preparation().request().forkExpiresAt());
-                        }));
+        catchThrowable(() ->
+            expiring
+                .context()
+                .serializableTransaction()
+                .executeWithoutResult(status -> {
+                  new GameSessionPrivateFreshRuntimeAllocationRepository(expiring.context().dsl())
+                      .allocate(expiring.request());
+                  awaitExpiry(expiring.context(), expiring.preparation().request().forkExpiresAt());
+                }));
     assertThat(sqlStateInCauseChain(expired)).isEqualTo("23514");
     assertThat(expiring.context().dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isZero();
     var changed = runtimeFixture(3600);
     Throwable superseded =
-        catchThrowable(
-            () ->
-                changed
-                    .context()
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status -> {
-                          new GameSessionPrivateFreshRuntimeAllocationRepository(
-                                  changed.context().dsl())
-                              .allocate(changed.request());
-                          // Even a self-consistent re-selection of the same lifecycle changes the
-                          // captured exact head.
-                          selectRuntimeSource(
-                              changed.context(), changed.target(), changed.selection());
-                        }));
+        catchThrowable(() ->
+            changed
+                .context()
+                .serializableTransaction()
+                .executeWithoutResult(status -> {
+                  new GameSessionPrivateFreshRuntimeAllocationRepository(changed.context().dsl())
+                      .allocate(changed.request());
+                  // Even a self-consistent re-selection of the same lifecycle changes the
+                  // captured exact head.
+                  selectRuntimeSource(changed.context(), changed.target(), changed.selection());
+                }));
     assertThat(sqlStateInCauseChain(superseded)).isEqualTo("23514");
     assertThat(changed.context().dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isZero();
   }
@@ -511,14 +491,12 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             "{\"selection_head_revision\":2}",
             "{\"selection_request_digest\":\"sha256:" + "e".repeat(64) + "\"}")) {
       Throwable rejected =
-          catchThrowable(
-              () ->
-                  context
-                      .serializableTransaction()
-                      .executeWithoutResult(
-                          status ->
-                              insertForgedRuntimeAllocation(
-                                  context, fixture.request().requestId(), patch)));
+          catchThrowable(() ->
+              context
+                  .serializableTransaction()
+                  .executeWithoutResult(status ->
+                      insertForgedRuntimeAllocation(
+                          context, fixture.request().requestId(), patch)));
       assertThat(sqlStateInCauseChain(rejected)).as(patch).isIn("23514", "P0002");
     }
     for (String sql :
@@ -551,40 +529,32 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var workers = Executors.newFixedThreadPool(2);
     try {
       var first =
-          workers.submit(
-              () ->
-                  context
-                      .serializableTransaction()
-                      .execute(
-                          status -> {
-                            var result = owner.allocate(fixture.request());
-                            held.countDown();
-                            await(release);
-                            return result;
-                          }));
+          workers.submit(() ->
+              context
+                  .serializableTransaction()
+                  .execute(status -> {
+                    var result = owner.allocate(fixture.request());
+                    held.countDown();
+                    await(release);
+                    return result;
+                  }));
       await(held);
       var second =
-          workers.submit(
-              () -> {
-                try {
-                  context
-                      .serializableTransaction()
-                      .executeWithoutResult(
-                          status -> {
-                            assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS)))
-                                .isZero();
-                            secondPid.set(
-                                context
-                                    .dsl()
-                                    .fetchSingle("SELECT pg_backend_pid()")
-                                    .get(0, Integer.class));
-                            snapshotEstablished.countDown();
-                            owner.allocate(fixture.request());
-                          });
-                } catch (Throwable failed) {
-                  secondFailure.set(failed);
-                }
-              });
+          workers.submit(() -> {
+            try {
+              context
+                  .serializableTransaction()
+                  .executeWithoutResult(status -> {
+                    assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isZero();
+                    secondPid.set(
+                        context.dsl().fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                    snapshotEstablished.countDown();
+                    owner.allocate(fixture.request());
+                  });
+            } catch (Throwable failed) {
+              secondFailure.set(failed);
+            }
+          });
       await(snapshotEstablished);
       awaitAdvisoryLockWait(context, secondPid.get());
       release.countDown();
@@ -741,10 +711,9 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     assertThat(selectedPolicy)
         .isEqualTo(
             context.published().policies().stream()
-                .filter(
-                    candidate ->
-                        candidate.source().policy().worldSlug().equals(request.worldSlug())
-                            && candidate.source().policy().realmSlug().equals(request.realmSlug()))
+                .filter(candidate ->
+                    candidate.source().policy().worldSlug().equals(request.worldSlug())
+                        && candidate.source().policy().realmSlug().equals(request.realmSlug()))
                 .findFirst()
                 .orElseThrow());
     assertThat(context.prepare(request)).isEqualTo(new Allocation(preparation, true));
@@ -943,12 +912,11 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         Objects.requireNonNull(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        selectionRepository
-                            .readCurrent(
-                                NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
-                            .orElseThrow()));
+                .execute(status ->
+                    selectionRepository
+                        .readCurrent(
+                            NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
+                        .orElseThrow()));
     assertThat(current.selection()).isEqualTo(replacementSelection.receipt());
     assertThat(current.selectedPrepSnapshot().preparation()).isEqualTo(laterPreparation);
     assertThat(current.selectedPrepSnapshot().state()).isEqualTo(ReadState.INCOMPLETE);
@@ -1052,12 +1020,11 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         Objects.requireNonNull(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        selectionRepository
-                            .readCurrent(
-                                NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
-                            .orElseThrow()));
+                .execute(status ->
+                    selectionRepository
+                        .readCurrent(
+                            NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
+                        .orElseThrow()));
     assertThat(currentAfterReplay.selection()).isEqualTo(replacementSelection.receipt());
     assertThat(currentAfterReplay.admissionAllowed()).isFalse();
   }
@@ -1319,12 +1286,11 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         Objects.requireNonNull(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        selections
-                            .readCurrent(
-                                NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
-                            .orElseThrow()));
+                .execute(status ->
+                    selections
+                        .readCurrent(
+                            NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
+                        .orElseThrow()));
     assertThat(currentSelection.selection()).isEqualTo(laterSelection.receipt());
     assertThat(currentSelection.selectedPrepSnapshot().preparation())
         .isEqualTo(fixture.laterPreparation());
@@ -1339,10 +1305,9 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         Objects.requireNonNull(
             context
                 .serializableTransaction()
-                .execute(
-                    status ->
-                        revisions.readForWorldPreparation(
-                            fixture.laterRequest().requestId(), target.playtestLifecycleId())));
+                .execute(status ->
+                    revisions.readForWorldPreparation(
+                        fixture.laterRequest().requestId(), target.playtestLifecycleId())));
     assertThat(currentWorldTarget).contains(target);
     assertThat(context.prepare(fixture.initialRequest()))
         .isEqualTo(new Allocation(fixture.initialPreparation(), true));
@@ -1518,50 +1483,46 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             second.playtestLifecycleId().toString(),
             next.requestDigest());
     Throwable wrongFrame =
-        catchThrowable(
-            () ->
-                context
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .execute(
-                                    sql,
-                                    second.realmId(),
-                                    intended.requestId(),
-                                    wrongPreimage,
-                                    sha256(wrongPreimage),
-                                    "sha256:" + "0".repeat(64),
-                                    nextRequest.requestId(),
-                                    next.playtestLifecycleId(),
-                                    next.playableStateNamespaceId(),
-                                    second.playtestLifecycleId())));
+        catchThrowable(() ->
+            context
+                .serializableTransaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .execute(
+                            sql,
+                            second.realmId(),
+                            intended.requestId(),
+                            wrongPreimage,
+                            sha256(wrongPreimage),
+                            "sha256:" + "0".repeat(64),
+                            nextRequest.requestId(),
+                            next.playtestLifecycleId(),
+                            next.playableStateNamespaceId(),
+                            second.playtestLifecycleId())));
     assertThat(sqlStateInCauseChain(wrongFrame)).isEqualTo("23514");
     assertThat(databaseFailureSummary(wrongFrame).toLowerCase(java.util.Locale.ROOT))
         .contains("request");
     assertThat(privateRevisionRows(context)).isEqualTo(before);
 
     Throwable wrongReceipt =
-        catchThrowable(
-            () ->
-                context
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .execute(
-                                    sql,
-                                    second.realmId(),
-                                    intended.requestId(),
-                                    validPreimage,
-                                    intended.requestDigest(next.requestDigest()),
-                                    "sha256:" + "0".repeat(64),
-                                    nextRequest.requestId(),
-                                    next.playtestLifecycleId(),
-                                    next.playableStateNamespaceId(),
-                                    second.playtestLifecycleId())));
+        catchThrowable(() ->
+            context
+                .serializableTransaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .execute(
+                            sql,
+                            second.realmId(),
+                            intended.requestId(),
+                            validPreimage,
+                            intended.requestDigest(next.requestDigest()),
+                            "sha256:" + "0".repeat(64),
+                            nextRequest.requestId(),
+                            next.playtestLifecycleId(),
+                            next.playableStateNamespaceId(),
+                            second.playtestLifecycleId())));
     assertThat(sqlStateInCauseChain(wrongReceipt)).isEqualTo("23514");
     assertThat(databaseFailureSummary(wrongReceipt).toLowerCase(java.util.Locale.ROOT))
         .contains("receipt");
@@ -1578,26 +1539,24 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     byte[] reusedPreimage =
         reusedPreparation.canonicalPreimage(fixture.initialPreparation().requestDigest());
     Throwable wrongPreparation =
-        catchThrowable(
-            () ->
-                context
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .execute(
-                                    sql,
-                                    second.realmId(),
-                                    reusedPreparation.requestId(),
-                                    reusedPreimage,
-                                    reusedPreparation.requestDigest(
-                                        fixture.initialPreparation().requestDigest()),
-                                    "sha256:" + "0".repeat(64),
-                                    fixture.initialRequest().requestId(),
-                                    fixture.initialPreparation().playtestLifecycleId(),
-                                    fixture.initialPreparation().playableStateNamespaceId(),
-                                    second.playtestLifecycleId())));
+        catchThrowable(() ->
+            context
+                .serializableTransaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .execute(
+                            sql,
+                            second.realmId(),
+                            reusedPreparation.requestId(),
+                            reusedPreimage,
+                            reusedPreparation.requestDigest(
+                                fixture.initialPreparation().requestDigest()),
+                            "sha256:" + "0".repeat(64),
+                            fixture.initialRequest().requestId(),
+                            fixture.initialPreparation().playtestLifecycleId(),
+                            fixture.initialPreparation().playableStateNamespaceId(),
+                            second.playtestLifecycleId())));
     assertThat(sqlStateInCauseChain(wrongPreparation)).isEqualTo("23514");
     assertThat(databaseFailureSummary(wrongPreparation).toLowerCase(java.util.Locale.ROOT))
         .contains("reuses original");
@@ -1614,11 +1573,10 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             "UPDATE game_session_canonical_realm_catalog SET receipt_digest = receipt_digest",
             "DELETE FROM game_session_canonical_realm_catalog")) {
       Throwable refused =
-          catchThrowable(
-              () ->
-                  context
-                      .serializableTransaction()
-                      .executeWithoutResult(status -> context.dsl().execute(mutation)));
+          catchThrowable(() ->
+              context
+                  .serializableTransaction()
+                  .executeWithoutResult(status -> context.dsl().execute(mutation)));
       assertThat(refused).as("retained-history mutation: %s", mutation).isNotNull();
       assertThat(sqlStateInCauseChain(refused))
           .as("retained-history mutation: %s", mutation)
@@ -1676,16 +1634,14 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var revisions = new GameSessionPrivateFreshCatalogRevisionRepository(context.dsl());
     var before = privateRevisionRows(context);
     Throwable failure =
-        catchThrowable(
-            () ->
-                context
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status -> {
-                          var allocated = revisions.advance(fixture.advanceRequest());
-                          assertThat(allocated.snapshot().catalogRevision()).isEqualTo(2);
-                          awaitExpiry(context, fixture.laterRequest().forkExpiresAt());
-                        }));
+        catchThrowable(() ->
+            context
+                .serializableTransaction()
+                .executeWithoutResult(status -> {
+                  var allocated = revisions.advance(fixture.advanceRequest());
+                  assertThat(allocated.snapshot().catalogRevision()).isEqualTo(2);
+                  awaitExpiry(context, fixture.laterRequest().forkExpiresAt());
+                }));
     assertThat(failure).isNotNull();
     assertThat(sqlStateInCauseChain(failure)).isEqualTo("23514");
     assertThat(privateRevisionRows(context)).isEqualTo(before);
@@ -1708,31 +1664,27 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             requestId, preparation.request().requestId(), preparation.playtestLifecycleId());
     var allocation = context.allocatePrivateTarget(original);
 
-    assertThatThrownBy(
-            () ->
-                context.allocatePrivateTarget(
-                    new GameSessionPrivateFreshTargetRepository.Request(
-                        requestId, UUID.randomUUID(), preparation.playtestLifecycleId())))
+    assertThatThrownBy(() ->
+            context.allocatePrivateTarget(
+                new GameSessionPrivateFreshTargetRepository.Request(
+                    requestId, UUID.randomUUID(), preparation.playtestLifecycleId())))
         .isInstanceOf(GameSessionPrivateFreshTargetRepository.IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                context.allocatePrivateTarget(
-                    new GameSessionPrivateFreshTargetRepository.Request(
-                        requestId, preparation.request().requestId(), UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            context.allocatePrivateTarget(
+                new GameSessionPrivateFreshTargetRepository.Request(
+                    requestId, preparation.request().requestId(), UUID.randomUUID())))
         .isInstanceOf(GameSessionPrivateFreshTargetRepository.IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                context.allocatePrivateTarget(
-                    new GameSessionPrivateFreshTargetRepository.Request(
-                        UUID.randomUUID(),
-                        preparation.request().requestId(),
-                        preparation.playtestLifecycleId())))
+    assertThatThrownBy(() ->
+            context.allocatePrivateTarget(
+                new GameSessionPrivateFreshTargetRepository.Request(
+                    UUID.randomUUID(),
+                    preparation.request().requestId(),
+                    preparation.playtestLifecycleId())))
         .isInstanceOf(GameSessionPrivateFreshTargetRepository.IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                context.allocatePrivateTarget(
-                    new GameSessionPrivateFreshTargetRepository.Request(
-                        UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            context.allocatePrivateTarget(
+                new GameSessionPrivateFreshTargetRepository.Request(
+                    UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())))
         .isInstanceOf(
             GameSessionPrivateFreshTargetRepository.PreparationUnavailableException.class);
     assertThat(context.allocatePrivateTarget(original).snapshot()).isEqualTo(allocation.snapshot());
@@ -1776,22 +1728,20 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
                     targetRequest.requestId())
                 .get(0, String.class))
         .isEqualTo(retainedRow);
-    assertThatThrownBy(
-            () ->
-                context.allocatePrivateTarget(
-                    new GameSessionPrivateFreshTargetRepository.Request(
-                        UUID.randomUUID(),
-                        preparation.request().requestId(),
-                        preparation.playtestLifecycleId())))
+    assertThatThrownBy(() ->
+            context.allocatePrivateTarget(
+                new GameSessionPrivateFreshTargetRepository.Request(
+                    UUID.randomUUID(),
+                    preparation.request().requestId(),
+                    preparation.playtestLifecycleId())))
         .isInstanceOf(
             GameSessionPrivateFreshTargetRepository.PreparationUnavailableException.class);
-    assertThatThrownBy(
-            () ->
-                context.allocatePrivateTarget(
-                    new GameSessionPrivateFreshTargetRepository.Request(
-                        targetRequest.requestId(),
-                        preparation.request().requestId(),
-                        UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            context.allocatePrivateTarget(
+                new GameSessionPrivateFreshTargetRepository.Request(
+                    targetRequest.requestId(),
+                    preparation.request().requestId(),
+                    UUID.randomUUID())))
         .isInstanceOf(GameSessionPrivateFreshTargetRepository.IdempotencyConflictException.class);
     assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
         .isEqualTo(2);
@@ -1807,13 +1757,12 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var preparation = context.prepare(preparationRequest).preparation();
     awaitExpiry(context, preparationRequest.forkExpiresAt());
 
-    assertThatThrownBy(
-            () ->
-                context.allocatePrivateTarget(
-                    new GameSessionPrivateFreshTargetRepository.Request(
-                        UUID.randomUUID(),
-                        preparation.request().requestId(),
-                        preparation.playtestLifecycleId())))
+    assertThatThrownBy(() ->
+            context.allocatePrivateTarget(
+                new GameSessionPrivateFreshTargetRepository.Request(
+                    UUID.randomUUID(),
+                    preparation.request().requestId(),
+                    preparation.playtestLifecycleId())))
         .isInstanceOf(GameSessionPrivateFreshTargetRepository.PreparationUnavailableException.class)
         .hasMessageContaining("expired");
     assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
@@ -1883,22 +1832,20 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         WHERE p.request_id = ? AND p.playtest_lifecycle_id = ?
         """;
 
-    assertThatThrownBy(
-            () ->
-                context
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .execute(
-                                    sql,
-                                    wrongNamespace,
-                                    requestId,
-                                    requestDigest,
-                                    requestPreimage,
-                                    preparation.request().requestId(),
-                                    preparation.playtestLifecycleId())))
+    assertThatThrownBy(() ->
+            context
+                .serializableTransaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .execute(
+                            sql,
+                            wrongNamespace,
+                            requestId,
+                            requestDigest,
+                            requestPreimage,
+                            preparation.request().requestId(),
+                            preparation.playtestLifecycleId())))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining(
             "Private FRESH catalog row differs from its exact retained preparation");
@@ -1909,22 +1856,20 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             "p.canonical_version_id, p.published_release_bundle_ref,",
             "p.canonical_version_id, NULL,");
     assertThat(nullBuildSql).isNotEqualTo(sql);
-    assertThatThrownBy(
-            () ->
-                context
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .execute(
-                                    nullBuildSql,
-                                    preparation.playableStateNamespaceId(),
-                                    requestId,
-                                    requestDigest,
-                                    requestPreimage,
-                                    preparation.request().requestId(),
-                                    preparation.playtestLifecycleId())))
+    assertThatThrownBy(() ->
+            context
+                .serializableTransaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .execute(
+                            nullBuildSql,
+                            preparation.playableStateNamespaceId(),
+                            requestId,
+                            requestDigest,
+                            requestPreimage,
+                            preparation.request().requestId(),
+                            preparation.playtestLifecycleId())))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("chk_gs_private_fresh_catalog_binding");
     assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
@@ -1949,23 +1894,22 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         Objects.requireNonNull(
             context
                 .serializableTransaction()
-                .execute(
-                    status -> {
-                      context.privateTargets().allocate(targetRequest);
-                      var genuine =
-                          Objects.requireNonNull(
-                              context
-                                  .dsl()
-                                  .fetchOne(
-                                      "SELECT * FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
-                                      creationRequestId));
-                      DetachedCatalogRow detachedValues =
-                          new DetachedCatalogRow(
-                              new LinkedHashMap<>(genuine.intoMap()),
-                              List.copyOf(java.util.Arrays.asList(genuine.fields())));
-                      status.setRollbackOnly();
-                      return detachedValues;
-                    }));
+                .execute(status -> {
+                  context.privateTargets().allocate(targetRequest);
+                  var genuine =
+                      Objects.requireNonNull(
+                          context
+                              .dsl()
+                              .fetchOne(
+                                  "SELECT * FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
+                                  creationRequestId));
+                  DetachedCatalogRow detachedValues =
+                      new DetachedCatalogRow(
+                          new LinkedHashMap<>(genuine.intoMap()),
+                          List.copyOf(java.util.Arrays.asList(genuine.fields())));
+                  status.setRollbackOnly();
+                  return detachedValues;
+                }));
     assertThat(
             context
                 .privateTargets()
@@ -2003,19 +1947,17 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
       values[index] = forged.get(originalField.getName());
     }
     Throwable insertFailure =
-        catchThrowable(
-            () ->
-                context
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .insertInto(
-                                    DSL.table(DSL.name("game_session_canonical_realm_catalog")),
-                                    insertFields)
-                                .values(values)
-                                .execute()));
+        catchThrowable(() ->
+            context
+                .serializableTransaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .insertInto(
+                            DSL.table(DSL.name("game_session_canonical_realm_catalog")),
+                            insertFields)
+                        .values(values)
+                        .execute()));
     String failureSummary = databaseFailureSummary(insertFailure);
     assertThat(insertFailure)
         .as("Forged INSERT failure should expose its database cause: %s", failureSummary)
@@ -2052,15 +1994,13 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             preparation.request().requestId(),
             preparation.playtestLifecycleId());
 
-    assertThatThrownBy(
-            () ->
-                context
-                    .serializableTransaction()
-                    .executeWithoutResult(
-                        status -> {
-                          context.privateTargets().allocate(targetRequest);
-                          awaitExpiry(context, preparationRequest.forkExpiresAt());
-                        }))
+    assertThatThrownBy(() ->
+            context
+                .serializableTransaction()
+                .executeWithoutResult(status -> {
+                  context.privateTargets().allocate(targetRequest);
+                  awaitExpiry(context, preparationRequest.forkExpiresAt());
+                }))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining(
             "Private FRESH catalog preparation expired before final catalog commit");
@@ -2141,11 +2081,10 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   @Test
   void missingOrMismatchedRetainedSourceAndBuildNeverAllocate() {
     Context missing = context(false);
-    assertThatThrownBy(
-            () ->
-                missing.prepare(
-                    missing.request(
-                        UUID.randomUUID(), "private-playtest", missing.now().plusSeconds(300))))
+    assertThatThrownBy(() ->
+            missing.prepare(
+                missing.request(
+                    UUID.randomUUID(), "private-playtest", missing.now().plusSeconds(300))))
         .isInstanceOf(SourceUnavailableException.class);
     assertThat(missing.count()).isZero();
     Context context = context(true);
@@ -2266,26 +2205,24 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             .replace("\"realmSlug\":\"private-playtest\"", "\"realmSlug\":\"other-target\"");
     assertThat(changedPolicy)
         .isNotEqualTo(new String(storedPolicy, java.nio.charset.StandardCharsets.UTF_8));
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status ->
-                            context
-                                .dsl()
-                                .execute(
-                                    "INSERT INTO "
-                                        + TABLE
-                                        + " (request_id, request_preimage, request_digest, target_namespace, canonical_tenant_id, world_slug, realm_slug, initialization_mode, preparation_state, playtest_state_generation, fork_expiry_second, fork_expiry_nano, fork_expiry_text, source_catalog_realm_id, source_catalog_request_id, source_catalog_revision, source_catalog_receipt_digest, source_intake_operation_id, source_intake_receipt_digest, source_operation_id, source_evidence_digest, canonical_version_id, published_release_bundle_ref, published_release_bundle_digest, source_policy_set_digest, source_policy_carrier_digest, target_policy_id, target_policy_source_commit_id, target_policy_source_revision_id, target_policy_logical_revision_id, target_policy_digest, target_policy_canonical_json, target_policy_schema_version, target_policy_world_slug, target_policy_realm_slug, target_policy_visible, target_policy_world_display_name, target_policy_public_production, target_policy_state_scope, target_policy_realm_display_name, target_policy_entry_policy) "
-                                        + "SELECT ?, ?, ?, target_namespace, canonical_tenant_id, world_slug, realm_slug, initialization_mode, preparation_state, playtest_state_generation, fork_expiry_second, fork_expiry_nano, fork_expiry_text, source_catalog_realm_id, source_catalog_request_id, source_catalog_revision, source_catalog_receipt_digest, source_intake_operation_id, source_intake_receipt_digest, source_operation_id, source_evidence_digest, canonical_version_id, published_release_bundle_ref, published_release_bundle_digest, source_policy_set_digest, source_policy_carrier_digest, target_policy_id, target_policy_source_commit_id, target_policy_source_revision_id, target_policy_logical_revision_id, target_policy_digest, ?, target_policy_schema_version, target_policy_world_slug, target_policy_realm_slug, target_policy_visible, target_policy_world_display_name, target_policy_public_production, target_policy_state_scope, target_policy_realm_display_name, target_policy_entry_policy FROM "
-                                        + TABLE
-                                        + " WHERE request_id = ?",
-                                    tampered.requestId(),
-                                    tampered.canonicalPreimage(),
-                                    tampered.requestDigest(),
-                                    changedPolicy.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                                    original.requestId())))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status ->
+                    context
+                        .dsl()
+                        .execute(
+                            "INSERT INTO "
+                                + TABLE
+                                + " (request_id, request_preimage, request_digest, target_namespace, canonical_tenant_id, world_slug, realm_slug, initialization_mode, preparation_state, playtest_state_generation, fork_expiry_second, fork_expiry_nano, fork_expiry_text, source_catalog_realm_id, source_catalog_request_id, source_catalog_revision, source_catalog_receipt_digest, source_intake_operation_id, source_intake_receipt_digest, source_operation_id, source_evidence_digest, canonical_version_id, published_release_bundle_ref, published_release_bundle_digest, source_policy_set_digest, source_policy_carrier_digest, target_policy_id, target_policy_source_commit_id, target_policy_source_revision_id, target_policy_logical_revision_id, target_policy_digest, target_policy_canonical_json, target_policy_schema_version, target_policy_world_slug, target_policy_realm_slug, target_policy_visible, target_policy_world_display_name, target_policy_public_production, target_policy_state_scope, target_policy_realm_display_name, target_policy_entry_policy) "
+                                + "SELECT ?, ?, ?, target_namespace, canonical_tenant_id, world_slug, realm_slug, initialization_mode, preparation_state, playtest_state_generation, fork_expiry_second, fork_expiry_nano, fork_expiry_text, source_catalog_realm_id, source_catalog_request_id, source_catalog_revision, source_catalog_receipt_digest, source_intake_operation_id, source_intake_receipt_digest, source_operation_id, source_evidence_digest, canonical_version_id, published_release_bundle_ref, published_release_bundle_digest, source_policy_set_digest, source_policy_carrier_digest, target_policy_id, target_policy_source_commit_id, target_policy_source_revision_id, target_policy_logical_revision_id, target_policy_digest, ?, target_policy_schema_version, target_policy_world_slug, target_policy_realm_slug, target_policy_visible, target_policy_world_display_name, target_policy_public_production, target_policy_state_scope, target_policy_realm_display_name, target_policy_entry_policy FROM "
+                                + TABLE
+                                + " WHERE request_id = ?",
+                            tampered.requestId(),
+                            tampered.canonicalPreimage(),
+                            tampered.requestDigest(),
+                            changedPolicy.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                            original.requestId())))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("Selected private target policy differs");
     assertThat(context.count()).isEqualTo(1);
@@ -2302,19 +2239,17 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var first =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(begin);
-                return context.prepare(request);
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(begin);
+            return context.prepare(request);
+          });
       var second =
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(begin);
-                return context.prepare(request);
-              });
+          executor.submit(() -> {
+            ready.countDown();
+            await(begin);
+            return context.prepare(request);
+          });
       assertThat(ready.await(30, TimeUnit.SECONDS)).isTrue();
       begin.countDown();
       Allocation left = first.get(60, TimeUnit.SECONDS);
@@ -2371,49 +2306,42 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
       var firstAllocation =
           new AtomicReference<GameSessionPrivateFreshTargetRepository.Allocation>();
       var first =
-          executor.submit(
-              () ->
-                  Objects.requireNonNull(
-                      context
-                          .serializableTransaction()
-                          .execute(
-                              status -> {
-                                var allocated = context.privateTargets().allocate(targetRequest);
-                                firstAllocation.set(allocated);
-                                firstAllocationHeld.countDown();
-                                await(releaseFirstAllocation);
-                                return allocated;
-                              })));
+          executor.submit(() ->
+              Objects.requireNonNull(
+                  context
+                      .serializableTransaction()
+                      .execute(status -> {
+                        var allocated = context.privateTargets().allocate(targetRequest);
+                        firstAllocation.set(allocated);
+                        firstAllocationHeld.countDown();
+                        await(releaseFirstAllocation);
+                        return allocated;
+                      })));
       await(firstAllocationHeld);
 
       var second =
-          executor.submit(
-              () -> {
-                try {
-                  context
-                      .serializableTransaction()
-                      .executeWithoutResult(
-                          status -> {
-                            var visibleBeforeCommit =
-                                context
-                                    .dsl()
-                                    .fetchSingle(
-                                        "SELECT count(*) FROM game_session_canonical_realm_catalog WHERE private_preparation_request_id = ?",
-                                        preparation.request().requestId())
-                                    .get(0, Long.class);
-                            assertThat(visibleBeforeCommit).isZero();
-                            secondBackendPid.set(
-                                context
-                                    .dsl()
-                                    .fetchSingle("SELECT pg_backend_pid()")
-                                    .get(0, Integer.class));
-                            secondSnapshotEstablished.countDown();
-                            context.privateTargets().allocate(targetRequest);
-                          });
-                } catch (Throwable failure) {
-                  staleFailure.set(failure);
-                }
-              });
+          executor.submit(() -> {
+            try {
+              context
+                  .serializableTransaction()
+                  .executeWithoutResult(status -> {
+                    var visibleBeforeCommit =
+                        context
+                            .dsl()
+                            .fetchSingle(
+                                "SELECT count(*) FROM game_session_canonical_realm_catalog WHERE private_preparation_request_id = ?",
+                                preparation.request().requestId())
+                            .get(0, Long.class);
+                    assertThat(visibleBeforeCommit).isZero();
+                    secondBackendPid.set(
+                        context.dsl().fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                    secondSnapshotEstablished.countDown();
+                    context.privateTargets().allocate(targetRequest);
+                  });
+            } catch (Throwable failure) {
+              staleFailure.set(failure);
+            }
+          });
       await(secondSnapshotEstablished);
       awaitAdvisoryLockWait(context, secondBackendPid.get());
       releaseFirstAllocation.countDown();
@@ -2470,55 +2398,51 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     Optional<Snapshot> wrongLifecycle =
         context
             .transaction()
-            .execute(
-                status ->
-                    context
-                        .repository()
-                        .readExact(
-                            NAMESPACE,
-                            request.tenantId(),
-                            request.worldSlug(),
-                            request.realmSlug(),
-                            UUID.randomUUID()));
+            .execute(status ->
+                context
+                    .repository()
+                    .readExact(
+                        NAMESPACE,
+                        request.tenantId(),
+                        request.worldSlug(),
+                        request.realmSlug(),
+                        UUID.randomUUID()));
     Optional<Snapshot> wrongRealm =
         context
             .transaction()
-            .execute(
-                status ->
-                    context
-                        .repository()
-                        .readExact(
-                            NAMESPACE,
-                            request.tenantId(),
-                            request.worldSlug(),
-                            "wrong-realm",
-                            original.playtestLifecycleId()));
+            .execute(status ->
+                context
+                    .repository()
+                    .readExact(
+                        NAMESPACE,
+                        request.tenantId(),
+                        request.worldSlug(),
+                        "wrong-realm",
+                        original.playtestLifecycleId()));
     Optional<Snapshot> wrongTenant =
         context
             .transaction()
-            .execute(
-                status ->
-                    context
-                        .repository()
-                        .readExact(
-                            NAMESPACE,
-                            UUID.randomUUID(),
-                            request.worldSlug(),
-                            request.realmSlug(),
-                            original.playtestLifecycleId()));
+            .execute(status ->
+                context
+                    .repository()
+                    .readExact(
+                        NAMESPACE,
+                        UUID.randomUUID(),
+                        request.worldSlug(),
+                        request.realmSlug(),
+                        original.playtestLifecycleId()));
     Optional<Snapshot> wrongWorld =
         context
             .transaction()
-            .execute(
-                status ->
-                    context
-                        .repository()
-                        .readExact(
-                            NAMESPACE,
-                            request.tenantId(),
-                            "wrong-world",
-                            request.realmSlug(),
-                            original.playtestLifecycleId()));
+            .execute(status ->
+                context
+                    .repository()
+                    .readExact(
+                        NAMESPACE,
+                        request.tenantId(),
+                        "wrong-world",
+                        request.realmSlug(),
+                        original.playtestLifecycleId()));
     assertThat(wrongLifecycle).isEmpty();
     assertThat(wrongRealm).isEmpty();
     assertThat(wrongTenant).isEmpty();
@@ -2545,32 +2469,26 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     Context context = context(true);
     Request request =
         context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          context.repository().prepare(request);
-                          throw new IllegalStateException("Controlled coordinator refusal");
-                        }))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status -> {
+                  context.repository().prepare(request);
+                  throw new IllegalStateException("Controlled coordinator refusal");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Controlled coordinator refusal");
     assertThat(context.count()).isZero();
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          Request shortRequest =
-                              context.request(
-                                  UUID.randomUUID(),
-                                  "private-playtest",
-                                  context.now().plusSeconds(5));
-                          context.repository().prepare(shortRequest);
-                          awaitExpiry(context, shortRequest.forkExpiresAt());
-                        }))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status -> {
+                  Request shortRequest =
+                      context.request(
+                          UUID.randomUUID(), "private-playtest", context.now().plusSeconds(5));
+                  context.repository().prepare(shortRequest);
+                  awaitExpiry(context, shortRequest.forkExpiresAt());
+                }))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("expired before final preparation commit");
     assertThat(context.count()).isZero();
@@ -2582,9 +2500,8 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             "UPDATE " + TABLE + " SET fork_expiry_second = fork_expiry_second + 1",
             "DELETE FROM " + TABLE,
             "TRUNCATE " + TABLE)) {
-      assertThatThrownBy(
-              () ->
-                  context.transaction().executeWithoutResult(status -> context.dsl().execute(sql)))
+      assertThatThrownBy(() ->
+              context.transaction().executeWithoutResult(status -> context.dsl().execute(sql)))
           .as(sql)
           .isInstanceOf(RuntimeException.class);
     }
@@ -2600,23 +2517,22 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
     for (InitializationMode mode :
         List.of(InitializationMode.SEEDED, InitializationMode.SNAPSHOT)) {
-      assertThatThrownBy(
-              () ->
-                  new Request(
-                      request.requestId(),
-                      NAMESPACE,
-                      request.tenantId(),
-                      request.worldSlug(),
-                      request.realmSlug(),
-                      request.sourceCatalogRealmId(),
-                      request.sourceCatalogRequestId(),
-                      request.sourceCatalogRevision(),
-                      request.sourceIntakeOperationId(),
-                      request.canonicalVersionId(),
-                      request.publishedReleaseBundleRef(),
-                      request.publishedReleaseBundleDigest(),
-                      mode,
-                      request.forkExpiresAt()))
+      assertThatThrownBy(() ->
+              new Request(
+                  request.requestId(),
+                  NAMESPACE,
+                  request.tenantId(),
+                  request.worldSlug(),
+                  request.realmSlug(),
+                  request.sourceCatalogRealmId(),
+                  request.sourceCatalogRequestId(),
+                  request.sourceCatalogRevision(),
+                  request.sourceIntakeOperationId(),
+                  request.canonicalVersionId(),
+                  request.publishedReleaseBundleRef(),
+                  request.publishedReleaseBundleDigest(),
+                  mode,
+                  request.forkExpiresAt()))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("Only initial FRESH");
     }
@@ -2652,18 +2568,17 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     Awaitility.await()
         .atMost(30, TimeUnit.SECONDS)
         .pollInterval(10, TimeUnit.MILLISECONDS)
-        .untilAsserted(
-            () -> {
-              var activity =
-                  context
-                      .dsl()
-                      .fetchOne(
-                          "SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid = ?",
-                          backendPid);
-              assertThat(activity).isNotNull();
-              assertThat(activity.get("wait_event_type", String.class)).isEqualTo("Lock");
-              assertThat(activity.get("wait_event", String.class)).isEqualTo("advisory");
-            });
+        .untilAsserted(() -> {
+          var activity =
+              context
+                  .dsl()
+                  .fetchOne(
+                      "SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid = ?",
+                      backendPid);
+          assertThat(activity).isNotNull();
+          assertThat(activity.get("wait_event_type", String.class)).isEqualTo("Lock");
+          assertThat(activity.get("wait_event", String.class)).isEqualTo("advisory");
+        });
   }
 
   private static String privateCatalogRow(Context context, UUID requestId) {
@@ -2848,24 +2763,19 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             later.playtestLifecycleId(),
             f.selection().headRevision(),
             f.selection().playtestLifecycleId());
-    assertThatThrownBy(
-            () ->
-                f.context()
-                    .transaction()
-                    .execute(
-                        status ->
-                            new GameSessionCurrentPrivatePlaytestRepository(f.context().dsl())
-                                .select(select)))
+    assertThatThrownBy(() ->
+            f.context()
+                .transaction()
+                .execute(status ->
+                    new GameSessionCurrentPrivatePlaytestRepository(f.context().dsl())
+                        .select(select)))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("unresolved World preparation");
     var unsupported = new TransactionTemplate(f.context().transaction().getTransactionManager());
     unsupported.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
-    assertThatThrownBy(
-            () ->
-                unsupported.execute(
-                    status ->
-                        new GameSessionCurrentPrivatePlaytestRepository(f.context().dsl())
-                            .select(select)))
+    assertThatThrownBy(() ->
+            unsupported.execute(status ->
+                new GameSessionCurrentPrivatePlaytestRepository(f.context().dsl()).select(select)))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("READ COMMITTED or SERIALIZABLE");
     var advance =
@@ -2921,11 +2831,8 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             retainedRowWithXmin(
                 f.context(), "game_session_private_preparation_protection", "request_id", request))
         .isEqualTo(retained);
-    assertThatThrownBy(
-            () ->
-                f.context()
-                    .dsl()
-                    .execute("DELETE FROM game_session_private_preparation_protection"))
+    assertThatThrownBy(() ->
+            f.context().dsl().execute("DELETE FROM game_session_private_preparation_protection"))
         .isInstanceOf(RuntimeException.class);
   }
 
@@ -2942,17 +2849,16 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
                 .dsl()
                 .configuration()
                 .derive(
-                    org.jooq.ExecuteListener.onRecordEnd(
-                        execution -> {
-                          String sql = execution.sql();
-                          var record = execution.record();
-                          if (sql != null
-                              && sql.contains("pg_try_advisory_xact_lock")
-                              && record != null
-                              && Boolean.FALSE.equals(record.get("acquired", Boolean.class))
-                              && attemptedThreads.add(Thread.currentThread().threadId()))
-                            attempts.countDown();
-                        })));
+                    org.jooq.ExecuteListener.onRecordEnd(execution -> {
+                      String sql = execution.sql();
+                      var record = execution.record();
+                      if (sql != null
+                          && sql.contains("pg_try_advisory_xact_lock")
+                          && record != null
+                          && Boolean.FALSE.equals(record.get("acquired", Boolean.class))
+                          && attemptedThreads.add(Thread.currentThread().threadId()))
+                        attempts.countDown();
+                    })));
     var owner =
         new GameSessionPrivatePreparationProtectionRepository(
             observedDsl, Objects.requireNonNull(f.context().transaction().getTransactionManager()));
@@ -2960,36 +2866,33 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     try (var executor = Executors.newFixedThreadPool(2)) {
       var gate = new CountDownLatch(1);
       var first =
-          executor.submit(
-              () -> {
-                gate.await();
-                return owner.acquire(request, source);
-              });
+          executor.submit(() -> {
+            gate.await();
+            return owner.acquire(request, source);
+          });
       var second =
-          executor.submit(
-              () -> {
-                gate.await();
-                return owner.acquire(request, source);
-              });
+          executor.submit(() -> {
+            gate.await();
+            return owner.acquire(request, source);
+          });
       // Both callers must encounter a busy request. They must release those SERIALIZABLE
       // transactions before retrying, rather than retain pre-wait snapshots under a blocking lock.
       f.context()
           .transaction()
-          .executeWithoutResult(
-              status -> {
-                f.context()
-                    .dsl()
-                    .fetch(
-                        "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
-                        "private-source-protection/" + request);
-                gate.countDown();
-                try {
-                  assertThat(attempts.await(3, TimeUnit.SECONDS)).isTrue();
-                } catch (InterruptedException interrupted) {
-                  Thread.currentThread().interrupt();
-                  throw new IllegalStateException(interrupted);
-                }
-              });
+          .executeWithoutResult(status -> {
+            f.context()
+                .dsl()
+                .fetch(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
+                    "private-source-protection/" + request);
+            gate.countDown();
+            try {
+              assertThat(attempts.await(3, TimeUnit.SECONDS)).isTrue();
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException(interrupted);
+            }
+          });
       assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(second.get(10, TimeUnit.SECONDS));
     }
     assertThat(
@@ -3013,43 +2916,36 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var protectionCommitted = new CountDownLatch(1);
     try (var executor = Executors.newSingleThreadExecutor()) {
       var writer =
-          executor.submit(
-              () ->
-                  catchThrowable(
-                      () ->
-                          f.context()
-                              .serializableTransaction()
-                              .executeWithoutResult(
-                                  status -> {
-                                    f.context()
-                                        .dsl()
-                                        .fetch(
-                                            "SELECT * FROM game_session_current_private_playtests");
-                                    snapshotTaken.countDown();
-                                    try {
-                                      if (!protectionCommitted.await(10, TimeUnit.SECONDS))
-                                        throw new IllegalStateException(
-                                            "Protection did not commit");
-                                    } catch (InterruptedException interrupted) {
-                                      Thread.currentThread().interrupt();
-                                      throw new IllegalStateException(interrupted);
-                                    }
-                                    new GameSessionCurrentPrivatePlaytestRepository(
-                                            f.context().dsl())
-                                        .select(
-                                            new GameSessionCurrentPrivatePlaytestRepository.Request(
-                                                UUID.randomUUID(),
-                                                new GameSessionCurrentPrivatePlaytestRepository
-                                                    .Scope(
-                                                    NAMESPACE,
-                                                    f.target().tenantId(),
-                                                    f.target().worldSlug(),
-                                                    f.target().realmSlug()),
-                                                later.request().requestId(),
-                                                later.playtestLifecycleId(),
-                                                f.selection().headRevision(),
-                                                f.selection().playtestLifecycleId()));
-                                  })));
+          executor.submit(() ->
+              catchThrowable(() ->
+                  f.context()
+                      .serializableTransaction()
+                      .executeWithoutResult(status -> {
+                        f.context()
+                            .dsl()
+                            .fetch("SELECT * FROM game_session_current_private_playtests");
+                        snapshotTaken.countDown();
+                        try {
+                          if (!protectionCommitted.await(10, TimeUnit.SECONDS))
+                            throw new IllegalStateException("Protection did not commit");
+                        } catch (InterruptedException interrupted) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(interrupted);
+                        }
+                        new GameSessionCurrentPrivatePlaytestRepository(f.context().dsl())
+                            .select(
+                                new GameSessionCurrentPrivatePlaytestRepository.Request(
+                                    UUID.randomUUID(),
+                                    new GameSessionCurrentPrivatePlaytestRepository.Scope(
+                                        NAMESPACE,
+                                        f.target().tenantId(),
+                                        f.target().worldSlug(),
+                                        f.target().realmSlug()),
+                                    later.request().requestId(),
+                                    later.playtestLifecycleId(),
+                                    f.selection().headRevision(),
+                                    f.selection().playtestLifecycleId()));
+                      })));
       assertThat(snapshotTaken.await(10, TimeUnit.SECONDS)).isTrue();
       var owner = privateProtectionOwner(f.context());
       var held = owner.acquire(UUID.randomUUID(), expected);
@@ -3072,21 +2968,20 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var c = f.context();
     return Objects.requireNonNull(
         c.transaction()
-            .execute(
-                status ->
-                    new GameSessionPrivateWorldPreparationSourceReader(
-                            new GameSessionCurrentPrivatePlaytestRepository(c.dsl()),
-                            c.privateTargets(),
-                            new GameSessionPrivateFreshRuntimeAllocationRepository(c.dsl()))
-                        .read(
-                            new PrivateWorldPreparationReadGrpcCodec.Request(
-                                UUID.randomUUID(),
-                                new CurrentPrivatePlaytestLifecycleReadEvidence.Scope(
-                                    NAMESPACE,
-                                    f.target().tenantId(),
-                                    f.target().worldSlug(),
-                                    f.target().realmSlug()),
-                                f.preparation().request().requestId()))));
+            .execute(status ->
+                new GameSessionPrivateWorldPreparationSourceReader(
+                        new GameSessionCurrentPrivatePlaytestRepository(c.dsl()),
+                        c.privateTargets(),
+                        new GameSessionPrivateFreshRuntimeAllocationRepository(c.dsl()))
+                    .read(
+                        new PrivateWorldPreparationReadGrpcCodec.Request(
+                            UUID.randomUUID(),
+                            new CurrentPrivatePlaytestLifecycleReadEvidence.Scope(
+                                NAMESPACE,
+                                f.target().tenantId(),
+                                f.target().worldSlug(),
+                                f.target().realmSlug()),
+                            f.preparation().request().requestId()))));
   }
 
   private static final String RUNTIME_ALLOCATIONS =
@@ -3131,10 +3026,8 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     return Objects.requireNonNull(
             context
                 .transaction()
-                .execute(
-                    status ->
-                        new GameSessionCurrentPrivatePlaytestRepository(context.dsl())
-                            .select(request)))
+                .execute(status ->
+                    new GameSessionCurrentPrivatePlaytestRepository(context.dsl()).select(request)))
         .receipt();
   }
 
@@ -3159,10 +3052,9 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     return Objects.requireNonNull(
         context
             .serializableTransaction()
-            .execute(
-                status ->
-                    new GameSessionPrivateFreshRuntimeAllocationRepository(context.dsl())
-                        .allocate(request)));
+            .execute(status ->
+                new GameSessionPrivateFreshRuntimeAllocationRepository(context.dsl())
+                    .allocate(request)));
   }
 
   private static List<Map<String, Object>> runtimeSourceRows(Context context) {
@@ -3360,14 +3252,13 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var intake =
         Objects.requireNonNull(
             transaction.execute(status -> sourceOwner.register(UUID.randomUUID(), evidence)));
-    transaction.executeWithoutResult(
-        status ->
-            new GameSessionFreshTenantAssociationRepository(dsl)
-                .associateFresh(
-                    UUID.randomUUID(),
-                    NAMESPACE,
-                    intake,
-                    CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(evidence)));
+    transaction.executeWithoutResult(status ->
+        new GameSessionFreshTenantAssociationRepository(dsl)
+            .associateFresh(
+                UUID.randomUUID(),
+                NAMESPACE,
+                intake,
+                CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(evidence)));
     var catalogRequest =
         new CreateCanonicalRealmCatalogRequest(
             UUID.randomUUID(),
@@ -3545,16 +3436,15 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
 
     GameSessionInitialPlaytestLifecycleRepository.Snapshot read(Request request, UUID lifecycle) {
       return Objects.requireNonNull(
-          transaction.execute(
-              status ->
-                  repository
-                      .readExact(
-                          NAMESPACE,
-                          request.tenantId(),
-                          request.worldSlug(),
-                          request.realmSlug(),
-                          lifecycle)
-                      .orElseThrow()));
+          transaction.execute(status ->
+              repository
+                  .readExact(
+                      NAMESPACE,
+                      request.tenantId(),
+                      request.worldSlug(),
+                      request.realmSlug(),
+                      lifecycle)
+                  .orElseThrow()));
     }
 
     int count() {

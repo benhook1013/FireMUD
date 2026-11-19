@@ -29,25 +29,21 @@ class AccountRecentReauthenticationPolicyTest {
   @Test
   void deploymentCannotLoosenPlatformOrExceedHardAgeAndSkewLimits() {
     var platform = new PlatformValue(1L, 300L, 30L);
-    assertThatThrownBy(
-            () ->
-                AccountRecentReauthenticationPolicy.resolve(
-                    platform, new DeploymentValue(2L, 301L, 30L)))
+    assertThatThrownBy(() ->
+            AccountRecentReauthenticationPolicy.resolve(
+                platform, new DeploymentValue(2L, 301L, 30L)))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                AccountRecentReauthenticationPolicy.resolve(
-                    platform, new DeploymentValue(2L, 300L, 31L)))
+    assertThatThrownBy(() ->
+            AccountRecentReauthenticationPolicy.resolve(
+                platform, new DeploymentValue(2L, 300L, 31L)))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                AccountRecentReauthenticationPolicy.resolve(
-                    platform, new DeploymentValue(2L, 300L, 300L)))
+    assertThatThrownBy(() ->
+            AccountRecentReauthenticationPolicy.resolve(
+                platform, new DeploymentValue(2L, 300L, 300L)))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                AccountRecentReauthenticationPolicy.resolve(
-                    new PlatformValue(1L, 90L, 30L), new DeploymentValue(1L, 300L, 30L)))
+    assertThatThrownBy(() ->
+            AccountRecentReauthenticationPolicy.resolve(
+                new PlatformValue(1L, 90L, 30L), new DeploymentValue(1L, 300L, 30L)))
         .isInstanceOf(IllegalStateException.class);
   }
 

@@ -151,16 +151,15 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
                     + "canonical_tenant_id, playable_state_namespace_id FROM gameplay_admission_pointer "
                     + "WHERE tenant_id = ?",
                 RETAINED_TENANT_ID))
-        .satisfies(
-            row -> {
-              assertThat(row.get("representation_version", Integer.class)).isEqualTo(1);
-              assertThat(row.get("tenant_id", Long.class)).isEqualTo(RETAINED_TENANT_ID);
-              assertThat(row.get("game_instance_id", Long.class)).isEqualTo(501L);
-              assertThat(row.get("realm_id", UUID.class)).isEqualTo(RETAINED_REALM_ID);
-              assertThat(row.get("canonical_tenant_id", UUID.class)).isNull();
-              assertThat(row.get("playable_state_namespace_id", UUID.class))
-                  .isEqualTo(RETAINED_PLAYABLE_NAMESPACE_ID);
-            });
+        .satisfies(row -> {
+          assertThat(row.get("representation_version", Integer.class)).isEqualTo(1);
+          assertThat(row.get("tenant_id", Long.class)).isEqualTo(RETAINED_TENANT_ID);
+          assertThat(row.get("game_instance_id", Long.class)).isEqualTo(501L);
+          assertThat(row.get("realm_id", UUID.class)).isEqualTo(RETAINED_REALM_ID);
+          assertThat(row.get("canonical_tenant_id", UUID.class)).isNull();
+          assertThat(row.get("playable_state_namespace_id", UUID.class))
+              .isEqualTo(RETAINED_PLAYABLE_NAMESPACE_ID);
+        });
     assertThat(
             requiredRecord(
                     fixture.dsl,
@@ -187,14 +186,11 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
     AuthoredWorldLaunchDescriptorEvidence descriptor =
         syntheticDescriptor(request, catalog, source);
 
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.execute(
-                    status -> {
-                      fixture.preparationRepository.persistPrepared(
-                          request, catalog, source, descriptor);
-                      throw new IllegalStateException("forced owner rollback");
-                    }))
+    assertThatThrownBy(() ->
+            fixture.transactions.execute(status -> {
+              fixture.preparationRepository.persistPrepared(request, catalog, source, descriptor);
+              throw new IllegalStateException("forced owner rollback");
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("forced owner rollback");
     assertThat(
@@ -208,21 +204,19 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
             fixture.preparationRepository.readByControlPlaneRequestId(
                 NAMESPACE, request.controlPlaneRequestId()))
         .contains(committed);
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE game_session_canonical_launch_preparation "
-                        + "SET receipt_digest = ? WHERE target_namespace = ?",
-                    digest("f"),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE game_session_canonical_launch_preparation "
+                    + "SET receipt_digest = ? WHERE target_namespace = ?",
+                digest("f"),
+                NAMESPACE))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("Canonical launch preparation evidence is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "DELETE FROM game_session_canonical_launch_preparation "
-                        + "WHERE target_namespace = ?",
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "DELETE FROM game_session_canonical_launch_preparation "
+                    + "WHERE target_namespace = ?",
+                NAMESPACE))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("Canonical launch preparation evidence is immutable");
     assertThatThrownBy(
@@ -236,28 +230,26 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
 
     // Simulate privileged storage corruption in this isolated test schema; normal update/delete
     // paths remain blocked by the immutable trigger above.
-    fixture.transactions.execute(
-        status -> {
-          fixture.dsl.execute(
-              "ALTER TABLE game_session_canonical_launch_preparation DISABLE TRIGGER "
-                  + "game_session_canonical_launch_preparation_immutable");
-          fixture.dsl.execute(
-              "UPDATE game_session_canonical_launch_preparation "
-                  + "SET catalog_evidence_json = jsonb_set(catalog_evidence_json, "
-                  + "'{realmDisplayName}', to_jsonb(CAST(? AS text))) "
-                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
-              "Tampered Realm Display Name",
-              NAMESPACE,
-              request.controlPlaneRequestId());
-          fixture.dsl.execute(
-              "ALTER TABLE game_session_canonical_launch_preparation ENABLE TRIGGER "
-                  + "game_session_canonical_launch_preparation_immutable");
-          return null;
-        });
-    assertThatThrownBy(
-            () ->
-                fixture.preparationRepository.readByControlPlaneRequestId(
-                    NAMESPACE, request.controlPlaneRequestId()))
+    fixture.transactions.execute(status -> {
+      fixture.dsl.execute(
+          "ALTER TABLE game_session_canonical_launch_preparation DISABLE TRIGGER "
+              + "game_session_canonical_launch_preparation_immutable");
+      fixture.dsl.execute(
+          "UPDATE game_session_canonical_launch_preparation "
+              + "SET catalog_evidence_json = jsonb_set(catalog_evidence_json, "
+              + "'{realmDisplayName}', to_jsonb(CAST(? AS text))) "
+              + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+          "Tampered Realm Display Name",
+          NAMESPACE,
+          request.controlPlaneRequestId());
+      fixture.dsl.execute(
+          "ALTER TABLE game_session_canonical_launch_preparation ENABLE TRIGGER "
+              + "game_session_canonical_launch_preparation_immutable");
+      return null;
+    });
+    assertThatThrownBy(() ->
+            fixture.preparationRepository.readByControlPlaneRequestId(
+                NAMESPACE, request.controlPlaneRequestId()))
         .isInstanceOf(
             GameSessionCanonicalLaunchPreparationRepository
                 .InvalidLaunchPreparationEvidenceException.class)
@@ -313,12 +305,11 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
           authorized.fixture(), authorized.ownerTuple(), substituted);
       AuthoredWorldLaunchDescriptorClient descriptorClient = syntheticGameDesignClient();
 
-      assertThatThrownBy(
-              () ->
-                  authorized
-                      .fixture()
-                      .service(descriptorClient)
-                      .prepareAuthorized(authorized.claim(), authorized.request()))
+      assertThatThrownBy(() ->
+              authorized
+                  .fixture()
+                  .service(descriptorClient)
+                  .prepareAuthorized(authorized.claim(), authorized.request()))
           .isInstanceOf(
               GameSessionCanonicalLaunchPreparationRepository
                   .InvalidLaunchPreparationEvidenceException.class)
@@ -362,20 +353,18 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
   private static AuthoredWorldLaunchDescriptorClient syntheticGameDesignClient() {
     AuthoredWorldLaunchDescriptorClient client = mock(AuthoredWorldLaunchDescriptorClient.class);
     when(client.resolve(any(AuthoredWorldLaunchDescriptorEvidence.Request.class)))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldLaunchDescriptorEvidence.Request request = invocation.getArgument(0);
-              return syntheticDescriptor(request);
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldLaunchDescriptorEvidence.Request request = invocation.getArgument(0);
+          return syntheticDescriptor(request);
+        });
     when(client.get(any(GetRequest.class)))
-        .thenAnswer(
-            invocation -> {
-              GetRequest request = invocation.getArgument(0);
-              AuthoredWorldLaunchDescriptorEvidence descriptor =
-                  syntheticDescriptor(request.expectedRequest());
-              assertThat(request.expectedResultDigest()).isEqualTo(descriptor.resultDigest());
-              return descriptor;
-            });
+        .thenAnswer(invocation -> {
+          GetRequest request = invocation.getArgument(0);
+          AuthoredWorldLaunchDescriptorEvidence descriptor =
+              syntheticDescriptor(request.expectedRequest());
+          assertThat(request.expectedResultDigest()).isEqualTo(descriptor.resultDigest());
+          return descriptor;
+        });
     return client;
   }
 
@@ -383,30 +372,27 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
       CountDownLatch bothResolved) {
     AuthoredWorldLaunchDescriptorClient client = mock(AuthoredWorldLaunchDescriptorClient.class);
     when(client.resolve(any(AuthoredWorldLaunchDescriptorEvidence.Request.class)))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldLaunchDescriptorEvidence.Request request = invocation.getArgument(0);
-              bothResolved.countDown();
-              try {
-                if (!bothResolved.await(15, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Concurrent exact attempts did not both resolve");
-                }
-              } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(
-                    "Concurrent exact attempt was interrupted", exception);
-              }
-              return syntheticDescriptor(request);
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldLaunchDescriptorEvidence.Request request = invocation.getArgument(0);
+          bothResolved.countDown();
+          try {
+            if (!bothResolved.await(15, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Concurrent exact attempts did not both resolve");
+            }
+          } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Concurrent exact attempt was interrupted", exception);
+          }
+          return syntheticDescriptor(request);
+        });
     when(client.get(any(GetRequest.class)))
-        .thenAnswer(
-            invocation -> {
-              GetRequest request = invocation.getArgument(0);
-              AuthoredWorldLaunchDescriptorEvidence descriptor =
-                  syntheticDescriptor(request.expectedRequest());
-              assertThat(request.expectedResultDigest()).isEqualTo(descriptor.resultDigest());
-              return descriptor;
-            });
+        .thenAnswer(invocation -> {
+          GetRequest request = invocation.getArgument(0);
+          AuthoredWorldLaunchDescriptorEvidence descriptor =
+              syntheticDescriptor(request.expectedRequest());
+          assertThat(request.expectedResultDigest()).isEqualTo(descriptor.resultDigest());
+          return descriptor;
+        });
     return client;
   }
 
@@ -864,33 +850,31 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
     columns.put("source_game_tenant_key", source.sourceGameTenantKey());
     columns.put("source_provenance_kind", source.provenanceKind());
     columns.put("source_evidence_digest", source.evidenceDigest());
-    transactions.executeWithoutResult(
-        status -> {
-          java.util.Map<String, Object> namespaceColumns = new java.util.LinkedHashMap<>();
-          namespaceColumns.put("target_namespace", NAMESPACE);
-          namespaceColumns.put("canonical_tenant_id", source.canonicalTenantId());
-          namespaceColumns.put("playable_state_namespace_id", namespace);
-          columns.forEach(
-              (name, value) -> {
-                if (name.startsWith("source_") && !name.equals("source_world_display_name")) {
-                  namespaceColumns.put(name, value);
-                }
-              });
-          dsl.execute(
-              "INSERT INTO gameplay_tenant_shared_playable_state_namespace ("
-                  + String.join(",", namespaceColumns.keySet())
-                  + ") VALUES ("
-                  + String.join(",", java.util.Collections.nCopies(namespaceColumns.size(), "?"))
-                  + ")",
-              namespaceColumns.values().toArray());
-          dsl.execute(
-              "INSERT INTO game_session_canonical_realm_catalog ("
-                  + String.join(",", columns.keySet())
-                  + ") VALUES ("
-                  + String.join(",", java.util.Collections.nCopies(columns.size(), "?"))
-                  + ")",
-              columns.values().toArray());
-        });
+    transactions.executeWithoutResult(status -> {
+      java.util.Map<String, Object> namespaceColumns = new java.util.LinkedHashMap<>();
+      namespaceColumns.put("target_namespace", NAMESPACE);
+      namespaceColumns.put("canonical_tenant_id", source.canonicalTenantId());
+      namespaceColumns.put("playable_state_namespace_id", namespace);
+      columns.forEach((name, value) -> {
+        if (name.startsWith("source_") && !name.equals("source_world_display_name")) {
+          namespaceColumns.put(name, value);
+        }
+      });
+      dsl.execute(
+          "INSERT INTO gameplay_tenant_shared_playable_state_namespace ("
+              + String.join(",", namespaceColumns.keySet())
+              + ") VALUES ("
+              + String.join(",", java.util.Collections.nCopies(namespaceColumns.size(), "?"))
+              + ")",
+          namespaceColumns.values().toArray());
+      dsl.execute(
+          "INSERT INTO game_session_canonical_realm_catalog ("
+              + String.join(",", columns.keySet())
+              + ") VALUES ("
+              + String.join(",", java.util.Collections.nCopies(columns.size(), "?"))
+              + ")",
+          columns.values().toArray());
+    });
     return new CanonicalRealmCatalogSnapshot(
         NAMESPACE,
         source.canonicalTenantId(),
@@ -1045,15 +1029,13 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
               "PRESEEDED_ONLY",
               null,
               null);
-      transactions.execute(
-          status ->
-              new GameSessionFreshTenantAssociationRepository(dsl)
-                  .associateFresh(
-                      uuid(980),
-                      NAMESPACE,
-                      source,
-                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
-                          source.source())));
+      transactions.execute(status ->
+          new GameSessionFreshTenantAssociationRepository(dsl)
+              .associateFresh(
+                  uuid(980),
+                  NAMESPACE,
+                  source,
+                  CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source.source())));
       var policy =
           CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
               request,

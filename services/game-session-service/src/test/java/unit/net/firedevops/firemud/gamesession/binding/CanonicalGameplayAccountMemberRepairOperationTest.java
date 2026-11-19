@@ -61,41 +61,39 @@ class CanonicalGameplayAccountMemberRepairOperationTest {
         new CanonicalGameplayAccountIndexMember(reference, BigInteger.TEN, ACCOUNT_INDEX_FENCE)
             .value();
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayAccountMemberRepairOperation(
-                    TRANSITION_ID,
-                    OPERATION_ID,
-                    BigInteger.ONE,
-                    COVERAGE_FENCE,
-                    BigInteger.valueOf(11),
-                    reference,
-                    ACCOUNT_ID,
-                    UUID.fromString("77777777-7777-4777-8777-777777777777"),
-                    BigInteger.TEN,
-                    ACCOUNT_INDEX_FENCE,
-                    obligation,
-                    exactMember,
-                    BigInteger.ZERO))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayAccountMemberRepairOperation(
+                TRANSITION_ID,
+                OPERATION_ID,
+                BigInteger.ONE,
+                COVERAGE_FENCE,
+                BigInteger.valueOf(11),
+                reference,
+                ACCOUNT_ID,
+                UUID.fromString("77777777-7777-4777-8777-777777777777"),
+                BigInteger.TEN,
+                ACCOUNT_INDEX_FENCE,
+                obligation,
+                exactMember,
+                BigInteger.ZERO))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("bindingRef tenant segment");
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayAccountMemberRepairOperation(
-                    TRANSITION_ID,
-                    OPERATION_ID,
-                    BigInteger.ONE,
-                    COVERAGE_FENCE,
-                    BigInteger.valueOf(11),
-                    reference,
-                    ACCOUNT_ID,
-                    TENANT_ID,
-                    BigInteger.TEN,
-                    ACCOUNT_INDEX_FENCE,
-                    obligation,
-                    exactMember + "-foreign",
-                    BigInteger.ZERO))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayAccountMemberRepairOperation(
+                TRANSITION_ID,
+                OPERATION_ID,
+                BigInteger.ONE,
+                COVERAGE_FENCE,
+                BigInteger.valueOf(11),
+                reference,
+                ACCOUNT_ID,
+                TENANT_ID,
+                BigInteger.TEN,
+                ACCOUNT_INDEX_FENCE,
+                obligation,
+                exactMember + "-foreign",
+                BigInteger.ZERO))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("member differs");
   }
@@ -103,32 +101,30 @@ class CanonicalGameplayAccountMemberRepairOperationTest {
   @Test
   void requiresLaterEvidenceGenerationAndOriginalNewObligation() {
     CanonicalGameplayAccountMemberRepairOperation operation = operation(TENANT_ID);
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayAccountMemberAcknowledgement(
-                    operation, operation.inventorySnapshotRevision(), operation.member()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayAccountMemberAcknowledgement(
+                operation, operation.inventorySnapshotRevision(), operation.member()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("newer than");
 
     CanonicalGameplayBindingRef reference = reference(TENANT_ID);
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayAccountMemberRepairOperation(
-                    TRANSITION_ID,
-                    OPERATION_ID,
-                    BigInteger.ONE,
-                    COVERAGE_FENCE,
-                    BigInteger.valueOf(11),
-                    reference,
-                    ACCOUNT_ID,
-                    TENANT_ID,
-                    BigInteger.TEN,
-                    ACCOUNT_INDEX_FENCE,
-                    obligation(reference, TENANT_ID, BigInteger.ONE),
-                    new CanonicalGameplayAccountIndexMember(
-                            reference, BigInteger.TEN, ACCOUNT_INDEX_FENCE)
-                        .value(),
-                    BigInteger.ZERO))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayAccountMemberRepairOperation(
+                TRANSITION_ID,
+                OPERATION_ID,
+                BigInteger.ONE,
+                COVERAGE_FENCE,
+                BigInteger.valueOf(11),
+                reference,
+                ACCOUNT_ID,
+                TENANT_ID,
+                BigInteger.TEN,
+                ACCOUNT_INDEX_FENCE,
+                obligation(reference, TENANT_ID, BigInteger.ONE),
+                new CanonicalGameplayAccountIndexMember(
+                        reference, BigInteger.TEN, ACCOUNT_INDEX_FENCE)
+                    .value(),
+                BigInteger.ZERO))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact outstanding NEW");
   }

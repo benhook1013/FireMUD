@@ -841,12 +841,11 @@ public class AccountGameplayDelegationResponseEnvelopeRepository {
             account.generation(),
             account
                 .accountSecurityCutoff()
-                .map(
-                    cutoff ->
-                        new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
-                            cutoff.accountAuthorityGeneration(),
-                            cutoff.outboxStreamKey(),
-                            cutoff.outboxSequence())));
+                .map(cutoff ->
+                    new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
+                        cutoff.accountAuthorityGeneration(),
+                        cutoff.outboxStreamKey(),
+                        cutoff.outboxSequence())));
     if (!Arrays.equals(
             bytes(operation, "authority_tuple_canonical_bytes"), canonicalJson(currentTuple))
         || !Arrays.equals(bytes(operation, "membership_version_canonical_bytes"), EMPTY_OBJECT)) {
@@ -969,12 +968,11 @@ public class AccountGameplayDelegationResponseEnvelopeRepository {
         sources
             .account()
             .accountSecurityCutoff()
-            .map(
-                value ->
-                    new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
-                        value.accountAuthorityGeneration(),
-                        value.outboxStreamKey(),
-                        value.outboxSequence()));
+            .map(value ->
+                new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
+                    value.accountAuthorityGeneration(),
+                    value.outboxStreamKey(),
+                    value.outboxSequence()));
     return new AccountAuthoritySnapshot(
         sources.account().scope().accountId(),
         sources.issuer().generation(),

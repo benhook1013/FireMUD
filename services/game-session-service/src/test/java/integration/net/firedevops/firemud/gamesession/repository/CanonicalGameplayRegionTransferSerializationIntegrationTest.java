@@ -95,16 +95,15 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
               DSL.using(repeatableReadSource, SQLDialect.POSTGRES));
       assertThat(repeatableReadRepository.find(proof.scope)).contains(proof.prior);
       Future<?> install =
-          executor.submit(
-              () ->
-                  repeatableReadRepository.installOwner(
-                      proof.scope,
-                      1L,
-                      proof.prior,
-                      "e".repeat(64),
-                      "game-session-service",
-                      "repeatable-read-successor",
-                      Instant.parse("2026-10-26T00:00:03Z")));
+          executor.submit(() ->
+              repeatableReadRepository.installOwner(
+                  proof.scope,
+                  1L,
+                  proof.prior,
+                  "e".repeat(64),
+                  "game-session-service",
+                  "repeatable-read-successor",
+                  Instant.parse("2026-10-26T00:00:03Z")));
 
       try {
         assertDatabaseWaitsFor(proof.sql, blockerPid);
@@ -138,24 +137,21 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
       Future<?> authorization =
-          executor.submit(
-              () ->
-                  proof
-                      .capacity(gate.attach(proof.sql))
-                      .authorize(
-                          proof.admission,
-                          template,
-                          account,
-                          issuer,
-                          proof.execution,
-                          transferDeadline()));
+          executor.submit(() ->
+              proof
+                  .capacity(gate.attach(proof.sql))
+                  .authorize(
+                      proof.admission,
+                      template,
+                      account,
+                      issuer,
+                      proof.execution,
+                      transferDeadline()));
       gate.awaitLock();
       Future<UUID> freeze =
-          executor.submit(
-              () ->
-                  proof.transfers.within(
-                      transferDeadline(),
-                      ignored -> proof.transfers.begin(proof.scope, proof.prior)));
+          executor.submit(() ->
+              proof.transfers.within(
+                  transferDeadline(), ignored -> proof.transfers.begin(proof.scope, proof.prior)));
       try {
         assertDatabaseWaitsFor(proof.sql, gate.backendPid());
         assertThat(freeze.isDone()).isFalse();
@@ -189,17 +185,16 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
       Future<?> authorization =
-          executor.submit(
-              () ->
-                  proof
-                      .capacity(gate.attach(proof.sql))
-                      .authorize(
-                          proof.admission,
-                          template,
-                          account,
-                          issuer,
-                          proof.execution,
-                          transferDeadline()));
+          executor.submit(() ->
+              proof
+                  .capacity(gate.attach(proof.sql))
+                  .authorize(
+                      proof.admission,
+                      template,
+                      account,
+                      issuer,
+                      proof.execution,
+                      transferDeadline()));
       gate.awaitLock();
 
       var repeatableReadSource =
@@ -222,11 +217,10 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
           new CanonicalGameplayRegionOwnerTransferRepository(
               DSL.using(repeatableReadSource, SQLDialect.POSTGRES), proof.clock, proof.tags);
       Future<UUID> freeze =
-          executor.submit(
-              () ->
-                  repeatableReadTransfers.within(
-                      transferDeadline(),
-                      ignored -> repeatableReadTransfers.begin(proof.scope, proof.prior)));
+          executor.submit(() ->
+              repeatableReadTransfers.within(
+                  transferDeadline(),
+                  ignored -> repeatableReadTransfers.begin(proof.scope, proof.prior)));
       try {
         assertDatabaseWaitsFor(proof.sql, gate.backendPid());
         assertThat(freeze.isDone()).isFalse();
@@ -273,29 +267,27 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       var issuer = proof.issuerOpen();
       var freezing = proof.transfers(gate.attach(proof.sql));
       Future<UUID> freeze =
-          executor.submit(
-              () ->
-                  freezing.within(
-                      transferDeadline(), ignored -> freezing.begin(proof.scope, proof.prior)));
+          executor.submit(() ->
+              freezing.within(
+                  transferDeadline(), ignored -> freezing.begin(proof.scope, proof.prior)));
       gate.awaitLock();
       Future<Boolean> refused =
-          executor.submit(
-              () -> {
-                try {
-                  proof
-                      .capacity(proof.sql)
-                      .authorize(
-                          proof.admission,
-                          template,
-                          account,
-                          issuer,
-                          proof.execution,
-                          transferDeadline());
-                  return false;
-                } catch (IllegalStateException frozen) {
-                  return true;
-                }
-              });
+          executor.submit(() -> {
+            try {
+              proof
+                  .capacity(proof.sql)
+                  .authorize(
+                      proof.admission,
+                      template,
+                      account,
+                      issuer,
+                      proof.execution,
+                      transferDeadline());
+              return false;
+            } catch (IllegalStateException frozen) {
+              return true;
+            }
+          });
       try {
         assertDatabaseWaitsFor(proof.sql, gate.backendPid());
         assertThat(refused.isDone()).isFalse();
@@ -334,46 +326,43 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       var blockerPid = new AtomicInteger();
       String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
       Future<UUID> freeze =
-          executor.submit(
-              () -> {
-                try (var connection =
-                    java.sql.DriverManager.getConnection(
-                        postgresContainer().getJdbcUrl(),
-                        postgresContainer().getUsername(),
-                        postgresContainer().getPassword())) {
-                  connection.setSchema(schema);
-                  connection.setAutoCommit(false);
-                  DSLContext rawSql = DSL.using(connection, SQLDialect.POSTGRES);
-                  rawSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-                  UUID transferId = proof.insertRawFrozenTransfer(rawSql);
-                  blockerPid.set(
-                      rawSql.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-                  inserted.countDown();
-                  if (!release.await(4, TimeUnit.SECONDS))
-                    throw new AssertionError("Raw frozen-insert gate was not released");
-                  connection.commit();
-                  return transferId;
-                }
-              });
+          executor.submit(() -> {
+            try (var connection =
+                java.sql.DriverManager.getConnection(
+                    postgresContainer().getJdbcUrl(),
+                    postgresContainer().getUsername(),
+                    postgresContainer().getPassword())) {
+              connection.setSchema(schema);
+              connection.setAutoCommit(false);
+              DSLContext rawSql = DSL.using(connection, SQLDialect.POSTGRES);
+              rawSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+              UUID transferId = proof.insertRawFrozenTransfer(rawSql);
+              blockerPid.set(rawSql.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+              inserted.countDown();
+              if (!release.await(4, TimeUnit.SECONDS))
+                throw new AssertionError("Raw frozen-insert gate was not released");
+              connection.commit();
+              return transferId;
+            }
+          });
       awaitGate(inserted, freeze, "Raw frozen insert did not reach its transaction gate");
       Future<Boolean> refused =
-          executor.submit(
-              () -> {
-                try {
-                  proof
-                      .capacity(proof.sql)
-                      .authorize(
-                          proof.admission,
-                          template,
-                          account,
-                          issuer,
-                          proof.execution,
-                          transferDeadline());
-                  return false;
-                } catch (IllegalStateException frozen) {
-                  return true;
-                }
-              });
+          executor.submit(() -> {
+            try {
+              proof
+                  .capacity(proof.sql)
+                  .authorize(
+                      proof.admission,
+                      template,
+                      account,
+                      issuer,
+                      proof.execution,
+                      transferDeadline());
+              return false;
+            } catch (IllegalStateException frozen) {
+              return true;
+            }
+          });
       try {
         assertDatabaseWaitsFor(proof.sql, blockerPid.get());
         assertThat(refused.isDone()).isFalse();
@@ -408,36 +397,34 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
       Future<?> authorization =
-          executor.submit(
-              () ->
-                  proof
-                      .capacity(gate.attach(proof.sql))
-                      .authorize(
-                          proof.admission,
-                          template,
-                          account,
-                          issuer,
-                          proof.execution,
-                          transferDeadline()));
+          executor.submit(() ->
+              proof
+                  .capacity(gate.attach(proof.sql))
+                  .authorize(
+                      proof.admission,
+                      template,
+                      account,
+                      issuer,
+                      proof.execution,
+                      transferDeadline()));
       gate.awaitLock();
       String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
       Future<UUID> freeze =
-          executor.submit(
-              () -> {
-                try (var connection =
-                    java.sql.DriverManager.getConnection(
-                        postgresContainer().getJdbcUrl(),
-                        postgresContainer().getUsername(),
-                        postgresContainer().getPassword())) {
-                  connection.setSchema(schema);
-                  connection.setAutoCommit(false);
-                  DSLContext rawSql = DSL.using(connection, SQLDialect.POSTGRES);
-                  rawSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-                  UUID transferId = proof.insertRawFrozenTransfer(rawSql);
-                  connection.commit();
-                  return transferId;
-                }
-              });
+          executor.submit(() -> {
+            try (var connection =
+                java.sql.DriverManager.getConnection(
+                    postgresContainer().getJdbcUrl(),
+                    postgresContainer().getUsername(),
+                    postgresContainer().getPassword())) {
+              connection.setSchema(schema);
+              connection.setAutoCommit(false);
+              DSLContext rawSql = DSL.using(connection, SQLDialect.POSTGRES);
+              rawSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+              UUID transferId = proof.insertRawFrozenTransfer(rawSql);
+              connection.commit();
+              return transferId;
+            }
+          });
       try {
         assertDatabaseWaitsFor(proof.sql, gate.backendPid());
         assertThat(freeze.isDone()).isFalse();
@@ -460,14 +447,12 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
   @Test
   void rawFrozenInsertAndCapacityDispatchRejectRepeatableRead() throws Exception {
     try (var proof = new TransferSqlProof()) {
-      assertThatThrownBy(
-              () ->
-                  proof.sql.transaction(
-                      configuration -> {
-                        DSLContext tx = DSL.using(configuration);
-                        tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-                        proof.insertRawFrozenTransfer(tx);
-                      }))
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration -> {
+                DSLContext tx = DSL.using(configuration);
+                tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+                proof.insertRawFrozenTransfer(tx);
+              }))
           .rootCause()
           .isInstanceOfSatisfying(
               org.postgresql.util.PSQLException.class,
@@ -476,14 +461,12 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
                 assertThat(failure.getMessage())
                     .contains("Region transfer freeze requires READ COMMITTED owner fencing");
               });
-      assertThatThrownBy(
-              () ->
-                  proof.sql.transaction(
-                      configuration -> {
-                        DSLContext tx = DSL.using(configuration);
-                        tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-                        proof.insertExecution(tx, proof.execution, "INSTALL_DISPATCHED", null);
-                      }))
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration -> {
+                DSLContext tx = DSL.using(configuration);
+                tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+                proof.insertExecution(tx, proof.execution, "INSTALL_DISPATCHED", null);
+              }))
           .rootCause()
           .isInstanceOfSatisfying(
               org.postgresql.util.PSQLException.class,
@@ -550,51 +533,46 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       var blockerPid = new AtomicInteger();
       String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
       Future<?> itemInsert =
-          executor.submit(
-              () -> {
-                try (var connection =
-                    java.sql.DriverManager.getConnection(
-                        postgresContainer().getJdbcUrl(),
-                        postgresContainer().getUsername(),
-                        postgresContainer().getPassword())) {
-                  connection.setSchema(schema);
-                  connection.setAutoCommit(false);
-                  DSLContext rawSql = DSL.using(connection, SQLDialect.POSTGRES);
-                  rawSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-                  proof.insertRawTransferItem(rawSql, transferId, 0);
-                  blockerPid.set(
-                      rawSql.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-                  inserted.countDown();
-                  if (!release.await(4, TimeUnit.SECONDS))
-                    throw new AssertionError("Raw transfer-item gate was not released");
-                  connection.commit();
-                }
-                return null;
-              });
+          executor.submit(() -> {
+            try (var connection =
+                java.sql.DriverManager.getConnection(
+                    postgresContainer().getJdbcUrl(),
+                    postgresContainer().getUsername(),
+                    postgresContainer().getPassword())) {
+              connection.setSchema(schema);
+              connection.setAutoCommit(false);
+              DSLContext rawSql = DSL.using(connection, SQLDialect.POSTGRES);
+              rawSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+              proof.insertRawTransferItem(rawSql, transferId, 0);
+              blockerPid.set(rawSql.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+              inserted.countDown();
+              if (!release.await(4, TimeUnit.SECONDS))
+                throw new AssertionError("Raw transfer-item gate was not released");
+              connection.commit();
+            }
+            return null;
+          });
       awaitGate(
           inserted, itemInsert, "Raw transfer-item insert did not reach its transaction gate");
       Future<String> oldSnapshotCompletion =
-          executor.submit(
-              () ->
-                  sqlStateOf(
-                      () ->
-                          proof.sql.transaction(
-                              configuration -> {
-                                DSLContext tx = DSL.using(configuration);
-                                tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-                                tx.fetchSingle(
-                                    "SELECT state FROM game_session_region_owner_transfer WHERE"
-                                        + " transfer_id=?",
-                                    transferId);
-                                tx.execute(
-                                    "UPDATE game_session_region_owner_transfer SET"
-                                        + " state='COMPLETED',"
-                                        + "new_owner_id='sql-proof-successor',new_owner_fence=?,new_lease_correlation=?"
-                                        + " WHERE transfer_id=?",
-                                    proof.prior.executorFence().longValueExact() + 1,
-                                    "e".repeat(64),
-                                    transferId);
-                              })));
+          executor.submit(() ->
+              sqlStateOf(() ->
+                  proof.sql.transaction(configuration -> {
+                    DSLContext tx = DSL.using(configuration);
+                    tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+                    tx.fetchSingle(
+                        "SELECT state FROM game_session_region_owner_transfer WHERE"
+                            + " transfer_id=?",
+                        transferId);
+                    tx.execute(
+                        "UPDATE game_session_region_owner_transfer SET"
+                            + " state='COMPLETED',"
+                            + "new_owner_id='sql-proof-successor',new_owner_fence=?,new_lease_correlation=?"
+                            + " WHERE transfer_id=?",
+                        proof.prior.executorFence().longValueExact() + 1,
+                        "e".repeat(64),
+                        transferId);
+                  })));
       try {
         assertDatabaseWaitsFor(proof.sql, blockerPid.get());
         assertThat(oldSnapshotCompletion.isDone()).isFalse();
@@ -603,15 +581,14 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       }
       itemInsert.get(10, TimeUnit.SECONDS);
       assertThat(oldSnapshotCompletion.get(10, TimeUnit.SECONDS)).isEqualTo("40001");
-      assertSqlGuard(
-          () ->
-              proof.sql.execute(
-                  "UPDATE game_session_region_owner_transfer SET state='COMPLETED',"
-                      + "new_owner_id='sql-proof-successor',new_owner_fence=?,new_lease_correlation=?"
-                      + " WHERE transfer_id=?",
-                  proof.prior.executorFence().longValueExact() + 1,
-                  "e".repeat(64),
-                  transferId));
+      assertSqlGuard(() ->
+          proof.sql.execute(
+              "UPDATE game_session_region_owner_transfer SET state='COMPLETED',"
+                  + "new_owner_id='sql-proof-successor',new_owner_fence=?,new_lease_correlation=?"
+                  + " WHERE transfer_id=?",
+              proof.prior.executorFence().longValueExact() + 1,
+              "e".repeat(64),
+              transferId));
       assertThat(
               proof
                   .sql
@@ -645,17 +622,16 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
       Future<?> authorization =
-          executor.submit(
-              () ->
-                  proof
-                      .capacity(gate.attach(proof.sql))
-                      .authorize(
-                          proof.admission,
-                          template,
-                          account,
-                          issuer,
-                          proof.execution,
-                          transferDeadline()));
+          executor.submit(() ->
+              proof
+                  .capacity(gate.attach(proof.sql))
+                  .authorize(
+                      proof.admission,
+                      template,
+                      account,
+                      issuer,
+                      proof.execution,
+                      transferDeadline()));
       gate.awaitLock();
       Future<?> replay = executor.submit(proof::replayBridge);
       try {
@@ -690,14 +666,13 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       Future<?> replay = executor.submit(proof::replayBridge);
       gate.awaitLock();
       Future<?> continuation =
-          executor.submit(
-              () ->
-                  proof.transfers.within(
-                      transferDeadline(),
-                      ignored -> {
-                        proof.transfers.requireFrozenOriginal(original, proof.scope, proof.prior);
-                        return null;
-                      }));
+          executor.submit(() ->
+              proof.transfers.within(
+                  transferDeadline(),
+                  ignored -> {
+                    proof.transfers.requireFrozenOriginal(original, proof.scope, proof.prior);
+                    return null;
+                  }));
       try {
         assertDatabaseWaitsFor(proof.sql, gate.backendPid());
         assertThat(continuation.isDone()).isFalse();
@@ -782,34 +757,31 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       var blockerPid = new AtomicInteger();
       String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
       Future<UUID> first =
-          executor.submit(
-              () -> {
-                try (var connection =
-                    java.sql.DriverManager.getConnection(
-                        postgresContainer().getJdbcUrl(),
-                        postgresContainer().getUsername(),
-                        postgresContainer().getPassword())) {
-                  connection.setSchema(schema);
-                  connection.setAutoCommit(false);
-                  DSLContext rawSql = DSL.using(connection, SQLDialect.POSTGRES);
-                  rawSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-                  UUID transferId = proof.insertRawFrozenTransfer(rawSql);
-                  blockerPid.set(
-                      rawSql.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-                  inserted.countDown();
-                  if (!release.await(4, TimeUnit.SECONDS))
-                    throw new AssertionError("Transfer history reservation gate was not released");
-                  connection.commit();
-                  return transferId;
-                }
-              });
+          executor.submit(() -> {
+            try (var connection =
+                java.sql.DriverManager.getConnection(
+                    postgresContainer().getJdbcUrl(),
+                    postgresContainer().getUsername(),
+                    postgresContainer().getPassword())) {
+              connection.setSchema(schema);
+              connection.setAutoCommit(false);
+              DSLContext rawSql = DSL.using(connection, SQLDialect.POSTGRES);
+              rawSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+              UUID transferId = proof.insertRawFrozenTransfer(rawSql);
+              blockerPid.set(rawSql.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+              inserted.countDown();
+              if (!release.await(4, TimeUnit.SECONDS))
+                throw new AssertionError("Transfer history reservation gate was not released");
+              connection.commit();
+              return transferId;
+            }
+          });
       awaitGate(inserted, first, "First transfer did not reserve the tenant history slot");
       var second =
-          executor.submit(
-              () ->
-                  assertTransferHistoryGuard(
-                      () -> proof.insertRawFrozenTransfer(proof.sql, otherScope, otherPrior),
-                      "Transfer history is exhausted"));
+          executor.submit(() ->
+              assertTransferHistoryGuard(
+                  () -> proof.insertRawFrozenTransfer(proof.sql, otherScope, otherPrior),
+                  "Transfer history is exhausted"));
       try {
         assertDatabaseWaitsFor(proof.sql, blockerPid.get());
         assertThat(second.isDone()).isFalse();

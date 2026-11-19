@@ -196,12 +196,11 @@ class WorldLifecycleCommandServiceImplTest {
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
         .thenAnswer(invocation -> Optional.ofNullable(storedInstance.get()));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance worldInstance = invocation.getArgument(0);
-              storedInstance.set(worldInstance);
-              return worldInstance;
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance worldInstance = invocation.getArgument(0);
+          storedInstance.set(worldInstance);
+          return worldInstance;
+        });
 
     var prepared =
         service.prepareWorldInstance(
@@ -384,11 +383,10 @@ class WorldLifecycleCommandServiceImplTest {
     RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
     when(provider.isEnabled()).thenReturn(true);
     when(provider.requireAuthenticatedEvidence())
-        .thenAnswer(
-            invocation -> {
-              assertFalse(localTransactionActive.get());
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          assertFalse(localTransactionActive.get());
+          return evidence;
+        });
     when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
         .thenReturn("c".repeat(64));
     WorldInstance instance = boundFixtureInstance("PREPARING", 1L);
@@ -565,11 +563,10 @@ class WorldLifecycleCommandServiceImplTest {
     WorldInstance instance = activeWorldInstance();
     stubPersistedWorldInstance(instance);
     when(worldInstanceRepository.hasNonterminalInitialAdmissionBindHold(42L, 101L))
-        .thenAnswer(
-            invocation -> {
-              assertTrue(localTransactionActive.get());
-              return true;
-            });
+        .thenAnswer(invocation -> {
+          assertTrue(localTransactionActive.get());
+          return true;
+        });
 
     IllegalArgumentException error =
         assertThrows(
@@ -595,11 +592,10 @@ class WorldLifecycleCommandServiceImplTest {
     WorldInstance instance = boundFixtureInstance("ACTIVE", 2L);
     stubPersistedWorldInstance(instance);
     when(worldInstanceRepository.hasNonterminalInitialAdmissionBindHold(42L, 101L))
-        .thenAnswer(
-            invocation -> {
-              assertTrue(localTransactionActive.get());
-              return true;
-            });
+        .thenAnswer(invocation -> {
+          assertTrue(localTransactionActive.get());
+          return true;
+        });
 
     IllegalArgumentException error =
         assertThrows(
@@ -726,11 +722,10 @@ class WorldLifecycleCommandServiceImplTest {
         .when(worldEventRepository)
         .deleteByTenantIdAndGameInstanceId(42L, 101L);
     when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
-        .thenAnswer(
-            invocation -> {
-              assertFalse(localTransactionActive.get());
-              return CleanupRuntimeInstanceResponse.newBuilder().build();
-            });
+        .thenAnswer(invocation -> {
+          assertFalse(localTransactionActive.get());
+          return CleanupRuntimeInstanceResponse.newBuilder().build();
+        });
 
     var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
 
@@ -750,13 +745,12 @@ class WorldLifecycleCommandServiceImplTest {
     WorldInstance instance = activeWorldInstance();
     AtomicReference<WorldInstance> persisted = stubPersistedWorldInstance(instance);
     when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance changed = copyWorldInstance(persisted.get());
-              changed.setTerminationRequestId("term-2");
-              persisted.set(changed);
-              return CleanupRuntimeInstanceResponse.newBuilder().build();
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance changed = copyWorldInstance(persisted.get());
+          changed.setTerminationRequestId("term-2");
+          persisted.set(changed);
+          return CleanupRuntimeInstanceResponse.newBuilder().build();
+        });
 
     IllegalArgumentException error =
         assertThrows(
@@ -776,13 +770,12 @@ class WorldLifecycleCommandServiceImplTest {
     WorldInstance instance = activeWorldInstance();
     AtomicReference<WorldInstance> persisted = stubPersistedWorldInstance(instance);
     when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance changed = copyWorldInstance(persisted.get());
-              changed.setStatus("ACTIVE");
-              persisted.set(changed);
-              return CleanupRuntimeInstanceResponse.newBuilder().build();
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance changed = copyWorldInstance(persisted.get());
+          changed.setStatus("ACTIVE");
+          persisted.set(changed);
+          return CleanupRuntimeInstanceResponse.newBuilder().build();
+        });
 
     IllegalArgumentException error =
         assertThrows(
@@ -802,15 +795,14 @@ class WorldLifecycleCommandServiceImplTest {
     WorldInstance instance = activeWorldInstance();
     AtomicReference<WorldInstance> persisted = stubPersistedWorldInstance(instance);
     when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance completed = copyWorldInstance(persisted.get());
-              completed.setStatus("TERMINATED");
-              completed.setLifecycleEpoch(4L);
-              completed.setTerminatedAt(Instant.parse("2026-09-01T00:00:00Z"));
-              persisted.set(completed);
-              return CleanupRuntimeInstanceResponse.newBuilder().build();
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance completed = copyWorldInstance(persisted.get());
+          completed.setStatus("TERMINATED");
+          completed.setLifecycleEpoch(4L);
+          completed.setTerminatedAt(Instant.parse("2026-09-01T00:00:00Z"));
+          persisted.set(completed);
+          return CleanupRuntimeInstanceResponse.newBuilder().build();
+        });
 
     var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
 
@@ -835,14 +827,13 @@ class WorldLifecycleCommandServiceImplTest {
     when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance), Optional.of(terminating));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance submitted = invocation.getArgument(0);
-              if ("TERMINATED".equals(submitted.getStatus())) {
-                throw new IllegalStateException("stale write for world_instance");
-              }
-              return submitted;
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance submitted = invocation.getArgument(0);
+          if ("TERMINATED".equals(submitted.getStatus())) {
+            throw new IllegalStateException("stale write for world_instance");
+          }
+          return submitted;
+        });
 
     IllegalStateException error =
         assertThrows(
@@ -1079,13 +1070,12 @@ class WorldLifecycleCommandServiceImplTest {
     when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenAnswer(invocation -> Optional.ofNullable(persisted.get()));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance submitted = invocation.getArgument(0);
-              submitted.setId(101L);
-              persisted.set(copyWorldInstance(submitted));
-              return submitted;
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance submitted = invocation.getArgument(0);
+          submitted.setId(101L);
+          persisted.set(copyWorldInstance(submitted));
+          return submitted;
+        });
     WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
     PreparedWorldInstanceRequest request = ordinaryPreparedRequest();
 
@@ -1197,13 +1187,12 @@ class WorldLifecycleCommandServiceImplTest {
     when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenAnswer(invocation -> Optional.of(copyWorldInstance(persisted.get())));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance submitted = invocation.getArgument(0);
-              submitted.setRowVersion(submitted.getRowVersion() + 1L);
-              persisted.set(copyWorldInstance(submitted));
-              return copyWorldInstance(submitted);
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance submitted = invocation.getArgument(0);
+          submitted.setRowVersion(submitted.getRowVersion() + 1L);
+          persisted.set(copyWorldInstance(submitted));
+          return copyWorldInstance(submitted);
+        });
     WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
 
     var active = fixtureService.activatePreparedWorldInstance(42L, 101L, 1L);
@@ -1382,40 +1371,37 @@ class WorldLifecycleCommandServiceImplTest {
         new AtomicReference<>(copyWorldInstance(initiallyLoaded));
     AtomicBoolean firstFind = new AtomicBoolean(true);
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
-        .thenAnswer(
-            invocation -> {
-              if (localTransactionActive.get()) {
-                worldInstanceReadInLocalTransaction.set(true);
-              }
-              if (firstFind.compareAndSet(true, false)) {
-                return Optional.of(initiallyLoaded);
-              }
-              return Optional.of(copyWorldInstance(persisted.get()));
-            });
+        .thenAnswer(invocation -> {
+          if (localTransactionActive.get()) {
+            worldInstanceReadInLocalTransaction.set(true);
+          }
+          if (firstFind.compareAndSet(true, false)) {
+            return Optional.of(initiallyLoaded);
+          }
+          return Optional.of(copyWorldInstance(persisted.get()));
+        });
     AtomicBoolean firstLockedFind = new AtomicBoolean(true);
     when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
-        .thenAnswer(
-            invocation -> {
-              if (localTransactionActive.get()) {
-                worldInstanceReadInLocalTransaction.set(true);
-              }
-              return firstLockedFind.compareAndSet(true, false)
-                  ? Optional.of(initiallyLoaded)
-                  : Optional.of(copyWorldInstance(persisted.get()));
-            });
+        .thenAnswer(invocation -> {
+          if (localTransactionActive.get()) {
+            worldInstanceReadInLocalTransaction.set(true);
+          }
+          return firstLockedFind.compareAndSet(true, false)
+              ? Optional.of(initiallyLoaded)
+              : Optional.of(copyWorldInstance(persisted.get()));
+        });
     when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(
-            invocation -> {
-              WorldInstance submitted = invocation.getArgument(0);
-              if ("TERMINATED".equals(submitted.getStatus())) {
-                assertTrue(localTransactionActive.get());
-              }
-              WorldInstance saved = copyWorldInstance(submitted);
-              long rowVersion = submitted.getRowVersion() == null ? 0L : submitted.getRowVersion();
-              saved.setRowVersion(rowVersion + 1L);
-              persisted.set(saved);
-              return copyWorldInstance(saved);
-            });
+        .thenAnswer(invocation -> {
+          WorldInstance submitted = invocation.getArgument(0);
+          if ("TERMINATED".equals(submitted.getStatus())) {
+            assertTrue(localTransactionActive.get());
+          }
+          WorldInstance saved = copyWorldInstance(submitted);
+          long rowVersion = submitted.getRowVersion() == null ? 0L : submitted.getRowVersion();
+          saved.setRowVersion(rowVersion + 1L);
+          persisted.set(saved);
+          return copyWorldInstance(saved);
+        });
     return persisted;
   }
 

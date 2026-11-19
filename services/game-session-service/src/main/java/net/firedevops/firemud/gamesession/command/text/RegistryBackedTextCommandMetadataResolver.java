@@ -19,13 +19,12 @@ final class RegistryBackedTextCommandMetadataResolver implements TextCommandMeta
     return textCommandRegistry
         .findDefinition(commandIdOrAlias)
         .or(() -> textCommandRegistry.findDefinitionByAlias(commandIdOrAlias))
-        .map(
-            definition ->
-                new ResolvedTextCommandMetadata(
-                    definition.dispatchGroup(),
-                    definition.promptPolicy(),
-                    definition.actionCategory(),
-                    definition.actionTags(),
-                    definition.capability()));
+        .map(definition ->
+            new ResolvedTextCommandMetadata(
+                definition.dispatchGroup(),
+                definition.promptPolicy(),
+                definition.actionCategory(),
+                definition.actionTags(),
+                definition.capability()));
   }
 }

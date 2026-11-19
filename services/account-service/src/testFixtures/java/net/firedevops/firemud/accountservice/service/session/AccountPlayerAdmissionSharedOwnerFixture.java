@@ -119,11 +119,10 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
     var outbox = new AccountAuthorityOutboxRepository(sources.dsl);
     authoritySources =
         new AccountAuthoritySourceEvidenceRepository(sources.dsl, generations, outbox);
-    sources.tx(
-        () -> {
-          authoritySources.initializeIssuerIfAbsent(GameSessionAccountDelegationProfile.ISSUER);
-          return null;
-        });
+    sources.tx(() -> {
+      authoritySources.initializeIssuerIfAbsent(GameSessionAccountDelegationProfile.ISSUER);
+      return null;
+    });
     var bundles = new AccountAuthEvidenceBundleRepository(sources.dsl, generations, outbox);
     var issuanceTarget =
         new AccountGameplayDelegationIssuanceRepository(sources.dsl, authoritySources, bundles);
@@ -354,10 +353,9 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
             Math.addExact(
                 Math.multiplyExact(expiresAtEpochSecond, 1_000L), REGISTRY_CLEANUP_MILLIS));
     var snapshot =
-        sources.tx(
-            () ->
-                authoritySources.readCurrentIssuerAccountSources(
-                    GameSessionAccountDelegationProfile.ISSUER, accountId()));
+        sources.tx(() ->
+            authoritySources.readCurrentIssuerAccountSources(
+                GameSessionAccountDelegationProfile.ISSUER, accountId()));
     byte[][] expected =
         AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(snapshot);
     var observation = projection.observeCurrent(accountId());
@@ -390,52 +388,50 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
     }
     assertCreatorRemainsNonAdmitting();
     if (!accountId().equals(sources.account.getAccountUuid())) {
-      sources.tx(
-          () -> {
-            var fresh =
-                new FreshTenantIdentityAssociationRepository(
-                    sources.dsl, creationEvidence().targetNamespace());
-            var memberships =
-                new AccountTenantMembershipRepository(
-                    sources.dsl,
-                    sources.accounts,
-                    fresh,
-                    new AccountMembershipPairAuthorityRepository(sources.dsl));
-            assertThat(memberships.findFreshMembership(accountId(), sources.tenant)).isEmpty();
-            return null;
-          });
+      sources.tx(() -> {
+        var fresh =
+            new FreshTenantIdentityAssociationRepository(
+                sources.dsl, creationEvidence().targetNamespace());
+        var memberships =
+            new AccountTenantMembershipRepository(
+                sources.dsl,
+                sources.accounts,
+                fresh,
+                new AccountMembershipPairAuthorityRepository(sources.dsl));
+        assertThat(memberships.findFreshMembership(accountId(), sources.tenant)).isEmpty();
+        return null;
+      });
     }
   }
 
   /** Real canonical membership and role readback, with the original source tuple unchanged. */
   public void assertCreatorRemainsNonAdmitting() {
     UUID creatorId = sources.account.getAccountUuid();
-    sources.tx(
-        () -> {
-          var fresh =
-              new FreshTenantIdentityAssociationRepository(
-                  sources.dsl, creationEvidence().targetNamespace());
-          assertThat(fresh.read(sources.tenant)).contains(creationEvidence());
-          var pairs = new AccountMembershipPairAuthorityRepository(sources.dsl);
-          var memberships =
-              new AccountTenantMembershipRepository(sources.dsl, sources.accounts, fresh, pairs);
-          var membership = memberships.findFreshMembership(creatorId, sources.tenant).orElseThrow();
-          assertThat(membership.getLifecycleState()).isEqualTo("ACTIVE");
-          assertThat(membership.getAuthorityProvenance()).isEqualTo("TENANT_CREATION");
-          assertThat(membership.isGameplayAdmissionAllowed()).isFalse();
-          var pair = pairs.readPositive(creatorId, sources.tenant).orElseThrow();
-          var roles =
-              new AccountTenantMembershipRoleSnapshotRepository(sources.dsl)
-                  .findForCanonicalUpdate(
-                      creatorId,
-                      sources.tenant,
-                      pair.provenance(),
-                      membership.getId(),
-                      membership.getMembershipVersion())
-                  .orElseThrow();
-          assertThat(roles.roles()).containsExactly("tenantAdmin");
-          return null;
-        });
+    sources.tx(() -> {
+      var fresh =
+          new FreshTenantIdentityAssociationRepository(
+              sources.dsl, creationEvidence().targetNamespace());
+      assertThat(fresh.read(sources.tenant)).contains(creationEvidence());
+      var pairs = new AccountMembershipPairAuthorityRepository(sources.dsl);
+      var memberships =
+          new AccountTenantMembershipRepository(sources.dsl, sources.accounts, fresh, pairs);
+      var membership = memberships.findFreshMembership(creatorId, sources.tenant).orElseThrow();
+      assertThat(membership.getLifecycleState()).isEqualTo("ACTIVE");
+      assertThat(membership.getAuthorityProvenance()).isEqualTo("TENANT_CREATION");
+      assertThat(membership.isGameplayAdmissionAllowed()).isFalse();
+      var pair = pairs.readPositive(creatorId, sources.tenant).orElseThrow();
+      var roles =
+          new AccountTenantMembershipRoleSnapshotRepository(sources.dsl)
+              .findForCanonicalUpdate(
+                  creatorId,
+                  sources.tenant,
+                  pair.provenance(),
+                  membership.getId(),
+                  membership.getMembershipVersion())
+              .orElseThrow();
+      assertThat(roles.roles()).containsExactly("tenantAdmin");
+      return null;
+    });
   }
 
   private static Path writeResponseKeyring(Path temporary) throws IOException {

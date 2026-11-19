@@ -63,12 +63,11 @@ public class ScriptHandoffEventRepository {
             .where(candidateEligibility)
             .orderBy(candidates.EVENT_ID.asc())
             .limit(RETENTION_DELETE_BATCH_SIZE)
-            .fetch(
-                record ->
-                    new RetentionCandidate(
-                        record.get(candidates.ID),
-                        record.get(candidates.TENANT_ID),
-                        record.get(candidates.WORK_ITEM_ID)));
+            .fetch(record ->
+                new RetentionCandidate(
+                    record.get(candidates.ID),
+                    record.get(candidates.TENANT_ID),
+                    record.get(candidates.WORK_ITEM_ID)));
     if (selected.isEmpty()) {
       return 0L;
     }
@@ -82,10 +81,9 @@ public class ScriptHandoffEventRepository {
             .where(selectedParentBundleCondition(selected))
             .orderBy(SCRIPT_WORK_ITEMS.TENANT_ID.asc(), SCRIPT_WORK_ITEMS.ID.asc())
             .forUpdate()
-            .fetch(
-                record ->
-                    new RetentionBundle(
-                        record.get(SCRIPT_WORK_ITEMS.TENANT_ID), record.get(SCRIPT_WORK_ITEMS.ID)));
+            .fetch(record ->
+                new RetentionBundle(
+                    record.get(SCRIPT_WORK_ITEMS.TENANT_ID), record.get(SCRIPT_WORK_ITEMS.ID)));
     if (existingParents.isEmpty()) {
       return 0L;
     }
@@ -116,12 +114,11 @@ public class ScriptHandoffEventRepository {
                     .and(
                         retentionEligibility(
                             recheckCandidates, recheckSiblings, cutoff, current, true)))
-            .fetch(
-                record ->
-                    new RetentionCandidate(
-                        record.get(recheckCandidates.ID),
-                        record.get(recheckCandidates.TENANT_ID),
-                        record.get(recheckCandidates.WORK_ITEM_ID)));
+            .fetch(record ->
+                new RetentionCandidate(
+                    record.get(recheckCandidates.ID),
+                    record.get(recheckCandidates.TENANT_ID),
+                    record.get(recheckCandidates.WORK_ITEM_ID)));
     if (eligible.isEmpty()) {
       return 0L;
     }
@@ -435,10 +432,9 @@ public class ScriptHandoffEventRepository {
       }
       ScriptHandoffEvent existing =
           findByEventId(entity.getEventId())
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "handoff event conflict did not yield a persisted row"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "handoff event conflict did not yield a persisted row"));
       if (!immutableIdentityMatches(existing, entity)) {
         throw identityConflict(existing, entity);
       }

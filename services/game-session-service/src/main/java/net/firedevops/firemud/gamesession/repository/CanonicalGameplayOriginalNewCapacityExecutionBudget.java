@@ -267,20 +267,19 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     synchronized (lifecycle) {
       outstandingAsyncCloses++;
     }
-    closeAttempt.whenComplete(
-        (ignored, failure) -> {
-          synchronized (lifecycle) {
-            if (failure != null) {
-              if (!redisCloseFailureRecorded) {
-                redisCloseFailureRecorded = true;
-                REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
-              }
-              return;
-            }
-            outstandingAsyncCloses--;
-            releaseIfFinished();
+    closeAttempt.whenComplete((ignored, failure) -> {
+      synchronized (lifecycle) {
+        if (failure != null) {
+          if (!redisCloseFailureRecorded) {
+            redisCloseFailureRecorded = true;
+            REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
           }
-        });
+          return;
+        }
+        outstandingAsyncCloses--;
+        releaseIfFinished();
+      }
+    });
   }
 
   /** Actual worker exit, including SQL resource cleanup; never the caller timeout. */
@@ -294,13 +293,12 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     synchronized (lifecycle) {
       outstandingRetainedWork++;
     }
-    work.whenComplete(
-        (ignored, failure) -> {
-          synchronized (lifecycle) {
-            outstandingRetainedWork--;
-            releaseIfFinished();
-          }
-        });
+    work.whenComplete((ignored, failure) -> {
+      synchronized (lifecycle) {
+        outstandingRetainedWork--;
+        releaseIfFinished();
+      }
+    });
   }
 
   /** Waits for one Redis close attempt only through this operation's deadline. */

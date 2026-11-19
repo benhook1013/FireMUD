@@ -339,9 +339,8 @@ public class PlayCommandHandler {
                   .filter(SessionContext::hasGameplayRegionBinding);
           boolean resumedOrTookOver =
               existingBinding
-                  .map(
-                      existing ->
-                          handleExistingBinding(context, existing, gameInstanceId, characterId))
+                  .map(existing ->
+                      handleExistingBinding(context, existing, gameInstanceId, characterId))
                   .orElse(false);
 
           String roomInstanceId =
@@ -504,10 +503,9 @@ public class PlayCommandHandler {
     if (StringUtils.hasText(requestedCharacter)) {
       List<Character> matches =
           roster.stream()
-              .filter(
-                  character ->
-                      Objects.equals(
-                          normalizeName(character.getName()), normalizeName(requestedCharacter)))
+              .filter(character ->
+                  Objects.equals(
+                      normalizeName(character.getName()), normalizeName(requestedCharacter)))
               .toList();
       if (matches.size() != 1) {
         throw new CharacterSelectionRequiredException(

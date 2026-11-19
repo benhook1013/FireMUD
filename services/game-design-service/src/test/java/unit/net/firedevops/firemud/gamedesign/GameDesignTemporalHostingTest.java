@@ -34,22 +34,20 @@ class GameDesignTemporalHostingTest {
 
   @Test
   void gameDesignModuleUsesSharedTemporalHostingPattern() {
-    contextRunner.run(
-        context -> {
-          TemporalTaskQueueResolver taskQueues = context.getBean(TemporalTaskQueueResolver.class);
-          WorkerFactory workerFactory = context.getBean(WorkerFactory.class);
-          Worker worker = context.getBean(Worker.class);
-          String taskQueue = taskQueues.forWorkflowFamily("publish");
+    contextRunner.run(context -> {
+      TemporalTaskQueueResolver taskQueues = context.getBean(TemporalTaskQueueResolver.class);
+      WorkerFactory workerFactory = context.getBean(WorkerFactory.class);
+      Worker worker = context.getBean(Worker.class);
+      String taskQueue = taskQueues.forWorkflowFamily("publish");
 
-          assertThat(taskQueue).isEqualTo("firemud:game-design-service:publish");
-          assertThat(
-                  FiremudWorkflowIds.workflowId("publish", "tenant-1", "publish-request", "req-1"))
-              .isEqualTo("publish:tenant-1:publish-request:req-1");
+      assertThat(taskQueue).isEqualTo("firemud:game-design-service:publish");
+      assertThat(FiremudWorkflowIds.workflowId("publish", "tenant-1", "publish-request", "req-1"))
+          .isEqualTo("publish:tenant-1:publish-request:req-1");
 
-          verify(workerFactory).newWorker(taskQueue);
-          verify(worker).registerWorkflowImplementationTypes(HostProbeWorkflowImpl.class);
-          verify(workerFactory).start();
-        });
+      verify(workerFactory).newWorker(taskQueue);
+      verify(worker).registerWorkflowImplementationTypes(HostProbeWorkflowImpl.class);
+      verify(workerFactory).start();
+    });
   }
 
   @Configuration(proxyBeanMethods = false)

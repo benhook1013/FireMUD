@@ -207,18 +207,17 @@ public class VersionTemplateRemapSetRepository {
     return dsl.selectFrom(ENTRY_TABLE)
         .where(ENTRY_REMAP_SET_PK.eq(remapSet.getId()))
         .orderBy(ENTRY_ID.asc())
-        .fetch(
-            record -> {
-              VersionTemplateRemapEntry entry = new VersionTemplateRemapEntry();
-              entry.setId(record.get(ENTRY_ID));
-              entry.setRemapSet(remapSet);
-              entry.setMappingDomain(record.get(ENTRY_MAPPING_DOMAIN));
-              entry.setMappingType(record.get(ENTRY_MAPPING_TYPE));
-              entry.setSourceTemplateKey(record.get(ENTRY_SOURCE_TEMPLATE_KEY));
-              entry.setTargetTemplateKey(record.get(ENTRY_TARGET_TEMPLATE_KEY));
-              entry.setCreatedAt(readLocalDateTime(record, ENTRY_CREATED_AT));
-              return entry;
-            });
+        .fetch(record -> {
+          VersionTemplateRemapEntry entry = new VersionTemplateRemapEntry();
+          entry.setId(record.get(ENTRY_ID));
+          entry.setRemapSet(remapSet);
+          entry.setMappingDomain(record.get(ENTRY_MAPPING_DOMAIN));
+          entry.setMappingType(record.get(ENTRY_MAPPING_TYPE));
+          entry.setSourceTemplateKey(record.get(ENTRY_SOURCE_TEMPLATE_KEY));
+          entry.setTargetTemplateKey(record.get(ENTRY_TARGET_TEMPLATE_KEY));
+          entry.setCreatedAt(readLocalDateTime(record, ENTRY_CREATED_AT));
+          return entry;
+        });
   }
 
   private static LocalDateTime readLocalDateTime(Record record, Field<LocalDateTime> field) {

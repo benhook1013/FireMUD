@@ -102,20 +102,19 @@ class AccountControlUiIssuanceRepositoryTest {
             Instant.class,
             long.class);
     prepare.setAccessible(true);
-    assertThatThrownBy(
-            () ->
-                prepare.invoke(
-                    repository,
-                    requestId,
-                    "spiffe://firemud/ns/test/sa/logging-admin-service",
-                    callerContextId,
-                    "test-mac-key",
-                    "a".repeat(64),
-                    authenticated,
-                    source,
-                    signer,
-                    Instant.parse("2026-10-08T11:00:00Z"),
-                    300_000L))
+    assertThatThrownBy(() ->
+            prepare.invoke(
+                repository,
+                requestId,
+                "spiffe://firemud/ns/test/sa/logging-admin-service",
+                callerContextId,
+                "test-mac-key",
+                "a".repeat(64),
+                authenticated,
+                source,
+                signer,
+                Instant.parse("2026-10-08T11:00:00Z"),
+                300_000L))
         .isInstanceOf(InvocationTargetException.class)
         .hasCauseInstanceOf(IllegalStateException.class);
 
@@ -140,16 +139,15 @@ class AccountControlUiIssuanceRepositoryTest {
   void retainedLegacyIssuanceWithoutCleanupDeadlineCannotBeReinterpreted() throws Exception {
     Record row = mock(Record.class);
     when(row.get(anyString(), any(Class.class)))
-        .thenAnswer(
-            call ->
-                switch (call.getArgument(0, String.class)) {
-                  case "authorization_scope" -> "TENANT";
-                  case "tenant_uuid" -> TENANT_ID;
-                  case "issued_at_epoch_second" -> 1_800_000_000L;
-                  case "expires_at_epoch_second" -> 1_800_000_300L;
-                  case "recovery_expires_at" -> OffsetDateTime.parse("2027-01-15T08:01:00Z");
-                  default -> null;
-                });
+        .thenAnswer(call ->
+            switch (call.getArgument(0, String.class)) {
+              case "authorization_scope" -> "TENANT";
+              case "tenant_uuid" -> TENANT_ID;
+              case "issued_at_epoch_second" -> 1_800_000_000L;
+              case "expires_at_epoch_second" -> 1_800_000_300L;
+              case "recovery_expires_at" -> OffsetDateTime.parse("2027-01-15T08:01:00Z");
+              default -> null;
+            });
     var retained = stored(row);
 
     assertThatThrownBy(() -> storedExpiryMillis(retained))
@@ -190,9 +188,8 @@ class AccountControlUiIssuanceRepositoryTest {
     when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(row);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    assertThatThrownBy(
-            () ->
-                new AccountControlUiCommittedIssuanceRepository(dsl).readCommitted("b".repeat(64)))
+    assertThatThrownBy(() ->
+            new AccountControlUiCommittedIssuanceRepository(dsl).readCommitted("b".repeat(64)))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -209,30 +206,29 @@ class AccountControlUiIssuanceRepositoryTest {
         .thenAnswer(call -> storedValues.get(call.getArgument(0, String.class)));
     when(dsl.execute(
             startsWith("INSERT INTO account_control_ui_issuance_operations"), any(Object[].class)))
-        .thenAnswer(
-            call -> {
-              Object[] args = (Object[]) call.getRawArguments()[1];
-              storedValues.put("request_id", args[0]);
-              storedValues.put("operation_id", args[1]);
-              storedValues.put("token_jti", args[2]);
-              storedValues.put("account_uuid", args[3]);
-              storedValues.put("tenant_uuid", args[4]);
-              storedValues.put("authorization_scope", args[5]);
-              storedValues.put("caller_workload", args[6]);
-              storedValues.put("caller_context_id", args[7]);
-              storedValues.put("request_mac_key_id", args[8]);
-              storedValues.put("request_digest", args[9]);
-              storedValues.put("claims_payload", args[10]);
-              storedValues.put("source_payload", args[11]);
-              storedValues.put("bundle_payload", args[12]);
-              storedValues.put("signer_receipt", args[13]);
-              storedValues.put("issued_at_epoch_second", args[14]);
-              storedValues.put("expires_at_epoch_second", args[15]);
-              storedValues.put("registry_cleanup_deadline_epoch_millis", args[16]);
-              storedValues.put("recovery_expires_at", args[17]);
-              storedValues.put("status", "PREPARED");
-              return 1;
-            });
+        .thenAnswer(call -> {
+          Object[] args = (Object[]) call.getRawArguments()[1];
+          storedValues.put("request_id", args[0]);
+          storedValues.put("operation_id", args[1]);
+          storedValues.put("token_jti", args[2]);
+          storedValues.put("account_uuid", args[3]);
+          storedValues.put("tenant_uuid", args[4]);
+          storedValues.put("authorization_scope", args[5]);
+          storedValues.put("caller_workload", args[6]);
+          storedValues.put("caller_context_id", args[7]);
+          storedValues.put("request_mac_key_id", args[8]);
+          storedValues.put("request_digest", args[9]);
+          storedValues.put("claims_payload", args[10]);
+          storedValues.put("source_payload", args[11]);
+          storedValues.put("bundle_payload", args[12]);
+          storedValues.put("signer_receipt", args[13]);
+          storedValues.put("issued_at_epoch_second", args[14]);
+          storedValues.put("expires_at_epoch_second", args[15]);
+          storedValues.put("registry_cleanup_deadline_epoch_millis", args[16]);
+          storedValues.put("recovery_expires_at", args[17]);
+          storedValues.put("status", "PREPARED");
+          return 1;
+        });
     when(dsl.fetchOne(
             startsWith("SELECT * FROM account_control_ui_issuance_operations WHERE request_id = ?"),
             any(Object[].class)))
@@ -498,9 +494,8 @@ class AccountControlUiIssuanceRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     Record row = committedRow(scopeKind, tenantId, 1_800_000_300_000L);
     when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(row);
-    assertThatThrownBy(
-            () ->
-                new AccountControlUiCommittedIssuanceRepository(dsl).readCommitted("b".repeat(64)))
+    assertThatThrownBy(() ->
+            new AccountControlUiCommittedIssuanceRepository(dsl).readCommitted("b".repeat(64)))
         .isInstanceOf(IllegalStateException.class);
   }
 

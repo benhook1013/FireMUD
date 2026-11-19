@@ -131,13 +131,12 @@ public class TestDataSeeder implements ApplicationRunner {
     if (!initialAdmissionFixtureEnabled
         && versionRepository
             .findByTenantIdAndVersionNumber(DEMO_TENANT_ID, DEMO_VERSION_NUMBER)
-            .filter(
-                version ->
-                    version.getCanonicalVersionId() == null
-                        && version.getCanonicalTenantId() == null
-                        && version.getIdentitySourceGameRowId() == null
-                        && version.getIdentitySourceGameTenantKey() == null
-                        && version.getIdentitySourceProvenanceKind() == null)
+            .filter(version ->
+                version.getCanonicalVersionId() == null
+                    && version.getCanonicalTenantId() == null
+                    && version.getIdentitySourceGameRowId() == null
+                    && version.getIdentitySourceGameTenantKey() == null
+                    && version.getIdentitySourceProvenanceKind() == null)
             .isPresent()) {
       seedRetainedBaselineRuntime();
       return;
@@ -187,10 +186,8 @@ public class TestDataSeeder implements ApplicationRunner {
       GameTenantIdentity gameIdentity =
           gameRepository
               .findRuntimeTenantIdentityByTenantKey(game.getTenantId())
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Existing demo game tenant identity cannot be read"));
+              .orElseThrow(() ->
+                  new IllegalStateException("Existing demo game tenant identity cannot be read"));
       if (!matchesDemoVersion(version, game, gameIdentity)) {
         throw new IllegalStateException(
             "Existing published version does not exactly match the demo seed; refusing to reuse it");

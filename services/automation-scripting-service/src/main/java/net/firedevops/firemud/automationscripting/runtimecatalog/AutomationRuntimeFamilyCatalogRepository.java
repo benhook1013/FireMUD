@@ -46,29 +46,28 @@ public final class AutomationRuntimeFamilyCatalogRepository {
   public Evidence read(Request request) {
     requireIndependent(request);
     byte[] committed =
-        capture.execute(
-            status -> {
-              AutomationRuntimeFamilyCatalog catalog = currentCatalog();
-              byte[] requestBytes = AutomationRuntimeFamilyCatalogCodec.requestBytes(request);
-              var proposed = new Evidence(request, UUID.randomUUID(), catalog);
-              byte[] evidenceBytes = AutomationRuntimeFamilyCatalogCodec.evidenceBytes(proposed);
-              dsl.execute(
-                  "INSERT INTO "
-                      + table("automation_runtime_family_catalog_snapshot")
-                      + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
-                      + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)"
-                      + " ON CONFLICT (read_request_id) DO NOTHING",
-                  request.readRequestId(),
-                  request.targetNamespace(),
-                  requestBytes,
-                  AutomationRuntimeFamilyCatalog.sha256(requestBytes),
-                  proposed.snapshotId(),
-                  catalog.catalogEpoch(),
-                  catalog.digest(),
-                  evidenceBytes,
-                  proposed.digest());
-              return retained(request, catalog);
-            });
+        capture.execute(status -> {
+          AutomationRuntimeFamilyCatalog catalog = currentCatalog();
+          byte[] requestBytes = AutomationRuntimeFamilyCatalogCodec.requestBytes(request);
+          var proposed = new Evidence(request, UUID.randomUUID(), catalog);
+          byte[] evidenceBytes = AutomationRuntimeFamilyCatalogCodec.evidenceBytes(proposed);
+          dsl.execute(
+              "INSERT INTO "
+                  + table("automation_runtime_family_catalog_snapshot")
+                  + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
+                  + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)"
+                  + " ON CONFLICT (read_request_id) DO NOTHING",
+              request.readRequestId(),
+              request.targetNamespace(),
+              requestBytes,
+              AutomationRuntimeFamilyCatalog.sha256(requestBytes),
+              proposed.snapshotId(),
+              catalog.catalogEpoch(),
+              catalog.digest(),
+              evidenceBytes,
+              proposed.digest());
+          return retained(request, catalog);
+        });
     Evidence result = readExact(request);
     if (!Arrays.equals(committed, AutomationRuntimeFamilyCatalogCodec.evidenceBytes(result))) {
       throw new CatalogConflictException("Committed Automation catalog readback changed");
@@ -79,10 +78,9 @@ public final class AutomationRuntimeFamilyCatalogRepository {
   /** Missing, stale, contradictory or corrupt evidence refuses; none is an empty-owner result. */
   public Evidence readExact(Request request) {
     requireIndependent(request);
-    return readback.execute(
-        status ->
-            AutomationRuntimeFamilyCatalogCodec.evidenceFromStored(
-                retained(request, currentCatalog())));
+    return readback.execute(status ->
+        AutomationRuntimeFamilyCatalogCodec.evidenceFromStored(
+            retained(request, currentCatalog())));
   }
 
   private AutomationRuntimeFamilyCatalog currentCatalog() {

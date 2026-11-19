@@ -891,12 +891,11 @@ class HostedIdentityScopeServiceTest {
         scopeRoleAdmissionExpression(RUNTIME_SCOPE_MARKER, "runtime-scope");
     List<String> deploymentRules =
         celExistsRuleBodies(runtimeScopeExpression).stream()
-            .filter(
-                rule ->
-                    Optional.of(List.of("apps")).equals(celListEquality(rule, "apiGroups"))
-                        && Optional.of(List.of("deployments"))
-                            .equals(celListEquality(rule, "resources"))
-                        && celListEquality(rule, "resourceNames").isPresent())
+            .filter(rule ->
+                Optional.of(List.of("apps")).equals(celListEquality(rule, "apiGroups"))
+                    && Optional.of(List.of("deployments"))
+                        .equals(celListEquality(rule, "resources"))
+                    && celListEquality(rule, "resourceNames").isPresent())
             .toList();
     assertEquals(
         1, deploymentRules.size(), "runtime deployment matcher must have exactly one rule");
@@ -915,13 +914,11 @@ class HostedIdentityScopeServiceTest {
         scopeRoleAdmissionExpression(IDENTITY_SCOPE_MARKER, "identity-scope");
     List<String> secretRules =
         celExistsRuleBodies(identityScopeExpression).stream()
-            .filter(
-                rule ->
-                    Optional.of(List.of("")).equals(celListEquality(rule, "apiGroups"))
-                        && Optional.of(List.of("secrets"))
-                            .equals(celListEquality(rule, "resources"))
-                        && Optional.of(verbs).equals(celListEquality(rule, "verbs"))
-                        && celListExpressions(rule, "resourceNames").isPresent())
+            .filter(rule ->
+                Optional.of(List.of("")).equals(celListEquality(rule, "apiGroups"))
+                    && Optional.of(List.of("secrets")).equals(celListEquality(rule, "resources"))
+                    && Optional.of(verbs).equals(celListEquality(rule, "verbs"))
+                    && celListExpressions(rule, "resourceNames").isPresent())
             .toList();
     assertEquals(
         1,
@@ -942,10 +939,9 @@ class HostedIdentityScopeServiceTest {
               .filter(Objects::nonNull)
               .map(Map.class::cast)
               .filter(document -> "ValidatingAdmissionPolicy".equals(document.get("kind")))
-              .filter(
-                  document ->
-                      "firemud-hosted-identity-scope-roles"
-                          .equals(((Map<?, ?>) document.get("metadata")).get("name")))
+              .filter(document ->
+                  "firemud-hosted-identity-scope-roles"
+                      .equals(((Map<?, ?>) document.get("metadata")).get("name")))
               .findFirst()
               .orElseThrow(() -> new AssertionError("scope-role admission policy must exist"));
     }
@@ -1004,12 +1000,11 @@ class HostedIdentityScopeServiceTest {
     }
     return Optional.of(
         expressions.get().stream()
-            .map(
-                element -> {
-                  var literal = CEL_STRING_LITERAL.matcher(element);
-                  assertTrue(literal.matches(), "CEL list element must be a string literal");
-                  return literal.group(1);
-                })
+            .map(element -> {
+              var literal = CEL_STRING_LITERAL.matcher(element);
+              assertTrue(literal.matches(), "CEL list element must be a string literal");
+              return literal.group(1);
+            })
             .toList());
   }
 

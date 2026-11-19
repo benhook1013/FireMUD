@@ -23,19 +23,17 @@ class EntityCharacterCreateBindingsTest {
     var action = EntityCharacterCreateBindings.requireOriginal(reference(original), original);
     assertThat(action.mutation().canonicalCreationInput()).isEqualTo("{}");
     assertThat(action.mutation().authoredSource().core().canonicalJson()).contains("Wayfarer");
-    assertThatThrownBy(
-            () ->
-                EntityCharacterCreateBindings.requireOriginal(
-                    reference(original),
-                    original.toBuilder()
-                        .setAuthenticatedAccountId(UUID.randomUUID().toString())
-                        .build()))
+    assertThatThrownBy(() ->
+            EntityCharacterCreateBindings.requireOriginal(
+                reference(original),
+                original.toBuilder()
+                    .setAuthenticatedAccountId(UUID.randomUUID().toString())
+                    .build()))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
-    assertThatThrownBy(
-            () ->
-                EntityCharacterCreateBindings.requireOriginal(
-                    reference(original),
-                    original.toBuilder().setOriginalSourceReadback(ByteString.EMPTY).build()))
+    assertThatThrownBy(() ->
+            EntityCharacterCreateBindings.requireOriginal(
+                reference(original),
+                original.toBuilder().setOriginalSourceReadback(ByteString.EMPTY).build()))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
   }
 
@@ -60,33 +58,29 @@ class EntityCharacterCreateBindingsTest {
             .setOriginalEntitlementSnapshot(ByteString.copyFromUtf8("fixture-entitlement"))
             .build();
     EntityCharacterCreateBindings.requireAccountProtection(request, original, proof);
-    assertThatThrownBy(
-            () ->
-                EntityCharacterCreateBindings.requireAccountProtection(
-                    request,
-                    original,
-                    proof.toBuilder()
-                        .setOriginal(
-                            original.toBuilder()
-                                .setOriginalSourceReadback(
-                                    ByteString.copyFromUtf8("different-source")))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntityCharacterCreateBindings.requireAccountProtection(
+                request,
+                original,
+                proof.toBuilder()
+                    .setOriginal(
+                        original.toBuilder()
+                            .setOriginalSourceReadback(ByteString.copyFromUtf8("different-source")))
+                    .build()))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
-    assertThatThrownBy(
-            () ->
-                EntityCharacterCreateBindings.requireAccountProtection(
-                    request, original, proof.toBuilder().setAccountProtectionFence(2L).build()))
+    assertThatThrownBy(() ->
+            EntityCharacterCreateBindings.requireAccountProtection(
+                request, original, proof.toBuilder().setAccountProtectionFence(2L).build()))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
   }
 
   @Test
   void unavailableGameSessionCreationAuthorityCannotBecomePositiveRosterEvidence() {
-    assertThatThrownBy(
-            () ->
-                GameSessionCharacterCreateProtectionReader.unavailable()
-                    .readOriginal(
-                        ReadOriginalCharacterCreateProtectionResponse.getDefaultInstance(),
-                        protection()))
+    assertThatThrownBy(() ->
+            GameSessionCharacterCreateProtectionReader.unavailable()
+                .readOriginal(
+                    ReadOriginalCharacterCreateProtectionResponse.getDefaultInstance(),
+                    protection()))
         .isInstanceOf(io.grpc.StatusRuntimeException.class)
         .hasMessageContaining("UNAVAILABLE");
   }
@@ -101,18 +95,16 @@ class EntityCharacterCreateBindingsTest {
             .setWorldProtection(protection())
             .build();
     EntityCharacterCreateBindings.requireRequest(request);
-    assertThatThrownBy(
-            () ->
-                EntityCharacterCreateBindings.requireRequest(
-                    request.toBuilder().clearWorldProtection().build()))
+    assertThatThrownBy(() ->
+            EntityCharacterCreateBindings.requireRequest(
+                request.toBuilder().clearWorldProtection().build()))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
-    assertThatThrownBy(
-            () ->
-                EntityCharacterCreateBindings.requireRequest(
-                    request.toBuilder()
-                        .setGameSessionProtection(
-                            request.getGameSessionProtection().toBuilder().setProtectionFence(0L))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntityCharacterCreateBindings.requireRequest(
+                request.toBuilder()
+                    .setGameSessionProtection(
+                        request.getGameSessionProtection().toBuilder().setProtectionFence(0L))
+                    .build()))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
   }
 

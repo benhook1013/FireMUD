@@ -28,10 +28,9 @@ class RunOwnedFixtureOwnerReadAuthorizationTest {
   void missingFixedConfigurationFailsClosedWithoutOwnerAccess() {
     var readback = mock(RunOwnedFixtureLaunchReadback.class);
     var policy = mock(RunOwnedFixturePolicyProducer.class);
-    assertThatThrownBy(
-            () ->
-                new RunOwnedFixtureOwnerReadAuthorization(
-                    readback, policy, "dev", "", "", "", "", "", "", ""))
+    assertThatThrownBy(() ->
+            new RunOwnedFixtureOwnerReadAuthorization(
+                readback, policy, "dev", "", "", "", "", "", "", ""))
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(readback, policy);
   }
@@ -44,17 +43,16 @@ class RunOwnedFixtureOwnerReadAuthorizationTest {
     when(trusted.worldManagementLeafSha256()).thenReturn("a".repeat(64));
     try (var configuration = mockStatic(TestDataSeeder.class)) {
       configuration
-          .when(
-              () ->
-                  TestDataSeeder.verifyFixtureConfiguration(
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString()))
+          .when(() ->
+              TestDataSeeder.verifyFixtureConfiguration(
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString()))
           .thenReturn(trusted);
       var authorization =
           new RunOwnedFixtureOwnerReadAuthorization(
@@ -136,29 +134,26 @@ class RunOwnedFixtureOwnerReadAuthorizationTest {
                 net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
                     .class)) {
       configuration
-          .when(
-              () ->
-                  TestDataSeeder.verifyFixtureConfiguration(
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString(),
-                      anyString()))
+          .when(() ->
+              TestDataSeeder.verifyFixtureConfiguration(
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString(),
+                  anyString()))
           .thenReturn(trusted);
       byte[] controlledReceipt = new byte[] {7};
       files
-          .when(
-              () ->
-                  net.firedevops.firemud.common.smoke.RunOwnedFixtureImmutableFileReader
-                      .readBoundedImmutableFile(any(java.nio.file.Path.class), anyInt(), any()))
+          .when(() ->
+              net.firedevops.firemud.common.smoke.RunOwnedFixtureImmutableFileReader
+                  .readBoundedImmutableFile(any(java.nio.file.Path.class), anyInt(), any()))
           .thenReturn(controlledReceipt);
-      wire.when(
-              () ->
-                  net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
-                      .parseSourceReceipt(controlledReceipt, capability))
+      wire.when(() ->
+              net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+                  .parseSourceReceipt(controlledReceipt, capability))
           .thenReturn(receipt);
       var authorization =
           new RunOwnedFixtureOwnerReadAuthorization(
@@ -182,11 +177,10 @@ class RunOwnedFixtureOwnerReadAuthorizationTest {
               GrpcPeerIdentity.parseUri("spiffe://firemud/ns/dev/sa/world-management-service")
                   .orElseThrow())
           .withValue(GrpcPeerCertificateEvidence.CONTEXT_KEY, certificate)
-          .run(
-              () ->
-                  assertThatThrownBy(() -> authorization.authorizeSource(request))
-                      .isInstanceOf(IllegalStateException.class)
-                      .hasMessageContaining("Preexisting"));
+          .run(() ->
+              assertThatThrownBy(() -> authorization.authorizeSource(request))
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("Preexisting"));
       verify(readback).readCommittedReceipt(receipt);
       verify(policy).readExisting(trusted, creation, committed.snapshot(), committed.descriptor());
       verify(policy, never()).sealAndRead(any(), any(), any(), any());
@@ -194,15 +188,12 @@ class RunOwnedFixtureOwnerReadAuthorizationTest {
   }
 
   private static void assertBothDeny(RunOwnedFixtureOwnerReadAuthorization authorization) {
-    assertThatThrownBy(
-            () ->
-                authorization.authorizeSource(
-                    ResolveAuthoredWorldSourceRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            authorization.authorizeSource(ResolveAuthoredWorldSourceRequest.getDefaultInstance()))
         .isInstanceOf(SecurityException.class);
-    assertThatThrownBy(
-            () ->
-                authorization.authorizeVersion(
-                    GetAuthoredWorldVersionStateRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            authorization.authorizeVersion(
+                GetAuthoredWorldVersionStateRequest.getDefaultInstance()))
         .isInstanceOf(SecurityException.class);
   }
 }

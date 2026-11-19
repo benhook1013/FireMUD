@@ -80,15 +80,14 @@ final class CanonicalGameplayRegionLeaseOwner {
       if (noWriteRecoveries.get(operation) != retained || !retained.inUse) throw unavailable();
       retained.retainedWorkers++;
     }
-    lifetime.whenComplete(
-        (ignored, failure) -> {
-          synchronized (noWriteRecoveries) {
-            retained.retainedWorkers--;
-            if (!retained.inUse && retained.retainedWorkers == 0 && retained.proof == null) {
-              noWriteRecoveries.remove(operation, retained);
-            }
-          }
-        });
+    lifetime.whenComplete((ignored, failure) -> {
+      synchronized (noWriteRecoveries) {
+        retained.retainedWorkers--;
+        if (!retained.inUse && retained.retainedWorkers == 0 && retained.proof == null) {
+          noWriteRecoveries.remove(operation, retained);
+        }
+      }
+    });
     return lifetime;
   }
 
@@ -135,9 +134,8 @@ final class CanonicalGameplayRegionLeaseOwner {
             if (!workerOwnsRecovery.compareAndSet(false, true)) throw unavailable();
             cleanup
                 .workerLifetime()
-                .whenComplete(
-                    (ignored, failure) ->
-                        releaseNoWriteRecovery(recovery.preparation.operationId(), recovery));
+                .whenComplete((ignored, failure) ->
+                    releaseNoWriteRecovery(recovery.preparation.operationId(), recovery));
             this.statusRepository
                 .forBudget(cleanup)
                 .releaseInitialTimelineNoWrite(
@@ -497,15 +495,14 @@ final class CanonicalGameplayRegionLeaseOwner {
                                     }));
                       },
                       abandoned ->
-                          abandoned.ifPresent(
-                              unused -> {
-                                retainNoWriteProof(
-                                    initializationPreparation,
-                                    retained,
-                                    CanonicalGameplayRegionLeaseRedisOwner
-                                        .revokeUndispatchedInitialization(unused));
-                                recoverNoWrite(initializationPreparation, retained);
-                              }),
+                          abandoned.ifPresent(unused -> {
+                            retainNoWriteProof(
+                                initializationPreparation,
+                                retained,
+                                CanonicalGameplayRegionLeaseRedisOwner
+                                    .revokeUndispatchedInitialization(unused));
+                            recoverNoWrite(initializationPreparation, retained);
+                          }),
                       retainNoWriteWorker(initializationPreparation.operationId(), retained));
           grant =
               session.initialize(

@@ -247,21 +247,18 @@ class GrantAuthorityScopeCodecTest {
         .isEqualTo(minimumScope);
 
     for (String invalidSlug : new String[] {"", "World", " word", "word ", "é", "e\u0301"}) {
-      assertThatThrownBy(
-              () ->
-                  new GrantAuthorityScopeCodec.Scope(
-                      ACCOUNT_ID, TENANT_ID, invalidSlug, "realm", LIFECYCLE_ID))
+      assertThatThrownBy(() ->
+              new GrantAuthorityScopeCodec.Scope(
+                  ACCOUNT_ID, TENANT_ID, invalidSlug, "realm", LIFECYCLE_ID))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                new GrantAuthorityScopeCodec.Scope(
-                    ACCOUNT_ID, TENANT_ID, "a".repeat(121), "realm", LIFECYCLE_ID))
+    assertThatThrownBy(() ->
+            new GrantAuthorityScopeCodec.Scope(
+                ACCOUNT_ID, TENANT_ID, "a".repeat(121), "realm", LIFECYCLE_ID))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GrantAuthorityScopeCodec.Scope(
-                    ACCOUNT_ID, TENANT_ID, "world", "z".repeat(121), LIFECYCLE_ID))
+    assertThatThrownBy(() ->
+            new GrantAuthorityScopeCodec.Scope(
+                ACCOUNT_ID, TENANT_ID, "world", "z".repeat(121), LIFECYCLE_ID))
         .isInstanceOf(IllegalArgumentException.class);
 
     assertRejectedRaw(
@@ -306,17 +303,14 @@ class GrantAuthorityScopeCodecTest {
   }
 
   private static void assertRejectedScopeId(String scopeId) {
-    assertThatThrownBy(
-            () ->
-                GrantAuthorityScopeCodec.parseScopeId(scopeId, GrantAuthorityScopeCodec.V1_BOUNDS))
+    assertThatThrownBy(() ->
+            GrantAuthorityScopeCodec.parseScopeId(scopeId, GrantAuthorityScopeCodec.V1_BOUNDS))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   private static void assertRejectedOutboxKey(String key) {
-    assertThatThrownBy(
-            () ->
-                GrantAuthorityScopeCodec.parseOutboxStreamKey(
-                    key, GrantAuthorityScopeCodec.V1_BOUNDS))
+    assertThatThrownBy(() ->
+            GrantAuthorityScopeCodec.parseOutboxStreamKey(key, GrantAuthorityScopeCodec.V1_BOUNDS))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

@@ -291,17 +291,16 @@ public class ScriptEventIngressAuditRepository {
             .doUpdate()
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ID, SCRIPT_EVENT_INGRESS_AUDIT.ID)
             .returningResult(returningFields);
-    return insert.fetchOptional(
-        returned -> {
-          ScriptEventIngressAudit audit = toEntity(returned);
-          boolean inserted = Boolean.TRUE.equals(returned.get(INSERTED_ROW));
-          if (!inserted) {
-            requireMatchingPinOwnerEvidence(
-                normalizedRequestId, audit.getScriptPinControlPlaneRequestId());
-            requireMatchingClaimPluginFence(entity, audit);
-          }
-          return new IdempotentInsertResult(audit, inserted);
-        });
+    return insert.fetchOptional(returned -> {
+      ScriptEventIngressAudit audit = toEntity(returned);
+      boolean inserted = Boolean.TRUE.equals(returned.get(INSERTED_ROW));
+      if (!inserted) {
+        requireMatchingPinOwnerEvidence(
+            normalizedRequestId, audit.getScriptPinControlPlaneRequestId());
+        requireMatchingClaimPluginFence(entity, audit);
+      }
+      return new IdempotentInsertResult(audit, inserted);
+    });
   }
 
   @SuppressFBWarnings(

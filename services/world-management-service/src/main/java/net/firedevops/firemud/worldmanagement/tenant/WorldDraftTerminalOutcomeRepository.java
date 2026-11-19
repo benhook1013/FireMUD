@@ -452,13 +452,12 @@ public final class WorldDraftTerminalOutcomeRepository {
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new ConflictException("Writable World owner transaction required");
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new ConflictException("World terminal outcome requires READ_COMMITTED");
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new ConflictException("World terminal outcome requires READ_COMMITTED");
+      }
+    });
   }
 }

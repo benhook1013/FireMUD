@@ -144,14 +144,13 @@ class AccountGameplayCredentialRequestDigesterTest {
   void rejectsUnverifiedOrNonGameSessionCallerIdentity() {
     assertThatThrownBy(() -> bind(KEY, REQUEST, "player@example.com", null, ACCOUNT_ID))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                bind(
-                    KEY,
-                    REQUEST,
-                    "player@example.com",
-                    "spiffe://firemud/ns/test/sa/tcp-proxy-service",
-                    ACCOUNT_ID))
+    assertThatThrownBy(() ->
+            bind(
+                KEY,
+                REQUEST,
+                "player@example.com",
+                "spiffe://firemud/ns/test/sa/tcp-proxy-service",
+                ACCOUNT_ID))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

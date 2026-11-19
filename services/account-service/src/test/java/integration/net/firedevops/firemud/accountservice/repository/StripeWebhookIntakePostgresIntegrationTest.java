@@ -321,11 +321,10 @@ class StripeWebhookIntakePostgresIntegrationTest {
     String payload = eventPayload("evt_ambient_local", "unknown.event", "sub_unknown");
     TransactionTemplate ambient = new TransactionTemplate(context.transactionManager());
 
-    ambient.executeWithoutResult(
-        status ->
-            assertThatThrownBy(() -> service.accept(payload, "invalid-signature"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("ambient transaction or synchronization"));
+    ambient.executeWithoutResult(status ->
+        assertThatThrownBy(() -> service.accept(payload, "invalid-signature"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("ambient transaction or synchronization"));
 
     assertThat(serviceTransactions.requestCount()).isZero();
     assertThat(countRows(context)).isZero();
@@ -344,11 +343,10 @@ class StripeWebhookIntakePostgresIntegrationTest {
 
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              repository.retainOrReplay(verified);
-              status.setRollbackOnly();
-            });
+        .executeWithoutResult(status -> {
+          repository.retainOrReplay(verified);
+          status.setRollbackOnly();
+        });
     assertThat(countRows(context)).isZero();
 
     StripeWebhookIntakeService service =
@@ -358,21 +356,19 @@ class StripeWebhookIntakePostgresIntegrationTest {
     assertThat(committed.rawPayload()).isEqualTo(payload);
     assertThat(committed.processingStatus()).isEqualTo(StripeEventInboxRecord.PENDING);
 
-    assertAppendOnlyRejected(
-        () ->
-            context
-                .setupDsl()
-                .execute(
-                    "UPDATE stripe_event_inbox SET event_type = 'changed' "
-                        + "WHERE provider_event_id = ?",
-                    committed.providerEventId()));
-    assertAppendOnlyRejected(
-        () ->
-            context
-                .setupDsl()
-                .execute(
-                    "DELETE FROM stripe_event_inbox WHERE provider_event_id = ?",
-                    committed.providerEventId()));
+    assertAppendOnlyRejected(() ->
+        context
+            .setupDsl()
+            .execute(
+                "UPDATE stripe_event_inbox SET event_type = 'changed' "
+                    + "WHERE provider_event_id = ?",
+                committed.providerEventId()));
+    assertAppendOnlyRejected(() ->
+        context
+            .setupDsl()
+            .execute(
+                "DELETE FROM stripe_event_inbox WHERE provider_event_id = ?",
+                committed.providerEventId()));
     assertAppendOnlyRejected(() -> context.setupDsl().execute("TRUNCATE stripe_event_inbox"));
 
     assertThat(service.accept(payload, signatureHeader(SECRET, payload, NOW.getEpochSecond())))
@@ -449,13 +445,12 @@ class StripeWebhookIntakePostgresIntegrationTest {
   private static void assertAppendOnlyRejected(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              java.sql.SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-              assertThat(sqlFailure.getMessage())
-                  .contains("Stripe event inbox evidence is append-only");
-            });
+        .satisfies(failure -> {
+          java.sql.SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+          assertThat(sqlFailure.getMessage())
+              .contains("Stripe event inbox evidence is append-only");
+        });
   }
 
   private static java.sql.SQLException findSqlException(Throwable failure) {
@@ -519,17 +514,17 @@ class StripeWebhookIntakePostgresIntegrationTest {
 
   private static String reorderedEventPayload(String id, String type, String providerObjectId) {
     return """
-        {
-          "type": "$TYPE",
-          "pending_webhooks": 0,
-          "livemode": false,
-          "data": {"object": {"id": "$OBJECT"}},
-          "created": $CREATED,
-          "api_version": "2025-02-24.acacia",
-          "object": "event",
-          "id": "$EVENT"
-        }
-        """
+    {
+      "type": "$TYPE",
+      "pending_webhooks": 0,
+      "livemode": false,
+      "data": {"object": {"id": "$OBJECT"}},
+      "created": $CREATED,
+      "api_version": "2025-02-24.acacia",
+      "object": "event",
+      "id": "$EVENT"
+    }
+    """
         .replace("$TYPE", type)
         .replace("$OBJECT", providerObjectId)
         .replace("$CREATED", Long.toString(NOW.getEpochSecond()))

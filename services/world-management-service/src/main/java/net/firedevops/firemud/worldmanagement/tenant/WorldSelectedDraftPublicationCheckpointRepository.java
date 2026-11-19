@@ -65,10 +65,9 @@ final class WorldSelectedDraftPublicationCheckpointRepository {
     var inboundClosure =
         graph
             .inboundSourceClosure()
-            .orElseThrow(
-                () ->
-                    new ConflictException(
-                        "World selected digest requires the exact original inbound source closure"));
+            .orElseThrow(() ->
+                new ConflictException(
+                    "World selected digest requires the exact original inbound source closure"));
     var digest =
         digestService.getSelectedDraftDesignDigest(
             Long.toString(owner.localTenantKey()),

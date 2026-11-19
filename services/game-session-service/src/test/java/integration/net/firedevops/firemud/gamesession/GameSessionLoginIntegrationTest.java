@@ -167,11 +167,10 @@ class GameSessionLoginIntegrationTest {
   @SuppressWarnings("unchecked")
   private static void stubTransactionExecution(RedisTemplate<String, Object> redisTemplate) {
     when(redisTemplate.execute(org.mockito.Mockito.any(SessionCallback.class)))
-        .thenAnswer(
-            invocation -> {
-              SessionCallback<?> callback = invocation.getArgument(0);
-              return callback.execute((RedisOperations<String, Object>) redisTemplate);
-            });
+        .thenAnswer(invocation -> {
+          SessionCallback<?> callback = invocation.getArgument(0);
+          return callback.execute((RedisOperations<String, Object>) redisTemplate);
+        });
     when(redisTemplate.exec()).thenReturn(List.of("OK"));
   }
 }

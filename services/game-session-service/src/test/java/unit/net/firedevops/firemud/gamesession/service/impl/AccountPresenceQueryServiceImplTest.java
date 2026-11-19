@@ -42,11 +42,10 @@ class AccountPresenceQueryServiceImplTest {
             presenceService, resolver, recentPresenceService, pointerAuthorityService);
     when(recentPresenceService.findByAccountIds(
             org.mockito.Mockito.eq(1L),
-            org.mockito.ArgumentMatchers.argThat(
-                ids ->
-                    ids != null
-                        && ids.containsAll(List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID))
-                        && ids.size() == 2)))
+            org.mockito.ArgumentMatchers.argThat(ids ->
+                ids != null
+                    && ids.containsAll(List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID))
+                    && ids.size() == 2)))
         .thenReturn(
             java.util.Map.of(
                 OFFLINE_ACCOUNT_ID,
@@ -62,11 +61,10 @@ class AccountPresenceQueryServiceImplTest {
                     AccountRecentPresenceDisposition.TRANSPORT_LOSS)));
     when(presenceService.listConnectedByAccountIds(
             org.mockito.Mockito.eq(1L),
-            org.mockito.ArgumentMatchers.argThat(
-                ids ->
-                    ids != null
-                        && ids.containsAll(List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID))
-                        && ids.size() == 2)))
+            org.mockito.ArgumentMatchers.argThat(ids ->
+                ids != null
+                    && ids.containsAll(List.of(ONLINE_ACCOUNT_ID, OFFLINE_ACCOUNT_ID))
+                    && ids.size() == 2)))
         .thenReturn(
             Map.of(
                 ONLINE_ACCOUNT_ID,

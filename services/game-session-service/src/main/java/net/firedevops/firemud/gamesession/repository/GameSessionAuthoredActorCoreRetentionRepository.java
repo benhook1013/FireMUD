@@ -56,11 +56,10 @@ public final class GameSessionAuthoredActorCoreRetentionRepository {
           "Authored-core retention read differs from configured Game Session workload namespace");
     }
     Optional<StoredSource> result =
-        readTransaction.execute(
-            status -> {
-              Record row = select(targetNamespace, controlPlaneRequestId);
-              return row == null ? Optional.empty() : Optional.of(snapshot(row));
-            });
+        readTransaction.execute(status -> {
+          Record row = select(targetNamespace, controlPlaneRequestId);
+          return row == null ? Optional.empty() : Optional.of(snapshot(row));
+        });
     return Objects.requireNonNull(result, "Authored-core retention read returned no result");
   }
 

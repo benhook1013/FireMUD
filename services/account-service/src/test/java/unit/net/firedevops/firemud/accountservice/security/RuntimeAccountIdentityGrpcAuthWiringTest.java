@@ -249,47 +249,44 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
             AutoConfigurations.of(
                 ConfigurationPropertiesAutoConfiguration.class,
                 CommonSecurityAutoConfiguration.class))
-        .withInitializer(
-            context -> {
-              try {
-                YamlPropertySourceLoader yamlLoader = new YamlPropertySourceLoader();
-                PropertySource<?> accountBase =
-                    yamlLoader
-                        .load(
-                            "account-application",
-                            new FileSystemResource("src/main/resources/application.yml"))
-                        .get(0);
-                context.getEnvironment().getPropertySources().addLast(accountBase);
-                if (productionLayer) {
-                  PropertySource<?> accountProduction =
-                      yamlLoader
-                          .load(
-                              "account-application-prod",
-                              new FileSystemResource("src/main/resources/application-prod.yml"))
-                          .get(0);
-                  context.getEnvironment().getPropertySources().addFirst(accountProduction);
-                }
-              } catch (IOException exception) {
-                throw new IllegalStateException(
-                    "Could not load Account application config", exception);
-              }
-            })
+        .withInitializer(context -> {
+          try {
+            YamlPropertySourceLoader yamlLoader = new YamlPropertySourceLoader();
+            PropertySource<?> accountBase =
+                yamlLoader
+                    .load(
+                        "account-application",
+                        new FileSystemResource("src/main/resources/application.yml"))
+                    .get(0);
+            context.getEnvironment().getPropertySources().addLast(accountBase);
+            if (productionLayer) {
+              PropertySource<?> accountProduction =
+                  yamlLoader
+                      .load(
+                          "account-application-prod",
+                          new FileSystemResource("src/main/resources/application-prod.yml"))
+                      .get(0);
+              context.getEnvironment().getPropertySources().addFirst(accountProduction);
+            }
+          } catch (IOException exception) {
+            throw new IllegalStateException("Could not load Account application config", exception);
+          }
+        })
         .withPropertyValues("firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234")
-        .run(
-            context -> {
-              assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
-              assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
-                  .contains(IDENTITY_METHOD)
-                  .contains(
-                      START_SESSION_ISSUE_METHOD,
-                      START_SESSION_RECOVER_METHOD,
-                      START_SESSION_REDEEM_METHOD,
-                      READ_REDEEMED_OPERATION_PROJECTION_METHOD)
-                  .doesNotContain("account.v1.StartSessionOperatorAuthorizationService/*")
-                  .doesNotContain(NONPUBLIC_METHOD);
-              action.accept(
-                  context.getBean(AuthTokenInterceptor.class), context.getBean(JwtUtil.class));
-            });
+        .run(context -> {
+          assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
+          assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
+              .contains(IDENTITY_METHOD)
+              .contains(
+                  START_SESSION_ISSUE_METHOD,
+                  START_SESSION_RECOVER_METHOD,
+                  START_SESSION_REDEEM_METHOD,
+                  READ_REDEEMED_OPERATION_PROJECTION_METHOD)
+              .doesNotContain("account.v1.StartSessionOperatorAuthorizationService/*")
+              .doesNotContain(NONPUBLIC_METHOD);
+          action.accept(
+              context.getBean(AuthTokenInterceptor.class), context.getBean(JwtUtil.class));
+        });
   }
 
   private static <

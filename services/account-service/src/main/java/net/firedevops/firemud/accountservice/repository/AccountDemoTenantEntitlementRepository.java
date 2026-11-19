@@ -62,11 +62,10 @@ public class AccountDemoTenantEntitlementRepository {
     FreshTenantCreationEvidence currentSource =
         tenantIdentityRepository
             .read(request.canonicalTenantId())
-            .orElseThrow(
-                () ->
-                    new DemoTenantEntitlementException(
-                        Code.SOURCE_EVIDENCE_INVALID,
-                        "Exact fresh Game Design source evidence is absent at Account commit"));
+            .orElseThrow(() ->
+                new DemoTenantEntitlementException(
+                    Code.SOURCE_EVIDENCE_INVALID,
+                    "Exact fresh Game Design source evidence is absent at Account commit"));
     if (!authenticatedSource.equals(currentSource)) {
       throw new DemoTenantEntitlementException(
           Code.SOURCE_EVIDENCE_INVALID,
@@ -177,11 +176,10 @@ public class AccountDemoTenantEntitlementRepository {
     Optional<FreshTenantCreationEvidence> evidence =
         tenantIdentityRepository.read(canonicalTenantId);
     FreshTenantCreationEvidence source =
-        evidence.orElseThrow(
-            () ->
-                new DemoTenantEntitlementException(
-                    Code.SOURCE_EVIDENCE_INVALID,
-                    "No exact fresh Game Design source evidence exists for this tenant UUID"));
+        evidence.orElseThrow(() ->
+            new DemoTenantEntitlementException(
+                Code.SOURCE_EVIDENCE_INVALID,
+                "No exact fresh Game Design source evidence exists for this tenant UUID"));
     ScopeState authority =
         authorityGenerationRepository.read(AuthorityScope.tenant(canonicalTenantId));
     Record row = readCurrentRow(canonicalTenantId, false);
@@ -248,9 +246,8 @@ public class AccountDemoTenantEntitlementRepository {
     Event event =
         outboxRepository
             .readEvent(request.canonicalTenantId(), sequence)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException("Committed demo entitlement operation has no event"));
+            .orElseThrow(() ->
+                new IllegalStateException("Committed demo entitlement operation has no event"));
     if (!request.requestId().equals(event.requestId())
         || !request.requestDigest().equals(event.requestDigest())
         || !event.eventId().equals(get(operation, "event_id", UUID.class))
@@ -308,9 +305,8 @@ public class AccountDemoTenantEntitlementRepository {
     var checkpoint =
         outboxRepository
             .readCheckpoint(source.canonicalTenantId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException("Current demo entitlement has no outbox checkpoint"));
+            .orElseThrow(() ->
+                new IllegalStateException("Current demo entitlement has no outbox checkpoint"));
     if (checkpoint.sequence() != sequence
         || !checkpoint.eventId().equals(get(row, "event_id", UUID.class))
         || !checkpoint.eventDigest().equals(get(row, "event_digest", String.class))) {

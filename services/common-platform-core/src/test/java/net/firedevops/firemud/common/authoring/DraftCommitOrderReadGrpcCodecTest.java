@@ -40,21 +40,18 @@ class DraftCommitOrderReadGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                DraftCommitOrderReadGrpcCodec.fromRequest(
-                    request.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            DraftCommitOrderReadGrpcCodec.fromRequest(
+                request.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                DraftCommitOrderReadGrpcCodec.fromRequest(
-                    request.toBuilder().setReadRequestId("not-a-uuid").build()))
+    assertThatThrownBy(() ->
+            DraftCommitOrderReadGrpcCodec.fromRequest(
+                request.toBuilder().setReadRequestId("not-a-uuid").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                DraftCommitOrderReadGrpcCodec.fromRequest(
-                    request.toBuilder().setSchemaVersion(2).build()))
+    assertThatThrownBy(() ->
+            DraftCommitOrderReadGrpcCodec.fromRequest(
+                request.toBuilder().setSchemaVersion(2).build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -62,10 +59,9 @@ class DraftCommitOrderReadGrpcCodecTest {
   void rejectsOversizedOriginalBindingBeforeCanonicalParsing() {
     byte[] oversized = new byte[WorldOriginalDraftGraphApplyEvidence.MAX_BINDING_BYTES + 1];
 
-    assertThatThrownBy(
-            () ->
-                new DraftCommitOrderReadEvidence.Request(
-                    1, "test", UUID.fromString("33333333-3333-4333-8333-333333333333"), oversized))
+    assertThatThrownBy(() ->
+            new DraftCommitOrderReadEvidence.Request(
+                1, "test", UUID.fromString("33333333-3333-4333-8333-333333333333"), oversized))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Complete original Account binding exceeds size limit");
     assertThatThrownBy(() -> DraftCommitOrderReadEvidence.Request.create("test", oversized))

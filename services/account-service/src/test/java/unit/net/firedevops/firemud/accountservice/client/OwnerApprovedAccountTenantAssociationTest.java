@@ -21,25 +21,24 @@ class OwnerApprovedAccountTenantAssociationTest {
 
   @Test
   void rejectsInvalidDigestAndSignedAt() {
-    assertThatThrownBy(
-            () ->
-                new OwnerApprovedAccountTenantAssociation(
-                    9,
-                    UUID.randomUUID(),
-                    "legacy-game-tenant",
-                    4,
-                    "sha256:bad",
-                    Instant.parse("2026-10-01T00:00:00Z"),
-                    UUID.randomUUID(),
-                    DIGEST,
-                    Base64.getEncoder().encodeToString(new byte[64]),
-                    "firemud",
-                    "key-1",
-                    "operator",
-                    "ticket-1",
-                    "not-an-instant",
-                    1,
-                    1))
+    assertThatThrownBy(() ->
+            new OwnerApprovedAccountTenantAssociation(
+                9,
+                UUID.randomUUID(),
+                "legacy-game-tenant",
+                4,
+                "sha256:bad",
+                Instant.parse("2026-10-01T00:00:00Z"),
+                UUID.randomUUID(),
+                DIGEST,
+                Base64.getEncoder().encodeToString(new byte[64]),
+                "firemud",
+                "key-1",
+                "operator",
+                "ticket-1",
+                "not-an-instant",
+                1,
+                1))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

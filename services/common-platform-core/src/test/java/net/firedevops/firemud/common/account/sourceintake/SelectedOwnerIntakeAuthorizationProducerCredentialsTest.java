@@ -35,10 +35,9 @@ class SelectedOwnerIntakeAuthorizationProducerCredentialsTest {
                     headers, allowedMethod)
                 .value())
         .isEqualTo(SECRET);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeAuthorizationProducerCredentials.readAuthenticated(
-                    headers, "other/Method"))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeAuthorizationProducerCredentials.readAuthenticated(
+                headers, "other/Method"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -60,15 +59,12 @@ class SelectedOwnerIntakeAuthorizationProducerCredentialsTest {
             .getAuthorizeSelectedOwnerIntakeMethod()
             .getFullMethodName();
 
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeAuthorizationProducerCredentials.readAuthenticated(
-                    missing, method))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeAuthorizationProducerCredentials.readAuthenticated(missing, method))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeAuthorizationProducerCredentials.readAuthenticated(
-                    duplicate, method))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeAuthorizationProducerCredentials.readAuthenticated(
+                duplicate, method))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(credential.toString()).doesNotContain(SECRET);
     assertThat(SelectedOwnerIntakeAuthorizationProducerCredentials.forAuthorize(SECRET).toString())

@@ -80,21 +80,19 @@ public final class TestGameplayWorldCatalogs {
       }
     }
     return grouped.entrySet().stream()
-        .map(
-            world ->
-                new GameplayWorldCatalog.WorldView(
-                    world.getKey(),
-                    displayNames.get(world.getKey()),
-                    world.getValue().entrySet().stream()
-                        .map(
-                            realm -> {
-                              if (realm.getValue().size() != 1) {
-                                throw new IllegalArgumentException(
-                                    "test catalog contains a duplicate world/realm selector");
-                              }
-                              return toRealmView(realm.getValue().getFirst());
-                            })
-                        .toList()))
+        .map(world ->
+            new GameplayWorldCatalog.WorldView(
+                world.getKey(),
+                displayNames.get(world.getKey()),
+                world.getValue().entrySet().stream()
+                    .map(realm -> {
+                      if (realm.getValue().size() != 1) {
+                        throw new IllegalArgumentException(
+                            "test catalog contains a duplicate world/realm selector");
+                      }
+                      return toRealmView(realm.getValue().getFirst());
+                    })
+                    .toList()))
         .toList();
   }
 

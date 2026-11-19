@@ -66,10 +66,9 @@ public final class DefaultGameplayPresenceLifecycleService
       sessionRoutingNormalizationService
           .resolveProjectedSessionContext(Long.toString(sessionId))
           .filter(SessionContext::hasGameplayRegionBindingOrFalse)
-          .ifPresent(
-              context ->
-                  scriptEventPublisher.publishRegionExitEvent(
-                      context, disconnectEventId(context, disposition), disposition.name()));
+          .ifPresent(context ->
+              scriptEventPublisher.publishRegionExitEvent(
+                  context, disconnectEventId(context, disposition), disposition.name()));
     }
     accountRecentPresenceService.recordDisconnect(sessionId, disposition);
     gameplayPresenceService.removeBySessionId(sessionId);

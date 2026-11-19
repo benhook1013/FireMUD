@@ -1545,11 +1545,10 @@ class CommandServiceImplTest {
   private RuntimeRegionStatusRepository defaultRuntimeRegionStatusRepository() {
     RuntimeRegionStatusRepository repository = Mockito.mock(RuntimeRegionStatusRepository.class);
     Mockito.when(repository.findByTenantIdAndGameInstanceId(Mockito.anyLong(), Mockito.anyLong()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(
-                    runtimeRegionStatus(
-                        Long.toString(invocation.getArgument(1, Long.class)), 1L, false)));
+        .thenAnswer(invocation ->
+            Optional.of(
+                runtimeRegionStatus(
+                    Long.toString(invocation.getArgument(1, Long.class)), 1L, false)));
     return repository;
   }
 
@@ -1567,16 +1566,15 @@ class CommandServiceImplTest {
     GameplayCommandRepository repository = Mockito.mock(GameplayCommandRepository.class);
     AtomicLong idSequence = new AtomicLong();
     Mockito.when(repository.save(Mockito.any(GameplayCommand.class)))
-        .thenAnswer(
-            invocation -> {
-              GameplayCommand command = invocation.getArgument(0);
-              if (command.getId() == null) {
-                long id = idSequence.incrementAndGet();
-                command.setId(id);
-                command.setEnqueueSeq(id);
-              }
-              return command;
-            });
+        .thenAnswer(invocation -> {
+          GameplayCommand command = invocation.getArgument(0);
+          if (command.getId() == null) {
+            long id = idSequence.incrementAndGet();
+            command.setId(id);
+            command.setEnqueueSeq(id);
+          }
+          return command;
+        });
     return repository;
   }
 

@@ -147,12 +147,11 @@ class HttpTestSupportTest {
       server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
       server.createContext("/actuator/health/readiness", handler);
       executor =
-          Executors.newCachedThreadPool(
-              runnable -> {
-                Thread thread = new Thread(runnable, "http-test-support-test-server");
-                thread.setDaemon(true);
-                return thread;
-              });
+          Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "http-test-support-test-server");
+            thread.setDaemon(true);
+            return thread;
+          });
       server.setExecutor(executor);
       server.start();
     }
@@ -162,30 +161,28 @@ class HttpTestSupportTest {
     }
 
     private static TestHttpServer responding(int statusCode, String body) throws IOException {
-      return new TestHttpServer(
-          exchange -> {
-            byte[] response = body.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(statusCode, response.length);
-            try (OutputStream output = exchange.getResponseBody()) {
-              output.write(response);
-            }
-          });
+      return new TestHttpServer(exchange -> {
+        byte[] response = body.getBytes(StandardCharsets.UTF_8);
+        exchange.sendResponseHeaders(statusCode, response.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+          output.write(response);
+        }
+      });
     }
 
     private static TestHttpServer disconnectingOnceThenResponding(
         AtomicInteger requestCount, String body) throws IOException {
-      return new TestHttpServer(
-          exchange -> {
-            if (requestCount.getAndIncrement() == 0) {
-              exchange.close();
-              return;
-            }
-            byte[] response = body.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(503, response.length);
-            try (OutputStream output = exchange.getResponseBody()) {
-              output.write(response);
-            }
-          });
+      return new TestHttpServer(exchange -> {
+        if (requestCount.getAndIncrement() == 0) {
+          exchange.close();
+          return;
+        }
+        byte[] response = body.getBytes(StandardCharsets.UTF_8);
+        exchange.sendResponseHeaders(503, response.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+          output.write(response);
+        }
+      });
     }
 
     private static TestHttpServer hanging(
@@ -194,19 +191,18 @@ class HttpTestSupportTest {
         CountDownLatch requestFinished,
         AtomicInteger requestCount)
         throws IOException {
-      return new TestHttpServer(
-          exchange -> {
-            requestCount.incrementAndGet();
-            requestStarted.countDown();
-            try {
-              releaseRequest.await();
-            } catch (InterruptedException ex) {
-              Thread.currentThread().interrupt();
-            } finally {
-              exchange.close();
-              requestFinished.countDown();
-            }
-          });
+      return new TestHttpServer(exchange -> {
+        requestCount.incrementAndGet();
+        requestStarted.countDown();
+        try {
+          releaseRequest.await();
+        } catch (InterruptedException ex) {
+          Thread.currentThread().interrupt();
+        } finally {
+          exchange.close();
+          requestFinished.countDown();
+        }
+      });
     }
 
     private String url() {

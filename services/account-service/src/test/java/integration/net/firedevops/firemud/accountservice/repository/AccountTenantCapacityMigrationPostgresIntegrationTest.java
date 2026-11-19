@@ -89,27 +89,25 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           dsl.fetch(
                   "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
               .intoMaps();
-      assertThatThrownBy(
-              () ->
-                  Flyway.configure()
-                      .dataSource(data)
-                      .schemas(schema)
-                      .defaultSchema(schema)
-                      .placeholders(java.util.Map.of("serviceSchema", schema))
-                      .locations("classpath:db/migration")
-                      .target("1040.4")
-                      .load()
-                      .migrate())
+      assertThatThrownBy(() ->
+              Flyway.configure()
+                  .dataSource(data)
+                  .schemas(schema)
+                  .defaultSchema(schema)
+                  .placeholders(java.util.Map.of("serviceSchema", schema))
+                  .locations("classpath:db/migration")
+                  .target("1040.4")
+                  .load()
+                  .migrate())
           .isInstanceOf(org.flywaydb.core.api.FlywayException.class)
           .hasStackTraceContaining("account_capacity_origin_attempt_unique")
-          .satisfies(
-              failure -> {
-                Throwable cause = failure;
-                while (cause != null && !(cause instanceof java.sql.SQLException))
-                  cause = cause.getCause();
-                assertThat(cause).isInstanceOf(java.sql.SQLException.class);
-                assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("23505");
-              });
+          .satisfies(failure -> {
+            Throwable cause = failure;
+            while (cause != null && !(cause instanceof java.sql.SQLException))
+              cause = cause.getCause();
+            assertThat(cause).isInstanceOf(java.sql.SQLException.class);
+            assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("23505");
+          });
       assertThat(
               dsl.fetch(
                       "SELECT tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, encode(canonical_payload, 'hex') AS payload, decision, decision_id, refusal_code, xmin::text AS row_version FROM account_capacity_origin_decisions ORDER BY decision_id")
@@ -139,9 +137,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
       var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
       var tenant = source();
-      transaction.executeWithoutResult(
-          status ->
-              new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant));
+      transaction.executeWithoutResult(status ->
+          new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant));
       UUID retainedAttempt = UUID.randomUUID();
       for (int index = 0; index < 3; index++) {
         dsl.execute(
@@ -163,10 +160,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .load()
           .migrate();
       var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
-      assertThatThrownBy(
-              () ->
-                  transaction.executeWithoutResult(
-                      status -> budgets.provision(tenant.canonicalTenantId(), 2)))
+      assertThatThrownBy(() ->
+              transaction.executeWithoutResult(
+                  status -> budgets.provision(tenant.canonicalTenantId(), 2)))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> {
@@ -176,13 +172,11 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                         "Capacity refusal budget cannot exclude retained evidence");
               });
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
-      assertThatThrownBy(
-              () ->
-                  transaction.executeWithoutResult(
-                      status -> {
-                        budgets.provision(tenant.canonicalTenantId(), 4);
-                        budgets.requireReady(tenant.canonicalTenantId(), 4, 2);
-                      }))
+      assertThatThrownBy(() ->
+              transaction.executeWithoutResult(status -> {
+                budgets.provision(tenant.canonicalTenantId(), 4);
+                budgets.requireReady(tenant.canonicalTenantId(), 4, 2);
+              }))
           .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
       transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
@@ -190,10 +184,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               transaction.<Long>execute(
                   status -> budgets.requireReady(tenant.canonicalTenantId(), 4, 1)))
           .isEqualTo(1);
-      assertThatThrownBy(
-              () ->
-                  transaction.execute(
-                      status -> budgets.requireReady(tenant.canonicalTenantId(), 4, 2)))
+      assertThatThrownBy(() ->
+              transaction.execute(status -> budgets.requireReady(tenant.canonicalTenantId(), 4, 2)))
           .isInstanceOfSatisfying(
               AccountTenantCapacityRepository.CapacityException.class,
               failure ->
@@ -207,10 +199,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                       "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"))
               .intoMap();
       transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
-      assertThatThrownBy(
-              () ->
-                  transaction.executeWithoutResult(
-                      status -> budgets.provision(tenant.canonicalTenantId(), 2)))
+      assertThatThrownBy(() ->
+              transaction.executeWithoutResult(
+                  status -> budgets.provision(tenant.canonicalTenantId(), 2)))
           .isInstanceOfSatisfying(
               AccountTenantCapacityRepository.CapacityException.class,
               failure ->
@@ -224,17 +215,16 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                           "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget"))
                   .intoMap())
           .isEqualTo(original);
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
-                      tenant.canonicalTenantId(),
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      retainedAttempt,
-                      "b".repeat(64),
-                      new byte[] {2},
-                      UUID.randomUUID()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
+                  tenant.canonicalTenantId(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  retainedAttempt,
+                  "b".repeat(64),
+                  new byte[] {2},
+                  UUID.randomUUID()))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23505"));
@@ -266,12 +256,11 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       var existing = source();
       var historical =
           Objects.requireNonNull(
-              transaction.execute(
-                  status -> {
-                    repository.importVerified(existing);
-                    return claimBootstrap(
-                        operations, new AccountRepository(dsl).save(creator()), existing);
-                  }));
+              transaction.execute(status -> {
+                repository.importVerified(existing);
+                return claimBootstrap(
+                    operations, new AccountRepository(dsl).save(creator()), existing);
+              }));
       assertThat(historical.status()).isEqualTo("IN_PROGRESS");
       Flyway.configure()
           .dataSource(data)
@@ -292,14 +281,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .isNull();
       var completed =
           Objects.requireNonNull(
-              transaction.execute(
-                  status -> {
-                    var operation = operations.findForUpdate(historical.requestId()).orElseThrow();
-                    assertThat(operation.status()).isEqualTo("IN_PROGRESS");
-                    assertThat(operation.creationOperationId()).isEqualTo(existing.operationId());
-                    assertThat(operation.requestPayload()).isEqualTo(historical.requestPayload());
-                    return operations.complete(operation.requestId(), completion(operation));
-                  }));
+              transaction.execute(status -> {
+                var operation = operations.findForUpdate(historical.requestId()).orElseThrow();
+                assertThat(operation.status()).isEqualTo("IN_PROGRESS");
+                assertThat(operation.creationOperationId()).isEqualTo(existing.operationId());
+                assertThat(operation.requestPayload()).isEqualTo(historical.requestPayload());
+                return operations.complete(operation.requestId(), completion(operation));
+              }));
       assertThat(completed.status()).isEqualTo("COMMITTED");
       assertThat(completed.tenantUuid()).isEqualTo(existing.canonicalTenantId());
       assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isZero();
@@ -317,10 +305,9 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isZero();
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
       var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
-      assertThatThrownBy(
-              () ->
-                  transaction.execute(
-                      status -> budgets.requireReady(existing.canonicalTenantId(), 4, 2)))
+      assertThatThrownBy(() ->
+              transaction.execute(
+                  status -> budgets.requireReady(existing.canonicalTenantId(), 4, 2)))
           .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
       transaction.executeWithoutResult(
           status -> budgets.provision(existing.canonicalTenantId(), 4));
@@ -340,20 +327,16 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       Long readyHeadroom =
           transaction.execute(status -> budgets.requireReady(existing.canonicalTenantId(), 4, 2));
       assertThat(readyHeadroom).isEqualTo(4L);
-      assertThatThrownBy(
-              () ->
-                  transaction.executeWithoutResult(
-                      status -> budgets.provision(existing.canonicalTenantId(), 5)))
+      assertThatThrownBy(() ->
+              transaction.executeWithoutResult(
+                  status -> budgets.provision(existing.canonicalTenantId(), 5)))
           .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
-      assertThatThrownBy(
-              () ->
-                  transaction.execute(
-                      status -> budgets.requireReady(later.canonicalTenantId(), 4, 1)))
+      assertThatThrownBy(() ->
+              transaction.execute(status -> budgets.requireReady(later.canonicalTenantId(), 4, 1)))
           .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
-      assertThatThrownBy(
-              () ->
-                  transaction.executeWithoutResult(
-                      status -> budgets.provision(existing.canonicalTenantId(), 0)))
+      assertThatThrownBy(() ->
+              transaction.executeWithoutResult(
+                  status -> budgets.provision(existing.canonicalTenantId(), 0)))
           .isInstanceOf(IllegalArgumentException.class);
       assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isZero();
       assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
@@ -381,12 +364,10 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
       var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
       var tenant = source();
-      transaction.executeWithoutResult(
-          status -> {
-            new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
-            new AccountCapacityRefusalBudgetRepository(dsl)
-                .provision(tenant.canonicalTenantId(), 1);
-          });
+      transaction.executeWithoutResult(status -> {
+        new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
+        new AccountCapacityRefusalBudgetRepository(dsl).provision(tenant.canonicalTenantId(), 1);
+      });
       UUID request = UUID.randomUUID(),
           admission = UUID.randomUUID(),
           attempt = UUID.randomUUID(),
@@ -426,17 +407,16 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                       "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget")
                   .intoMap())
           .isEqualTo(retainedBudget);
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      insert,
-                      tenant.canonicalTenantId(),
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      "a".repeat(64),
-                      new byte[] {1},
-                      UUID.randomUUID()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  insert,
+                  tenant.canonicalTenantId(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  "a".repeat(64),
+                  new byte[] {1},
+                  UUID.randomUUID()))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
@@ -460,30 +440,27 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .usingRecursiveComparison()
           .isEqualTo(retained);
       // A genuinely new refusal without a budget still fails and leaves no evidence.
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      insert,
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      "b".repeat(64),
-                      new byte[] {2},
-                      UUID.randomUUID()))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  insert,
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  "b".repeat(64),
+                  new byte[] {2},
+                  UUID.randomUUID()))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23514"));
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(1);
 
       var concurrentTenant = source();
-      transaction.executeWithoutResult(
-          status -> {
-            new FreshTenantIdentityAssociationRepository(dsl, "prod")
-                .importVerified(concurrentTenant);
-            new AccountCapacityRefusalBudgetRepository(dsl)
-                .provision(concurrentTenant.canonicalTenantId(), 1);
-          });
+      transaction.executeWithoutResult(status -> {
+        new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(concurrentTenant);
+        new AccountCapacityRefusalBudgetRepository(dsl)
+            .provision(concurrentTenant.canonicalTenantId(), 1);
+      });
       UUID concurrentAttempt = UUID.randomUUID();
       try (var stale = data.getConnection();
           var winner = data.getConnection()) {
@@ -505,17 +482,16 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                         new byte[] {3},
                         UUID.randomUUID()))
             .isEqualTo(1);
-        assertThatThrownBy(
-                () ->
-                    staleDsl.execute(
-                        insert,
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        concurrentAttempt,
-                        "d".repeat(64),
-                        new byte[] {4},
-                        UUID.randomUUID()))
+        assertThatThrownBy(() ->
+                staleDsl.execute(
+                    insert,
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    concurrentAttempt,
+                    "d".repeat(64),
+                    new byte[] {4},
+                    UUID.randomUUID()))
             .isInstanceOfSatisfying(
                 org.jooq.exception.DataAccessException.class,
                 failure -> assertThat(failure.sqlState()).isEqualTo("40001"));

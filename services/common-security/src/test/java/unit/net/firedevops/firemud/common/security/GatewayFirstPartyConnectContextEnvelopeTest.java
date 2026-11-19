@@ -178,55 +178,53 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
   @Test
   void rejectsMapKeyMismatchExtraTenantAndWrongNestedCounterType() {
     var tuple = authorityTuple("1", "1", "1", "1", false);
-    assertThatThrownBy(
-            () ->
-                new GatewayFirstPartyConnectContextEnvelope.GameplayConnectSource(
-                    ACCOUNT_ID,
-                    TENANT_ID,
-                    REALM_ID,
-                    "world",
-                    "realm",
-                    NAMESPACE_ID,
-                    "SHARED",
-                    GAME_INSTANCE_ID,
-                    "1",
-                    "1",
-                    "scope-1",
-                    "request-1",
-                    tuple,
-                    Map.of(UUID.randomUUID().toString(), "1"),
-                    "jti-1",
-                    "1",
-                    null,
-                    null,
-                    NOW_MILLIS / 1_000L + 30L))
+    assertThatThrownBy(() ->
+            new GatewayFirstPartyConnectContextEnvelope.GameplayConnectSource(
+                ACCOUNT_ID,
+                TENANT_ID,
+                REALM_ID,
+                "world",
+                "realm",
+                NAMESPACE_ID,
+                "SHARED",
+                GAME_INSTANCE_ID,
+                "1",
+                "1",
+                "scope-1",
+                "request-1",
+                tuple,
+                Map.of(UUID.randomUUID().toString(), "1"),
+                "jti-1",
+                "1",
+                null,
+                null,
+                NOW_MILLIS / 1_000L + 30L))
         .isInstanceOf(IllegalArgumentException.class);
 
     Map<String, String> extraTenant = new LinkedHashMap<>();
     extraTenant.put(TENANT_ID.toString(), "1");
     extraTenant.put(UUID.randomUUID().toString(), "2");
-    assertThatThrownBy(
-            () ->
-                new GatewayFirstPartyConnectContextEnvelope.GameplayConnectSource(
-                    ACCOUNT_ID,
-                    TENANT_ID,
-                    REALM_ID,
-                    "world",
-                    "realm",
-                    NAMESPACE_ID,
-                    "SHARED",
-                    GAME_INSTANCE_ID,
-                    "1",
-                    "1",
-                    "scope-1",
-                    "request-1",
-                    tuple,
-                    extraTenant,
-                    "jti-1",
-                    "1",
-                    null,
-                    null,
-                    NOW_MILLIS / 1_000L + 30L))
+    assertThatThrownBy(() ->
+            new GatewayFirstPartyConnectContextEnvelope.GameplayConnectSource(
+                ACCOUNT_ID,
+                TENANT_ID,
+                REALM_ID,
+                "world",
+                "realm",
+                NAMESPACE_ID,
+                "SHARED",
+                GAME_INSTANCE_ID,
+                "1",
+                "1",
+                "scope-1",
+                "request-1",
+                tuple,
+                extraTenant,
+                "jti-1",
+                "1",
+                null,
+                null,
+                NOW_MILLIS / 1_000L + 30L))
         .isInstanceOf(IllegalArgumentException.class);
 
     Map<String, Object> unsafeAuthority = new LinkedHashMap<>(authorityTupleMap(tuple));
@@ -277,15 +275,13 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
     String compact = GatewayFirstPartyConnectContextEnvelope.sign(valid, metadata(), signingKey);
     assertThat(payload(compact).get("authorityTuple")).isEqualTo(authorityTupleMap(tuple));
 
-    assertThatThrownBy(
-            () ->
-                new GatewayFirstPartyConnectContextEnvelope.AccountSecurityCutoff(
-                    "2", "account:auth-authority:v1:account/" + ACCOUNT_ID, "0"))
+    assertThatThrownBy(() ->
+            new GatewayFirstPartyConnectContextEnvelope.AccountSecurityCutoff(
+                "2", "account:auth-authority:v1:account/" + ACCOUNT_ID, "0"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GatewayFirstPartyConnectContextEnvelope.AuthorityTuple(
-                    "1", "2", Map.of(tenant, "1"), Map.of(tenant, "1"), List.of(), null, Map.of()))
+    assertThatThrownBy(() ->
+            new GatewayFirstPartyConnectContextEnvelope.AuthorityTuple(
+                "1", "2", Map.of(tenant, "1"), Map.of(tenant, "1"), List.of(), null, Map.of()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -408,10 +404,8 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
     var metadataPastSource =
         new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
             "203.0.113.8", "request-1", NOW_MILLIS, NOW_MILLIS, NOW_MILLIS + 31_000L);
-    assertThatThrownBy(
-            () ->
-                GatewayFirstPartyConnectContextEnvelope.sign(
-                    source, metadataPastSource, signingKey))
+    assertThatThrownBy(() ->
+            GatewayFirstPartyConnectContextEnvelope.sign(source, metadataPastSource, signingKey))
         .isInstanceOf(GatewayFirstPartyConnectContextEnvelope.VerificationException.class)
         .extracting("reason")
         .isEqualTo(GatewayFirstPartyConnectContextEnvelope.FailureReason.INVALID_LIFETIME);
@@ -437,10 +431,9 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
             source.playtestLifecycleId(),
             source.playtestStateGeneration(),
             NOW_MILLIS / 1_000L + 10L);
-    assertThatThrownBy(
-            () ->
-                GatewayFirstPartyConnectContextEnvelope.sign(
-                    sourceExpiringInTenSeconds, metadata(), signingKey))
+    assertThatThrownBy(() ->
+            GatewayFirstPartyConnectContextEnvelope.sign(
+                sourceExpiringInTenSeconds, metadata(), signingKey))
         .isInstanceOf(GatewayFirstPartyConnectContextEnvelope.VerificationException.class)
         .extracting("reason")
         .isEqualTo(GatewayFirstPartyConnectContextEnvelope.FailureReason.INVALID_LIFETIME);
@@ -469,9 +462,8 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
     var metadata31 =
         new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
             "203.0.113.8", "request-1", NOW_MILLIS, NOW_MILLIS, NOW_MILLIS + 31_000L);
-    assertThatThrownBy(
-            () ->
-                GatewayFirstPartyConnectContextEnvelope.sign(tooLongSource, metadata31, signingKey))
+    assertThatThrownBy(() ->
+            GatewayFirstPartyConnectContextEnvelope.sign(tooLongSource, metadata31, signingKey))
         .isInstanceOf(GatewayFirstPartyConnectContextEnvelope.VerificationException.class);
 
     String valid = GatewayFirstPartyConnectContextEnvelope.sign(source, metadata(), signingKey);
@@ -502,43 +494,38 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
                 "missing-key",
                 "typ",
                 GatewayFirstPartyConnectContextEnvelope.PROTECTED_TYPE));
-    assertThatThrownBy(
-            () ->
-                GatewayFirstPartyConnectContextEnvelope.verify(
-                    token,
-                    kid -> {
-                      throw new GatewayFirstPartyConnectContextEnvelope
-                          .KeySourceUnavailableException();
-                    },
-                    NOW_MILLIS,
-                    0))
+    assertThatThrownBy(() ->
+            GatewayFirstPartyConnectContextEnvelope.verify(
+                token,
+                kid -> {
+                  throw new GatewayFirstPartyConnectContextEnvelope.KeySourceUnavailableException();
+                },
+                NOW_MILLIS,
+                0))
         .isInstanceOf(GatewayFirstPartyConnectContextEnvelope.VerificationException.class)
-        .satisfies(
-            failure -> {
-              assertThat(failure.getMessage()).doesNotContain(secretMarker, "missing-key", token);
-              assertThat(
-                      ((GatewayFirstPartyConnectContextEnvelope.VerificationException) failure)
-                          .reason())
-                  .isEqualTo(
-                      GatewayFirstPartyConnectContextEnvelope.FailureReason.KEY_SOURCE_UNAVAILABLE);
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getMessage()).doesNotContain(secretMarker, "missing-key", token);
+          assertThat(
+                  ((GatewayFirstPartyConnectContextEnvelope.VerificationException) failure)
+                      .reason())
+              .isEqualTo(
+                  GatewayFirstPartyConnectContextEnvelope.FailureReason.KEY_SOURCE_UNAVAILABLE);
+        });
   }
 
   @Test
   void rejectsNoncanonicalClientAddressInsteadOfAcceptingHeaderLikeInput() {
-    assertThatThrownBy(
-            () ->
-                new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
-                    "203.000.113.8", "request-1", NOW_MILLIS, NOW_MILLIS, NOW_MILLIS + 30_000L))
+    assertThatThrownBy(() ->
+            new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
+                "203.000.113.8", "request-1", NOW_MILLIS, NOW_MILLIS, NOW_MILLIS + 30_000L))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
-                    "198.51.100.2, 203.0.113.8",
-                    "request-1",
-                    NOW_MILLIS,
-                    NOW_MILLIS,
-                    NOW_MILLIS + 30_000L))
+    assertThatThrownBy(() ->
+            new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
+                "198.51.100.2, 203.0.113.8",
+                "request-1",
+                NOW_MILLIS,
+                NOW_MILLIS,
+                NOW_MILLIS + 30_000L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -554,32 +541,21 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
     var verified = GatewayFirstPartyConnectContextEnvelope.verify(signed, keySource, NOW_MILLIS, 0);
 
     assertThat(verified.claims().canonicalClientAddress()).isEqualTo("2001:db8:0:0:0:0:0:1");
-    assertThatThrownBy(
-            () ->
-                new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
-                    "2001:db8::1", "request-1", NOW_MILLIS, NOW_MILLIS, NOW_MILLIS + 30_000L))
+    assertThatThrownBy(() ->
+            new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
+                "2001:db8::1", "request-1", NOW_MILLIS, NOW_MILLIS, NOW_MILLIS + 30_000L))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
-                    "2001:DB8:0:0:0:0:0:1",
-                    "request-1",
-                    NOW_MILLIS,
-                    NOW_MILLIS,
-                    NOW_MILLIS + 30_000L))
+    assertThatThrownBy(() ->
+            new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
+                "2001:DB8:0:0:0:0:0:1", "request-1", NOW_MILLIS, NOW_MILLIS, NOW_MILLIS + 30_000L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void rejectsNonAsciiCharactersInIpv6Address() {
-    assertThatThrownBy(
-            () ->
-                new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
-                    "2001:db8:0:0:0:0:0:１",
-                    "request-1",
-                    NOW_MILLIS,
-                    NOW_MILLIS,
-                    NOW_MILLIS + 30_000L))
+    assertThatThrownBy(() ->
+            new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
+                "2001:db8:0:0:0:0:0:１", "request-1", NOW_MILLIS, NOW_MILLIS, NOW_MILLIS + 30_000L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -676,14 +652,13 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
     map.put(
         "privateRealmGrantVersions",
         tuple.privateRealmGrantVersions().stream()
-            .map(
-                grant ->
-                    Map.of(
-                        "tenantId", grant.tenantId(),
-                        "worldSlug", grant.worldSlug(),
-                        "realmSlug", grant.realmSlug(),
-                        "playtestLifecycleId", grant.playtestLifecycleId(),
-                        "grantVersion", grant.grantVersion()))
+            .map(grant ->
+                Map.of(
+                    "tenantId", grant.tenantId(),
+                    "worldSlug", grant.worldSlug(),
+                    "realmSlug", grant.realmSlug(),
+                    "playtestLifecycleId", grant.playtestLifecycleId(),
+                    "grantVersion", grant.grantVersion()))
             .toList());
     if (tuple.accountSecurityCutoff() != null) {
       map.put(
@@ -698,15 +673,14 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
       Map<String, Object> cutoffs = new LinkedHashMap<>();
       tuple
           .tenantBillingCutoff()
-          .forEach(
-              (tenant, cutoff) ->
-                  cutoffs.put(
-                      tenant,
-                      Map.of(
-                          "tenantAuthorityGeneration", cutoff.tenantAuthorityGeneration(),
-                          "tenantBillingSequence", cutoff.tenantBillingSequence(),
-                          "outboxStreamKey", cutoff.outboxStreamKey(),
-                          "outboxSequence", cutoff.outboxSequence())));
+          .forEach((tenant, cutoff) ->
+              cutoffs.put(
+                  tenant,
+                  Map.of(
+                      "tenantAuthorityGeneration", cutoff.tenantAuthorityGeneration(),
+                      "tenantBillingSequence", cutoff.tenantBillingSequence(),
+                      "outboxStreamKey", cutoff.outboxStreamKey(),
+                      "outboxSequence", cutoff.outboxSequence())));
       map.put("tenantBillingCutoff", cutoffs);
     }
     return map;
@@ -771,12 +745,11 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
     assertThatThrownBy(
             () -> GatewayFirstPartyConnectContextEnvelope.verify(token, keySource, NOW_MILLIS, 0))
         .isInstanceOf(GatewayFirstPartyConnectContextEnvelope.VerificationException.class)
-        .satisfies(
-            failure ->
-                assertThat(
-                        ((GatewayFirstPartyConnectContextEnvelope.VerificationException) failure)
-                            .reason())
-                    .isEqualTo(reason));
+        .satisfies(failure ->
+            assertThat(
+                    ((GatewayFirstPartyConnectContextEnvelope.VerificationException) failure)
+                        .reason())
+                .isEqualTo(reason));
   }
 
   private void assertRejectedAt(
@@ -787,11 +760,10 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
     assertThatThrownBy(
             () -> GatewayFirstPartyConnectContextEnvelope.verify(token, keySource, nowMillis, skew))
         .isInstanceOf(GatewayFirstPartyConnectContextEnvelope.VerificationException.class)
-        .satisfies(
-            failure ->
-                assertThat(
-                        ((GatewayFirstPartyConnectContextEnvelope.VerificationException) failure)
-                            .reason())
-                    .isEqualTo(reason));
+        .satisfies(failure ->
+            assertThat(
+                    ((GatewayFirstPartyConnectContextEnvelope.VerificationException) failure)
+                        .reason())
+                .isEqualTo(reason));
   }
 }

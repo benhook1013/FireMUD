@@ -81,10 +81,8 @@ class HistoricalOriginalStartSessionOwnerEvidenceGrpcCodecTest {
                     .getDefaultInstance())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.fromResponse(
-                    request, response))
+    assertThatThrownBy(() ->
+            HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.fromResponse(request, response))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("request echo");
   }
@@ -116,10 +114,8 @@ class HistoricalOriginalStartSessionOwnerEvidenceGrpcCodecTest {
                     .getDefaultInstance())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.fromResponse(
-                    request(), response))
+    assertThatThrownBy(() ->
+            HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.fromResponse(request(), response))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining(
             "ReadHistoricalOriginalStartSessionOwnerEvidenceResponse.template_association_request contains unsupported fields");

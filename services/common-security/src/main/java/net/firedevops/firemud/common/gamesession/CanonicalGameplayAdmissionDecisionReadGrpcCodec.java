@@ -179,27 +179,26 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
     Set<UUID> realms = new HashSet<>();
     List<Target> targets =
         response.getCurrentTargetsList().stream()
-            .map(
-                wire -> {
-                  requireWireSize(
-                      wire.getSerializedSize(),
-                      MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES,
-                      "discovery target");
-                  Target target = parseTargetEvidence(wire);
-                  if (!expected.targetNamespace().equals(target.targetNamespace())
-                      || !"SHARED".equals(target.playableStateScope())
-                      || !("PRESEEDED_ONLY".equals(target.characterCreationPolicy())
-                          || "PLAYER_CREATED".equals(target.characterCreationPolicy()))
-                      || target.ownerProofOutcome() != OwnerProofOutcome.COMMITTED
-                      || target.positiveDurableAbort()
-                      || !tenants.add(target.canonicalTenantId())
-                      || !tenantSlugs.add(target.tenantSlug())
-                      || !realms.add(target.realmId())) {
-                    throw invalid(
-                        "Discovery requires unique current public SHARED owner targets with a supported creation policy");
-                  }
-                  return target;
-                })
+            .map(wire -> {
+              requireWireSize(
+                  wire.getSerializedSize(),
+                  MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES,
+                  "discovery target");
+              Target target = parseTargetEvidence(wire);
+              if (!expected.targetNamespace().equals(target.targetNamespace())
+                  || !"SHARED".equals(target.playableStateScope())
+                  || !("PRESEEDED_ONLY".equals(target.characterCreationPolicy())
+                      || "PLAYER_CREATED".equals(target.characterCreationPolicy()))
+                  || target.ownerProofOutcome() != OwnerProofOutcome.COMMITTED
+                  || target.positiveDurableAbort()
+                  || !tenants.add(target.canonicalTenantId())
+                  || !tenantSlugs.add(target.tenantSlug())
+                  || !realms.add(target.realmId())) {
+                throw invalid(
+                    "Discovery requires unique current public SHARED owner targets with a supported creation policy");
+              }
+              return target;
+            })
             .toList();
     return new VisiblePublicProductionTargets(expected, targets);
   }
@@ -736,18 +735,17 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
     var content = terminal.releaseContent();
     var participants =
         content.participantDigests().stream()
-            .map(
-                participant ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        participant.participantKey(),
-                        participant.scopeValue(),
-                        participant.baseVersionId() != null,
-                        participant.baseVersionId(),
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        participant.digestSchemaVersion(),
-                        participant.abilitySchemaDigest() != null,
-                        participant.abilitySchemaDigest()))
+            .map(participant ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    participant.participantKey(),
+                    participant.scopeValue(),
+                    participant.baseVersionId() != null,
+                    participant.baseVersionId(),
+                    participant.appliedCommitId(),
+                    participant.contentDigest(),
+                    participant.digestSchemaVersion(),
+                    participant.abilitySchemaDigest() != null,
+                    participant.abilitySchemaDigest()))
             .toList();
     int attestationSchema =
         switch (content.attestationSchemaVersion()) {

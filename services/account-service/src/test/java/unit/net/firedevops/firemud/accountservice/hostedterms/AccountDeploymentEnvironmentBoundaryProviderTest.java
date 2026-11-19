@@ -49,30 +49,25 @@ class AccountDeploymentEnvironmentBoundaryProviderTest {
 
   @Test
   void rejectsAbsentExpectedValuesAndEvidence() {
-    assertThatThrownBy(
-            () ->
-                new AccountDeploymentEnvironmentBoundaryProvider(
-                    null, OWNER, EVENT, OWNER_EVIDENCE_DIGEST, evidence(OWNER_EVIDENCE)))
+    assertThatThrownBy(() ->
+            new AccountDeploymentEnvironmentBoundaryProvider(
+                null, OWNER, EVENT, OWNER_EVIDENCE_DIGEST, evidence(OWNER_EVIDENCE)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountDeploymentEnvironmentBoundaryProvider(
-                    ENVIRONMENT, null, EVENT, OWNER_EVIDENCE_DIGEST, evidence(OWNER_EVIDENCE)))
+    assertThatThrownBy(() ->
+            new AccountDeploymentEnvironmentBoundaryProvider(
+                ENVIRONMENT, null, EVENT, OWNER_EVIDENCE_DIGEST, evidence(OWNER_EVIDENCE)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountDeploymentEnvironmentBoundaryProvider(
-                    ENVIRONMENT, OWNER, null, OWNER_EVIDENCE_DIGEST, evidence(OWNER_EVIDENCE)))
+    assertThatThrownBy(() ->
+            new AccountDeploymentEnvironmentBoundaryProvider(
+                ENVIRONMENT, OWNER, null, OWNER_EVIDENCE_DIGEST, evidence(OWNER_EVIDENCE)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountDeploymentEnvironmentBoundaryProvider(
-                    ENVIRONMENT, OWNER, EVENT, null, evidence(OWNER_EVIDENCE)))
+    assertThatThrownBy(() ->
+            new AccountDeploymentEnvironmentBoundaryProvider(
+                ENVIRONMENT, OWNER, EVENT, null, evidence(OWNER_EVIDENCE)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountDeploymentEnvironmentBoundaryProvider(
-                    ENVIRONMENT, OWNER, EVENT, OWNER_EVIDENCE_DIGEST, null))
+    assertThatThrownBy(() ->
+            new AccountDeploymentEnvironmentBoundaryProvider(
+                ENVIRONMENT, OWNER, EVENT, OWNER_EVIDENCE_DIGEST, null))
         .isInstanceOf(NullPointerException.class);
   }
 
@@ -91,14 +86,13 @@ class AccountDeploymentEnvironmentBoundaryProviderTest {
 
   @Test
   void existingBoundaryRecordRejectsBytesWithAConflictingDigest() {
-    assertThatThrownBy(
-            () ->
-                new HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary(
-                    ENVIRONMENT,
-                    OWNER,
-                    EVENT,
-                    "different-evidence".getBytes(StandardCharsets.UTF_8),
-                    OWNER_EVIDENCE_DIGEST))
+    assertThatThrownBy(() ->
+            new HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary(
+                ENVIRONMENT,
+                OWNER,
+                EVENT,
+                "different-evidence".getBytes(StandardCharsets.UTF_8),
+                OWNER_EVIDENCE_DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Environment-owner evidence digest conflicts");
   }
@@ -120,10 +114,9 @@ class AccountDeploymentEnvironmentBoundaryProviderTest {
       String event,
       String digest,
       HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary evidence) {
-    assertThatThrownBy(
-            () ->
-                new AccountDeploymentEnvironmentBoundaryProvider(
-                    environment, owner, event, digest, evidence))
+    assertThatThrownBy(() ->
+            new AccountDeploymentEnvironmentBoundaryProvider(
+                environment, owner, event, digest, evidence))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Deployment environment evidence differs from the fixed server boundary");
   }

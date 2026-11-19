@@ -304,12 +304,11 @@ class AdmissionPointerServiceImplTest {
     assertEquals(4L, result.catalogRevision());
     verify(gameSessionControlPlaneClient)
         .setAdmissionPointer(
-            org.mockito.ArgumentMatchers.argThat(
-                request ->
-                    request.getActorPrincipal().equals(ACCOUNT_UUID)
-                        && request.getExpectedPointerVersion() == 3L
-                        && request.getExpectedCatalogRevision() == 4L
-                        && request.getPreparedVersionUpgradeId().equals("pvu-1")));
+            org.mockito.ArgumentMatchers.argThat(request ->
+                request.getActorPrincipal().equals(ACCOUNT_UUID)
+                    && request.getExpectedPointerVersion() == 3L
+                    && request.getExpectedCatalogRevision() == 4L
+                    && request.getPreparedVersionUpgradeId().equals("pvu-1")));
   }
 
   @Test
@@ -400,12 +399,11 @@ class AdmissionPointerServiceImplTest {
     assertEquals(4L, result.catalogRevision());
     verify(gameSessionControlPlaneClient)
         .executePreparedVersionCutover(
-            org.mockito.ArgumentMatchers.argThat(
-                request ->
-                    request.getActorPrincipal().equals(ACCOUNT_UUID)
-                        && request.getPreparedVersionUpgradeId().equals("pvu-1")
-                        && request.getExpectedPointerVersion() == 3L
-                        && request.getExpectedCatalogRevision() == 4L));
+            org.mockito.ArgumentMatchers.argThat(request ->
+                request.getActorPrincipal().equals(ACCOUNT_UUID)
+                    && request.getPreparedVersionUpgradeId().equals("pvu-1")
+                    && request.getExpectedPointerVersion() == 3L
+                    && request.getExpectedCatalogRevision() == 4L));
   }
 
   @Test
@@ -518,12 +516,11 @@ class AdmissionPointerServiceImplTest {
     assertEquals("COMPATIBLE", result.result());
     verify(gameSessionControlPlaneClient)
         .prepareVersionUpgrade(
-            org.mockito.ArgumentMatchers.argThat(
-                request ->
-                    request.getTenantId().equals("2")
-                        && request.getSourceGameInstanceId().equals("7")
-                        && request.getTargetVersionId().equals("9")
-                        && request.getControlPlaneRequestId().equals("req-prepare")));
+            org.mockito.ArgumentMatchers.argThat(request ->
+                request.getTenantId().equals("2")
+                    && request.getSourceGameInstanceId().equals("7")
+                    && request.getTargetVersionId().equals("9")
+                    && request.getControlPlaneRequestId().equals("req-prepare")));
   }
 
   @Test
@@ -560,10 +557,8 @@ class AdmissionPointerServiceImplTest {
     assertEquals("prepared version-upgrade proof authority unavailable", ex.getReason());
     verify(gameSessionControlPlaneClient)
         .getPreparedVersionUpgrade(
-            org.mockito.ArgumentMatchers.argThat(
-                request ->
-                    request.getTenantId().equals("2")
-                        && request.getPreparationId().equals("pvu-1")));
+            org.mockito.ArgumentMatchers.argThat(request ->
+                request.getTenantId().equals("2") && request.getPreparationId().equals("pvu-1")));
   }
 
   @Test

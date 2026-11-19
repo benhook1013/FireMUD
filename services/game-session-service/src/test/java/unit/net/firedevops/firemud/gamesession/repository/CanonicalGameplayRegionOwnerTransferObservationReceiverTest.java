@@ -506,16 +506,15 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
         };
     var peer =
         Thread.ofVirtual()
-            .start(
-                () ->
-                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                        Clock.systemUTC(),
-                        System.currentTimeMillis() + 5_000L,
-                        budget -> {
-                          peerEntered.countDown();
-                          awaitRelease(peerRelease);
-                          return null;
-                        }));
+            .start(() ->
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                    Clock.systemUTC(),
+                    System.currentTimeMillis() + 5_000L,
+                    budget -> {
+                      peerEntered.countDown();
+                      awaitRelease(peerRelease);
+                      return null;
+                    }));
     try {
       assertThat(peerEntered.await(2, TimeUnit.SECONDS)).isTrue();
       long started = System.nanoTime();

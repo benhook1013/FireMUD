@@ -30,13 +30,12 @@ class RealmPolicyPublicationReadConfigurationTest {
 
   @Test
   void ownerReadCompositionAndGrpcAdapterAreAbsentByDefault() {
-    contextRunner.run(
-        context -> {
-          assertThat(context).hasNotFailed();
-          assertThat(context).doesNotHaveBean(RealmPolicyPublicationRepository.class);
-          assertThat(context).doesNotHaveBean(RealmPolicyPublicationService.class);
-          assertThat(context).doesNotHaveBean(RealmPolicyPublicationGrpcService.class);
-        });
+    contextRunner.run(context -> {
+      assertThat(context).hasNotFailed();
+      assertThat(context).doesNotHaveBean(RealmPolicyPublicationRepository.class);
+      assertThat(context).doesNotHaveBean(RealmPolicyPublicationService.class);
+      assertThat(context).doesNotHaveBean(RealmPolicyPublicationGrpcService.class);
+    });
   }
 
   @Test
@@ -45,13 +44,12 @@ class RealmPolicyPublicationReadConfigurationTest {
         .withPropertyValues(
             "firemud.game-design.published-realm-entry-policy-read.enabled=true",
             "firemud.grpc.workload-namespace=firemud-test")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(RealmPolicyPublicationRepository.class);
-              assertThat(context).hasSingleBean(RealmPolicyPublicationService.class);
-              assertThat(context).hasSingleBean(RealmPolicyPublicationGrpcService.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).hasSingleBean(RealmPolicyPublicationRepository.class);
+          assertThat(context).hasSingleBean(RealmPolicyPublicationService.class);
+          assertThat(context).hasSingleBean(RealmPolicyPublicationGrpcService.class);
+        });
   }
 
   @Test
@@ -78,27 +76,23 @@ class RealmPolicyPublicationReadConfigurationTest {
         new YamlPropertySourceLoader()
             .load(fileName, new FileSystemResource("src/main/resources/" + fileName));
     new ApplicationContextRunner()
-        .withInitializer(
-            context ->
-                propertySources.forEach(context.getEnvironment().getPropertySources()::addFirst))
-        .run(
-            context ->
-                assertThat(
-                        Binder.get(context.getEnvironment())
-                            .bind("firemud.auth.grpc.public-methods", Bindable.listOf(String.class))
-                            .orElse(List.of()))
-                    .containsExactly(
-                        "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation",
-                        PublishedRealmEntryPolicyServiceGrpc
-                            .getResolvePublishedRealmEntryPolicyMethod()
-                            .getFullMethodName(),
-                        PublishedRealmEntryPolicyServiceGrpc
-                            .getListPublishedRealmEntryPoliciesMethod()
-                            .getFullMethodName(),
-                        "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor",
-                        "gamedesign.v1.GameDesignService/GetLaunchDescriptor",
-                        "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding",
-                        "gamedesign.v1.AuthoredWorldSourceReadService/ResolveAuthoredWorldSource",
-                        "gamedesign.v1.AuthoredWorldVersionStateService/GetAuthoredWorldVersionState"));
+        .withInitializer(context ->
+            propertySources.forEach(context.getEnvironment().getPropertySources()::addFirst))
+        .run(context ->
+            assertThat(
+                    Binder.get(context.getEnvironment())
+                        .bind("firemud.auth.grpc.public-methods", Bindable.listOf(String.class))
+                        .orElse(List.of()))
+                .containsExactly(
+                    "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation",
+                    PublishedRealmEntryPolicyServiceGrpc.getResolvePublishedRealmEntryPolicyMethod()
+                        .getFullMethodName(),
+                    PublishedRealmEntryPolicyServiceGrpc.getListPublishedRealmEntryPoliciesMethod()
+                        .getFullMethodName(),
+                    "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor",
+                    "gamedesign.v1.GameDesignService/GetLaunchDescriptor",
+                    "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding",
+                    "gamedesign.v1.AuthoredWorldSourceReadService/ResolveAuthoredWorldSource",
+                    "gamedesign.v1.AuthoredWorldVersionStateService/GetAuthoredWorldVersionState"));
   }
 }

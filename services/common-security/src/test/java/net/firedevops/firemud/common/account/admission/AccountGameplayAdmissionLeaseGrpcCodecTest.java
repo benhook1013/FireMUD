@@ -81,34 +81,29 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
             decisionRequest, decisionWire);
     assertThat(decodedDecision.candidate()).isEqualTo(candidate(original));
     assertThat(decodedDecision.targetEvidence()).isEqualTo(target(original));
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
-                    decisionRequest,
-                    decisionWire.toBuilder().setPurpose(0, "provisional-decision/v1").build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                decisionRequest,
+                decisionWire.toBuilder().setPurpose(0, "provisional-decision/v1").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
-                    decisionRequest,
-                    decisionWire.toBuilder().addCandidateSha256("a".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                decisionRequest,
+                decisionWire.toBuilder().addCandidateSha256("a".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
-                    decisionRequest, decisionWire.toBuilder().setBindingGeneration(0, "1").build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                decisionRequest, decisionWire.toBuilder().setBindingGeneration(0, "1").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
-                    decisionRequest,
-                    decisionWire.toBuilder().setClosureReadbackSha256(0, "A".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                decisionRequest,
+                decisionWire.toBuilder().setClosureReadbackSha256(0, "A".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
-                    decisionRequest,
-                    decisionWire.toBuilder().setAbandonmentUuid(0, CLEANUP_ID.toString()).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.fromDecisionResponse(
+                decisionRequest,
+                decisionWire.toBuilder().setAbandonmentUuid(0, CLEANUP_ID.toString()).build()))
         .isInstanceOf(IllegalArgumentException.class);
     var abort =
         new AccountGameplayAdmissionNeverAdmittedGrpcCodec.AbortEvidence(
@@ -124,52 +119,45 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
         .isEqualTo(abort);
     assertThat(request.toString()).doesNotContain(JWT);
     for (int state : List.of(0, 1, 2, 999)) {
-      assertThatThrownBy(
-              () ->
-                  AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
-                      request, response.toBuilder().setStateValue(0, state).build()))
+      assertThatThrownBy(() ->
+              AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
+                  request, response.toBuilder().setStateValue(0, state).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
-                    request, response.toBuilder().addSchemaVersion(1).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
+                request, response.toBuilder().addSchemaVersion(1).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(
-                    wireRequest.toBuilder()
-                        .setTransitionUuid(0, "00000000-0000-0000-0000-000000000000")
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(
+                wireRequest.toBuilder()
+                    .setTransitionUuid(0, "00000000-0000-0000-0000-000000000000")
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(
-                    wireRequest.toBuilder().addPresentedInitialGsaCompactJwt(JWT).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(
+                wireRequest.toBuilder().addPresentedInitialGsaCompactJwt(JWT).build()))
         .isInstanceOf(IllegalArgumentException.class);
     var unknown =
         UnknownFieldSet.newBuilder()
             .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
-                    request, response.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseResponse(
+                request, response.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
-                    decisionWireRequest.toBuilder()
-                        .setExpectedLeaseEvidenceUtf8(
-                            0, ByteString.copyFromUtf8(original.canonicalJson() + " "))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                decisionWireRequest.toBuilder()
+                    .setExpectedLeaseEvidenceUtf8(
+                        0, ByteString.copyFromUtf8(original.canonicalJson() + " "))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(
-                    wireRequest.toBuilder()
-                        .setPresentedInitialGsaCompactJwt(0, "x".repeat(256 * 1024))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseRequest(
+                wireRequest.toBuilder()
+                    .setPresentedInitialGsaCompactJwt(0, "x".repeat(256 * 1024))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -311,10 +299,9 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
     assertThat(legacyIssuerCandidate.getIssuerAuthGeneration(0))
         .isEqualTo(canonicalCandidate.getIssuerAuthGeneration(0));
 
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
-                    wire.toBuilder().setExpectedCandidate(0, legacyIssuerCandidate).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
+                wire.toBuilder().setExpectedCandidate(0, legacyIssuerCandidate).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unsupported issuer identity")
         .hasMessageContaining("legacy UUID issuer identities require explicit recovery");
@@ -392,10 +379,9 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
         AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
                 abortRequest(lease, DECISION_ID), lease, CLEANUP_ID, abortResolution(lease))
             .getAbortResolution(0);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
-                    request, response.toBuilder().addAbortResolution(resolutionWire).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
+                request, response.toBuilder().addAbortResolution(resolutionWire).build()))
         .isInstanceOf(IllegalArgumentException.class);
     assertAbortRejected(
         abortRequest(lease, DECISION_ID),
@@ -445,10 +431,9 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
               leaseFence,
               "102",
               checkpointsSha256)) {
-        assertThatThrownBy(
-                () ->
-                    AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialResponse(
-                        request, lease, State.COMMITTED, DECISION_ID, ack, changedCredential))
+        assertThatThrownBy(() ->
+                AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialResponse(
+                    request, lease, State.COMMITTED, DECISION_ID, ack, changedCredential))
             .as("independently rejects changed %s", changedClaim)
             .isInstanceOf(IllegalArgumentException.class);
       }
@@ -468,49 +453,42 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
-                    wireRequest.toBuilder().clearExpectedCandidate().build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
+                wireRequest.toBuilder().clearExpectedCandidate().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
-                    wireRequest.toBuilder().addSchemaVersion(1).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
+                wireRequest.toBuilder().addSchemaVersion(1).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
-                    wireRequest.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
+                wireRequest.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
-                    wireRequest.toBuilder()
-                        .setExpectedCandidate(
-                            0,
-                            wireRequest.getExpectedCandidate(0).toBuilder()
-                                .addAccountUuid(OTHER.toString()))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
+                wireRequest.toBuilder()
+                    .setExpectedCandidate(
+                        0,
+                        wireRequest.getExpectedCandidate(0).toBuilder()
+                            .addAccountUuid(OTHER.toString()))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
-                    wireRequest.toBuilder()
-                        .setExpectedTarget(
-                            0,
-                            wireRequest.getExpectedTarget(0).toBuilder().setUnknownFields(unknown))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
+                wireRequest.toBuilder()
+                    .setExpectedTarget(
+                        0, wireRequest.getExpectedTarget(0).toBuilder().setUnknownFields(unknown))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.toAcquireRequest(
-                    REQUEST_ID,
-                    JWT,
-                    withGameInstance(candidate(lease), OTHER),
-                    target(lease),
-                    new BigInteger(HIGH)))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.toAcquireRequest(
+                REQUEST_ID,
+                JWT,
+                withGameInstance(candidate(lease), OTHER),
+                target(lease),
+                new BigInteger(HIGH)))
         .isInstanceOf(IllegalArgumentException.class);
 
     var parsedRequest = AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(wireRequest);
@@ -561,13 +539,12 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
     assertThat(aborted.getBindingDecisionUuidCount()).isZero();
     assertThat(aborted.getOriginalLeaseEvidenceUtf8(0).toByteArray())
         .containsExactly(originalBytes);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(
-                    abortWire.toBuilder()
-                        .addBindingDecisionUuid(DECISION_ID.toString())
-                        .addBindingDecisionUuid(OTHER.toString())
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(
+                abortWire.toBuilder()
+                    .addBindingDecisionUuid(DECISION_ID.toString())
+                    .addBindingDecisionUuid(OTHER.toString())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -636,10 +613,9 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
             resolution.toBuilder().setBindingDecisionUuid(0, OTHER.toString()).build())) {
       assertAbortRejected(request, response.toBuilder().setAbortResolution(0, changed).build());
     }
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
-                    request, lease, OTHER, abortResolution(lease)))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+                request, lease, OTHER, abortResolution(lease)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -696,20 +672,13 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
         assertAbortRejected(request, response.toBuilder().setAbortResolution(0, changed).build());
       }
     }
-    assertThatThrownBy(
-            () ->
-                new AbortResolutionEvidence(
-                    OTHER, OTHER, BigInteger.ZERO, lease.sha256(), CLEANUP_ID, DECISION_ID))
+    assertThatThrownBy(() ->
+            new AbortResolutionEvidence(
+                OTHER, OTHER, BigInteger.ZERO, lease.sha256(), CLEANUP_ID, DECISION_ID))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AbortResolutionEvidence(
-                    new UUID(0L, 0L),
-                    OTHER,
-                    BigInteger.ONE,
-                    lease.sha256(),
-                    CLEANUP_ID,
-                    DECISION_ID))
+    assertThatThrownBy(() ->
+            new AbortResolutionEvidence(
+                new UUID(0L, 0L), OTHER, BigInteger.ONE, lease.sha256(), CLEANUP_ID, DECISION_ID))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -722,10 +691,9 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
         AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
             request, lease, CLEANUP_ID, abortResolution(lease));
     assertAbortRejected(abortRequest(lease, null), response);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
-                    abortRequest(lease, null), lease, CLEANUP_ID, abortResolution(lease)))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.toResolvedAbortResponse(
+                abortRequest(lease, null), lease, CLEANUP_ID, abortResolution(lease)))
         .isInstanceOf(IllegalArgumentException.class);
     var read =
         AccountGameplayAdmissionLeaseGrpcCodec.parseReadRequest(
@@ -758,15 +726,14 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
         AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialRequest(
             AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
                 JWT, leaseBytes));
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
-                    credentialRequest,
-                    response.toBuilder()
-                        .addOriginalNewCredential(
-                            net.firedevops.firemud.account.v1.OriginalNewGameplayCredentialResult
-                                .getDefaultInstance())
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
+                credentialRequest,
+                response.toBuilder()
+                    .addOriginalNewCredential(
+                        net.firedevops.firemud.account.v1.OriginalNewGameplayCredentialResult
+                            .getDefaultInstance())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -838,10 +805,8 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
                 0,
                 ByteString.copyFrom(changedLease.canonicalJson().getBytes(StandardCharsets.UTF_8)))
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseReadResponse(
-                    readRequest, changedReadback))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseReadResponse(readRequest, changedReadback))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -876,20 +841,19 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
     assertThat(parsed.originalAckReceipt().finalizationXid()).isEqualTo(uint64MaxMinusOne);
     assertThat(parsed.originalAckReceipt().receiptXid()).isEqualTo(uint64Max);
 
-    assertThatThrownBy(
-            () ->
-                OriginalAckReceiptEvidence.fromFields(
-                    1,
-                    REQUEST_ID,
-                    ACCOUNT_ID,
-                    leaseId,
-                    lease.leaseFence().longValueExact(),
-                    lease.sha256(),
-                    DECISION_ID,
-                    1_015_000L,
-                    uint64MaxPlusOne,
-                    1_014_999L,
-                    uint64Max))
+    assertThatThrownBy(() ->
+            OriginalAckReceiptEvidence.fromFields(
+                1,
+                REQUEST_ID,
+                ACCOUNT_ID,
+                leaseId,
+                lease.leaseFence().longValueExact(),
+                lease.sha256(),
+                DECISION_ID,
+                1_015_000L,
+                uint64MaxPlusOne,
+                1_014_999L,
+                uint64Max))
         .isInstanceOf(IllegalArgumentException.class);
 
     var wrongFence =
@@ -905,10 +869,9 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
             "101",
             1_014_999L,
             "102");
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.toAcquireResponse(
-                    request, lease, State.COMMITTED, DECISION_ID, null, wrongFence))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.toAcquireResponse(
+                request, lease, State.COMMITTED, DECISION_ID, null, wrongFence))
         .isInstanceOf(IllegalArgumentException.class);
 
     UnknownFieldSet unknown =
@@ -943,19 +906,17 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
     resumeCarrier.put("resumeEpisodeId", OTHER.toString());
     resumeCarrier.put("expectedOldBindingGeneration", "7");
     var resume = AccountGameplayAdmissionLeaseEvidence.fromCarrier(resumeCarrier);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(
-                    JWT, resume.canonicalJson().getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(
+                JWT, resume.canonicalJson().getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
 
     var oldGenerationCarrier = AccountGameplayAdmissionLeaseEvidenceTest.fixture();
     oldGenerationCarrier.put("expectedOldBindingGeneration", "7");
     var oldGeneration = AccountGameplayAdmissionLeaseEvidence.fromCarrier(oldGenerationCarrier);
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(
-                    JWT, oldGeneration.canonicalJson().getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(
+                JWT, oldGeneration.canonicalJson().getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -977,10 +938,9 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
                                     .MAX_ACQUIRE_REQUEST_WIRE_BYTES]))
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
-                    acquire.toBuilder().setUnknownFields(oversizedAcquireField).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(
+                acquire.toBuilder().setUnknownFields(oversizedAcquireField).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
 
@@ -1002,24 +962,19 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
                                     .MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES]))
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeRequest(
-                    finalizeRequest.toBuilder()
-                        .setUnknownFields(oversizedOriginalLeaseField)
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeRequest(
+                finalizeRequest.toBuilder().setUnknownFields(oversizedOriginalLeaseField).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseReadRequest(
-                    readRequest.toBuilder().setUnknownFields(oversizedOriginalLeaseField).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseReadRequest(
+                readRequest.toBuilder().setUnknownFields(oversizedOriginalLeaseField).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(
-                    abortRequest.toBuilder().setUnknownFields(oversizedOriginalLeaseField).build()))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAbortRequest(
+                abortRequest.toBuilder().setUnknownFields(oversizedOriginalLeaseField).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
 
@@ -1043,28 +998,23 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
                             .build())
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireResponse(
-                    parsedAcquire, oversizedResponse))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireResponse(
+                parsedAcquire, oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeResponse(
-                    parsedFinalize, oversizedResponse))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeResponse(
+                parsedFinalize, oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseReadResponse(
-                    parsedRead, oversizedResponse))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseReadResponse(parsedRead, oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
-    assertThatThrownBy(
-            () ->
-                AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(
-                    parsedAbort, oversizedResponse))
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseAbortResponse(
+                parsedAbort, oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire bound");
   }

@@ -937,14 +937,13 @@ public class AccountStartSessionWorldParticipationRepository {
     if (declaredIsolation != null && declaredIsolation != Connection.TRANSACTION_READ_COMMITTED) {
       throw new IllegalStateException("Writable Account READ_COMMITTED transaction required");
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException("Writable Account READ_COMMITTED transaction required");
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException("Writable Account READ_COMMITTED transaction required");
+      }
+    });
   }
 
   private static ImmutableBindingConflictException conflict() {

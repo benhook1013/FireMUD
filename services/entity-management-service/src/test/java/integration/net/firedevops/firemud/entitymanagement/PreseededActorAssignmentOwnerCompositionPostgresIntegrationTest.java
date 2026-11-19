@@ -315,10 +315,9 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
 
         // Invalidate the capability only after all three independent source RPCs have returned.
         // The service's second read is the last authorization step before the proxied SQL writer.
-        gameSessionOwner.afterNextRead.set(
-            () ->
-                writeCapabilityUnchecked(
-                    capabilityFile, assignment, "changed-during-source-read", PROJECT));
+        gameSessionOwner.afterNextRead.set(() ->
+            writeCapabilityUnchecked(
+                capabilityFile, assignment, "changed-during-source-read", PROJECT));
         assertCallDenied(
             entityServer, "game-session-client", wireRequest, Status.Code.PERMISSION_DENIED);
         assertNoMutation(baseline, assignment);
@@ -452,10 +451,9 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
             List.of("world-client", "account-client", "foreign-game-session-client")) {
           assertThatThrownBy(() -> callRuntimeRead(entityServer, wrongPeer, runtimeSelector))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure ->
-                      assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                          .isEqualTo(Status.Code.PERMISSION_DENIED));
+              .satisfies(failure ->
+                  assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                      .isEqualTo(Status.Code.PERMISSION_DENIED));
         }
         assertThat(runtimeReadEntryCount.get()).isEqualTo(1);
         var changedRuntimeSelector =
@@ -463,10 +461,9 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
         assertThatThrownBy(
                 () -> callRuntimeRead(entityServer, "game-session-client", changedRuntimeSelector))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.NOT_FOUND));
+            .satisfies(failure ->
+                assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(Status.Code.NOT_FOUND));
         // A replacement target cannot borrow the original assignment's projection.
         var changedRuntimeTarget =
             runtimeSelector.toBuilder()
@@ -477,10 +474,9 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
         assertThatThrownBy(
                 () -> callRuntimeRead(entityServer, "game-session-client", changedRuntimeTarget))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.NOT_FOUND));
+            .satisfies(failure ->
+                assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(Status.Code.NOT_FOUND));
         var foreignRuntimeTarget =
             runtimeSelector.toBuilder()
                 .setExpectedTarget(
@@ -490,19 +486,17 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
         assertThatThrownBy(
                 () -> callRuntimeRead(entityServer, "game-session-client", foreignRuntimeTarget))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.NOT_FOUND));
+            .satisfies(failure ->
+                assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(Status.Code.NOT_FOUND));
         var wrongAssignment =
             runtimeSelector.toBuilder().setAssignmentUuid(UUID.randomUUID().toString()).build();
         assertThatThrownBy(
                 () -> callRuntimeRead(entityServer, "game-session-client", wrongAssignment))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.NOT_FOUND));
+            .satisfies(failure ->
+                assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(Status.Code.NOT_FOUND));
         assertThat(
                 callRuntimeRead(entityServer, "game-session-client", runtimeSelector).toByteArray())
             .containsExactly(runtimeRead.toByteArray());
@@ -889,36 +883,36 @@ class PreseededActorAssignmentOwnerCompositionPostgresIntegrationTest {
       String trustRootFingerprint) {
     var target = request.expectedTarget();
     return """
-        {\
-          "schema": "firemud.run-owned-preseeded-actor-assignment.v3",%n\
-          "runId": "%s",%n\
-          "composeProjectName": "%s",%n\
-          "action": "PRESEEDED_ACTOR_ASSIGNMENT",%n\
-          "trustedGameSessionUriSan": "%s",%n\
-          "trustedGameSessionNamespace": "%s",%n\
-          "assignmentUuid": "%s",%n\
-          "canonicalAccountUuid": "%s",%n\
-          "expectedTarget": {%n\
-            "canonicalTenantUuid": "%s",%n\
-            "realmUuid": "%s",%n\
-            "worldSlug": "%s",%n\
-            "realmSlug": "%s",%n\
-            "gameInstanceId": "%s",%n\
-            "catalogRevision": %d,%n\
-            "canonicalVersionUuid": "%s",%n\
-            "frozenPolicyDigest": "%s",%n\
-            "playableStateNamespaceUuid": "%s",%n\
-            "publishedReleaseBundleRef": "%s",%n\
-            "playableStateScope": "%s"%n\
-          },%n\
-          "corePayload": {%n\
-            "actorKind": "PLAYER",%n\
-            "displayName": "%s"%n\
-          },%n\
-          "intentDigest": "%s",%n\
-          "entityServerTrustRootSha256": "%s"%n\
-        }%n\
-        """
+    {\
+      "schema": "firemud.run-owned-preseeded-actor-assignment.v3",%n\
+      "runId": "%s",%n\
+      "composeProjectName": "%s",%n\
+      "action": "PRESEEDED_ACTOR_ASSIGNMENT",%n\
+      "trustedGameSessionUriSan": "%s",%n\
+      "trustedGameSessionNamespace": "%s",%n\
+      "assignmentUuid": "%s",%n\
+      "canonicalAccountUuid": "%s",%n\
+      "expectedTarget": {%n\
+        "canonicalTenantUuid": "%s",%n\
+        "realmUuid": "%s",%n\
+        "worldSlug": "%s",%n\
+        "realmSlug": "%s",%n\
+        "gameInstanceId": "%s",%n\
+        "catalogRevision": %d,%n\
+        "canonicalVersionUuid": "%s",%n\
+        "frozenPolicyDigest": "%s",%n\
+        "playableStateNamespaceUuid": "%s",%n\
+        "publishedReleaseBundleRef": "%s",%n\
+        "playableStateScope": "%s"%n\
+      },%n\
+      "corePayload": {%n\
+        "actorKind": "PLAYER",%n\
+        "displayName": "%s"%n\
+      },%n\
+      "intentDigest": "%s",%n\
+      "entityServerTrustRootSha256": "%s"%n\
+    }%n\
+    """
         .formatted(
             runId,
             project,

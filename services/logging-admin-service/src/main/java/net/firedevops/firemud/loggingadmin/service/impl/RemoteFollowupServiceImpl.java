@@ -64,16 +64,15 @@ public class RemoteFollowupServiceImpl implements RemoteFollowupService {
         gameSessionControlPlaneClient.listRemoteFollowups(toRequest(tenantId, request));
     requireNoError(response.getError());
     return response.getFollowupsList().stream()
-        .map(
-            followup -> {
-              long responseTenantId = parseLong(followup.getTenantId(), "tenant_id");
-              if (responseTenantId != tenantId) {
-                throw new ResponseStatusException(
-                    HttpStatus.INTERNAL_SERVER_ERROR,
-                    "control-plane remote followup list response did not match requested tenant_id");
-              }
-              return toDto(followup);
-            })
+        .map(followup -> {
+          long responseTenantId = parseLong(followup.getTenantId(), "tenant_id");
+          if (responseTenantId != tenantId) {
+            throw new ResponseStatusException(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "control-plane remote followup list response did not match requested tenant_id");
+          }
+          return toDto(followup);
+        })
         .toList();
   }
 

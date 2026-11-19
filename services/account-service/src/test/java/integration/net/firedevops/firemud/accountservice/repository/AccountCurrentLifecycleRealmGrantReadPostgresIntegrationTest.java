@@ -163,12 +163,11 @@ class AccountCurrentLifecycleRealmGrantReadPostgresIntegrationTest {
           .isEqualTo(AccountCurrentLifecycleRealmGrantReadOwner.Status.CURRENT_LIFECYCLE_MISMATCH);
       assertThat(wrongLifecycle.grant()).isEmpty();
       assertThat(wrongLifecycle.admissionAllowed()).isFalse();
-      transport.respond(
-          request -> {
-            throw Status.UNAVAILABLE
-                .withDescription("Controlled GS source outage")
-                .asRuntimeException();
-          });
+      transport.respond(request -> {
+        throw Status.UNAVAILABLE
+            .withDescription("Controlled GS source outage")
+            .asRuntimeException();
+      });
       assertThatThrownBy(() -> owner.read(context.scope())).isInstanceOf(RuntimeException.class);
       assertThat(context.history()).usingRecursiveComparison().isEqualTo(before);
     }
@@ -187,14 +186,12 @@ class AccountCurrentLifecycleRealmGrantReadPostgresIntegrationTest {
       var replacement =
           CurrentPrivatePlaytestReadTransportFixture.snapshot(
               original.scope(), UUID.randomUUID(), fork, context.now(), 2L);
-      transport.respond(
-          request -> {
-            var response =
-                CurrentPrivatePlaytestLifecycleReadGrpcCodec.toResponse(
-                    request, Optional.of(original));
-            transport.current(Optional.of(replacement));
-            return response;
-          });
+      transport.respond(request -> {
+        var response =
+            CurrentPrivatePlaytestLifecycleReadGrpcCodec.toResponse(request, Optional.of(original));
+        transport.current(Optional.of(replacement));
+        return response;
+      });
       var owner = context.owner(transport);
       var asOf = owner.read(context.scope());
       assertThat(asOf.status())

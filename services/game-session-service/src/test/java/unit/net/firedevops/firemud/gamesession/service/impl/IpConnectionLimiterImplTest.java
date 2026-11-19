@@ -34,13 +34,12 @@ class IpConnectionLimiterImplTest {
     org.mockito.Mockito.when(ops.get(anyString()))
         .thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
     org.mockito.Mockito.when(ops.decrement(anyString()))
-        .thenAnswer(
-            inv -> {
-              String key = inv.getArgument(0);
-              long val = Long.parseLong(store.getOrDefault(key, "0")) - 1;
-              store.put(key, Long.toString(val));
-              return val;
-            });
+        .thenAnswer(inv -> {
+          String key = inv.getArgument(0);
+          long val = Long.parseLong(store.getOrDefault(key, "0")) - 1;
+          store.put(key, Long.toString(val));
+          return val;
+        });
     doAnswer(
             inv -> {
               store.put(inv.getArgument(0), inv.getArgument(1));

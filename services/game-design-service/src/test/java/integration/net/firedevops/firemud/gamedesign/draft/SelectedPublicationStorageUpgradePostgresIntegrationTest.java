@@ -260,16 +260,15 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
         () ->
             fixture
                 .write()
-                .executeWithoutResult(
-                    status ->
-                        fixture
-                            .operations()
-                            .seal(
-                                operation.tenantKey(),
-                                operation.workflowId(),
-                                operation.versionId(),
-                                operation.selectionDigest(),
-                                false)),
+                .executeWithoutResult(status ->
+                    fixture
+                        .operations()
+                        .seal(
+                            operation.tenantKey(),
+                            operation.workflowId(),
+                            operation.versionId(),
+                            operation.selectionDigest(),
+                            false)),
         "Truncated publication inventory frame");
     for (String family : List.of("command", "realm_policy", "asset")) {
       deny(
@@ -356,9 +355,8 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     assertThat(retained.schema()).isEqualTo(GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA);
     assertThat(retained.canonicalBytes()).containsExactly(originalBytes);
     assertThat(retained.digest()).isEqualTo(originalDigest);
-    assertThatThrownBy(
-            () ->
-                new GameDesignReviewedBaseRepository(fixture.dsl()).requireCurrentRetained(binding))
+    assertThatThrownBy(() ->
+            new GameDesignReviewedBaseRepository(fixture.dsl()).requireCurrentRetained(binding))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("REVIEWED_BASE_ASSET_LINEAGE_UNAVAILABLE");
     assertEnabledGuards(fixture);
@@ -404,14 +402,13 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
         () ->
             fixture
                 .write()
-                .executeWithoutResult(
-                    status ->
-                        insertReviewedBaseV1(
-                            fixture.dsl(),
-                            newBinding,
-                            originalBytes,
-                            originalDigest,
-                            newBinding.baseCommitId())),
+                .executeWithoutResult(status ->
+                    insertReviewedBaseV1(
+                        fixture.dsl(),
+                        newBinding,
+                        originalBytes,
+                        originalDigest,
+                        newBinding.baseCommitId())),
         "Fresh reviewed base requires complete asset-bound v2 owner evidence");
     assertThat(reviewedBaseRow(fixture, binding)).isEqualTo(beforeRow);
     assertThat(
@@ -431,23 +428,22 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     var operation = fixture.operation();
     fixture
         .write()
-        .executeWithoutResult(
-            status -> {
-              var attempts = new PublishAttemptRepository(fixture.dsl());
-              var attempt =
-                  attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
-              attempt.setStatus(PublishAttemptStatus.FAILED);
-              attempt.setFailureCode("ISOLATED_STORAGE_DENIAL");
-              attempts.save(attempt);
-              fixture
-                  .operations()
-                  .seal(
-                      operation.tenantKey(),
-                      operation.workflowId(),
-                      operation.versionId(),
-                      operation.selectionDigest(),
-                      false);
-            });
+        .executeWithoutResult(status -> {
+          var attempts = new PublishAttemptRepository(fixture.dsl());
+          var attempt =
+              attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+          attempt.setStatus(PublishAttemptStatus.FAILED);
+          attempt.setFailureCode("ISOLATED_STORAGE_DENIAL");
+          attempts.save(attempt);
+          fixture
+              .operations()
+              .seal(
+                  operation.tenantKey(),
+                  operation.workflowId(),
+                  operation.versionId(),
+                  operation.selectionDigest(),
+                  false);
+        });
     var original = fixture.operations().read(operation.workflowId()).orElseThrow();
     assertThat(original.outcome()).isEqualTo("NO_PUBLICATION");
     assertThat(original.receiptBytes()).isNotEmpty();
@@ -478,14 +474,13 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
                 .get(0, String.class))
         .isEqualTo("1");
     assertThatThrownBy(() -> fixture.dsl().fetchSingle("SELECT ('4294967297'::TEXT::XID)::TEXT"))
-        .satisfies(
-            failure -> {
-              Throwable cause = failure;
-              while (!(cause instanceof SQLException) && cause.getCause() != null)
-                cause = cause.getCause();
-              assertThat(cause).isInstanceOf(SQLException.class);
-              assertThat(((SQLException) cause).getSQLState()).isEqualTo("22003");
-            });
+        .satisfies(failure -> {
+          Throwable cause = failure;
+          while (!(cause instanceof SQLException) && cause.getCause() != null)
+            cause = cause.getCause();
+          assertThat(cause).isInstanceOf(SQLException.class);
+          assertThat(((SQLException) cause).getSQLState()).isEqualTo("22003");
+        });
 
     Long templateId =
         fixture
@@ -549,17 +544,16 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
         () ->
             fixture
                 .write()
-                .executeWithoutResult(
-                    status ->
-                        fixture
-                            .dsl()
-                            .execute(
-                                "INSERT INTO game_design_publication_operation (publish_workflow_id, tenant_id, version_id, selection_digest, request_bytes) VALUES (?, ?, ?, ?, ?)",
-                                fixture.operation().workflowId(),
-                                fixture.operation().tenantKey(),
-                                fixture.operation().versionId(),
-                                "sha256:" + "f".repeat(64),
-                                originalV2)),
+                .executeWithoutResult(status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "INSERT INTO game_design_publication_operation (publish_workflow_id, tenant_id, version_id, selection_digest, request_bytes) VALUES (?, ?, ?, ?, ?)",
+                            fixture.operation().workflowId(),
+                            fixture.operation().tenantKey(),
+                            fixture.operation().versionId(),
+                            "sha256:" + "f".repeat(64),
+                            originalV2)),
         "publication operation does not bind exact selected attempt");
     assertThat(retainedRows(fixture)).isEqualTo(before);
     fixture.write().executeWithoutResult(status -> insertOperation(fixture, originalV2));
@@ -740,59 +734,58 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
             new DataSourceTransactionManager(dataSource)));
     var dsl = DSL.using(configuration);
     var operation =
-        write.execute(
-            status -> {
-              var requested = new Game();
-              requested.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
-              requested.setName("ISOLATED passive storage owner");
-              var game = new GameRepository(dsl).save(requested);
-              // Reproduce the original owner insertion under its actual pre-tail schema. The
-              // current Version writer requires ordinary asset genesis, which did not exist here.
-              var inserted =
-                  java.util.Objects.requireNonNull(
-                      dsl.fetchOne(
-                          "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
-                              + "identity_source_game_row_id, identity_source_game_tenant_key, "
-                              + "identity_source_provenance_kind, version_number, version_state, "
-                              + "version_state_epoch, is_script_only, created_at, updated_at) "
-                              + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
-                              + "g.tenant_identity_provenance_kind, 1, 'DRAFT', 1, FALSE, "
-                              + "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM game g WHERE g.id = ? RETURNING id",
-                          UUID.randomUUID(),
-                          game.getId()));
-              var version =
-                  new VersionRepository(dsl).findById(inserted.get("id", Long.class)).orElseThrow();
-              var target =
-                  new TargetProof(
-                      version.getCanonicalTenantId(),
-                      version.getCanonicalVersionId(),
-                      version.getId(),
-                      version.getTenantId(),
-                      version.getIdentitySourceGameRowId(),
-                      version.getIdentitySourceGameTenantKey(),
-                      version.getIdentitySourceProvenanceKind());
-              RealmPolicyGenesis reviewedGenesis = null;
-              String reviewedBaseReference = null;
-              if (retainReviewedV1) {
-                reviewedGenesis = new RealmPolicySourceRepository(dsl).recordFreshGenesis(target);
-                new CommandSourceRepository(dsl)
-                    .enrollNewDraftGenesis(
-                        new CommandSource.NewDraftGenesisReceipt(
-                            target,
-                            reviewedGenesis.receiptId(),
-                            reviewedGenesis.creationTransactionId()));
-                reviewedBaseReference = "genesis:" + reviewedGenesis.receiptId();
-              }
-              try {
-                return reserveV1
-                    ? IsolatedPublicationOwnerSetup.retainHistoricalV1PreV56(
-                        dsl, target, version.getVersionStateEpoch())
-                    : prepareUnreservedOwnerOperation(
-                        dsl, target, version, reviewedBaseReference, reviewedGenesis);
-              } catch (Exception failure) {
-                throw new IllegalStateException(failure);
-              }
-            });
+        write.execute(status -> {
+          var requested = new Game();
+          requested.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
+          requested.setName("ISOLATED passive storage owner");
+          var game = new GameRepository(dsl).save(requested);
+          // Reproduce the original owner insertion under its actual pre-tail schema. The
+          // current Version writer requires ordinary asset genesis, which did not exist here.
+          var inserted =
+              java.util.Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
+                          + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                          + "identity_source_provenance_kind, version_number, version_state, "
+                          + "version_state_epoch, is_script_only, created_at, updated_at) "
+                          + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
+                          + "g.tenant_identity_provenance_kind, 1, 'DRAFT', 1, FALSE, "
+                          + "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM game g WHERE g.id = ? RETURNING id",
+                      UUID.randomUUID(),
+                      game.getId()));
+          var version =
+              new VersionRepository(dsl).findById(inserted.get("id", Long.class)).orElseThrow();
+          var target =
+              new TargetProof(
+                  version.getCanonicalTenantId(),
+                  version.getCanonicalVersionId(),
+                  version.getId(),
+                  version.getTenantId(),
+                  version.getIdentitySourceGameRowId(),
+                  version.getIdentitySourceGameTenantKey(),
+                  version.getIdentitySourceProvenanceKind());
+          RealmPolicyGenesis reviewedGenesis = null;
+          String reviewedBaseReference = null;
+          if (retainReviewedV1) {
+            reviewedGenesis = new RealmPolicySourceRepository(dsl).recordFreshGenesis(target);
+            new CommandSourceRepository(dsl)
+                .enrollNewDraftGenesis(
+                    new CommandSource.NewDraftGenesisReceipt(
+                        target,
+                        reviewedGenesis.receiptId(),
+                        reviewedGenesis.creationTransactionId()));
+            reviewedBaseReference = "genesis:" + reviewedGenesis.receiptId();
+          }
+          try {
+            return reserveV1
+                ? IsolatedPublicationOwnerSetup.retainHistoricalV1PreV56(
+                    dsl, target, version.getVersionStateEpoch())
+                : prepareUnreservedOwnerOperation(
+                    dsl, target, version, reviewedBaseReference, reviewedGenesis);
+          } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+          }
+        });
     return new Fixture(
         dataSource,
         schema,
@@ -832,15 +825,14 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     coordinator.markOwnerInProgress(draft, DraftCommitBinding.Owner.WORLD_MANAGEMENT);
     var epochs =
         draft.affectedUnits().stream()
-            .map(
-                unit ->
-                    new DraftCommitCoordinatorRepository.AppliedEpoch(
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch(),
-                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+            .map(unit ->
+                new DraftCommitCoordinatorRepository.AppliedEpoch(
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch(),
+                    new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
             .toList();
     var outcome =
         new DraftCommitCoordinatorRepository.OwnerOutcome(
@@ -1112,29 +1104,27 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
   private void deny(Fixture fixture, Runnable write, String message) {
     assertThatThrownBy(write::run)
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            failure -> {
-              Throwable cause = failure;
-              while (!(cause instanceof SQLException) && cause.getCause() != null)
-                cause = cause.getCause();
-              assertThat(cause).isInstanceOf(SQLException.class);
-              assertThat(((SQLException) cause).getSQLState()).isEqualTo("23514");
-              if (message != null) assertThat(cause.getMessage()).contains(message);
-            });
+        .satisfies(failure -> {
+          Throwable cause = failure;
+          while (!(cause instanceof SQLException) && cause.getCause() != null)
+            cause = cause.getCause();
+          assertThat(cause).isInstanceOf(SQLException.class);
+          assertThat(((SQLException) cause).getSQLState()).isEqualTo("23514");
+          if (message != null) assertThat(cause.getMessage()).contains(message);
+        });
   }
 
   private void denyReviewedBase(Fixture fixture, Runnable write, String message) {
     assertThatThrownBy(write::run)
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            failure -> {
-              Throwable cause = failure;
-              while (!(cause instanceof SQLException) && cause.getCause() != null)
-                cause = cause.getCause();
-              assertThat(cause).isInstanceOf(SQLException.class);
-              assertThat(((SQLException) cause).getSQLState()).isEqualTo("P0001");
-              if (message != null) assertThat(cause.getMessage()).contains(message);
-            });
+        .satisfies(failure -> {
+          Throwable cause = failure;
+          while (!(cause instanceof SQLException) && cause.getCause() != null)
+            cause = cause.getCause();
+          assertThat(cause).isInstanceOf(SQLException.class);
+          assertThat(((SQLException) cause).getSQLState()).isEqualTo("P0001");
+          if (message != null) assertThat(cause.getMessage()).contains(message);
+        });
   }
 
   /** Raw supplied external inventory, matching the published isolated fixture's closed profile. */
@@ -1290,21 +1280,20 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     model.put(
         "appliedEpochs",
         commit.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    Map.of(
-                        "aggregateType",
-                        unit.aggregateType(),
-                        "aggregateId",
-                        unit.aggregateId(),
-                        "scopeType",
-                        unit.scopeType(),
-                        "scopeId",
-                        unit.scopeId(),
-                        "expectedEpoch",
-                        unit.expectedEpoch(),
-                        "resultingEpoch",
-                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+            .map(unit ->
+                Map.of(
+                    "aggregateType",
+                    unit.aggregateType(),
+                    "aggregateId",
+                    unit.aggregateId(),
+                    "scopeType",
+                    unit.scopeType(),
+                    "scopeId",
+                    unit.scopeId(),
+                    "expectedEpoch",
+                    unit.expectedEpoch(),
+                    "resultingEpoch",
+                    new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
             .toList());
     result.put("sourceModel", model);
     result.put(

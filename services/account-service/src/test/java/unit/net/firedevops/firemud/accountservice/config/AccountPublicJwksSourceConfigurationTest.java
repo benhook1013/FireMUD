@@ -35,19 +35,18 @@ class AccountPublicJwksSourceConfigurationTest {
 
   @Test
   void noSourceOrReceiverIsRegisteredByDefault() {
-    context.run(
-        ctx -> {
-          assertThat(ctx).hasNotFailed();
-          assertThat(ctx).doesNotHaveBean(AccountProtectedJwksSourceConfiguration.class);
-          assertThat(ctx).doesNotHaveBean(AccountJwtJwksApiBinding.class);
-          assertThat(ctx).doesNotHaveBean(AccountJwtJwksConfigMapClient.class);
-          assertThat(ctx).doesNotHaveBean(AccountJwtJwksTrustedSource.class);
-          assertThat(
-                  AnnotationUtils.findAnnotation(
-                      AccountProtectedJwksSourceConfiguration.class, Component.class))
-              .isNull();
-          assertThat(ctx).doesNotHaveBean(AccountPublicJwksReadGrpcService.class);
-        });
+    context.run(ctx -> {
+      assertThat(ctx).hasNotFailed();
+      assertThat(ctx).doesNotHaveBean(AccountProtectedJwksSourceConfiguration.class);
+      assertThat(ctx).doesNotHaveBean(AccountJwtJwksApiBinding.class);
+      assertThat(ctx).doesNotHaveBean(AccountJwtJwksConfigMapClient.class);
+      assertThat(ctx).doesNotHaveBean(AccountJwtJwksTrustedSource.class);
+      assertThat(
+              AnnotationUtils.findAnnotation(
+                  AccountProtectedJwksSourceConfiguration.class, Component.class))
+          .isNull();
+      assertThat(ctx).doesNotHaveBean(AccountPublicJwksReadGrpcService.class);
+    });
   }
 
   @Test
@@ -93,24 +92,23 @@ class AccountPublicJwksSourceConfigurationTest {
               "transactionManager",
               PlatformTransactionManager.class,
               () -> mock(PlatformTransactionManager.class))
-          .run(
-              ctx -> {
-                assertThat(ctx).hasNotFailed();
-                assertThat(ctx).hasSingleBean(AccountProtectedJwksSourceConfiguration.class);
-                assertThat(ctx).hasSingleBean(AccountJwtJwksApiBinding.class);
-                assertThat(ctx).hasSingleBean(AccountJwtJwksConfigMapClient.class);
-                assertThat(ctx).hasSingleBean(AccountJwtJwksTrustedSource.class);
-                if (selection.equals("read") || selection.equals("all")) {
-                  assertThat(ctx).hasSingleBean(AccountPublicJwksReadService.class);
-                  assertThat(ctx).hasSingleBean(AccountPublicJwksReadGrpcService.class);
-                } else {
-                  assertThat(ctx).doesNotHaveBean(AccountPublicJwksReadService.class);
-                  assertThat(ctx).doesNotHaveBean(AccountPublicJwksReadGrpcService.class);
-                }
-                assertThat(ctx).doesNotHaveBean(AccountGameplayDelegationRedisClient.class);
-                assertThat(construction.constructed()).hasSize(1);
-                verifyNoInteractions(signers, publications);
-              });
+          .run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            assertThat(ctx).hasSingleBean(AccountProtectedJwksSourceConfiguration.class);
+            assertThat(ctx).hasSingleBean(AccountJwtJwksApiBinding.class);
+            assertThat(ctx).hasSingleBean(AccountJwtJwksConfigMapClient.class);
+            assertThat(ctx).hasSingleBean(AccountJwtJwksTrustedSource.class);
+            if (selection.equals("read") || selection.equals("all")) {
+              assertThat(ctx).hasSingleBean(AccountPublicJwksReadService.class);
+              assertThat(ctx).hasSingleBean(AccountPublicJwksReadGrpcService.class);
+            } else {
+              assertThat(ctx).doesNotHaveBean(AccountPublicJwksReadService.class);
+              assertThat(ctx).doesNotHaveBean(AccountPublicJwksReadGrpcService.class);
+            }
+            assertThat(ctx).doesNotHaveBean(AccountGameplayDelegationRedisClient.class);
+            assertThat(construction.constructed()).hasSize(1);
+            verifyNoInteractions(signers, publications);
+          });
     }
   }
 

@@ -52,19 +52,17 @@ class CanonicalGameplayRosterRecoveryServiceTest {
             UUID.fromString(owner.getTargetFenceUuid()),
             null);
     when(ownerClient.getCanonicalGameplayRosterReference(request.getOriginalSelection()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return owner;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return owner;
+        });
     when(repository.closeAdmission(request, owner, policy))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
-              return response;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
+          return response;
+        });
     var service =
         new CanonicalGameplayRosterRecoveryService(
             repository, ownerClient, localTransactions(), policy);

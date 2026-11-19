@@ -777,46 +777,45 @@ class ServedEnvironmentProbeTest {
 
   private static CompletableFuture<String> serveBridge(
       SSLServerSocket server, BridgeResponse response) {
-    return CompletableFuture.supplyAsync(
-        () -> {
-          try (SSLSocket peer = (SSLSocket) server.accept()) {
-            peer.startHandshake();
-            String request = readRequest(peer.getInputStream());
-            if (response == BridgeResponse.NO_RESPONSE) {
-              return request;
-            }
-            String nonce = requestHeader(request, "Sec-WebSocket-Key");
-            String accept =
-                response == BridgeResponse.MALFORMED_ACCEPT
-                    ? "not-the-request-accept"
-                    : websocketAccept(nonce);
-            StringBuilder payload =
-                new StringBuilder()
-                    .append(
-                        response == BridgeResponse.BAD_STATUS
-                            ? "HTTP/1.1 200 OK"
-                            : response == BridgeResponse.FORBIDDEN
-                                ? "HTTP/1.1 403 Forbidden"
-                                : "HTTP/1.1 101 Switching Protocols")
-                    .append("\r\n");
-            if (response != BridgeResponse.MISSING_UPGRADE) {
-              payload.append("Upgrade: websocket\r\n");
-            }
-            if (response != BridgeResponse.MISSING_CONNECTION) {
-              payload.append("Connection: Upgrade\r\n");
-            }
-            if (response != BridgeResponse.MISSING_ACCEPT) {
-              payload.append("Sec-WebSocket-Accept: ").append(accept).append("\r\n");
-            }
-            payload.append("\r\n");
-            OutputStream output = peer.getOutputStream();
-            output.write(payload.toString().getBytes(StandardCharsets.ISO_8859_1));
-            output.flush();
-            return request;
-          } catch (Exception exception) {
-            throw new IllegalStateException(exception);
-          }
-        });
+    return CompletableFuture.supplyAsync(() -> {
+      try (SSLSocket peer = (SSLSocket) server.accept()) {
+        peer.startHandshake();
+        String request = readRequest(peer.getInputStream());
+        if (response == BridgeResponse.NO_RESPONSE) {
+          return request;
+        }
+        String nonce = requestHeader(request, "Sec-WebSocket-Key");
+        String accept =
+            response == BridgeResponse.MALFORMED_ACCEPT
+                ? "not-the-request-accept"
+                : websocketAccept(nonce);
+        StringBuilder payload =
+            new StringBuilder()
+                .append(
+                    response == BridgeResponse.BAD_STATUS
+                        ? "HTTP/1.1 200 OK"
+                        : response == BridgeResponse.FORBIDDEN
+                            ? "HTTP/1.1 403 Forbidden"
+                            : "HTTP/1.1 101 Switching Protocols")
+                .append("\r\n");
+        if (response != BridgeResponse.MISSING_UPGRADE) {
+          payload.append("Upgrade: websocket\r\n");
+        }
+        if (response != BridgeResponse.MISSING_CONNECTION) {
+          payload.append("Connection: Upgrade\r\n");
+        }
+        if (response != BridgeResponse.MISSING_ACCEPT) {
+          payload.append("Sec-WebSocket-Accept: ").append(accept).append("\r\n");
+        }
+        payload.append("\r\n");
+        OutputStream output = peer.getOutputStream();
+        output.write(payload.toString().getBytes(StandardCharsets.ISO_8859_1));
+        output.flush();
+        return request;
+      } catch (Exception exception) {
+        throw new IllegalStateException(exception);
+      }
+    });
   }
 
   private static String readRequest(InputStream input) throws IOException {
@@ -884,14 +883,13 @@ class ServedEnvironmentProbeTest {
   }
 
   private static CompletableFuture<Void> acceptOne(SSLServerSocket server) {
-    return CompletableFuture.runAsync(
-        () -> {
-          try (SSLSocket peer = (SSLSocket) server.accept()) {
-            peer.startHandshake();
-          } catch (Exception exception) {
-            throw new IllegalStateException(exception);
-          }
-        });
+    return CompletableFuture.runAsync(() -> {
+      try (SSLSocket peer = (SSLSocket) server.accept()) {
+        peer.startHandshake();
+      } catch (Exception exception) {
+        throw new IllegalStateException(exception);
+      }
+    });
   }
 
   private static EnvironmentIdentityPlan withConsumers(

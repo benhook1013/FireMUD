@@ -105,10 +105,9 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
   void anotherDataSourceIsRejectedBeforeAnyConnection() throws Exception {
     var fixture = new Fixture();
     var other = mock(DataSource.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(other)
-                    .confirm(fixture.acknowledgement))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(other)
+                .confirm(fixture.acknowledgement))
         .hasMessageContaining("Fresh owned");
     verifyNoInteractions(other);
   }
@@ -537,29 +536,26 @@ class AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest {
             assertThat(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
                 .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
             when(repository.create(acknowledgement))
-                .thenAnswer(
-                    ignored -> {
-                      if (creationFault == null)
-                        return new AccountGameplayAdmissionOriginalAckReceiptRepository.Creation(
-                            receipt, inserted);
-                      AccountGameplayAdmissionOriginalAckReceipt value =
-                          switch (creationFault) {
-                            case "failure" ->
-                                throw new IllegalStateException("creation unavailable");
-                            case "null" -> null;
-                            case "decision" -> receipt(evidence, UUID.randomUUID());
-                            case "evidence" -> {
-                              var carrier = new java.util.LinkedHashMap<>(evidence.carrier());
-                              carrier.put("requestId", UUID.randomUUID().toString());
-                              yield receipt(
-                                  AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier),
-                                  decision);
-                            }
-                            default -> throw new IllegalArgumentException(creationFault);
-                          };
-                      return new AccountGameplayAdmissionOriginalAckReceiptRepository.Creation(
-                          value, inserted);
-                    });
+                .thenAnswer(ignored -> {
+                  if (creationFault == null)
+                    return new AccountGameplayAdmissionOriginalAckReceiptRepository.Creation(
+                        receipt, inserted);
+                  AccountGameplayAdmissionOriginalAckReceipt value =
+                      switch (creationFault) {
+                        case "failure" -> throw new IllegalStateException("creation unavailable");
+                        case "null" -> null;
+                        case "decision" -> receipt(evidence, UUID.randomUUID());
+                        case "evidence" -> {
+                          var carrier = new java.util.LinkedHashMap<>(evidence.carrier());
+                          carrier.put("requestId", UUID.randomUUID().toString());
+                          yield receipt(
+                              AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier), decision);
+                        }
+                        default -> throw new IllegalArgumentException(creationFault);
+                      };
+                  return new AccountGameplayAdmissionOriginalAckReceiptRepository.Creation(
+                      value, inserted);
+                });
             when(repository.readExact(evidence, decision)).thenAnswer(ignored -> readResult());
             when(repository.readDurably(evidence, decision)).thenAnswer(ignored -> readResult());
             when(repository.captureHistorical(evidence, decision)).thenReturn(pending);

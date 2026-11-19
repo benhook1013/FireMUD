@@ -71,12 +71,11 @@ class ChatServiceImplTest {
             props);
     service.init();
     when(repository.save(any(ChatMessage.class)))
-        .thenAnswer(
-            inv -> {
-              ChatMessage m = inv.getArgument(0);
-              m.setId(1L);
-              return m;
-            });
+        .thenAnswer(inv -> {
+          ChatMessage m = inv.getArgument(0);
+          m.setId(1L);
+          return m;
+        });
   }
 
   @Test

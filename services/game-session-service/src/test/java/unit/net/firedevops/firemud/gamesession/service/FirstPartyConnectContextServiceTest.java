@@ -164,17 +164,12 @@ class FirstPartyConnectContextServiceTest {
 
   private static void assertOnlyFixedFailureMetricTags(SimpleMeterRegistry registry) {
     assertThat(registry.getMeters())
-        .allSatisfy(
-            meter -> {
-              assertThat(meter.getId().getName())
-                  .isEqualTo("gamesession.first_party_connect_context.parse.failures");
-              assertThat(meter.getId().getTags()).hasSize(1);
-              assertThat(meter.getId().getTag("reason"))
-                  .isIn(
-                      "key_unavailable",
-                      "invalid_envelope",
-                      "owner_unavailable",
-                      "target_mismatch");
-            });
+        .allSatisfy(meter -> {
+          assertThat(meter.getId().getName())
+              .isEqualTo("gamesession.first_party_connect_context.parse.failures");
+          assertThat(meter.getId().getTags()).hasSize(1);
+          assertThat(meter.getId().getTag("reason"))
+              .isIn("key_unavailable", "invalid_envelope", "owner_unavailable", "target_mismatch");
+        });
   }
 }

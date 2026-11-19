@@ -83,32 +83,29 @@ class GameSessionCurrentPrivatePlaytestLifecycleReadClientTest {
   @Test
   void changedCorrelationMalformedAndOverLimitResponsesFailClosed() throws Exception {
     try (var transport = new CurrentPrivatePlaytestReadTransportFixture(pki, directory, "gs")) {
-      transport.respond(
-          request ->
-              CurrentPrivatePlaytestLifecycleReadGrpcCodec.toResponse(
-                  new CurrentPrivatePlaytestLifecycleReadGrpcCodec.Request(
-                      UUID.randomUUID(), request.scope()),
-                  Optional.empty()));
+      transport.respond(request ->
+          CurrentPrivatePlaytestLifecycleReadGrpcCodec.toResponse(
+              new CurrentPrivatePlaytestLifecycleReadGrpcCodec.Request(
+                  UUID.randomUUID(), request.scope()),
+              Optional.empty()));
       assertThatThrownBy(() -> transport.client().read(scope()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("invalid");
-      transport.respond(
-          request ->
-              ReadCurrentPrivatePlaytestLifecycleResponse.newBuilder()
-                  .setCanonicalEvidence(ByteString.copyFromUtf8("{}"))
-                  .build());
+      transport.respond(request ->
+          ReadCurrentPrivatePlaytestLifecycleResponse.newBuilder()
+              .setCanonicalEvidence(ByteString.copyFromUtf8("{}"))
+              .build());
       assertThatThrownBy(() -> transport.client().read(scope()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("invalid");
-      transport.respond(
-          request ->
-              ReadCurrentPrivatePlaytestLifecycleResponse.newBuilder()
-                  .setCanonicalEvidence(
-                      ByteString.copyFrom(
-                          new byte
-                              [CurrentPrivatePlaytestLifecycleReadGrpcCodec.MAX_RESPONSE_WIRE_BYTES
-                                  + 1]))
-                  .build());
+      transport.respond(request ->
+          ReadCurrentPrivatePlaytestLifecycleResponse.newBuilder()
+              .setCanonicalEvidence(
+                  ByteString.copyFrom(
+                      new byte
+                          [CurrentPrivatePlaytestLifecycleReadGrpcCodec.MAX_RESPONSE_WIRE_BYTES
+                              + 1]))
+              .build());
       assertThatThrownBy(() -> transport.client().read(scope()))
           .isInstanceOfSatisfying(
               io.grpc.StatusRuntimeException.class,
@@ -134,11 +131,10 @@ class GameSessionCurrentPrivatePlaytestLifecycleReadClientTest {
       assertThatThrownBy(() -> transport.client().read(scope()))
           .isInstanceOf(IllegalStateException.class);
       SessionContext.clear();
-      assertThatThrownBy(
-              () ->
-                  transport
-                      .client()
-                      .read(new Scope("another-namespace", UUID.randomUUID(), "world", "realm")))
+      assertThatThrownBy(() ->
+              transport
+                  .client()
+                  .read(new Scope("another-namespace", UUID.randomUUID(), "world", "realm")))
           .isInstanceOf(IllegalArgumentException.class);
       assertThat(transport.calls()).isZero();
     }
@@ -148,13 +144,12 @@ class GameSessionCurrentPrivatePlaytestLifecycleReadClientTest {
   void plaintextCompositionIsUnavailable() {
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GameSessionCurrentPrivatePlaytestLifecycleReadClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    new GrpcChannelFactory(),
-                    CurrentPrivatePlaytestReadTransportFixture.NAMESPACE))
+    assertThatThrownBy(() ->
+            new GameSessionCurrentPrivatePlaytestLifecycleReadClient(
+                new ServiceEndpointsProperties(),
+                plaintext,
+                new GrpcChannelFactory(),
+                CurrentPrivatePlaytestReadTransportFixture.NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
   }

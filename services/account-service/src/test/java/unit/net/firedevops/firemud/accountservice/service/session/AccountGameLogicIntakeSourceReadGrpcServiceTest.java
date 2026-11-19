@@ -64,11 +64,10 @@ class AccountGameLogicIntakeSourceReadGrpcServiceTest {
     var wrongFirst = new Collector();
     var wrongLast = new Collector();
     peer("test", "game-design-service")
-        .run(
-            () -> {
-              service.readSourceScope(finalized, wrongFirst);
-              service.readFinalizedIntake(prelim, wrongLast);
-            });
+        .run(() -> {
+          service.readSourceScope(finalized, wrongFirst);
+          service.readFinalizedIntake(prelim, wrongLast);
+        });
     assertThat(wrongFirst.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
     assertThat(wrongLast.error).isEqualTo(Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(owner);
@@ -79,11 +78,10 @@ class AccountGameLogicIntakeSourceReadGrpcServiceTest {
     var first = new Collector();
     var last = new Collector();
     peer("test", "game-design-service")
-        .run(
-            () -> {
-              service.readSourceScope(prelim, first);
-              service.readFinalizedIntake(finalized, last);
-            });
+        .run(() -> {
+          service.readSourceScope(prelim, first);
+          service.readFinalizedIntake(finalized, last);
+        });
     assertThat(first.response.getRequest()).isEqualTo(prelim);
     assertThat(last.response.getRequest()).isEqualTo(finalized);
     assertThat(first.response.getPermitted()).isTrue();

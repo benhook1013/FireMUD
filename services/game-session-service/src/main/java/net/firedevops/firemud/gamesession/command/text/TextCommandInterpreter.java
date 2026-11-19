@@ -297,9 +297,8 @@ public class TextCommandInterpreter {
     TextCommandDefinition definition =
         activeRegistry
             .findDefinition(command.commandId())
-            .orElseGet(
-                () ->
-                    TextCommandDefinition.extensionDefinition(command.type(), command.commandId()));
+            .orElseGet(() ->
+                TextCommandDefinition.extensionDefinition(command.type(), command.commandId()));
     if (command.type() == TextCommandType.NOOP) {
       return withResolvedCommand(
           new TextCommandInterpretationResult(CommandEnqueueResult.success()), command, definition);
@@ -378,28 +377,26 @@ public class TextCommandInterpreter {
       case NEVER -> result;
       case WHEN_LOGGED_IN ->
           maybeContext
-              .map(
-                  context ->
-                      new TextCommandInterpretationResult(
-                          result.commandResult(),
-                          appendPrompt(context, result.outputs()),
-                          result.reconnectRedrawRecommended(),
-                          result.meaningfulGameplayActivity(),
-                          result.resolvedCommand(),
-                          result.resolvedMetadata()))
+              .map(context ->
+                  new TextCommandInterpretationResult(
+                      result.commandResult(),
+                      appendPrompt(context, result.outputs()),
+                      result.reconnectRedrawRecommended(),
+                      result.meaningfulGameplayActivity(),
+                      result.resolvedCommand(),
+                      result.resolvedMetadata()))
               .orElse(result);
       case WHEN_GAMEPLAY ->
           maybeContext
               .filter(SessionContext::hasGameplayRegionBinding)
-              .map(
-                  context ->
-                      new TextCommandInterpretationResult(
-                          result.commandResult(),
-                          appendPrompt(context, result.outputs()),
-                          result.reconnectRedrawRecommended(),
-                          result.meaningfulGameplayActivity(),
-                          result.resolvedCommand(),
-                          result.resolvedMetadata()))
+              .map(context ->
+                  new TextCommandInterpretationResult(
+                      result.commandResult(),
+                      appendPrompt(context, result.outputs()),
+                      result.reconnectRedrawRecommended(),
+                      result.meaningfulGameplayActivity(),
+                      result.resolvedCommand(),
+                      result.resolvedMetadata()))
               .orElse(result);
     };
   }
@@ -472,10 +469,9 @@ public class TextCommandInterpreter {
     }
     try {
       return maybeContext
-          .map(
-              context ->
-                  commandCapabilitiesSettingsResolver.isEnabled(
-                      definition.capability(), context.tenantId(), context.gameInstanceId()))
+          .map(context ->
+              commandCapabilitiesSettingsResolver.isEnabled(
+                  definition.capability(), context.tenantId(), context.gameInstanceId()))
           .orElse(true);
     } catch (RuntimeException ex) {
       LOG.warn(
@@ -515,12 +511,11 @@ public class TextCommandInterpreter {
       List<PlayerOutput> outputs) {
     return promptComposer
         .compose(context)
-        .map(
-            prompt -> {
-              java.util.ArrayList<PlayerOutput> combined = new java.util.ArrayList<>(outputs);
-              combined.add(prompt);
-              return List.copyOf(combined);
-            })
+        .map(prompt -> {
+          java.util.ArrayList<PlayerOutput> combined = new java.util.ArrayList<>(outputs);
+          combined.add(prompt);
+          return List.copyOf(combined);
+        })
         .orElse(outputs);
   }
 

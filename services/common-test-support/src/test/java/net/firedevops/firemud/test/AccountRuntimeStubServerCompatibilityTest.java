@@ -80,10 +80,9 @@ class AccountRuntimeStubServerCompatibilityTest {
           ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
       try {
         var stub = AccountServiceGrpc.newBlockingStub(channel);
-        assertThatThrownBy(
-                () ->
-                    stub.commitTenantCapacityAdmission(
-                        CommitTenantCapacityAdmissionRequest.getDefaultInstance()))
+        assertThatThrownBy(() ->
+                stub.commitTenantCapacityAdmission(
+                    CommitTenantCapacityAdmissionRequest.getDefaultInstance()))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->

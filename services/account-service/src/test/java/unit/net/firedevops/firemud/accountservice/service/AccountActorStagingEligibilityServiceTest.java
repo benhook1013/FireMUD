@@ -78,35 +78,32 @@ class AccountActorStagingEligibilityServiceTest {
 
   @Test
   void rejectsUnsupportedScopeAndPurposeBeforeReadingOwnerSources() {
-    assertThatThrownBy(
-            () ->
-                service.resolve(
-                    2,
-                    NAMESPACE,
-                    REQUEST_UUID,
-                    ACCOUNT_UUID,
-                    TENANT_UUID,
-                    Purpose.PUBLIC_PRODUCTION_STAGING_ONLY))
+    assertThatThrownBy(() ->
+            service.resolve(
+                2,
+                NAMESPACE,
+                REQUEST_UUID,
+                ACCOUNT_UUID,
+                TENANT_UUID,
+                Purpose.PUBLIC_PRODUCTION_STAGING_ONLY))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                service.resolve(
-                    1,
-                    "other",
-                    REQUEST_UUID,
-                    ACCOUNT_UUID,
-                    TENANT_UUID,
-                    Purpose.PUBLIC_PRODUCTION_STAGING_ONLY))
+    assertThatThrownBy(() ->
+            service.resolve(
+                1,
+                "other",
+                REQUEST_UUID,
+                ACCOUNT_UUID,
+                TENANT_UUID,
+                Purpose.PUBLIC_PRODUCTION_STAGING_ONLY))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                service.resolve(
-                    1,
-                    NAMESPACE,
-                    new UUID(0L, 0L),
-                    ACCOUNT_UUID,
-                    TENANT_UUID,
-                    Purpose.PUBLIC_PRODUCTION_STAGING_ONLY))
+    assertThatThrownBy(() ->
+            service.resolve(
+                1,
+                NAMESPACE,
+                new UUID(0L, 0L),
+                ACCOUNT_UUID,
+                TENANT_UUID,
+                Purpose.PUBLIC_PRODUCTION_STAGING_ONLY))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(repository);
   }

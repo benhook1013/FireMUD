@@ -164,17 +164,14 @@ public final class IsolatedWorldPublicationInventoryFixtures {
                 0,
                 0,
                 commit.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-                    .map(
-                        unit ->
-                            new AppliedEpoch(
-                                unit.aggregateType(),
-                                unit.aggregateId(),
-                                unit.scopeType(),
-                                unit.scopeId(),
-                                unit.expectedEpoch(),
-                                new BigInteger(unit.expectedEpoch())
-                                    .add(BigInteger.ONE)
-                                    .toString()))
+                    .map(unit ->
+                        new AppliedEpoch(
+                            unit.aggregateType(),
+                            unit.aggregateId(),
+                            unit.scopeType(),
+                            unit.scopeId(),
+                            unit.expectedEpoch(),
+                            new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
                     .toList(),
                 inboundClosure),
             List.of(

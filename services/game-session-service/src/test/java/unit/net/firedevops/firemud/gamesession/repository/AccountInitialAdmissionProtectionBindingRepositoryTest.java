@@ -97,14 +97,13 @@ public class AccountInitialAdmissionProtectionBindingRepositoryTest {
     changes.put("intent_original_request", "another-original");
     changes.put("original_request", "another-original");
     changes.put("commit_proof_digest", "sha256:" + "f".repeat(64));
-    changes.forEach(
-        (field, replacement) -> {
-          var values = fields(p, "COMMITTED");
-          values.put(field, replacement);
-          assertThatThrownBy(() -> repository(values).read(NAMESPACE, OPERATION))
-              .as(field)
-              .isInstanceOfAny(IllegalStateException.class, IllegalArgumentException.class);
-        });
+    changes.forEach((field, replacement) -> {
+      var values = fields(p, "COMMITTED");
+      values.put(field, replacement);
+      assertThatThrownBy(() -> repository(values).read(NAMESPACE, OPERATION))
+          .as(field)
+          .isInstanceOfAny(IllegalStateException.class, IllegalArgumentException.class);
+    });
   }
 
   @Test

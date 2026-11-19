@@ -55,11 +55,10 @@ public final class AccountGameLogicIntakeSourceReadService {
     var active = registry.readActive(current.tokenHash());
     if (!current.registryDigest().equals(DraftAuthorizationFenceBinding.digest(active)))
       throw Status.FAILED_PRECONDITION.asRuntimeException();
-    return transaction.execute(
-        ignored -> {
-          repository.readSourceScope(scope, current, clock.instant());
-          return scope;
-        });
+    return transaction.execute(ignored -> {
+      repository.readSourceScope(scope, current, clock.instant());
+      return scope;
+    });
   }
 
   public GameLogicIntakeAuthorizationBinding readFinalizedIntake(
@@ -68,11 +67,10 @@ public final class AccountGameLogicIntakeSourceReadService {
     requireReader(intendedReader, purpose, "game-logic-service");
     Objects.requireNonNull(authorization);
     outsideSql();
-    return transaction.execute(
-        ignored -> {
-          repository.readFinalizedSourceScope(authorization, namespace);
-          return authorization;
-        });
+    return transaction.execute(ignored -> {
+      repository.readFinalizedSourceScope(authorization, namespace);
+      return authorization;
+    });
   }
 
   private void requireReader(String reader, String purpose, String service) {

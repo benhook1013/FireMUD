@@ -19,18 +19,17 @@ class RedisDisconnectDeduplicationServiceTest {
     ConcurrentMap<String, Long> store = new ConcurrentHashMap<>();
     StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
     when(redisTemplate.execute(any(), anyList(), any(), any()))
-        .thenAnswer(
-            invocation -> {
-              List<String> keys = invocation.getArgument(1);
-              String key = keys.get(0);
-              long sequence = Long.parseLong(invocation.getArgument(2));
-              Long current = store.get(key);
-              if (current == null || sequence > current) {
-                store.put(key, sequence);
-                return 1L;
-              }
-              return 0L;
-            });
+        .thenAnswer(invocation -> {
+          List<String> keys = invocation.getArgument(1);
+          String key = keys.get(0);
+          long sequence = Long.parseLong(invocation.getArgument(2));
+          Long current = store.get(key);
+          if (current == null || sequence > current) {
+            store.put(key, sequence);
+            return 1L;
+          }
+          return 0L;
+        });
 
     RedisDisconnectDeduplicationService service =
         new RedisDisconnectDeduplicationService(redisTemplate, 1500L);

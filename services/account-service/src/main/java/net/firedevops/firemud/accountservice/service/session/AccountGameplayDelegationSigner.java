@@ -180,26 +180,25 @@ public final class AccountGameplayDelegationSigner {
     PendingCandidateCredential openedCandidate = null;
     try {
       InvocationIdentity acquired =
-          accountTransaction.execute(
-              status -> {
-                CurrentSigner signer = currentCommittedSigner();
-                PendingSigningIdentity pending = requireCurrentPendingIdentity(requestId);
-                requireUnexpired(pending);
-                PendingCandidateCredential resumed =
-                    pending.persistedCandidate().isPresent()
-                        ? responseEnvelopeService.openPendingCandidate(
-                            requestId,
-                            new CallerIdentity(
-                                pending.identity().callerWorkload(),
-                                pending.identity().callerContextId()))
-                        : null;
-                if (resumed != null) {
-                  PendingCandidateCredential replaced = acquiredCandidate.getAndSet(resumed);
-                  if (replaced != null) replaced.close();
-                  requireOpenedCandidate(pending, resumed);
-                }
-                return new InvocationIdentity(signer, pending, resumed);
-              });
+          accountTransaction.execute(status -> {
+            CurrentSigner signer = currentCommittedSigner();
+            PendingSigningIdentity pending = requireCurrentPendingIdentity(requestId);
+            requireUnexpired(pending);
+            PendingCandidateCredential resumed =
+                pending.persistedCandidate().isPresent()
+                    ? responseEnvelopeService.openPendingCandidate(
+                        requestId,
+                        new CallerIdentity(
+                            pending.identity().callerWorkload(),
+                            pending.identity().callerContextId()))
+                    : null;
+            if (resumed != null) {
+              PendingCandidateCredential replaced = acquiredCandidate.getAndSet(resumed);
+              if (replaced != null) replaced.close();
+              requireOpenedCandidate(pending, resumed);
+            }
+            return new InvocationIdentity(signer, pending, resumed);
+          });
       openedCandidate = acquiredCandidate.getAndSet(null);
       if (acquired == null) {
         throw unavailable();
@@ -286,18 +285,17 @@ public final class AccountGameplayDelegationSigner {
       AccountMountedJwtSignerBundle.SignedDelegationDigest signedDigest = digest;
       VerifiedCandidateIdentity verifiedCandidateIdentity = candidateIdentity;
       CandidateOutcome outcome =
-          accountTransaction.execute(
-              status ->
-                  initial.resumedCandidate() == null
-                      ? bindAndSealWithinTransaction(
-                          requestId,
-                          compactJwt,
-                          initial,
-                          verifiedCandidateIdentity,
-                          signedDigest,
-                          sourcePin)
-                      : resumeAndReadbackWithinTransaction(
-                          requestId, initial, verifiedCandidateIdentity, sourcePin));
+          accountTransaction.execute(status ->
+              initial.resumedCandidate() == null
+                  ? bindAndSealWithinTransaction(
+                      requestId,
+                      compactJwt,
+                      initial,
+                      verifiedCandidateIdentity,
+                      signedDigest,
+                      sourcePin)
+                  : resumeAndReadbackWithinTransaction(
+                      requestId, initial, verifiedCandidateIdentity, sourcePin));
       if (outcome == null) {
         throw unavailable();
       }
@@ -680,17 +678,15 @@ public final class AccountGameplayDelegationSigner {
         || !original.targetPublicKeyFingerprint().matches("[0-9a-f]{64}")
         || original
             .durableActive()
-            .filter(
-                active ->
-                    active.generation().equals(committed.signerGeneration())
-                        && active.kid().equals(committed.signerKid()))
+            .filter(active ->
+                active.generation().equals(committed.signerGeneration())
+                    && active.kid().equals(committed.signerKid()))
             .isEmpty()
         || original
             .publishedActive()
-            .filter(
-                active ->
-                    active.generation().equals(committed.signerGeneration())
-                        && active.kid().equals(committed.signerKid()))
+            .filter(active ->
+                active.generation().equals(committed.signerGeneration())
+                    && active.kid().equals(committed.signerKid()))
             .isEmpty()) {
       throw unavailable();
     }
@@ -1514,17 +1510,15 @@ public final class AccountGameplayDelegationSigner {
               .equals(signerCorrespondence.privatePromotionGenerationOperationId())
           || signerCorrespondence
               .durableActive()
-              .filter(
-                  active ->
-                      active.generation().equals(signerCorrespondence.targetGeneration())
-                          && active.kid().equals(signerCorrespondence.targetKid()))
+              .filter(active ->
+                  active.generation().equals(signerCorrespondence.targetGeneration())
+                      && active.kid().equals(signerCorrespondence.targetKid()))
               .isEmpty()
           || signerCorrespondence
               .publishedActive()
-              .filter(
-                  active ->
-                      active.generation().equals(signerCorrespondence.targetGeneration())
-                          && active.kid().equals(signerCorrespondence.targetKid()))
+              .filter(active ->
+                  active.generation().equals(signerCorrespondence.targetGeneration())
+                      && active.kid().equals(signerCorrespondence.targetKid()))
               .isEmpty()
           || signerCorrespondence
               .promotionPrivateObservedResourceVersion()

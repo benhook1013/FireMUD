@@ -46,21 +46,20 @@ public class DatabaseGameplayCommandRecoveryService implements GameplayCommandRe
   @EventListener(ApplicationReadyEvent.class)
   public void convergeAcceptedButUnstagedCommandsOnStartup() {
     Instant acceptedBefore = Instant.now();
-    gameplayCommandRecoveryExecutor.execute(
-        () -> {
-          try {
-            int recovered = convergeAcceptedButUnstagedCommands(acceptedBefore);
-            if (recovered > 0) {
-              logger.warn(
-                  "Re-enqueued {} accepted gameplay command(s) that were not staged before startup",
-                  recovered);
-            }
-          } catch (RuntimeException ex) {
-            logger.error(
-                "Unable to complete accepted gameplay command startup recovery; remaining commands stay retryable",
-                ex);
-          }
-        });
+    gameplayCommandRecoveryExecutor.execute(() -> {
+      try {
+        int recovered = convergeAcceptedButUnstagedCommands(acceptedBefore);
+        if (recovered > 0) {
+          logger.warn(
+              "Re-enqueued {} accepted gameplay command(s) that were not staged before startup",
+              recovered);
+        }
+      } catch (RuntimeException ex) {
+        logger.error(
+            "Unable to complete accepted gameplay command startup recovery; remaining commands stay retryable",
+            ex);
+      }
+    });
   }
 
   @Override

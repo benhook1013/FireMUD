@@ -107,144 +107,139 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
 
   @Override
   public void publishCommandEvent(SessionContext context, GameplayCommand command) {
-    submitBestEffort(
-        () -> {
-          PublishingScope scope = resolvePublishingScope(context, command);
-          if (scope == null) {
-            return;
-          }
-          TriggerScriptEventRequest request =
-              TriggerScriptEventRequestFactory.builder(
-                      new TriggerScriptEventRequestFactory.CommonFields(
-                          scope.tenantId(),
-                          scope.gameInstanceId(),
-                          scope.regionId(),
-                          scope.regionEpoch(),
-                          scope.entityId(),
-                          "onCommand",
-                          "v1",
-                          scope.scriptPatchVersion(),
-                          scope.scriptPatchBaseVersionId(),
-                          scope.scriptPinEpoch(),
-                          scope.scriptPinControlPlaneRequestId(),
-                          command.getCommandId(),
-                          false,
-                          TriggerMode.TRIGGER_MODE_NORMAL,
-                          scope.playableStateScope(),
-                          "game-session:onCommand:"
-                              + scope.gameInstanceId()
-                              + ":"
-                              + scope.regionEpoch()
-                              + ":"
-                              + command.getCommandId(),
-                          commandPayload(context, command)),
-                      scope.routingBundle())
-                  .build();
-          logIfNotAdmitted(
-              client.triggerScriptEvent(request),
-              "onCommand",
-              scope.gameInstanceId(),
-              command.getCommandId());
-        });
+    submitBestEffort(() -> {
+      PublishingScope scope = resolvePublishingScope(context, command);
+      if (scope == null) {
+        return;
+      }
+      TriggerScriptEventRequest request =
+          TriggerScriptEventRequestFactory.builder(
+                  new TriggerScriptEventRequestFactory.CommonFields(
+                      scope.tenantId(),
+                      scope.gameInstanceId(),
+                      scope.regionId(),
+                      scope.regionEpoch(),
+                      scope.entityId(),
+                      "onCommand",
+                      "v1",
+                      scope.scriptPatchVersion(),
+                      scope.scriptPatchBaseVersionId(),
+                      scope.scriptPinEpoch(),
+                      scope.scriptPinControlPlaneRequestId(),
+                      command.getCommandId(),
+                      false,
+                      TriggerMode.TRIGGER_MODE_NORMAL,
+                      scope.playableStateScope(),
+                      "game-session:onCommand:"
+                          + scope.gameInstanceId()
+                          + ":"
+                          + scope.regionEpoch()
+                          + ":"
+                          + command.getCommandId(),
+                      commandPayload(context, command)),
+                  scope.routingBundle())
+              .build();
+      logIfNotAdmitted(
+          client.triggerScriptEvent(request),
+          "onCommand",
+          scope.gameInstanceId(),
+          command.getCommandId());
+    });
   }
 
   @Override
   public void publishSpawnEvent(SessionContext context, String spawnReason, String scriptEventId) {
-    submitBestEffort(
-        () -> {
-          if (!StringUtils.hasText(scriptEventId)) {
-            return;
-          }
-          PublishingScope scope = resolvePublishingScope(context);
-          if (scope == null) {
-            return;
-          }
-          publishLifecycleEvent(
-              scope,
-              "onSpawn",
-              scriptEventId,
-              "game-session:onSpawn:"
-                  + scope.gameInstanceId()
-                  + ":"
-                  + scope.regionEpoch()
-                  + ":"
-                  + scriptEventId,
-              spawnPayload(spawnReason));
-        });
+    submitBestEffort(() -> {
+      if (!StringUtils.hasText(scriptEventId)) {
+        return;
+      }
+      PublishingScope scope = resolvePublishingScope(context);
+      if (scope == null) {
+        return;
+      }
+      publishLifecycleEvent(
+          scope,
+          "onSpawn",
+          scriptEventId,
+          "game-session:onSpawn:"
+              + scope.gameInstanceId()
+              + ":"
+              + scope.regionEpoch()
+              + ":"
+              + scriptEventId,
+          spawnPayload(spawnReason));
+    });
   }
 
   @Override
   public void publishRegionTransitionEvents(
       SessionContext previousContext, SessionContext currentContext, String effectId) {
-    submitBestEffort(
-        () -> {
-          if (previousContext == null || currentContext == null || !StringUtils.hasText(effectId)) {
-            return;
-          }
-          PublishingScope scope = resolvePublishingScope(currentContext);
-          if (scope == null) {
-            return;
-          }
-          String previousRoomId = canonicalPayloadRoomId(previousContext.roomInstanceId());
-          String currentRoomId = canonicalPayloadRoomId(currentContext.roomInstanceId());
-          if (!StringUtils.hasText(previousRoomId)
-              || !StringUtils.hasText(currentRoomId)
-              || previousRoomId.equals(currentRoomId)) {
-            return;
-          }
-          String payload = regionTransitionPayload(previousRoomId, currentRoomId);
-          publishRegionTransitionEvent(scope, effectId, "leave", "onLeaveRegion", payload);
-          publishRegionTransitionEvent(scope, effectId, "enter", "onEnterRegion", payload);
-        });
+    submitBestEffort(() -> {
+      if (previousContext == null || currentContext == null || !StringUtils.hasText(effectId)) {
+        return;
+      }
+      PublishingScope scope = resolvePublishingScope(currentContext);
+      if (scope == null) {
+        return;
+      }
+      String previousRoomId = canonicalPayloadRoomId(previousContext.roomInstanceId());
+      String currentRoomId = canonicalPayloadRoomId(currentContext.roomInstanceId());
+      if (!StringUtils.hasText(previousRoomId)
+          || !StringUtils.hasText(currentRoomId)
+          || previousRoomId.equals(currentRoomId)) {
+        return;
+      }
+      String payload = regionTransitionPayload(previousRoomId, currentRoomId);
+      publishRegionTransitionEvent(scope, effectId, "leave", "onLeaveRegion", payload);
+      publishRegionTransitionEvent(scope, effectId, "enter", "onEnterRegion", payload);
+    });
   }
 
   private void publishRegionTransitionEvent(
       PublishingScope scope, String effectId, String transition, String eventType, String payload) {
-    runBestEffort(
-        () ->
-            publishLifecycleEvent(
-                scope,
-                eventType,
-                effectId + ":" + transition,
-                "game-session:"
-                    + eventType
-                    + ":"
-                    + scope.gameInstanceId()
-                    + ":"
-                    + scope.regionEpoch()
-                    + ":"
-                    + effectId,
-                payload));
+    runBestEffort(() ->
+        publishLifecycleEvent(
+            scope,
+            eventType,
+            effectId + ":" + transition,
+            "game-session:"
+                + eventType
+                + ":"
+                + scope.gameInstanceId()
+                + ":"
+                + scope.regionEpoch()
+                + ":"
+                + effectId,
+            payload));
   }
 
   @Override
   public void publishRegionExitEvent(
       SessionContext context, String scriptEventId, String exitReason) {
-    submitBestEffort(
-        () -> {
-          if (context == null || !StringUtils.hasText(scriptEventId)) {
-            return;
-          }
-          PublishingScope scope = resolvePublishingScope(context);
-          if (scope == null) {
-            return;
-          }
-          String previousRoomId = canonicalPayloadRoomId(context.roomInstanceId());
-          if (!StringUtils.hasText(previousRoomId)) {
-            return;
-          }
-          publishLifecycleEvent(
-              scope,
-              "onLeaveRegion",
-              scriptEventId,
-              "game-session:onLeaveRegion:"
-                  + scope.gameInstanceId()
-                  + ":"
-                  + scope.regionEpoch()
-                  + ":"
-                  + scriptEventId,
-              regionExitPayload(previousRoomId, exitReason));
-        });
+    submitBestEffort(() -> {
+      if (context == null || !StringUtils.hasText(scriptEventId)) {
+        return;
+      }
+      PublishingScope scope = resolvePublishingScope(context);
+      if (scope == null) {
+        return;
+      }
+      String previousRoomId = canonicalPayloadRoomId(context.roomInstanceId());
+      if (!StringUtils.hasText(previousRoomId)) {
+        return;
+      }
+      publishLifecycleEvent(
+          scope,
+          "onLeaveRegion",
+          scriptEventId,
+          "game-session:onLeaveRegion:"
+              + scope.gameInstanceId()
+              + ":"
+              + scope.regionEpoch()
+              + ":"
+              + scriptEventId,
+          regionExitPayload(previousRoomId, exitReason));
+    });
   }
 
   private String commandPayload(SessionContext context, GameplayCommand command) {
@@ -264,14 +259,13 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         .ifPresent(
             alias -> payload.append(",\"commandAlias\":\"").append(escape(alias)).append("\""));
     resolveCommandMetadata(context, command)
-        .ifPresent(
-            metadata -> {
-              payload
-                  .append(",\"actionCategory\":\"")
-                  .append(metadata.actionCategory().name())
-                  .append("\",\"actionTags\":")
-                  .append(actionTagsJson(metadata.actionTags()));
-            });
+        .ifPresent(metadata -> {
+          payload
+              .append(",\"actionCategory\":\"")
+              .append(metadata.actionCategory().name())
+              .append("\",\"actionTags\":")
+              .append(actionTagsJson(metadata.actionTags()));
+        });
     return payload.append("}").toString();
   }
 
@@ -288,10 +282,9 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     }
     return textCommandMetadataResolver
         .resolve(command.getCommandName())
-        .or(
-            () ->
-                textCommandMetadataResolver.resolve(
-                    firstCommandToken(command.getCommandText()).orElse(null)));
+        .or(() ->
+            textCommandMetadataResolver.resolve(
+                firstCommandToken(command.getCommandText()).orElse(null)));
   }
 
   private Optional<String> resolveBuiltInCommandAlias(GameplayCommand command) {
@@ -500,13 +493,12 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       long tenantId, long gameInstanceId) {
     return runtimeRegionStatusRepository
         .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-        .map(
-            ownership ->
-                new PublishedRegionScope(
-                    StringUtils.hasText(ownership.getRegionId())
-                        ? ownership.getRegionId()
-                        : Long.toString(gameInstanceId),
-                    ownership.getRegionEpoch()));
+        .map(ownership ->
+            new PublishedRegionScope(
+                StringUtils.hasText(ownership.getRegionId())
+                    ? ownership.getRegionId()
+                    : Long.toString(gameInstanceId),
+                ownership.getRegionEpoch()));
   }
 
   private Optional<PublishedRegionScope> resolvePublishedRegionScope(GameplayCommand command) {

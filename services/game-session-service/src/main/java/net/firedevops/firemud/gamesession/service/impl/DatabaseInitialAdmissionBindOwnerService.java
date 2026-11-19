@@ -91,10 +91,9 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
         catalogRepository
             .findByTenantIdAndSelectors(
                 request.tenantId(), request.worldSlug(), request.realmSlug())
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "INITIAL_ADMISSION_CATALOG_NOT_FOUND: owner catalog row is missing"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "INITIAL_ADMISSION_CATALOG_NOT_FOUND: owner catalog row is missing"));
     attemptRepository.lockAttemptAndRealm(
         request.tenantId(), request.initialAdmissionRequestId(), catalog.realmId());
 
@@ -392,10 +391,9 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
     InitialAdmissionBindCatalog catalog =
         catalogRepository
             .findByTenantId(attempt.tenantId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "INITIAL_ADMISSION_CATALOG_MISSING: durable attempt lost its owner catalog"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "INITIAL_ADMISSION_CATALOG_MISSING: durable attempt lost its owner catalog"));
     if (!catalog.realmId().equals(attempt.realmId())
         || !catalog.playableStateNamespaceId().equals(attempt.playableStateNamespaceId())
         || catalog.catalogRevision() != attempt.catalogRevision()
@@ -430,10 +428,9 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
   private InitialAdmissionBindAttempt requireAttemptForUpdate(long tenantId, String requestId) {
     return attemptRepository
         .findByTenantAndRequestIdForUpdate(tenantId, requestId)
-        .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "INITIAL_ADMISSION_INTENT_NOT_FOUND: durable GS intent is required first"));
+        .orElseThrow(() ->
+            new IllegalStateException(
+                "INITIAL_ADMISSION_INTENT_NOT_FOUND: durable GS intent is required first"));
   }
 
   private void requireSameCatalog(
@@ -501,10 +498,9 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
     GameInstance gameInstance =
         gameInstanceRepository
             .findByTenantIdAndGameInstanceIdForUpdate(request.tenantId(), request.gameInstanceId())
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "GAME_INSTANCE_NOT_FOUND: initial admission target is not GS-owned"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "GAME_INSTANCE_NOT_FOUND: initial admission target is not GS-owned"));
     if (!Objects.equals(gameInstance.getGameTemplateId(), catalog.gameTemplateId())
         || !Objects.equals(gameInstance.getVersionId(), request.versionId())) {
       throw new IllegalArgumentException(

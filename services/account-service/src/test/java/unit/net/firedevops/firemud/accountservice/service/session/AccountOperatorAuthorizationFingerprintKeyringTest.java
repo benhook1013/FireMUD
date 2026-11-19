@@ -98,14 +98,13 @@ class AccountOperatorAuthorizationFingerprintKeyringTest {
 
     for (Snapshot snapshot : unavailableSnapshots) {
       AccountOperatorAuthorizationFingerprintKeyring keyring = keyring(snapshot);
-      assertThatThrownBy(
-              () ->
-                  keyring.matchesOriginal(
-                      ReferenceKind.HUMAN_OPERATOR,
-                      REFERENCE,
-                      original,
-                      REFERENCE_EXPIRY,
-                      RESPONSE_EXPIRY))
+      assertThatThrownBy(() ->
+              keyring.matchesOriginal(
+                  ReferenceKind.HUMAN_OPERATOR,
+                  REFERENCE,
+                  original,
+                  REFERENCE_EXPIRY,
+                  RESPONSE_EXPIRY))
           .isInstanceOf(KeyUnavailableException.class);
     }
   }
@@ -122,32 +121,28 @@ class AccountOperatorAuthorizationFingerprintKeyringTest {
             CLOCK,
             RETENTION_WINDOW);
 
-    assertThatThrownBy(
-            () ->
-                keyring.matchesOriginal(
-                    ReferenceKind.HUMAN_OPERATOR,
-                    REFERENCE,
-                    "arfp/v1/invalid/not-a-digest",
-                    REFERENCE_EXPIRY,
-                    RESPONSE_EXPIRY))
+    assertThatThrownBy(() ->
+            keyring.matchesOriginal(
+                ReferenceKind.HUMAN_OPERATOR,
+                REFERENCE,
+                "arfp/v1/invalid/not-a-digest",
+                REFERENCE_EXPIRY,
+                RESPONSE_EXPIRY))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(reads).hasValue(0);
   }
 
   @Test
   void rejectsAmbiguousKeySnapshotsAndMissingRetentionPolicy() {
-    assertThatThrownBy(
-            () ->
-                new Snapshot(
-                    new KeyMaterial("duplicate", key("active-secret")),
-                    List.of(
-                        new KeyMaterial(
-                            "duplicate", key("retained-secret"), NOW.plusSeconds(600)))))
+    assertThatThrownBy(() ->
+            new Snapshot(
+                new KeyMaterial("duplicate", key("active-secret")),
+                List.of(
+                    new KeyMaterial("duplicate", key("retained-secret"), NOW.plusSeconds(600)))))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountOperatorAuthorizationFingerprintKeyring(
-                    () -> snapshot("active", "active-secret", List.of()), CLOCK, Duration.ZERO))
+    assertThatThrownBy(() ->
+            new AccountOperatorAuthorizationFingerprintKeyring(
+                () -> snapshot("active", "active-secret", List.of()), CLOCK, Duration.ZERO))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

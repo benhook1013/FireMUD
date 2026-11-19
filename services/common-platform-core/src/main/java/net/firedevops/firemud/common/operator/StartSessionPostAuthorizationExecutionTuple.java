@@ -385,13 +385,12 @@ public final class StartSessionPostAuthorizationExecutionTuple {
       throw invalid(field + " must be an object");
     }
     Map<String, Object> result = new LinkedHashMap<>();
-    raw.forEach(
-        (key, member) -> {
-          if (!(key instanceof String text)) {
-            throw invalid(field + " has a non-string key");
-          }
-          result.put(text, member);
-        });
+    raw.forEach((key, member) -> {
+      if (!(key instanceof String text)) {
+        throw invalid(field + " has a non-string key");
+      }
+      result.put(text, member);
+    });
     return result;
   }
 

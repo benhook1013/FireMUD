@@ -61,10 +61,8 @@ class CanonicalGameplayAccountMemberRepairRedisOwnerTest {
     assertThat(
             Arrays.stream(
                 CanonicalGameplayAccountMemberRepairRedisOwner.Readback.class.getDeclaredMethods()))
-        .noneMatch(
-            method ->
-                Modifier.isStatic(method.getModifiers())
-                    && !Modifier.isPrivate(method.getModifiers()));
+        .noneMatch(method ->
+            Modifier.isStatic(method.getModifiers()) && !Modifier.isPrivate(method.getModifiers()));
   }
 
   @Test

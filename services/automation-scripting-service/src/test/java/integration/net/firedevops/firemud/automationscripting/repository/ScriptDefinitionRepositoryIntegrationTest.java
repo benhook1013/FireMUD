@@ -119,13 +119,12 @@ class ScriptDefinitionRepositoryIntegrationTest {
     try {
       for (int i = 0; i < 2; i++) {
         futures.add(
-            executor.submit(
-                () -> {
-                  ready.countDown();
-                  await(start);
-                  return new ScriptDefinitionRepository(dsl)
-                      .saveWithCreationResult(script("{\"value\":1}"));
-                }));
+            executor.submit(() -> {
+              ready.countDown();
+              await(start);
+              return new ScriptDefinitionRepository(dsl)
+                  .saveWithCreationResult(script("{\"value\":1}"));
+            }));
       }
 
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
@@ -309,12 +308,11 @@ class ScriptDefinitionRepositoryIntegrationTest {
     try {
       for (String definition : List.of(firstDefinition, secondDefinition)) {
         futures.add(
-            executor.submit(
-                () -> {
-                  ready.countDown();
-                  await(start);
-                  return new ScriptDefinitionRepository(dsl).save(script(definition));
-                }));
+            executor.submit(() -> {
+              ready.countDown();
+              await(start);
+              return new ScriptDefinitionRepository(dsl).save(script(definition));
+            }));
       }
 
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();

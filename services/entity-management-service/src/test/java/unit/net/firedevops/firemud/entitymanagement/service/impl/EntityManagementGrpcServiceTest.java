@@ -319,15 +319,14 @@ class EntityManagementGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.any(),
                 Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              String effectId = invocation.getArgument(1);
-              if (effectId == null || effectId.isBlank()) {
-                throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST, "Effect id is required for replay-guarded mutations");
-              }
-              return ((java.util.function.Supplier<?>) invocation.getArgument(3)).get();
-            });
+        .thenAnswer(invocation -> {
+          String effectId = invocation.getArgument(1);
+          if (effectId == null || effectId.isBlank()) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST, "Effect id is required for replay-guarded mutations");
+          }
+          return ((java.util.function.Supplier<?>) invocation.getArgument(3)).get();
+        });
     return service;
   }
 
@@ -441,22 +440,21 @@ class EntityManagementGrpcServiceTest {
             publicationReadGuard());
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () ->
-            service.getDraftDesignDigest(
-                fullDigestRequest("1", "7"),
-                new StreamObserver<>() {
-                  @Override
-                  public void onNext(GetDraftDesignDigestResponse value) {
-                    ref.set(value);
-                  }
+    runAsGameDesign(() ->
+        service.getDraftDesignDigest(
+            fullDigestRequest("1", "7"),
+            new StreamObserver<>() {
+              @Override
+              public void onNext(GetDraftDesignDigestResponse value) {
+                ref.set(value);
+              }
 
-                  @Override
-                  public void onError(Throwable t) {}
+              @Override
+              public void onError(Throwable t) {}
 
-                  @Override
-                  public void onCompleted() {}
-                }));
+              @Override
+              public void onCompleted() {}
+            }));
 
     assertEquals("7", ref.get().getVersionId());
     assertEquals("version:7", ref.get().getAppliedCommitId());

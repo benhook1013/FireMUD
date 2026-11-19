@@ -308,11 +308,10 @@ class GameSessionAccountPublicJwksSourceTest {
       var cache = fixture.cache();
       cache.refresh();
       fixture.advance(5);
-      fixture.afterAccountRead.set(
-          () -> {
-            fixture.publishNext();
-            fixture.converge();
-          });
+      fixture.afterAccountRead.set(() -> {
+        fixture.publishNext();
+        fixture.converge();
+      });
       if (proactive) {
         cache.refresh();
       } else {
@@ -335,11 +334,10 @@ class GameSessionAccountPublicJwksSourceTest {
     var cache = fixture.cache();
     cache.refresh();
     fixture.advance(10);
-    fixture.afterAccountRead.set(
-        () -> {
-          fixture.publishNext();
-          fixture.converge();
-        });
+    fixture.afterAccountRead.set(() -> {
+      fixture.publishNext();
+      fixture.converge();
+    });
     assertThatThrownBy(() -> cache.keyFor("next")).isInstanceOf(SourceUnavailableException.class);
     cache.refresh();
     assertThat(cache.keyFor("next")).isEqualTo(fixture.key);
@@ -350,12 +348,11 @@ class GameSessionAccountPublicJwksSourceTest {
     for (boolean qualified : new boolean[] {false, true}) {
       var fixture = new PublicationFixture();
       if (qualified) fixture.source.load();
-      fixture.afterAccountRead.set(
-          () -> {
-            fixture.publishNext();
-            fixture.converge();
-            if (qualified) fixture.pin.set(identity("test", "revision-2"));
-          });
+      fixture.afterAccountRead.set(() -> {
+        fixture.publishNext();
+        fixture.converge();
+        if (qualified) fixture.pin.set(identity("test", "revision-2"));
+      });
       assertInvalid(fixture.source);
       fixture.pin.set(identity("test", "revision-1"));
       assertInvalid(fixture.source);
@@ -367,12 +364,11 @@ class GameSessionAccountPublicJwksSourceTest {
     for (boolean matched : new boolean[] {false, true}) {
       var fixture = new PublicationFixture();
       fixture.source.load();
-      fixture.afterAccountRead.set(
-          () -> {
-            fixture.current.set("{broken".getBytes(StandardCharsets.US_ASCII));
-            fixture.mounted.set(
-                matched ? fixture.current.get() : publicJwks(fixture.key, "unexplained"));
-          });
+      fixture.afterAccountRead.set(() -> {
+        fixture.current.set("{broken".getBytes(StandardCharsets.US_ASCII));
+        fixture.mounted.set(
+            matched ? fixture.current.get() : publicJwks(fixture.key, "unexplained"));
+      });
       assertInvalid(fixture.source);
       fixture.publishNext();
       fixture.converge();
@@ -387,19 +383,17 @@ class GameSessionAccountPublicJwksSourceTest {
       fixture.source.load();
       AtomicInteger projectionReads = new AtomicInteger();
       when(fixture.projection.read())
-          .thenAnswer(
-              invocation -> {
-                if (projectionReads.incrementAndGet() == 3) {
-                  if (unsafe) throw new IllegalArgumentException("unsafe projection");
-                  return publicJwks(fixture.key, "unexplained");
-                }
-                return fixture.mounted.get().clone();
-              });
-      fixture.afterAccountRead.set(
-          () -> {
-            fixture.publishNext();
-            fixture.converge();
+          .thenAnswer(invocation -> {
+            if (projectionReads.incrementAndGet() == 3) {
+              if (unsafe) throw new IllegalArgumentException("unsafe projection");
+              return publicJwks(fixture.key, "unexplained");
+            }
+            return fixture.mounted.get().clone();
           });
+      fixture.afterAccountRead.set(() -> {
+        fixture.publishNext();
+        fixture.converge();
+      });
       assertInvalid(fixture.source);
       assertInvalid(fixture.source);
     }
@@ -523,28 +517,25 @@ class GameSessionAccountPublicJwksSourceTest {
     fixture.recoveryEligible.set(true);
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
-    fixture.beforeAccountRead.set(
-        () -> {
-          entered.countDown();
-          try {
-            if (!release.await(3, TimeUnit.SECONDS))
-              throw new IllegalStateException("test timeout");
-          } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(interrupted);
-          }
-        });
+    fixture.beforeAccountRead.set(() -> {
+      entered.countDown();
+      try {
+        if (!release.await(3, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout");
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(interrupted);
+      }
+    });
     try (var executor = Executors.newFixedThreadPool(2)) {
       var recovering = executor.submit(fixture.source::load);
       try {
         assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
         var denied =
-            executor.submit(
-                () -> {
-                  assertThat(fixture.source.isPreparedDenied()).isTrue();
-                  assertThatThrownBy(() -> cache.keyFor("known"))
-                      .isInstanceOf(SourcePreparedDenyException.class);
-                });
+            executor.submit(() -> {
+              assertThat(fixture.source.isPreparedDenied()).isTrue();
+              assertThatThrownBy(() -> cache.keyFor("known"))
+                  .isInstanceOf(SourcePreparedDenyException.class);
+            });
         denied.get(1, TimeUnit.SECONDS);
         cache.invalidateKid("known");
       } finally {

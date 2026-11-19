@@ -342,26 +342,24 @@ class RetainedActorIdentityIntegrationTest {
     assertThat(
             characterRepository.findById(legacyId).orElseThrow().getActorIdentity().status().name())
         .isEqualTo("QUARANTINED");
-    assertThatThrownBy(
-            () ->
-                insertActor(
-                    "duplicate UUID",
-                    resolvedActorUuid,
-                    null,
-                    null,
-                    null,
-                    null,
-                    "shared-live",
-                    "QUARANTINED",
-                    "OWNER_PROVENANCE_MISSING",
-                    accountId,
-                    tenantId))
+    assertThatThrownBy(() ->
+            insertActor(
+                "duplicate UUID",
+                resolvedActorUuid,
+                null,
+                null,
+                null,
+                null,
+                "shared-live",
+                "QUARANTINED",
+                "OWNER_PROVENANCE_MISSING",
+                accountId,
+                tenantId))
         .isInstanceOf(org.springframework.dao.DuplicateKeyException.class)
         .hasMessageContaining("ux_characters_character_uuid");
-    assertThatThrownBy(
-            () ->
-                insertNamespace(
-                    tenantUuid, namespaceUuid, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+    assertThatThrownBy(() ->
+            insertNamespace(
+                tenantUuid, namespaceUuid, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .isInstanceOf(org.springframework.dao.DuplicateKeyException.class)
         .hasMessageContaining("pk_entity_playable_state_namespace_scopes");
   }
@@ -499,15 +497,14 @@ class RetainedActorIdentityIntegrationTest {
                 shared,
                 targetActor.toString()))
         .get()
-        .satisfies(
-            identity -> {
-              assertThat(identity.characterUuid()).isEqualTo(targetActor);
-              assertThat(identity.accountUuid()).isEqualTo(accountUuid);
-              assertThat(identity.tenantUuid()).isEqualTo(tenantUuid);
-              assertThat(identity.playableStateNamespaceId()).isEqualTo(namespaceUuid);
-              assertThat(identity.playableStateScope()).isEqualTo(shared);
-              assertThat(identity.status().name()).isEqualTo("OWNER_RESOLVED");
-            });
+        .satisfies(identity -> {
+          assertThat(identity.characterUuid()).isEqualTo(targetActor);
+          assertThat(identity.accountUuid()).isEqualTo(accountUuid);
+          assertThat(identity.tenantUuid()).isEqualTo(tenantUuid);
+          assertThat(identity.playableStateNamespaceId()).isEqualTo(namespaceUuid);
+          assertThat(identity.playableStateScope()).isEqualTo(shared);
+          assertThat(identity.status().name()).isEqualTo("OWNER_RESOLVED");
+        });
     for (UUID excluded : List.of(accountActor, tenantActor, namespaceActor, quarantinedActor)) {
       assertThat(
               actorIdentityRepository.findOwnerResolvedActor(
@@ -697,11 +694,10 @@ class RetainedActorIdentityIntegrationTest {
             "saga/V1001__saga_instance_table.sql",
             "saga/V1002__saga_step_table.sql");
     assertThat(parentHistory)
-        .allSatisfy(
-            entry -> {
-              assertThat(entry.success()).isTrue();
-              assertThat(entry.checksum()).isNotNull();
-            });
+        .allSatisfy(entry -> {
+          assertThat(entry.success()).isTrue();
+          assertThat(entry.checksum()).isNotNull();
+        });
     try (Connection connection = connectToMigrationSchema()) {
       var statement = connection.createStatement();
       statement.executeUpdate(

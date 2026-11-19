@@ -101,47 +101,45 @@ class CanonicalGameplayAccountInitialBarrierValueTest {
     assertThat(proof.originalAttemptFence()).isEqualTo(9L);
     assertThat(proof.sourceControlEpoch()).isEqualTo(BigInteger.valueOf(9));
     assertThat(proof.exactFields()).containsEntry("ownerFenceEpoch", "9");
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayAccountInitialOpenProof.CurrentOpen(
-                    initializerId,
-                    requestId,
-                    callerContextId,
-                    9,
-                    accountId,
-                    tenantId,
-                    namespaceId,
-                    proof.key(),
-                    BigInteger.ONE,
-                    BigInteger.ONE,
-                    DIGEST,
-                    DIGEST,
-                    DIGEST,
-                    1_000L,
-                    31_000L,
-                    value.fields()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayAccountInitialOpenProof.CurrentOpen(
+                initializerId,
+                requestId,
+                callerContextId,
+                9,
+                accountId,
+                tenantId,
+                namespaceId,
+                proof.key(),
+                BigInteger.ONE,
+                BigInteger.ONE,
+                DIGEST,
+                DIGEST,
+                DIGEST,
+                1_000L,
+                31_000L,
+                value.fields()))
         .isInstanceOf(IllegalArgumentException.class);
     Map<String, String> changed = new LinkedHashMap<>(value.fields());
     changed.put("ownerFenceEpoch", "1");
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayAccountInitialOpenProof.CurrentOpen(
-                    initializerId,
-                    requestId,
-                    callerContextId,
-                    9,
-                    accountId,
-                    tenantId,
-                    namespaceId,
-                    proof.key(),
-                    BigInteger.ZERO,
-                    BigInteger.ONE,
-                    DIGEST,
-                    DIGEST,
-                    DIGEST,
-                    1_000L,
-                    31_000L,
-                    changed))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayAccountInitialOpenProof.CurrentOpen(
+                initializerId,
+                requestId,
+                callerContextId,
+                9,
+                accountId,
+                tenantId,
+                namespaceId,
+                proof.key(),
+                BigInteger.ZERO,
+                BigInteger.ONE,
+                DIGEST,
+                DIGEST,
+                DIGEST,
+                1_000L,
+                31_000L,
+                changed))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -181,10 +179,9 @@ class CanonicalGameplayAccountInitialBarrierValueTest {
                 + accountId
                 + ":"
                 + namespaceId);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayAccountInitialBarrierKey.forTarget(
-                    assignment, UUID.randomUUID(), requestId))
+    assertThatThrownBy(() ->
+            CanonicalGameplayAccountInitialBarrierKey.forTarget(
+                assignment, UUID.randomUUID(), requestId))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> CanonicalGameplaySessionRedisKeys.accountAdmissionBarrier(assignment))
         .isInstanceOf(IllegalArgumentException.class);

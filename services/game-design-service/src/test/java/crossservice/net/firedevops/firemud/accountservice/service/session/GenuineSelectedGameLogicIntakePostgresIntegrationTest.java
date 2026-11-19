@@ -247,18 +247,16 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
         var binding = binding(local, "genuine-admission");
         var reviewedBaseOwner = new GameDesignReviewedBaseRepository(local.dsl());
         transaction(local)
-            .execute(
-                ignored -> {
-                  var reviewedBase =
-                      reviewedBaseOwner.resolve(
-                          local.target(), DraftBaseReference.parse(binding.baseCommitId()));
-                  new GameDesignSourceRepository(local.dsl()).claimReviewed(binding, reviewedBase);
-                  var retained = reviewedBaseOwner.requireCurrentRetained(binding);
-                  assertThat(retained.canonicalBytes())
-                      .containsExactly(reviewedBase.canonicalBytes());
-                  assertThat(retained.digest()).isEqualTo(reviewedBase.digest());
-                  return null;
-                });
+            .execute(ignored -> {
+              var reviewedBase =
+                  reviewedBaseOwner.resolve(
+                      local.target(), DraftBaseReference.parse(binding.baseCommitId()));
+              new GameDesignSourceRepository(local.dsl()).claimReviewed(binding, reviewedBase);
+              var retained = reviewedBaseOwner.requireCurrentRetained(binding);
+              assertThat(retained.canonicalBytes()).containsExactly(reviewedBase.canonicalBytes());
+              assertThat(retained.digest()).isEqualTo(reviewedBase.digest());
+              return null;
+            });
         var originalRequest = account.prepareOriginalDraftOrder(binding, NAMESPACE);
         var original = originalRequest.original();
         var credential = originalRequest.originalCreatorCredential();
@@ -608,21 +606,20 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
       Local local, DraftAuthorizationFenceBinding original) {
     var tx = transaction(local);
     var selected = new GameDesignDraftTerminalOperation(original).gameDesignBinding();
-    return tx.execute(
-        ignored ->
-            new AuthoredDraftPublishSelectionRepository(
-                    local.dsl(), new DraftCommitCoordinatorRepository(local.dsl()))
-                .reserve(
-                    new AuthoredDraftPublishSelection.PublishIntent(
-                        local.target().canonicalTenantId(),
-                        local.target().canonicalVersionId(),
-                        UUID.randomUUID().toString(),
-                        "1",
-                        "controlled owner source receipt proof",
-                        selected.requestId(),
-                        selected.commitId(),
-                        selected.digest()))
-                .selection());
+    return tx.execute(ignored ->
+        new AuthoredDraftPublishSelectionRepository(
+                local.dsl(), new DraftCommitCoordinatorRepository(local.dsl()))
+            .reserve(
+                new AuthoredDraftPublishSelection.PublishIntent(
+                    local.target().canonicalTenantId(),
+                    local.target().canonicalVersionId(),
+                    UUID.randomUUID().toString(),
+                    "1",
+                    "controlled owner source receipt proof",
+                    selected.requestId(),
+                    selected.commitId(),
+                    selected.digest()))
+            .selection());
   }
 
   private static void assertSynchronizedSource(
@@ -658,15 +655,14 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
             NAMESPACE));
     var source =
         transaction(local)
-            .execute(
-                ignored ->
-                    gameSourceRepository.register(
-                        NAMESPACE,
-                        UUID.randomUUID(),
-                        local.target().canonicalTenantId(),
-                        "controlled-tenant",
-                        "controlled-world",
-                        "Controlled authored World source"));
+            .execute(ignored ->
+                gameSourceRepository.register(
+                    NAMESPACE,
+                    UUID.randomUUID(),
+                    local.target().canonicalTenantId(),
+                    "controlled-tenant",
+                    "controlled-world",
+                    "Controlled authored World source"));
     var intakes = new WorldAuthoredSourceIntakeRepository(world.dsl());
     var identities = new WorldAuthoredVersionIdentityRepository(world.dsl());
     try (var sourceClient =
@@ -1041,10 +1037,9 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
       public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
           ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
         String method = call.getMethodDescriptor().getFullMethodName().toLowerCase(Locale.ROOT);
-        methodCounts.forEach(
-            (fragment, count) -> {
-              if (method.contains(fragment)) count.incrementAndGet();
-            });
+        methodCounts.forEach((fragment, count) -> {
+          if (method.contains(fragment)) count.incrementAndGet();
+        });
         return next.startCall(call, headers);
       }
     };

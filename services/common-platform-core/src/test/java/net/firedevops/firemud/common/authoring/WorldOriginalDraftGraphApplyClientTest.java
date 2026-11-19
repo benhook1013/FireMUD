@@ -67,12 +67,11 @@ class WorldOriginalDraftGraphApplyClientTest {
       GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
       when(channelFactory.buildChannel(
               eq("world.internal:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
-          .thenAnswer(
-              invocation -> {
-                ManagedChannel channel = mock(ManagedChannel.class);
-                channels.add(channel);
-                return channel;
-              });
+          .thenAnswer(invocation -> {
+            ManagedChannel channel = mock(ManagedChannel.class);
+            channels.add(channel);
+            return channel;
+          });
       client = new WorldOriginalDraftGraphApplyClient(endpoints, tls, channelFactory, "test");
       client.init();
       WorldOriginalDraftGraphApplyClient clientUnderTest = client;
@@ -204,23 +203,20 @@ class WorldOriginalDraftGraphApplyClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var tls = tls(directory);
     tls.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldOriginalDraftGraphApplyClient(
-                    new ServiceEndpointsProperties(), tls, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldOriginalDraftGraphApplyClient(
+                new ServiceEndpointsProperties(), tls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     tls.setPlaintext(false);
     tls.setCaCert("classpath:ca.crt");
-    assertThatThrownBy(
-            () ->
-                new WorldOriginalDraftGraphApplyClient(
-                    new ServiceEndpointsProperties(), tls, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldOriginalDraftGraphApplyClient(
+                new ServiceEndpointsProperties(), tls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     tls.setCaCert(directory.resolve("missing.crt").toString());
-    assertThatThrownBy(
-            () ->
-                new WorldOriginalDraftGraphApplyClient(
-                    new ServiceEndpointsProperties(), tls, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldOriginalDraftGraphApplyClient(
+                new ServiceEndpointsProperties(), tls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(factory);
   }

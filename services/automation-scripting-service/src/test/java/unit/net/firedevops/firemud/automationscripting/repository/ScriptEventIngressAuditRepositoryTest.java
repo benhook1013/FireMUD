@@ -475,12 +475,10 @@ class ScriptEventIngressAuditRepositoryTest {
   private static void assertContainsTimestamp(Object[] bindings, Instant expected) {
     assertThat(
             Arrays.stream(bindings)
-                .anyMatch(
-                    binding ->
-                        binding instanceof OffsetDateTime offsetDateTime
-                            ? offsetDateTime.toInstant().equals(expected)
-                            : binding instanceof String
-                                && postgresTimestamp(expected).equals(binding)))
+                .anyMatch(binding ->
+                    binding instanceof OffsetDateTime offsetDateTime
+                        ? offsetDateTime.toInstant().equals(expected)
+                        : binding instanceof String && postgresTimestamp(expected).equals(binding)))
         .as("bindings should contain timestamp %s", expected)
         .isTrue();
   }

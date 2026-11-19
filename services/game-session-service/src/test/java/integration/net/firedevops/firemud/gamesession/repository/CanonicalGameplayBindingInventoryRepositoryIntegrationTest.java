@@ -152,13 +152,11 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
           .isEqualTo(beforeLeaseFreeAttempt.inventoryRevision());
       assertThat(afterLeaseFreeAttempt.bindings())
           .singleElement()
-          .satisfies(
-              candidate ->
-                  assertThat(candidate.lifecycle())
-                      .isEqualTo(
-                          net.firedevops.firemud.gamesession.binding
-                              .CanonicalGameplayBindingInventoryEntry.Lifecycle
-                              .CANDIDATE_PREPARED));
+          .satisfies(candidate ->
+              assertThat(candidate.lifecycle())
+                  .isEqualTo(
+                      net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingInventoryEntry.Lifecycle.CANDIDATE_PREPARED));
       var storedDecision =
           dsl.fetchOne(
               "SELECT admission_request_id, admission_lease_id"
@@ -173,13 +171,11 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
           .satisfies(obligation -> assertThat(obligation.expectedPriorGeneration()).isNull());
       assertThat(repository.readSnapshot().bindings())
           .singleElement()
-          .satisfies(
-              candidate ->
-                  assertThat(candidate.lifecycle())
-                      .isEqualTo(
-                          net.firedevops.firemud.gamesession.binding
-                              .CanonicalGameplayBindingInventoryEntry.Lifecycle
-                              .CANDIDATE_PREPARED));
+          .satisfies(candidate ->
+              assertThat(candidate.lifecycle())
+                  .isEqualTo(
+                      net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingInventoryEntry.Lifecycle.CANDIDATE_PREPARED));
     } finally {
       dropSchema(schema);
     }
@@ -207,13 +203,12 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
                   .PRESENT_AWAITING_COVERAGE);
       assertThat(fixture.repository().readSnapshot().accountIndexObligations())
           .singleElement()
-          .satisfies(
-              obligation ->
-                  assertThat(obligation.projectionState())
-                      .isEqualTo(
-                          net.firedevops.firemud.gamesession.binding
-                              .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
-                              .PRESENT_AWAITING_COVERAGE));
+          .satisfies(obligation ->
+              assertThat(obligation.projectionState())
+                  .isEqualTo(
+                      net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                          .PRESENT_AWAITING_COVERAGE));
     } finally {
       dropSchema(testSchema.schema());
     }
@@ -361,38 +356,35 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       var completed = fixture.repository().readSnapshot();
       assertThat(completed.transitions())
           .singleElement()
-          .satisfies(
-              transition ->
-                  assertThat(transition.status())
-                      .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL));
+          .satisfies(transition ->
+              assertThat(transition.status())
+                  .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL));
       assertThat(completed.bindings())
           .singleElement()
-          .satisfies(
-              candidate -> {
-                assertThat(candidate.lifecycle())
-                    .isEqualTo(
-                        net.firedevops.firemud.gamesession.binding
-                            .CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL);
-                assertThat(candidate.accountIndexState())
-                    .isEqualTo(
-                        net.firedevops.firemud.gamesession.binding
-                            .CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED);
-              });
+          .satisfies(candidate -> {
+            assertThat(candidate.lifecycle())
+                .isEqualTo(
+                    net.firedevops.firemud.gamesession.binding
+                        .CanonicalGameplayBindingInventoryEntry.Lifecycle.PROVISIONAL);
+            assertThat(candidate.accountIndexState())
+                .isEqualTo(
+                    net.firedevops.firemud.gamesession.binding
+                        .CanonicalGameplayBindingInventoryEntry.IndexState.ACKNOWLEDGED);
+          });
       assertThat(completed.accountIndexObligations())
           .singleElement()
-          .satisfies(
-              obligation -> {
-                assertThat(obligation.status())
-                    .isEqualTo(
-                        net.firedevops.firemud.gamesession.binding
-                            .CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED);
-                assertThat(obligation.projectionState())
-                    .isEqualTo(
-                        net.firedevops.firemud.gamesession.binding
-                            .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
-                            .PRESENT_AWAITING_COVERAGE);
-                assertThat(obligation.projectedMember()).isEqualTo(operation.member());
-              });
+          .satisfies(obligation -> {
+            assertThat(obligation.status())
+                .isEqualTo(
+                    net.firedevops.firemud.gamesession.binding
+                        .CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED);
+            assertThat(obligation.projectionState())
+                .isEqualTo(
+                    net.firedevops.firemud.gamesession.binding
+                        .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                        .PRESENT_AWAITING_COVERAGE);
+            assertThat(obligation.projectedMember()).isEqualTo(operation.member());
+          });
 
       var controlAfter =
           Objects.requireNonNull(
@@ -597,19 +589,18 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
           .isEqualTo(completed.accountIndexObligations());
       assertThat(fixture.repository().readSnapshot().accountIndexObligations())
           .singleElement()
-          .satisfies(
-              obligation -> {
-                assertThat(obligation.status())
-                    .isEqualTo(
-                        net.firedevops.firemud.gamesession.binding
-                            .CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED);
-                assertThat(obligation.projectionState())
-                    .isEqualTo(
-                        net.firedevops.firemud.gamesession.binding
-                            .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
-                            .PRESENT_AWAITING_COVERAGE);
-                assertThat(obligation.projectedMember()).isEqualTo(member);
-              });
+          .satisfies(obligation -> {
+            assertThat(obligation.status())
+                .isEqualTo(
+                    net.firedevops.firemud.gamesession.binding
+                        .CanonicalGameplayBindingAccountIndexObligation.Status.ACKNOWLEDGED);
+            assertThat(obligation.projectionState())
+                .isEqualTo(
+                    net.firedevops.firemud.gamesession.binding
+                        .CanonicalGameplayBindingAccountIndexObligation.ProjectionState
+                        .PRESENT_AWAITING_COVERAGE);
+            assertThat(obligation.projectedMember()).isEqualTo(member);
+          });
     } finally {
       if (redisFixture != null) {
         redisFixture.deleteAccountKey(ACCOUNT_ID);
@@ -669,20 +660,18 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       var snapshot = fixture.repository().readSnapshot();
       assertThat(snapshot.accountIndexObligations())
           .singleElement()
-          .satisfies(
-              obligation ->
-                  assertThat(obligation.status())
-                      .isEqualTo(
-                          net.firedevops.firemud.gamesession.binding
-                              .CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED));
+          .satisfies(obligation ->
+              assertThat(obligation.status())
+                  .isEqualTo(
+                      net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingAccountIndexObligation.Status.REQUIRED));
       assertThat(snapshot.bindings())
           .singleElement()
-          .satisfies(
-              candidate ->
-                  assertThat(candidate.accountIndexState())
-                      .isEqualTo(
-                          net.firedevops.firemud.gamesession.binding
-                              .CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED));
+          .satisfies(candidate ->
+              assertThat(candidate.accountIndexState())
+                  .isEqualTo(
+                      net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingInventoryEntry.IndexState.REPAIR_REQUIRED));
       var pending =
           Objects.requireNonNull(
               testSchema
@@ -878,15 +867,14 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
               RedisScriptCatalog.loadInstalled(getClass().getClassLoader()));
       redisOwner.projectAndRead(operation);
 
-      assertThatThrownBy(
-              () ->
-                  testSchema
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_binding_transition"
-                              + " SET status = 'ABORTED' WHERE transition_id = ?"
-                              + " AND status = 'PROVISIONAL'",
-                          TRANSITION_ID))
+      assertThatThrownBy(() ->
+              testSchema
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_binding_transition"
+                          + " SET status = 'ABORTED' WHERE transition_id = ?"
+                          + " AND status = 'PROVISIONAL'",
+                      TRANSITION_ID))
           .isInstanceOfSatisfying(
               org.jooq.exception.DataAccessException.class,
               failure -> {
@@ -1006,36 +994,33 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
         try {
           Future<Integer> runtimeMutation =
-              executor.submit(
-                  () ->
-                      testSchema
-                          .dsl()
-                          .transactionResult(
-                              configuration -> {
-                                DSLContext transaction = DSL.using(configuration);
-                                var runtime =
-                                    transaction.fetchOne(
-                                        "SELECT id FROM game_instances"
-                                            + " WHERE tenant_id = ? AND id = ? FOR UPDATE",
-                                        target.gameSessionTenantId(),
-                                        target.gameInstanceId());
-                                if (runtime == null) {
-                                  throw new IllegalStateException("Expected current runtime row");
-                                }
-                                runtimeRowLocked.countDown();
-                                awaitLatch(allowRuntimeMutation);
-                                return transaction.execute(
-                                    "UPDATE game_instances SET row_version = row_version + 1"
-                                        + " WHERE tenant_id = ? AND id = ?",
-                                    target.gameSessionTenantId(),
-                                    target.gameInstanceId());
-                              }));
+              executor.submit(() ->
+                  testSchema
+                      .dsl()
+                      .transactionResult(configuration -> {
+                        DSLContext transaction = DSL.using(configuration);
+                        var runtime =
+                            transaction.fetchOne(
+                                "SELECT id FROM game_instances"
+                                    + " WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                                target.gameSessionTenantId(),
+                                target.gameInstanceId());
+                        if (runtime == null) {
+                          throw new IllegalStateException("Expected current runtime row");
+                        }
+                        runtimeRowLocked.countDown();
+                        awaitLatch(allowRuntimeMutation);
+                        return transaction.execute(
+                            "UPDATE game_instances SET row_version = row_version + 1"
+                                + " WHERE tenant_id = ? AND id = ?",
+                            target.gameSessionTenantId(),
+                            target.gameInstanceId());
+                      }));
 
           assertThat(runtimeRowLocked.await(5, TimeUnit.SECONDS)).isTrue();
           Future<CanonicalGameplayBindingTransitionSnapshot> decisionAcquisition =
-              executor.submit(
-                  () ->
-                      fixture.repository().markProvisional(fixture.evidence(), fixture.decision()));
+              executor.submit(() ->
+                  fixture.repository().markProvisional(fixture.evidence(), fixture.decision()));
 
           awaitBindingLockWait(testSchema.dsl(), applicationName);
           allowRuntimeMutation.countDown();
@@ -1059,31 +1044,29 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
           CountDownLatch projectionRuntimeRowLocked = new CountDownLatch(1);
           CountDownLatch allowFencedRuntimeMutation = new CountDownLatch(1);
           Future<Integer> fencedRuntimeMutation =
-              executor.submit(
-                  () ->
-                      testSchema
-                          .dsl()
-                          .transactionResult(
-                              configuration -> {
-                                DSLContext transaction = DSL.using(configuration);
-                                var runtime =
-                                    transaction.fetchOne(
-                                        "SELECT id FROM game_instances"
-                                            + " WHERE tenant_id = ? AND id = ? FOR UPDATE",
-                                        target.gameSessionTenantId(),
-                                        target.gameInstanceId());
-                                if (runtime == null) {
-                                  throw new IllegalStateException("Expected current runtime row");
-                                }
-                                projectionRuntimeRowLocked.countDown();
-                                awaitLatch(allowFencedRuntimeMutation);
-                                return transaction.execute(
-                                    "UPDATE game_instances SET status = 'STOPPED',"
-                                        + " row_version = row_version + 1"
-                                        + " WHERE tenant_id = ? AND id = ?",
-                                    target.gameSessionTenantId(),
-                                    target.gameInstanceId());
-                              }));
+              executor.submit(() ->
+                  testSchema
+                      .dsl()
+                      .transactionResult(configuration -> {
+                        DSLContext transaction = DSL.using(configuration);
+                        var runtime =
+                            transaction.fetchOne(
+                                "SELECT id FROM game_instances"
+                                    + " WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                                target.gameSessionTenantId(),
+                                target.gameInstanceId());
+                        if (runtime == null) {
+                          throw new IllegalStateException("Expected current runtime row");
+                        }
+                        projectionRuntimeRowLocked.countDown();
+                        awaitLatch(allowFencedRuntimeMutation);
+                        return transaction.execute(
+                            "UPDATE game_instances SET status = 'STOPPED',"
+                                + " row_version = row_version + 1"
+                                + " WHERE tenant_id = ? AND id = ?",
+                            target.gameSessionTenantId(),
+                            target.gameInstanceId());
+                      }));
           Future<?> accountIndexReadback;
           try {
             assertThat(projectionRuntimeRowLocked.await(5, TimeUnit.SECONDS)).isTrue();
@@ -1092,11 +1075,10 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
             String member =
                 CanonicalGameplayAccountIndexMember.of(provisionalEvidence.candidate()).value();
             accountIndexReadback =
-                executor.submit(
-                    () ->
-                        fixture
-                            .repository()
-                            .markCandidateAccountIndexPresent(provisionalEvidence, member));
+                executor.submit(() ->
+                    fixture
+                        .repository()
+                        .markCandidateAccountIndexPresent(provisionalEvidence, member));
             awaitBindingLockWait(testSchema.dsl(), applicationName);
           } finally {
             allowFencedRuntimeMutation.countDown();
@@ -1208,20 +1190,17 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       assertThat(snapshot.bindings())
           .allSatisfy(row -> assertThat(row.identity().issuerId()).isEqualTo(ISSUER_ID));
       assertThat(snapshot.bindings())
-          .anySatisfy(
-              row ->
-                  assertThat(row.lifecycle())
-                      .isEqualTo(
-                          net.firedevops.firemud.gamesession.binding
-                              .CanonicalGameplayBindingInventoryEntry.Lifecycle.ACTIVE));
+          .anySatisfy(row ->
+              assertThat(row.lifecycle())
+                  .isEqualTo(
+                      net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingInventoryEntry.Lifecycle.ACTIVE));
       assertThat(snapshot.bindings())
-          .anySatisfy(
-              row ->
-                  assertThat(row.lifecycle())
-                      .isEqualTo(
-                          net.firedevops.firemud.gamesession.binding
-                              .CanonicalGameplayBindingInventoryEntry.Lifecycle
-                              .CANDIDATE_PREPARED));
+          .anySatisfy(row ->
+              assertThat(row.lifecycle())
+                  .isEqualTo(
+                      net.firedevops.firemud.gamesession.binding
+                          .CanonicalGameplayBindingInventoryEntry.Lifecycle.CANDIDATE_PREPARED));
       assertThat(snapshot.accountIndexObligations()).hasSize(2);
       assertThat(snapshot.accountIndexObligations().get(0).expectedPriorGeneration())
           .isEqualTo(BigInteger.valueOf(5));

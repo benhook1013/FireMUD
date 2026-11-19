@@ -103,28 +103,27 @@ class WorldAppliedGraphHistoryPostgresIntegrationTest {
     // The complete Account binding is test evidence; no protected Account producer is claimed.
     WorldDraftGraphAppliedResult original =
         Objects.requireNonNull(
-            write.execute(
-                ignored -> {
-                  assertThat(
-                          Objects.requireNonNull(dsl.fetchOne("SHOW session_replication_role"))
-                              .get(0, String.class))
-                      .isEqualTo("origin");
-                  var graph = topology.store(plan);
-                  var result = WorldDraftGraphAppliedResult.create(application, graph.graphBytes());
-                  var operation = application.operation();
-                  dsl.execute(
-                      "INSERT INTO world_draft_graph_application (operation_id,request_id,commit_id,authorization_fence_id,operation_bytes,account_binding_bytes,account_binding_digest,result_bytes,result_digest) VALUES (?,?,?,?,?,?,?,?,?)",
-                      operation.operationId(),
-                      operation.requestId(),
-                      operation.commitId(),
-                      operation.authorizationFenceId(),
-                      operation.canonicalBytes(),
-                      operation.accountBindingBytes(),
-                      operation.accountBindingDigest(),
-                      result.canonicalBytes(),
-                      result.digest());
-                  return result;
-                }));
+            write.execute(ignored -> {
+              assertThat(
+                      Objects.requireNonNull(dsl.fetchOne("SHOW session_replication_role"))
+                          .get(0, String.class))
+                  .isEqualTo("origin");
+              var graph = topology.store(plan);
+              var result = WorldDraftGraphAppliedResult.create(application, graph.graphBytes());
+              var operation = application.operation();
+              dsl.execute(
+                  "INSERT INTO world_draft_graph_application (operation_id,request_id,commit_id,authorization_fence_id,operation_bytes,account_binding_bytes,account_binding_digest,result_bytes,result_digest) VALUES (?,?,?,?,?,?,?,?,?)",
+                  operation.operationId(),
+                  operation.requestId(),
+                  operation.commitId(),
+                  operation.authorizationFenceId(),
+                  operation.canonicalBytes(),
+                  operation.accountBindingBytes(),
+                  operation.accountBindingDigest(),
+                  result.canonicalBytes(),
+                  result.digest());
+              return result;
+            }));
     assertThat(original.resultIdentity()).contains("/v1:");
     assertThat(original.startLocationReceipt()).isEmpty();
     assertThat(
@@ -158,18 +157,16 @@ class WorldAppliedGraphHistoryPostgresIntegrationTest {
             () -> WorldDraftStartLocationReceipt.create(application, original.graphBytes()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("requires an original graph declaration");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE world_draft_graph_application SET result_bytes = ? WHERE operation_id = ?",
-                    new byte[] {99},
-                    application.operation().operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE world_draft_graph_application SET result_bytes = ? WHERE operation_id = ?",
+                new byte[] {99},
+                application.operation().operationId()))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM world_draft_graph_terminal_identity WHERE operation_id = ?",
-                    application.operation().operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM world_draft_graph_terminal_identity WHERE operation_id = ?",
+                application.operation().operationId()))
         .isInstanceOf(DataAccessException.class);
     assertThat(rows(dsl, queries)).isEqualTo(rows);
   }
@@ -251,43 +248,42 @@ class WorldAppliedGraphHistoryPostgresIntegrationTest {
         Objects.requireNonNull(
             write.execute(ignored -> intakeRepository.acceptFresh(NAMESPACE, request, source)));
     return Objects.requireNonNull(
-        write.execute(
-            ignored -> {
-              var stateRequest =
-                  new AuthoredWorldVersionStateEvidence.Request(
-                      1,
-                      NAMESPACE,
-                      UUID.randomUUID(),
-                      tenant,
-                      slug,
-                      operation,
-                      source.evidenceDigest(),
-                      GAME_DESIGN_VERSION);
-              var version =
-                  new WorldAuthoredVersionIdentityRepository(dsl)
-                      .acceptFresh(
-                          intake,
-                          AuthoredWorldVersionStateEvidence.create(
-                              stateRequest,
-                              source,
-                              UUID.randomUUID(),
-                              VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
-                              1));
-              var owner =
-                  new OwnerBinding(
-                      NAMESPACE,
-                      tenant,
-                      version.canonicalVersionId(),
-                      version.operationId(),
-                      GAME_DESIGN_VERSION,
-                      request,
-                      intake.operationId(),
-                      intake.requestDigest(),
-                      operation,
-                      source.evidenceDigest(),
-                      intake.receiptDigest());
-              return new Fixture(intake, owner);
-            }));
+        write.execute(ignored -> {
+          var stateRequest =
+              new AuthoredWorldVersionStateEvidence.Request(
+                  1,
+                  NAMESPACE,
+                  UUID.randomUUID(),
+                  tenant,
+                  slug,
+                  operation,
+                  source.evidenceDigest(),
+                  GAME_DESIGN_VERSION);
+          var version =
+              new WorldAuthoredVersionIdentityRepository(dsl)
+                  .acceptFresh(
+                      intake,
+                      AuthoredWorldVersionStateEvidence.create(
+                          stateRequest,
+                          source,
+                          UUID.randomUUID(),
+                          VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+                          1));
+          var owner =
+              new OwnerBinding(
+                  NAMESPACE,
+                  tenant,
+                  version.canonicalVersionId(),
+                  version.operationId(),
+                  GAME_DESIGN_VERSION,
+                  request,
+                  intake.operationId(),
+                  intake.requestDigest(),
+                  operation,
+                  source.evidenceDigest(),
+                  intake.receiptDigest());
+          return new Fixture(intake, owner);
+        }));
   }
 
   private record Fixture(WorldAuthoredSourceIntakeReceipt intake, OwnerBinding owner) {}

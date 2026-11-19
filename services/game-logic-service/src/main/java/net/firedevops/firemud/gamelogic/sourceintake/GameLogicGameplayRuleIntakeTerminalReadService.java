@@ -35,11 +35,10 @@ public final class GameLogicGameplayRuleIntakeTerminalReadService {
       throw Status.FAILED_PRECONDITION.asRuntimeException();
     var original = new GameLogicGameplayRuleIntakeOperation(namespace, request.binding());
     var terminal = repository.findTerminal(request.binding().operationId());
-    terminal.ifPresent(
-        value -> {
-          if (!Arrays.equals(original.canonicalBytes(), value.operation().canonicalBytes()))
-            throw Status.ALREADY_EXISTS.asRuntimeException();
-        });
+    terminal.ifPresent(value -> {
+      if (!Arrays.equals(original.canonicalBytes(), value.operation().canonicalBytes()))
+        throw Status.ALREADY_EXISTS.asRuntimeException();
+    });
     return new GameLogicIntakeTerminalReadEvidence(request, terminal);
   }
 

@@ -83,9 +83,8 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
 
     assertThatThrownBy(() -> client.read(request()))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.NOT_FOUND));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.NOT_FOUND));
     assertThat(calls).hasValue(1);
 
     server.shutdownNow();
@@ -94,10 +93,9 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
     startServer(pki.wrongServer(), serverPort);
     assertThatThrownBy(() -> client.read(request()))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(calls).hasValue(1);
   }
 
@@ -112,14 +110,13 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
     client.init();
     assertThatThrownBy(() -> client.read(request()))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error -> {
-              assertThat(Status.fromThrowable(error).getCode())
-                  .isEqualTo(Status.Code.FAILED_PRECONDITION);
-              assertThat(Status.fromThrowable(error).getDescription())
-                  .isEqualTo("Entity returned invalid terminal evidence");
-              assertThat(error.getCause()).isInstanceOf(IllegalArgumentException.class);
-            });
+        .satisfies(error -> {
+          assertThat(Status.fromThrowable(error).getCode())
+              .isEqualTo(Status.Code.FAILED_PRECONDITION);
+          assertThat(Status.fromThrowable(error).getDescription())
+              .isEqualTo("Entity returned invalid terminal evidence");
+          assertThat(error.getCause()).isInstanceOf(IllegalArgumentException.class);
+        });
     assertThat(calls).hasValue(1);
   }
 

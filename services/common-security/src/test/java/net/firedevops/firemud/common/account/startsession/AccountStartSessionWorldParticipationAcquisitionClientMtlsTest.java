@@ -204,10 +204,9 @@ class AccountStartSessionWorldParticipationAcquisitionClientMtlsTest {
       client.init();
       assertThatThrownBy(() -> client.acquire(wireRequest))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
       client.close();
       client = null;
     }
@@ -233,10 +232,9 @@ class AccountStartSessionWorldParticipationAcquisitionClientMtlsTest {
 
     assertThatThrownBy(() -> client.acquire(request(NAMESPACE)))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(handlers).hasValue(0);
     verifyNoInteractions(backend);
   }

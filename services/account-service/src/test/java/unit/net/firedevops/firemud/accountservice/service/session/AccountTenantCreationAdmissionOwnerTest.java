@@ -217,12 +217,11 @@ class AccountTenantCreationAdmissionOwnerTest {
         new AccountControlUiIssuanceRepository.Stored(Fixture.row(changedIssuanceRow));
     when(fixture.issuances.findToken(changedTokenHash)).thenReturn(changedIssuance);
     when(fixture.actors.withCurrentAccount(eq(changedJwt), any()))
-        .thenAnswer(
-            invocation -> {
-              Function<AccountAuthenticatedActor, Object> action = invocation.getArgument(1);
-              return new TransactionTemplate(fixture.transactionManager)
-                  .execute(ignored -> action.apply(changedActor));
-            });
+        .thenAnswer(invocation -> {
+          Function<AccountAuthenticatedActor, Object> action = invocation.getArgument(1);
+          return new TransactionTemplate(fixture.transactionManager)
+              .execute(ignored -> action.apply(changedActor));
+        });
 
     assertThatThrownBy(() -> fixture.start(changedJwt, fixture.request))
         .isInstanceOf(IllegalStateException.class);
@@ -481,20 +480,19 @@ class AccountTenantCreationAdmissionOwnerTest {
       when(captured.sources()).thenReturn(sources);
 
       when(transactionManager.getTransaction(any()))
-          .thenAnswer(
-              invocation -> {
-                TransactionDefinition definition = invocation.getArgument(0);
-                if (definition.getIsolationLevel() != TransactionDefinition.ISOLATION_DEFAULT) {
-                  assertThat(definition.getIsolationLevel())
-                      .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-                }
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                TransactionSynchronizationManager.setActualTransactionActive(true);
-                TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
-                currentTransactionId = ++begins;
-                events.add("begin:" + currentTransactionId);
-                return mock(TransactionStatus.class);
-              });
+          .thenAnswer(invocation -> {
+            TransactionDefinition definition = invocation.getArgument(0);
+            if (definition.getIsolationLevel() != TransactionDefinition.ISOLATION_DEFAULT) {
+              assertThat(definition.getIsolationLevel())
+                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+            }
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            TransactionSynchronizationManager.setActualTransactionActive(true);
+            TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+            currentTransactionId = ++begins;
+            events.add("begin:" + currentTransactionId);
+            return mock(TransactionStatus.class);
+          });
       doAnswer(
               ignored -> {
                 events.add("commit:" + currentTransactionId);
@@ -518,13 +516,12 @@ class AccountTenantCreationAdmissionOwnerTest {
           .rollback(any());
 
       when(actors.withCurrentAccount(eq(JWT), any()))
-          .thenAnswer(
-              invocation -> {
-                events.add("account-actor");
-                Function<AccountAuthenticatedActor, Object> action = invocation.getArgument(1);
-                return new TransactionTemplate(transactionManager)
-                    .execute(ignored -> action.apply(actor));
-              });
+          .thenAnswer(invocation -> {
+            events.add("account-actor");
+            Function<AccountAuthenticatedActor, Object> action = invocation.getArgument(1);
+            return new TransactionTemplate(transactionManager)
+                .execute(ignored -> action.apply(actor));
+          });
       when(actor.accountId()).thenReturn(accountId);
       when(actor.issuanceOperationId()).thenReturn(issuanceId);
       when(actor.tokenHash()).thenReturn(tokenHash);

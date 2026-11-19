@@ -367,27 +367,26 @@ public final class CanonicalGameplayRosterRetentionRepository {
             after,
             after,
             limit)
-        .map(
-            row -> {
-              try {
-                byte[] bytes = row.get("recovery_response", byte[].class);
-                if (bytes == null)
-                  return ClosedAdmissionCandidate.invalid(
-                      row.get("operation_uuid", UUID.class), row.get("admission_uuid", UUID.class));
-                var response = CanonicalGameplayRosterRecoveryResponse.parseFrom(bytes);
-                CanonicalGameplayRosterRecoveryEvidence.requireResponse(
-                    response.getRequest(), response);
-                return new ClosedAdmissionCandidate(
-                    row.get("operation_uuid", UUID.class),
-                    row.get("admission_uuid", UUID.class),
-                    response);
-              } catch (com.google.protobuf.InvalidProtocolBufferException
-                  | IllegalArgumentException
-                  | IllegalStateException invalid) {
-                return ClosedAdmissionCandidate.invalid(
-                    row.get("operation_uuid", UUID.class), row.get("admission_uuid", UUID.class));
-              }
-            });
+        .map(row -> {
+          try {
+            byte[] bytes = row.get("recovery_response", byte[].class);
+            if (bytes == null)
+              return ClosedAdmissionCandidate.invalid(
+                  row.get("operation_uuid", UUID.class), row.get("admission_uuid", UUID.class));
+            var response = CanonicalGameplayRosterRecoveryResponse.parseFrom(bytes);
+            CanonicalGameplayRosterRecoveryEvidence.requireResponse(
+                response.getRequest(), response);
+            return new ClosedAdmissionCandidate(
+                row.get("operation_uuid", UUID.class),
+                row.get("admission_uuid", UUID.class),
+                response);
+          } catch (com.google.protobuf.InvalidProtocolBufferException
+              | IllegalArgumentException
+              | IllegalStateException invalid) {
+            return ClosedAdmissionCandidate.invalid(
+                row.get("operation_uuid", UUID.class), row.get("admission_uuid", UUID.class));
+          }
+        });
   }
 
   /**
@@ -716,38 +715,37 @@ public final class CanonicalGameplayRosterRetentionRepository {
             afterSnapshot,
             afterSnapshot,
             limit)
-        .map(
-            row -> {
-              try {
-                byte[] bytes = row.get("owner_request", byte[].class);
-                if (bytes == null) return Candidate.invalid(row.get("snapshot_uuid", UUID.class));
-                var request =
-                    net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
-                        .parseFrom(bytes);
-                CanonicalGameplayRosterReferenceEvidence.requireRequest(request);
-                var target =
-                    net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget
-                        .fromWire(CanonicalGameplayRosterReferenceEvidence.target(request));
-                var binding =
-                    new CanonicalGameplayRosterRetentionBinding(
-                        UUID.fromString(request.getCanonicalAccountUuid()),
-                        new net.firedevops.firemud.entitymanagement.service
-                            .CanonicalGameplayRosterSnapshotReference(
-                            row.get("snapshot_uuid", UUID.class),
-                            row.get("snapshot_digest", String.class)),
-                        target);
-                return new Candidate(
-                    binding,
-                    request,
-                    row.get("local_epoch", Long.class),
-                    row.get("lifecycle_state", String.class),
-                    row.get("owner_retirement_proof_digest", String.class));
-              } catch (com.google.protobuf.InvalidProtocolBufferException
-                  | IllegalArgumentException
-                  | IllegalStateException invalid) {
-                return Candidate.invalid(row.get("snapshot_uuid", UUID.class));
-              }
-            });
+        .map(row -> {
+          try {
+            byte[] bytes = row.get("owner_request", byte[].class);
+            if (bytes == null) return Candidate.invalid(row.get("snapshot_uuid", UUID.class));
+            var request =
+                net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
+                    .parseFrom(bytes);
+            CanonicalGameplayRosterReferenceEvidence.requireRequest(request);
+            var target =
+                net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget
+                    .fromWire(CanonicalGameplayRosterReferenceEvidence.target(request));
+            var binding =
+                new CanonicalGameplayRosterRetentionBinding(
+                    UUID.fromString(request.getCanonicalAccountUuid()),
+                    new net.firedevops.firemud.entitymanagement.service
+                        .CanonicalGameplayRosterSnapshotReference(
+                        row.get("snapshot_uuid", UUID.class),
+                        row.get("snapshot_digest", String.class)),
+                    target);
+            return new Candidate(
+                binding,
+                request,
+                row.get("local_epoch", Long.class),
+                row.get("lifecycle_state", String.class),
+                row.get("owner_retirement_proof_digest", String.class));
+          } catch (com.google.protobuf.InvalidProtocolBufferException
+              | IllegalArgumentException
+              | IllegalStateException invalid) {
+            return Candidate.invalid(row.get("snapshot_uuid", UUID.class));
+          }
+        });
   }
 
   /** Authenticated immutable GS target-seal evidence is observed on Entity's independent clock. */
@@ -1943,124 +1941,117 @@ public final class CanonicalGameplayRosterRetentionRepository {
             after,
             after,
             limit)
-        .map(
-            row -> {
-              try {
-                byte[] bytes = row.get("original_request", byte[].class);
-                if (bytes == null)
-                  return RetirementTransfer.invalid(
-                      row.get("observation_uuid", UUID.class),
-                      row.get("transfer_state", String.class));
-                var original = GetCanonicalGameplayRosterReferenceRequest.parseFrom(bytes);
-                CanonicalGameplayRosterReferenceEvidence.requireRequest(original);
-                if (!entryPolicy(original).equals(row.get("entry_policy", String.class)))
-                  throw new IllegalArgumentException("Transfer policy mismatch");
-                if (!original
-                    .getOperationUuid()
-                    .equals(row.get("operation_uuid", UUID.class).toString())) {
-                  throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
-                }
-                if (row.get("closed_admission_receipt", byte[].class) != null) {
-                  var closed =
-                      CanonicalGameplayRosterRecoveryResponse.parseFrom(
-                          row.get("closed_admission_receipt", byte[].class));
-                  CanonicalGameplayRosterRecoveryEvidence.requireResponse(
-                      closed.getRequest(), closed);
-                  if (!closed.getRequest().getOriginalSelection().equals(original)
-                      || !closed
-                          .getAdmissionUuid()
-                          .equals(row.get("admission_uuid", UUID.class).toString())
-                      || !closed.getCanonicalRosterReceipt().isEmpty()
-                      || !closed.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
-                      || closed.getOwnerFence() != row.get("owner_fence", Long.class)
-                      || !closed
-                          .getTargetFenceUuid()
-                          .equals(row.get("target_fence_uuid", UUID.class).toString())) {
-                    throw new IllegalStateException(
-                        "CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
-                  }
-                }
-                var request =
-                    row.get("acknowledgement_request", byte[].class) == null
-                        ? null
-                        : CanonicalGameplayRosterRetirementAcknowledgementRequest.parseFrom(
-                            row.get("acknowledgement_request", byte[].class));
-                var acknowledgement =
-                    row.get("acknowledgement_response", byte[].class) == null
-                        ? null
-                        : CanonicalGameplayRosterRetirementAcknowledgementResponse.parseFrom(
-                            row.get("acknowledgement_response", byte[].class));
-                if ((acknowledgement != null && request == null)
-                    || (request == null
-                        && !"WAITING_RETIREMENT".equals(row.get("transfer_state", String.class)))
-                    || (acknowledgement == null
-                        && "ACKNOWLEDGED".equals(row.get("transfer_state", String.class)))) {
-                  throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_INVALID");
-                }
-                if (request != null) {
-                  // Each fresh retained row is fully validated once. The guarded response
-                  // validator also computes and binds this same immutable request digest.
-                  String requestDigest =
-                      acknowledgement == null
-                          ? CanonicalGameplayRosterRetirementEvidence.requestDigest(request)
-                          : CanonicalGameplayRosterRetirementEvidence
-                              .requireAcknowledgementResponse(request, acknowledgement)
-                              .getRequestDigest();
-                  if (!request.getOriginalSelection().equals(original)
-                      || !request
-                          .getObservationUuid()
-                          .equals(row.get("observation_uuid", UUID.class).toString())
-                      || !request
-                          .getAdmissionUuid()
-                          .equals(row.get("admission_uuid", UUID.class).toString())
-                      || !Objects.equals(
-                          request.getSnapshotUuid(),
-                          row.get("snapshot_uuid", UUID.class) == null
-                              ? ""
-                              : row.get("snapshot_uuid", UUID.class).toString())
-                      || !Objects.equals(
-                          request.getSnapshotDigest(),
-                          row.get("snapshot_digest", String.class) == null
-                              ? ""
-                              : row.get("snapshot_digest", String.class))
-                      || request.getMinimumRetentionMillis()
-                          != row.get("minimum_retention_millis", Long.class)
-                      || request.getObservedRetirement().getOwnerFence()
-                          != row.get("owner_fence", Long.class)
-                      || !request
-                          .getObservedRetirement()
-                          .getTargetFenceUuid()
-                          .equals(row.get("target_fence_uuid", UUID.class).toString())
-                      || !Arrays.equals(
-                          request.getObservedRetirement().toByteArray(),
-                          row.get("observed_retirement", byte[].class))
-                      || !requestDigest.equals(row.get("request_digest", String.class))) {
-                    throw new IllegalStateException(
-                        "CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
-                  }
-                }
-                if (acknowledgement != null) {
-                  Long effectiveMinimum = row.get("effective_minimum_retention_millis", Long.class);
-                  if (effectiveMinimum == null
-                      || acknowledgement.getMinimumRetentionMillis() != effectiveMinimum) {
-                    throw new IllegalStateException(
-                        "CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
-                  }
-                }
-                return new RetirementTransfer(
-                    row.get("observation_uuid", UUID.class),
-                    row.get("transfer_state", String.class),
-                    original,
-                    request,
-                    acknowledgement);
-              } catch (com.google.protobuf.InvalidProtocolBufferException
-                  | IllegalArgumentException
-                  | IllegalStateException invalid) {
-                return RetirementTransfer.invalid(
-                    row.get("observation_uuid", UUID.class),
-                    row.get("transfer_state", String.class));
+        .map(row -> {
+          try {
+            byte[] bytes = row.get("original_request", byte[].class);
+            if (bytes == null)
+              return RetirementTransfer.invalid(
+                  row.get("observation_uuid", UUID.class), row.get("transfer_state", String.class));
+            var original = GetCanonicalGameplayRosterReferenceRequest.parseFrom(bytes);
+            CanonicalGameplayRosterReferenceEvidence.requireRequest(original);
+            if (!entryPolicy(original).equals(row.get("entry_policy", String.class)))
+              throw new IllegalArgumentException("Transfer policy mismatch");
+            if (!original
+                .getOperationUuid()
+                .equals(row.get("operation_uuid", UUID.class).toString())) {
+              throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
+            }
+            if (row.get("closed_admission_receipt", byte[].class) != null) {
+              var closed =
+                  CanonicalGameplayRosterRecoveryResponse.parseFrom(
+                      row.get("closed_admission_receipt", byte[].class));
+              CanonicalGameplayRosterRecoveryEvidence.requireResponse(closed.getRequest(), closed);
+              if (!closed.getRequest().getOriginalSelection().equals(original)
+                  || !closed
+                      .getAdmissionUuid()
+                      .equals(row.get("admission_uuid", UUID.class).toString())
+                  || !closed.getCanonicalRosterReceipt().isEmpty()
+                  || !closed.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
+                  || closed.getOwnerFence() != row.get("owner_fence", Long.class)
+                  || !closed
+                      .getTargetFenceUuid()
+                      .equals(row.get("target_fence_uuid", UUID.class).toString())) {
+                throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
               }
-            });
+            }
+            var request =
+                row.get("acknowledgement_request", byte[].class) == null
+                    ? null
+                    : CanonicalGameplayRosterRetirementAcknowledgementRequest.parseFrom(
+                        row.get("acknowledgement_request", byte[].class));
+            var acknowledgement =
+                row.get("acknowledgement_response", byte[].class) == null
+                    ? null
+                    : CanonicalGameplayRosterRetirementAcknowledgementResponse.parseFrom(
+                        row.get("acknowledgement_response", byte[].class));
+            if ((acknowledgement != null && request == null)
+                || (request == null
+                    && !"WAITING_RETIREMENT".equals(row.get("transfer_state", String.class)))
+                || (acknowledgement == null
+                    && "ACKNOWLEDGED".equals(row.get("transfer_state", String.class)))) {
+              throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_INVALID");
+            }
+            if (request != null) {
+              // Each fresh retained row is fully validated once. The guarded response
+              // validator also computes and binds this same immutable request digest.
+              String requestDigest =
+                  acknowledgement == null
+                      ? CanonicalGameplayRosterRetirementEvidence.requestDigest(request)
+                      : CanonicalGameplayRosterRetirementEvidence.requireAcknowledgementResponse(
+                              request, acknowledgement)
+                          .getRequestDigest();
+              if (!request.getOriginalSelection().equals(original)
+                  || !request
+                      .getObservationUuid()
+                      .equals(row.get("observation_uuid", UUID.class).toString())
+                  || !request
+                      .getAdmissionUuid()
+                      .equals(row.get("admission_uuid", UUID.class).toString())
+                  || !Objects.equals(
+                      request.getSnapshotUuid(),
+                      row.get("snapshot_uuid", UUID.class) == null
+                          ? ""
+                          : row.get("snapshot_uuid", UUID.class).toString())
+                  || !Objects.equals(
+                      request.getSnapshotDigest(),
+                      row.get("snapshot_digest", String.class) == null
+                          ? ""
+                          : row.get("snapshot_digest", String.class))
+                  || request.getMinimumRetentionMillis()
+                      != row.get("minimum_retention_millis", Long.class)
+                  || request.getObservedRetirement().getOwnerFence()
+                      != row.get("owner_fence", Long.class)
+                  || !request
+                      .getObservedRetirement()
+                      .getTargetFenceUuid()
+                      .equals(row.get("target_fence_uuid", UUID.class).toString())
+                  || !Arrays.equals(
+                      request.getObservedRetirement().toByteArray(),
+                      row.get("observed_retirement", byte[].class))
+                  || !requestDigest.equals(row.get("request_digest", String.class))) {
+                throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
+              }
+            }
+            if (acknowledgement != null) {
+              Long effectiveMinimum = row.get("effective_minimum_retention_millis", Long.class);
+              if (effectiveMinimum == null
+                  || acknowledgement.getMinimumRetentionMillis() != effectiveMinimum) {
+                throw new IllegalStateException("CANONICAL_ROSTER_RETIREMENT_TRANSFER_CONFLICT");
+              }
+            }
+            return new RetirementTransfer(
+                row.get("observation_uuid", UUID.class),
+                row.get("transfer_state", String.class),
+                original,
+                request,
+                acknowledgement);
+          } catch (com.google.protobuf.InvalidProtocolBufferException
+              | IllegalArgumentException
+              | IllegalStateException invalid) {
+            return RetirementTransfer.invalid(
+                row.get("observation_uuid", UUID.class), row.get("transfer_state", String.class));
+          }
+        });
   }
 
   public boolean observeWaitingRetirement(

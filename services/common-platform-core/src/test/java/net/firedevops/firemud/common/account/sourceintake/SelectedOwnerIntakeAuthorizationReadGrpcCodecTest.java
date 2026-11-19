@@ -134,10 +134,9 @@ class SelectedOwnerIntakeAuthorizationReadGrpcCodecTest {
               () -> SelectedOwnerIntakeAuthorizationReadGrpcCodec.fromResponse(request, changed))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeAuthorizationReadGrpcCodec.fromResponse(
-                    request, ReadHeldSelectedOwnerIntakeAuthorizationResponse.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeAuthorizationReadGrpcCodec.fromResponse(
+                request, ReadHeldSelectedOwnerIntakeAuthorizationResponse.getDefaultInstance()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -161,14 +160,13 @@ class SelectedOwnerIntakeAuthorizationReadGrpcCodecTest {
             .build();
     assertThat(oversizedResponse.getSerializedSize())
         .isGreaterThan(SelectedOwnerIntakeAuthorizationReadGrpcCodec.MAX_WIRE_BYTES);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeAuthorizationReadGrpcCodec.fromResponse(
-                    Request.create(
-                        "test",
-                        SelectedOwnerIntakeAuthorizationReadEvidenceTest.binding(
-                            Owner.ENTITY_MANAGEMENT)),
-                    oversizedResponse))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeAuthorizationReadGrpcCodec.fromResponse(
+                Request.create(
+                    "test",
+                    SelectedOwnerIntakeAuthorizationReadEvidenceTest.binding(
+                        Owner.ENTITY_MANAGEMENT)),
+                oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

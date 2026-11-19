@@ -95,11 +95,10 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
     var evidence =
         AccountInitialAdmissionSettlementReadGrpcCodecTest.evidence(Outcome.COMMITTED, true);
     assertThat(evidence.protection().canonicalBytes().length).isGreaterThan(4 * 1024 * 1024);
-    responder.set(
-        input ->
-            AccountInitialAdmissionSettlementReadGrpcCodec.toResponse(
-                new AccountInitialAdmissionSettlementReadEvidence(
-                    input.readRequestId(), input.protection(), evidence.terminal())));
+    responder.set(input ->
+        AccountInitialAdmissionSettlementReadGrpcCodec.toResponse(
+            new AccountInitialAdmissionSettlementReadEvidence(
+                input.readRequestId(), input.protection(), evidence.terminal())));
     start("gs");
     client = newClient("account", NAMESPACE);
     client.init();
@@ -167,9 +166,8 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
       failure.set(status);
       int previous = bodies.get();
       assertThatThrownBy(() -> client.read(evidence.input()))
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode()).isEqualTo(status.getCode()));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode()).isEqualTo(status.getCode()));
       assertThat(bodies.get()).isEqualTo(previous + 1);
     }
   }
@@ -190,10 +188,9 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
     client.init();
     var input = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED).input();
     assertThatThrownBy(() -> client.read(input))
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(bodies.get()).isZero();
   }
 
@@ -204,10 +201,9 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
     client.init();
     var input = AccountInitialAdmissionSettlementTestFixtures.evidence(Outcome.COMMITTED).input();
     assertThatThrownBy(() -> client.read(input))
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.PERMISSION_DENIED));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.PERMISSION_DENIED));
     assertThat(bodies.get()).isZero();
   }
 
@@ -239,23 +235,20 @@ class GrpcAccountInitialAdmissionSettlementReadClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var tls = LoopbackMtlsTestPki.placeholderTls(directory);
     tls.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GrpcAccountInitialAdmissionSettlementReadClient(
-                    new ServiceEndpointsProperties(), tls, factory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcAccountInitialAdmissionSettlementReadClient(
+                new ServiceEndpointsProperties(), tls, factory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
     tls.setPlaintext(false);
     tls.setCertChain("classpath:client.crt");
-    assertThatThrownBy(
-            () ->
-                new GrpcAccountInitialAdmissionSettlementReadClient(
-                    new ServiceEndpointsProperties(), tls, factory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcAccountInitialAdmissionSettlementReadClient(
+                new ServiceEndpointsProperties(), tls, factory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
     tls.setCertChain(directory.resolve("absent.crt").toString());
-    assertThatThrownBy(
-            () ->
-                new GrpcAccountInitialAdmissionSettlementReadClient(
-                    new ServiceEndpointsProperties(), tls, factory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcAccountInitialAdmissionSettlementReadClient(
+                new ServiceEndpointsProperties(), tls, factory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
     client =
         new GrpcAccountInitialAdmissionSettlementReadClient(

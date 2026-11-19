@@ -112,10 +112,9 @@ public final class ControlledSelectedSourceIntakeFixtureBuilder {
     DraftCommitBinding authored = authoredBinding(declarationPayload, selected.target());
     TemplateConfigOwnerSourceInventoryDeclaration ownerDeclaration =
         TemplateConfigSourceValues.mutations(authored).stream()
-            .filter(
-                mutation ->
-                    mutation.operation()
-                        == TemplateConfigSourceValues.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+            .filter(mutation ->
+                mutation.operation()
+                    == TemplateConfigSourceValues.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
             .map(TemplateConfigSourceValues.Mutation::ownerInventoryDeclaration)
             .findFirst()
             .orElseThrow();
@@ -330,15 +329,14 @@ public final class ControlledSelectedSourceIntakeFixtureBuilder {
             0,
             0,
             selected.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-                .map(
-                    unit ->
-                        new AppliedEpoch(
-                            unit.aggregateType(),
-                            unit.aggregateId(),
-                            unit.scopeType(),
-                            unit.scopeId(),
-                            unit.expectedEpoch(),
-                            new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                .map(unit ->
+                    new AppliedEpoch(
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch(),
+                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
                 .toList(),
             emptyInboundClosure());
     var ownerScope =

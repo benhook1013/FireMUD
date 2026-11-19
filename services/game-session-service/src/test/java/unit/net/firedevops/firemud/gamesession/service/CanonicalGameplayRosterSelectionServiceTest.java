@@ -217,12 +217,11 @@ class CanonicalGameplayRosterSelectionServiceTest {
   @Test
   void rejectsAnEntitySnapshotWithAnotherAccountOrTargetBeforeSelectedRead() throws Exception {
     var accountMismatch = harness(oneActor());
-    doAnswer(
-            invocation ->
-                rosterResponse(
-                    invocation.getArgument(0),
-                    uuid("12121212-1212-4212-8212-121212121212"),
-                    oneActor()))
+    doAnswer(invocation ->
+            rosterResponse(
+                invocation.getArgument(0),
+                uuid("12121212-1212-4212-8212-121212121212"),
+                oneActor()))
         .when(accountMismatch.stub())
         .listPreseededRoster(any());
 
@@ -1036,12 +1035,11 @@ class CanonicalGameplayRosterSelectionServiceTest {
         var calls = new AtomicInteger();
         int failedPhase = phase;
         when(h.sources().resolvePlayerCreatedRosterSource(any()))
-            .thenAnswer(
-                call -> {
-                  assertNoAmbientSql();
-                  if (calls.getAndIncrement() == failedPhase) throw failure;
-                  return h.source();
-                });
+            .thenAnswer(call -> {
+              assertNoAmbientSql();
+              if (calls.getAndIncrement() == failedPhase) throw failure;
+              return h.source();
+            });
         assertDenied(
             h.service().select(h.context(), null, null),
             CanonicalGameplayRosterSelectionService.Denial.ROUTE_UNAVAILABLE);
@@ -1218,30 +1216,26 @@ class CanonicalGameplayRosterSelectionServiceTest {
     var sources = mock(GameSessionCharacterCreatePublicSourceService.class);
     var client = mock(CanonicalPlayerCreatedRosterClient.class);
     when(routes.readCurrentTarget(route.canonicalTenantId()))
-        .thenAnswer(
-            call -> {
-              assertNoAmbientSql();
-              return route;
-            });
+        .thenAnswer(call -> {
+          assertNoAmbientSql();
+          return route;
+        });
     when(sources.resolvePlayerCreatedRosterSource(any()))
-        .thenAnswer(
-            call -> {
-              assertNoAmbientSql();
-              return source;
-            });
+        .thenAnswer(call -> {
+          assertNoAmbientSql();
+          return source;
+        });
     when(client.listPlayerCreatedRoster(source, context))
-        .thenAnswer(
-            call -> {
-              assertNoAmbientSql();
-              return roster;
-            });
+        .thenAnswer(call -> {
+          assertNoAmbientSql();
+          return roster;
+        });
     when(client.readSelectedPlayerCreatedCharacter(org.mockito.ArgumentMatchers.eq(roster), any()))
-        .thenAnswer(
-            call -> {
-              assertNoAmbientSql();
-              PlayerExecutionContext selectedContext = call.getArgument(1);
-              return references.get(UUID.fromString(selectedContext.getCharacterId()));
-            });
+        .thenAnswer(call -> {
+          assertNoAmbientSql();
+          PlayerExecutionContext selectedContext = call.getArgument(1);
+          return references.get(UUID.fromString(selectedContext.getCharacterId()));
+        });
     return new CreatedHarness(
         new CanonicalGameplayRosterSelectionService(
             routes, publications, preseeded, sources, client),
@@ -1640,55 +1634,50 @@ class CanonicalGameplayRosterSelectionServiceTest {
         .when(owner)
         .reserveSelectionInput(any(), any());
     when(owner.begin(any()))
-        .thenAnswer(
-            call ->
-                net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
-                    .response(
-                        call.getArgument(0),
-                        1L,
-                        java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
-                        null));
+        .thenAnswer(call ->
+            net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence.response(
+                call.getArgument(0),
+                1L,
+                java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                null));
     when(owner.record(any(), any()))
-        .thenAnswer(
-            call -> {
-              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
-                  request = call.getArgument(0);
-              CanonicalGameplayRosterResponse receipt = call.getArgument(1);
-              receipts.put(request.getOperationUuid(), receipt);
-              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
-                  .response(
-                      request,
-                      1L,
-                      java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
-                      receipt);
-            });
+        .thenAnswer(call -> {
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest request =
+              call.getArgument(0);
+          CanonicalGameplayRosterResponse receipt = call.getArgument(1);
+          receipts.put(request.getOperationUuid(), receipt);
+          return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+              .response(
+                  request,
+                  1L,
+                  java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                  receipt);
+        });
     when(owner.read(any()))
-        .thenAnswer(
-            call -> {
-              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
-                  request = call.getArgument(0);
-              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
-                  .response(
-                      request,
-                      1L,
-                      java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
-                      receipts.get(request.getOperationUuid()));
-            });
+        .thenAnswer(call -> {
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest request =
+              call.getArgument(0);
+          return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+              .response(
+                  request,
+                  1L,
+                  java.util.UUID.fromString("12121212-1212-4212-8212-121212121212"),
+                  receipts.get(request.getOperationUuid()));
+        });
     when(owner.selectOriginal(any(), any()))
-        .thenAnswer(
-            call -> {
-              net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest
-                  request = call.getArgument(0);
-              UUID selectedCharacter = call.getArgument(1);
-              var original = owner.read(request);
-              return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
-                  .requireResponse(
-                      request,
-                      original.toBuilder()
-                          .setSelectionInput(selectionInputs.get(request.getOperationUuid()))
-                          .setSelectedCharacterUuid(selectedCharacter.toString())
-                          .build());
-            });
+        .thenAnswer(call -> {
+          net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterReferenceRequest request =
+              call.getArgument(0);
+          UUID selectedCharacter = call.getArgument(1);
+          var original = owner.read(request);
+          return net.firedevops.firemud.common.world.CanonicalGameplayRosterReferenceEvidence
+              .requireResponse(
+                  request,
+                  original.toBuilder()
+                      .setSelectionInput(selectionInputs.get(request.getOperationUuid()))
+                      .setSelectedCharacterUuid(selectedCharacter.toString())
+                      .build());
+        });
     var ownerBeans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
     ownerBeans.addBean("controlledReferenceOwner", owner);
     var client =

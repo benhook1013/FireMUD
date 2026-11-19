@@ -557,16 +557,15 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
 
     void settle(OriginalNewCapacityExecution original, UUID denial) {
       var assignment = tags.assignmentForTransition(original.transitionId());
-      sql.transaction(
-          configuration ->
-              CanonicalGameplayCapacityEvidenceBudget.settleDenied(
-                  DSL.using(configuration),
-                  original.request(),
-                  original.candidateDigest(),
-                  new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
-                      original.selectedOwnerId(), original.selectedOwnerFence()),
-                  assignment.tenantGameplayTag(),
-                  denial));
+      sql.transaction(configuration ->
+          CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+              DSL.using(configuration),
+              original.request(),
+              original.candidateDigest(),
+              new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+                  original.selectedOwnerId(), original.selectedOwnerFence()),
+              assignment.tenantGameplayTag(),
+              denial));
     }
 
     void precharge(OriginalNewCapacityExecution original) {

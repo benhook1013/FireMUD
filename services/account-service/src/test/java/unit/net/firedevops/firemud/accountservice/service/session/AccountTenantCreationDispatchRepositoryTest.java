@@ -192,11 +192,10 @@ class AccountTenantCreationDispatchRepositoryTest {
     Fixture() {
       var manager = mock(PlatformTransactionManager.class);
       when(manager.getTransaction(any()))
-          .thenAnswer(
-              invocation -> {
-                TransactionSynchronizationManager.setActualTransactionActive(true);
-                return mock(TransactionStatus.class);
-              });
+          .thenAnswer(invocation -> {
+            TransactionSynchronizationManager.setActualTransactionActive(true);
+            return mock(TransactionStatus.class);
+          });
       doAnswer(
               invocation -> {
                 commits++;
@@ -273,11 +272,10 @@ class AccountTenantCreationDispatchRepositoryTest {
               issuance))
           .thenReturn(original);
       when(actors.readAcceptedSignerKey("kid"))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                return new AccountControlUiActorService.AcceptedSignerKey("kid", "fingerprint");
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return new AccountControlUiActorService.AcceptedSignerKey("kid", "fingerprint");
+          });
       var observed = mock(AccountTenantCreationOwnerSourceCapture.Captured.class);
       when(observed.originalClaims()).thenReturn(stored.claims);
       when(observed.originalSignerReceipt()).thenReturn(signer);
@@ -301,26 +299,24 @@ class AccountTenantCreationDispatchRepositoryTest {
           .thenAnswer(invocation -> hideClaim ? null : row);
       observe(Instant.ofEpochMilli(1899999900000L));
       when(dsl.fetchOne("SELECT clock_timestamp() AS observed_at"))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-                return clock;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            return clock;
+          });
       when(dsl.execute(anyString(), any(Object[].class)))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-                Object[] values = (Object[]) invocation.getRawArguments()[1];
-                claimFields.put("creation_operation_id", values[0]);
-                claimFields.put("dispatch_call_id", values[1]);
-                claimFields.put("authorization_binding_payload", values[2]);
-                claimFields.put("authorization_digest", values[3]);
-                claimFields.put("valid_before_epoch_millis", values[4]);
-                row = mock(Record.class);
-                when(row.get(anyString(), any(Class.class)))
-                    .thenAnswer(read -> claimFields.get(read.getArgument(0)));
-                return 1;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            Object[] values = (Object[]) invocation.getRawArguments()[1];
+            claimFields.put("creation_operation_id", values[0]);
+            claimFields.put("dispatch_call_id", values[1]);
+            claimFields.put("authorization_binding_payload", values[2]);
+            claimFields.put("authorization_digest", values[3]);
+            claimFields.put("valid_before_epoch_millis", values[4]);
+            row = mock(Record.class);
+            when(row.get(anyString(), any(Class.class)))
+                .thenAnswer(read -> claimFields.get(read.getArgument(0)));
+            return 1;
+          });
       repository =
           new AccountTenantCreationDispatchRepository(
               dsl, intents, admissions, orders, issuances, actors, capture, manager);

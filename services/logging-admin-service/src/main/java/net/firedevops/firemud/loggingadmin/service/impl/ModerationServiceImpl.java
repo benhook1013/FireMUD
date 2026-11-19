@@ -67,10 +67,9 @@ public class ModerationServiceImpl implements ModerationService {
         .findActivePolicyActions(tenantId, accountId, blockingActions, Instant.now())
         .stream()
         .findFirst()
-        .map(
-            action ->
-                new ModerationPolicyDecisionDto(
-                    false, action.getAction(), action.getReason(), action.getExpiresAt()))
+        .map(action ->
+            new ModerationPolicyDecisionDto(
+                false, action.getAction(), action.getReason(), action.getExpiresAt()))
         .orElseGet(() -> new ModerationPolicyDecisionDto(true, "", "", null));
   }
 

@@ -96,11 +96,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
 
       try {
         TransactionSynchronizationManager.setActualTransactionActive(true);
-        assertThatThrownBy(
-                () ->
-                    fixture
-                        .owner(initialReceiver, redis)
-                        .installAndRead(fixture.intent().operationId(), 0L))
+        assertThatThrownBy(() ->
+                fixture
+                    .owner(initialReceiver, redis)
+                    .installAndRead(fixture.intent().operationId(), 0L))
             .isInstanceOf(IllegalStateException.class);
       } finally {
         TransactionSynchronizationManager.clear();
@@ -108,11 +107,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       assertThat(redis.admin().type(redisKey)).isEqualTo("none");
       try {
         TransactionSynchronizationManager.initSynchronization();
-        assertThatThrownBy(
-                () ->
-                    fixture
-                        .owner(initialReceiver, redis)
-                        .installAndRead(fixture.intent().operationId(), 0L))
+        assertThatThrownBy(() ->
+                fixture
+                    .owner(initialReceiver, redis)
+                    .installAndRead(fixture.intent().operationId(), 0L))
             .isInstanceOf(IllegalStateException.class);
       } finally {
         TransactionSynchronizationManager.clearSynchronization();
@@ -169,12 +167,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       equalEpochOpen.put("state", "OPEN");
       redis.admin().del(List.of(redisKey).toArray(byte[][]::new));
       redis.admin().hset(redisKey, encoded(equalEpochOpen));
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class);
       assertExactHash(redis.admin(), redisKey, equalEpochOpen);
 
@@ -183,12 +179,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       equalEpochConflictingOwner.put("ownerOperationId", UUID.randomUUID().toString());
       redis.admin().del(List.of(redisKey).toArray(byte[][]::new));
       redis.admin().hset(redisKey, encoded(equalEpochConflictingOwner));
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class);
       assertExactHash(redis.admin(), redisKey, equalEpochConflictingOwner);
 
@@ -196,12 +190,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       unknownField.put("operatorExtension", "preserve");
       redis.admin().del(List.of(redisKey).toArray(byte[][]::new));
       redis.admin().hset(redisKey, encoded(unknownField));
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class);
       assertThat(stringMap(redis.admin().hgetall(redisKey))).isEqualTo(unknownField);
       assertThat(redis.admin().type(redisKey)).isEqualTo("hash");
@@ -222,11 +214,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       // The write may have happened, but changed protected evidence on the post-read observation
       // prevents an owner readback capability from being returned. The stored barrier stays closed.
       var changingReceiver = fixture.receiver(new ControlledSigner(fixture.keyPair(), true));
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(changingReceiver, redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(changingReceiver, redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("CLOSED account barrier is unavailable");
       assertExactHash(redis.admin(), redisKey, installed.barrierFields());
@@ -236,24 +227,20 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
           new LinkedHashMap<>(barrierFields(fixture, assignment, initialProof, "11", "OPEN"));
       newerOpen.put("ownerOperationId", UUID.randomUUID().toString());
       redis.admin().hset(redisKey, encoded(newerOpen));
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class);
       assertExactHash(redis.admin(), redisKey, newerOpen);
 
       // Wrong Redis type, foreign scope, and TTL-bearing hashes are non-mutating refusals.
       redis.admin().del(List.of(redisKey).toArray(byte[][]::new));
       redis.admin().set(redisKey, ascii("operator-owned"));
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().get(redisKey)).isEqualTo(ascii("operator-owned"));
 
@@ -262,12 +249,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
           new LinkedHashMap<>(barrierFields(fixture, assignment, initialProof, "9", "CLOSED"));
       foreignScope.put("tenantId", UUID.randomUUID().toString());
       redis.admin().hset(redisKey, encoded(foreignScope));
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class);
       assertExactHash(redis.admin(), redisKey, foreignScope);
 
@@ -275,29 +260,23 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       redis.admin().hset(redisKey, encoded(previousClosed));
       redis.admin().pexpire(redisKey, 60_000L);
       Map<byte[], byte[]> expiringBefore = redis.admin().hgetall(redisKey);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class);
       assertThat(stringMap(redis.admin().hgetall(redisKey))).isEqualTo(stringMap(expiringBefore));
       assertThat(redis.admin().pttl(redisKey)).isPositive();
 
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(UUID.randomUUID(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(UUID.randomUUID(), 0L))
           .isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 1L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 1L))
           .isInstanceOf(IllegalStateException.class);
     }
   }
@@ -345,12 +324,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
           new LinkedHashMap<>(barrierFields(fixture, assignment, proof, greaterEpoch, "OPEN"));
       newerOwner.put("ownerOperationId", UUID.randomUUID().toString());
       redis.admin().hset(key, encoded(newerOwner));
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class);
       assertThat(stringMap(redis.admin().hgetall(key))).isEqualTo(newerOwner);
       assertThat(newerOwner.get("ownerFenceEpoch")).isEqualTo(greaterEpoch);
@@ -397,12 +374,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
           withPriorOperation(barrierFields(fixture, assignment, proof, "0", "CLOSED"));
       redis.admin().del(List.of(key).toArray(byte[][]::new));
       redis.admin().hset(key, encoded(priorClosed));
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .owner(
-                          fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
-                      .installAndRead(fixture.intent().operationId(), 0L))
+      assertThatThrownBy(() ->
+              fixture
+                  .owner(fixture.receiver(new ControlledSigner(fixture.keyPair(), false)), redis)
+                  .installAndRead(fixture.intent().operationId(), 0L))
           .isInstanceOf(IllegalStateException.class);
       assertExactHash(redis.admin(), key, priorClosed);
     }
@@ -441,15 +416,12 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       assertThat(closedReceiptCount(fixture, operationId)).isEqualTo(1L);
       assertThat(closedReceiptPostimage(fixture, operationId, 0L)).isEqualTo(originalPostimage);
 
-      assertThatThrownBy(
-              () ->
-                  restartedSqlOwner.acceptClosedBarrierReadback(
-                      UUID.randomUUID(), 0L, freshRetryReadback))
+      assertThatThrownBy(() ->
+              restartedSqlOwner.acceptClosedBarrierReadback(
+                  UUID.randomUUID(), 0L, freshRetryReadback))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
-      assertThatThrownBy(
-              () ->
-                  restartedSqlOwner.acceptClosedBarrierReadback(
-                      operationId, 1L, freshRetryReadback))
+      assertThatThrownBy(() ->
+              restartedSqlOwner.acceptClosedBarrierReadback(operationId, 1L, freshRetryReadback))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
       assertThat(closedReceiptCount(fixture, operationId)).isEqualTo(1L);
       assertThat(closedReceiptPostimage(fixture, operationId, 0L)).isEqualTo(originalPostimage);
@@ -549,37 +521,33 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       CountDownLatch releaseInventoryClock = new CountDownLatch(1);
       try (ExecutorService executor = Executors.newFixedThreadPool(3)) {
         Future<?> clockHolder =
-            executor.submit(
-                () ->
-                    fixture.dsl.transactionResult(
-                        configuration -> {
-                          DSLContext transaction = DSL.using(configuration);
-                          if (transaction.fetchOne(
-                                  "SELECT inventory_revision FROM"
-                                      + " game_session_canonical_binding_inventory_clock"
-                                      + " WHERE singleton_id = 1 FOR UPDATE")
-                              == null) {
-                            throw new IllegalStateException("Inventory clock row is missing");
-                          }
-                          inventoryClockHeld.countDown();
-                          awaitLatch(releaseInventoryClock);
-                          return Boolean.TRUE;
-                        }));
+            executor.submit(() ->
+                fixture.dsl.transactionResult(configuration -> {
+                  DSLContext transaction = DSL.using(configuration);
+                  if (transaction.fetchOne(
+                          "SELECT inventory_revision FROM"
+                              + " game_session_canonical_binding_inventory_clock"
+                              + " WHERE singleton_id = 1 FOR UPDATE")
+                      == null) {
+                    throw new IllegalStateException("Inventory clock row is missing");
+                  }
+                  inventoryClockHeld.countDown();
+                  awaitLatch(releaseInventoryClock);
+                  return Boolean.TRUE;
+                }));
         try {
           assertThat(inventoryClockHeld.await(5, TimeUnit.SECONDS)).isTrue();
           Future<?> prepare =
-              executor.submit(
-                  () ->
-                      new CanonicalGameplayBindingInventoryRepository(prepareDsl)
-                          .prepare(otherRequest));
+              executor.submit(() ->
+                  new CanonicalGameplayBindingInventoryRepository(prepareDsl)
+                      .prepare(otherRequest));
           awaitInventoryClockLockWait(fixture.dsl, prepareApplicationName);
 
           Future<StoredClosedBarrierReceipt> accepted =
-              executor.submit(
-                  () ->
-                      new CanonicalGameplayAccountAdmissionBarrierRepository(
-                              acceptDsl, Clock.fixed(NOW, ZoneOffset.UTC))
-                          .acceptClosedBarrierReadback(operationId, 0L, readback));
+              executor.submit(() ->
+                  new CanonicalGameplayAccountAdmissionBarrierRepository(
+                          acceptDsl, Clock.fixed(NOW, ZoneOffset.UTC))
+                      .acceptClosedBarrierReadback(operationId, 0L, readback));
           awaitInventoryClockLockWait(fixture.dsl, acceptApplicationName);
 
           // PostgreSQL's row-lock queue releases the actual prepare first, then lets the receipt
@@ -632,9 +600,8 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       var expiredSqlOwner =
           new CanonicalGameplayAccountAdmissionBarrierRepository(
               fixture.dsl, Clock.fixed(NOW.plusSeconds(30), ZoneOffset.UTC));
-      assertThatThrownBy(
-              () ->
-                  expiredSqlOwner.acceptClosedBarrierReadback(operationId, 0L, nowExpiredReadback))
+      assertThatThrownBy(() ->
+              expiredSqlOwner.acceptClosedBarrierReadback(operationId, 0L, nowExpiredReadback))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
           .hasMessageContaining("expired");
       assertThat(closedReceiptCount(fixture, operationId)).isEqualTo(1L);
@@ -818,29 +785,26 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
       String originalPostimage = closedReceiptPostimage(fixture, operationId, 0L);
 
       // created_at is outside the row CHECK constraints, so 23514 proves the immutable trigger.
-      assertThatThrownBy(
-              () ->
-                  fixture.dsl.execute(
-                      "UPDATE game_session_canonical_account_closed_barrier_receipt"
-                          + " SET created_at = created_at + INTERVAL '1 second'"
-                          + " WHERE operation_id = ? AND target_ordinal = 0",
-                      operationId))
+      assertThatThrownBy(() ->
+              fixture.dsl.execute(
+                  "UPDATE game_session_canonical_account_closed_barrier_receipt"
+                      + " SET created_at = created_at + INTERVAL '1 second'"
+                      + " WHERE operation_id = ? AND target_ordinal = 0",
+                  operationId))
           .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
       assertThat(closedReceiptPostimage(fixture, operationId, 0L)).isEqualTo(originalPostimage);
 
-      assertThatThrownBy(
-              () ->
-                  fixture.dsl.execute(
-                      "DELETE FROM game_session_canonical_account_closed_barrier_receipt"
-                          + " WHERE operation_id = ? AND target_ordinal = 0",
-                      operationId))
+      assertThatThrownBy(() ->
+              fixture.dsl.execute(
+                  "DELETE FROM game_session_canonical_account_closed_barrier_receipt"
+                      + " WHERE operation_id = ? AND target_ordinal = 0",
+                  operationId))
           .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
       assertThat(closedReceiptPostimage(fixture, operationId, 0L)).isEqualTo(originalPostimage);
 
-      assertThatThrownBy(
-              () ->
-                  fixture.dsl.execute(
-                      "TRUNCATE TABLE game_session_canonical_account_closed_barrier_receipt"))
+      assertThatThrownBy(() ->
+              fixture.dsl.execute(
+                  "TRUNCATE TABLE game_session_canonical_account_closed_barrier_receipt"))
           .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
       assertThat(closedReceiptCount(fixture, operationId)).isEqualTo(1L);
       assertThat(closedReceiptPostimage(fixture, operationId, 0L)).isEqualTo(originalPostimage);
@@ -944,11 +908,10 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
 
   private static Map<String, String> stringMap(Map<byte[], byte[]> fields) {
     Map<String, String> decoded = new LinkedHashMap<>();
-    fields.forEach(
-        (field, value) ->
-            decoded.put(
-                new String(field, StandardCharsets.US_ASCII),
-                new String(value, StandardCharsets.US_ASCII)));
+    fields.forEach((field, value) ->
+        decoded.put(
+            new String(field, StandardCharsets.US_ASCII),
+            new String(value, StandardCharsets.US_ASCII)));
     return decoded;
   }
 
@@ -1221,24 +1184,22 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
                   identity.accountId(),
                   identity.accountId(),
                   identity.accountId())
-              .map(
-                  row ->
-                      CanonicalGameplayAccountAdmissionFenceIntent.cohortRow(
-                          row.get("row_ordinal", Long.class),
-                          CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.valueOf(
-                              row.get("source_kind", String.class)),
-                          row.get("source_key", String.class),
-                          row.get("tenant_id", UUID.class),
-                          row.get("playable_state_namespace_id", UUID.class),
-                          row.get("source_record_json", String.class)));
+              .map(row ->
+                  CanonicalGameplayAccountAdmissionFenceIntent.cohortRow(
+                      row.get("row_ordinal", Long.class),
+                      CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.valueOf(
+                          row.get("source_kind", String.class)),
+                      row.get("source_key", String.class),
+                      row.get("tenant_id", UUID.class),
+                      row.get("playable_state_namespace_id", UUID.class),
+                      row.get("source_record_json", String.class)));
       if (rows.size() != 3
           || rows.stream()
-              .anyMatch(
-                  row ->
-                      !identity.tenantId().equals(row.tenantId())
-                          || !identity
-                              .playableStateNamespaceId()
-                              .equals(row.playableStateNamespaceId()))) {
+              .anyMatch(row ->
+                  !identity.tenantId().equals(row.tenantId())
+                      || !identity
+                          .playableStateNamespaceId()
+                          .equals(row.playableStateNamespaceId()))) {
         throw new IllegalStateException("Historical fixture must retain its three scoped sources");
       }
       var target =

@@ -92,11 +92,10 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
     assertThat(snapshot.checkpoints()).hasSize(4);
     assertThat(snapshot.sourceEvidence()).hasSize(2);
     assertThat(snapshot.checkpoints())
-        .anySatisfy(
-            checkpoint -> {
-              assertThat(checkpoint.outboxStreamKey()).isEqualTo(fixture.membershipStream());
-              assertThat(checkpoint.outboxSequence()).isEqualTo("1");
-            });
+        .anySatisfy(checkpoint -> {
+          assertThat(checkpoint.outboxStreamKey()).isEqualTo(fixture.membershipStream());
+          assertThat(checkpoint.outboxSequence()).isEqualTo("1");
+        });
     assertThat(snapshot.authorityTuple().tenantBillingCutoff())
         .hasValueSatisfying(
             cutoffs -> assertThat(cutoffs).containsKey(fixture.tenantUuid.toString()));
@@ -120,11 +119,10 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
     assertThat(snapshot.membershipVersion()).containsEntry(fixture.tenantUuid.toString(), "1");
     assertThat(snapshot.membershipAuthorityGeneration()).isEqualTo("1");
     assertThat(snapshot.checkpoints())
-        .anySatisfy(
-            checkpoint -> {
-              assertThat(checkpoint.outboxStreamKey()).isEqualTo(fixture.membershipStream());
-              assertThat(checkpoint.outboxSequence()).isEqualTo("0");
-            });
+        .anySatisfy(checkpoint -> {
+          assertThat(checkpoint.outboxStreamKey()).isEqualTo(fixture.membershipStream());
+          assertThat(checkpoint.outboxSequence()).isEqualTo("0");
+        });
     assertThat(snapshot.sourceEvidence())
         .noneMatch(source -> source.outboxStreamKey().equals(fixture.membershipStream()));
     assertThat(fixture.schemaImage()).isEqualTo(before);
@@ -148,20 +146,18 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
     Fixture fixture = newFixture();
     fixture.commitFirstJoin();
     long membershipId = fixture.membershipId();
-    fixture.inTransaction(
-        () -> {
-          fixture.dsl.execute(
-              "DELETE FROM account_tenant_membership_role_snapshot_roles WHERE membership_id = ?",
-              membershipId);
-          fixture.dsl.execute(
-              "DELETE FROM account_tenant_membership_role_snapshots WHERE membership_id = ?",
-              membershipId);
-          return null;
-        });
+    fixture.inTransaction(() -> {
+      fixture.dsl.execute(
+          "DELETE FROM account_tenant_membership_role_snapshot_roles WHERE membership_id = ?",
+          membershipId);
+      fixture.dsl.execute(
+          "DELETE FROM account_tenant_membership_role_snapshots WHERE membership_id = ?",
+          membershipId);
+      return null;
+    });
 
-    assertThatThrownBy(
-            () ->
-                fixture.snapshots.readCurrent(fixture.account.getAccountUuid(), fixture.tenantUuid))
+    assertThatThrownBy(() ->
+            fixture.snapshots.readCurrent(fixture.account.getAccountUuid(), fixture.tenantUuid))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Committed current membership role snapshot is absent");
   }
@@ -298,50 +294,43 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
     }
 
     private void seedOwnerRowsAndOperation(AccountConnectScopeRepository connectScopes) {
-      inTransaction(
-          () -> {
-            freshTenants.importVerified(tenantEvidence);
-            sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
-            generations.initializeTenantIfAbsent(tenantUuid);
-            generations.initialize(
-                AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                    account.getAccountUuid(), tenantUuid));
-            connectScopes.insertCanonical(account.getId(), scope, provenance);
-            operations.insertCanonicalIntent(requestId, scope, callerBinding);
-            return null;
-          });
+      inTransaction(() -> {
+        freshTenants.importVerified(tenantEvidence);
+        sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
+        generations.initializeTenantIfAbsent(tenantUuid);
+        generations.initialize(
+            AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                account.getAccountUuid(), tenantUuid));
+        connectScopes.insertCanonical(account.getId(), scope, provenance);
+        operations.insertCanonicalIntent(requestId, scope, callerBinding);
+        return null;
+      });
       DemoTenantEntitlementSnapshot entitlement =
-          inTransaction(
-              () ->
-                  demoEntitlements.provision(
-                      entitlementRequest(UUID.randomUUID()), tenantEvidence));
-      inTransaction(
-          () -> {
-            operations.bindCanonicalPolicyEvidence(
-                requestId,
-                scope,
-                callerBinding,
-                entitlement.allowPublicJoin(),
-                entitlement.entitlementVersion());
-            return null;
-          });
+          inTransaction(() ->
+              demoEntitlements.provision(entitlementRequest(UUID.randomUUID()), tenantEvidence));
+      inTransaction(() -> {
+        operations.bindCanonicalPolicyEvidence(
+            requestId,
+            scope,
+            callerBinding,
+            entitlement.allowPublicJoin(),
+            entitlement.entitlementVersion());
+        return null;
+      });
     }
 
     private void enrollAbsenceBaseline() {
-      inTransaction(
-          () -> {
-            accounts
-                .findByAccountUuidForUpdate(account.getAccountUuid())
-                .orElseThrow(() -> new IllegalStateException("Account owner row is absent"));
-            if (!tenantEvidence.equals(freshTenants.read(tenantUuid).orElseThrow())
-                || memberships
-                    .findFreshMembership(account.getAccountUuid(), tenantUuid)
-                    .isPresent()) {
-              throw new IllegalStateException("Absence fixture is not the exact fresh empty pair");
-            }
-            pairs.enrollAbsence(account.getAccountUuid(), tenantUuid, provenance);
-            return null;
-          });
+      inTransaction(() -> {
+        accounts
+            .findByAccountUuidForUpdate(account.getAccountUuid())
+            .orElseThrow(() -> new IllegalStateException("Account owner row is absent"));
+        if (!tenantEvidence.equals(freshTenants.read(tenantUuid).orElseThrow())
+            || memberships.findFreshMembership(account.getAccountUuid(), tenantUuid).isPresent()) {
+          throw new IllegalStateException("Absence fixture is not the exact fresh empty pair");
+        }
+        pairs.enrollAbsence(account.getAccountUuid(), tenantUuid, provenance);
+        return null;
+      });
     }
 
     private AccountJoinOperationRepository.CanonicalJoinTerminalProof commitFirstJoin() {
@@ -350,12 +339,11 @@ class AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest {
     }
 
     private long membershipId() {
-      return inTransaction(
-          () ->
-              memberships
-                  .findFreshMembership(account.getAccountUuid(), tenantUuid)
-                  .orElseThrow()
-                  .getId());
+      return inTransaction(() ->
+          memberships
+              .findFreshMembership(account.getAccountUuid(), tenantUuid)
+              .orElseThrow()
+              .getId());
     }
 
     private DemoTenantEntitlementRequest entitlementRequest(UUID entitlementRequestId) {

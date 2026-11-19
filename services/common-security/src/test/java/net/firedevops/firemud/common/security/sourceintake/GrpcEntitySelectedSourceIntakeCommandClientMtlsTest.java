@@ -122,10 +122,9 @@ class GrpcEntitySelectedSourceIntakeCommandClientMtlsTest {
     client.init();
     assertThatThrownBy(() -> client.retain(request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(headers).hasValue(0);
     assertThat(bodies).hasValue(0);
   }

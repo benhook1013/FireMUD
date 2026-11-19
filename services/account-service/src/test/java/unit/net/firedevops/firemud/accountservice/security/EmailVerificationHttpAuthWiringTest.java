@@ -45,32 +45,31 @@ class EmailVerificationHttpAuthWiringTest {
     assertOpenApiDeclaresPublicPost();
     JwtUtil jwtUtil = mock(JwtUtil.class);
     configuredRunner(productionLayer, jwtUtil)
-        .run(
-            context -> {
-              assertThat(context).hasSingleBean(HttpJwtAuthInterceptor.class);
-              HttpAuthProperties properties = context.getBean(HttpAuthProperties.class);
-              assertThat(properties.isEnabled()).isTrue();
-              assertThat(properties.getPublicRoutes())
-                  .filteredOn(route -> PATH.equals(route.getPathPattern()))
-                  .extracting(HttpAuthProperties.HttpPublicRoute::getMethod)
-                  .containsExactly("POST");
-              AccountService owner = mock(AccountService.class);
-              var mvc =
-                  MockMvcBuilders.standaloneSetup(new AuthController(owner))
-                      .addInterceptors(context.getBean(HttpJwtAuthInterceptor.class))
-                      .build();
+        .run(context -> {
+          assertThat(context).hasSingleBean(HttpJwtAuthInterceptor.class);
+          HttpAuthProperties properties = context.getBean(HttpAuthProperties.class);
+          assertThat(properties.isEnabled()).isTrue();
+          assertThat(properties.getPublicRoutes())
+              .filteredOn(route -> PATH.equals(route.getPathPattern()))
+              .extracting(HttpAuthProperties.HttpPublicRoute::getMethod)
+              .containsExactly("POST");
+          AccountService owner = mock(AccountService.class);
+          var mvc =
+              MockMvcBuilders.standaloneSetup(new AuthController(owner))
+                  .addInterceptors(context.getBean(HttpJwtAuthInterceptor.class))
+                  .build();
 
-              mvc.perform(
-                      post(PATH)
-                          .contentType(MediaType.APPLICATION_JSON)
-                          .content("{\"token\":\"exact-verification-token\"}"))
-                  .andExpect(status().isOk())
-                  .andExpect(jsonPath("$.status").value("SUCCESS"));
+          mvc.perform(
+                  post(PATH)
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .content("{\"token\":\"exact-verification-token\"}"))
+              .andExpect(status().isOk())
+              .andExpect(jsonPath("$.status").value("SUCCESS"));
 
-              verify(owner).verifyEmail(new VerifyEmailRequest("exact-verification-token"));
-              verifyNoMoreInteractions(owner);
-              verifyNoInteractions(jwtUtil);
-            });
+          verify(owner).verifyEmail(new VerifyEmailRequest("exact-verification-token"));
+          verifyNoMoreInteractions(owner);
+          verifyNoInteractions(jwtUtil);
+        });
   }
 
   @ParameterizedTest
@@ -78,30 +77,27 @@ class EmailVerificationHttpAuthWiringTest {
   void publicPostPreservesVerificationOwnersInvalidTokenOutcome(boolean productionLayer) {
     JwtUtil jwtUtil = mock(JwtUtil.class);
     configuredRunner(productionLayer, jwtUtil)
-        .run(
-            context -> {
-              assertThat(context).hasSingleBean(HttpJwtAuthInterceptor.class);
-              AccountService owner = mock(AccountService.class);
-              VerifyEmailRequest invalid = new VerifyEmailRequest("invalid-token");
-              doThrow(new IllegalArgumentException("Invalid token"))
-                  .when(owner)
-                  .verifyEmail(invalid);
-              var mvc =
-                  MockMvcBuilders.standaloneSetup(new AuthController(owner))
-                      .setControllerAdvice(new GlobalExceptionHandler())
-                      .addInterceptors(context.getBean(HttpJwtAuthInterceptor.class))
-                      .build();
+        .run(context -> {
+          assertThat(context).hasSingleBean(HttpJwtAuthInterceptor.class);
+          AccountService owner = mock(AccountService.class);
+          VerifyEmailRequest invalid = new VerifyEmailRequest("invalid-token");
+          doThrow(new IllegalArgumentException("Invalid token")).when(owner).verifyEmail(invalid);
+          var mvc =
+              MockMvcBuilders.standaloneSetup(new AuthController(owner))
+                  .setControllerAdvice(new GlobalExceptionHandler())
+                  .addInterceptors(context.getBean(HttpJwtAuthInterceptor.class))
+                  .build();
 
-              mvc.perform(
-                      post(PATH)
-                          .contentType(MediaType.APPLICATION_JSON)
-                          .content("{\"token\":\"invalid-token\"}"))
-                  .andExpect(status().isBadRequest());
+          mvc.perform(
+                  post(PATH)
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .content("{\"token\":\"invalid-token\"}"))
+              .andExpect(status().isBadRequest());
 
-              verify(owner).verifyEmail(invalid);
-              verifyNoMoreInteractions(owner);
-              verifyNoInteractions(jwtUtil);
-            });
+          verify(owner).verifyEmail(invalid);
+          verifyNoMoreInteractions(owner);
+          verifyNoInteractions(jwtUtil);
+        });
   }
 
   @ParameterizedTest
@@ -109,17 +105,16 @@ class EmailVerificationHttpAuthWiringTest {
   void getIsNotWhitelistedWithoutBearer(boolean productionLayer) {
     JwtUtil jwtUtil = mock(JwtUtil.class);
     configuredRunner(productionLayer, jwtUtil)
-        .run(
-            context -> {
-              assertThat(context).hasSingleBean(HttpJwtAuthInterceptor.class);
-              HttpJwtAuthInterceptor interceptor = context.getBean(HttpJwtAuthInterceptor.class);
-              MockHttpServletRequest request = new MockHttpServletRequest("GET", PATH);
-              MockHttpServletResponse response = new MockHttpServletResponse();
+        .run(context -> {
+          assertThat(context).hasSingleBean(HttpJwtAuthInterceptor.class);
+          HttpJwtAuthInterceptor interceptor = context.getBean(HttpJwtAuthInterceptor.class);
+          MockHttpServletRequest request = new MockHttpServletRequest("GET", PATH);
+          MockHttpServletResponse response = new MockHttpServletResponse();
 
-              assertThat(interceptor.preHandle(request, response, new Object())).isFalse();
-              assertThat(response.getStatus()).isEqualTo(401);
-              verifyNoInteractions(jwtUtil);
-            });
+          assertThat(interceptor.preHandle(request, response, new Object())).isFalse();
+          assertThat(response.getStatus()).isEqualTo(401);
+          verifyNoInteractions(jwtUtil);
+        });
   }
 
   private static WebApplicationContextRunner configuredRunner(
@@ -131,29 +126,28 @@ class EmailVerificationHttpAuthWiringTest {
                 CommonSecurityAutoConfiguration.class,
                 CommonSecurityServletAutoConfiguration.class))
         .withBean("jwtUtil", JwtUtil.class, () -> jwtUtil)
-        .withInitializer(
-            context -> {
-              try {
-                YamlPropertySourceLoader loader = new YamlPropertySourceLoader();
-                for (var source :
-                    loader.load(
-                        "account-application",
-                        new FileSystemResource("src/main/resources/application.yml"))) {
-                  context.getEnvironment().getPropertySources().addLast(source);
-                }
-                if (productionLayer) {
-                  context.getEnvironment().setActiveProfiles("prod");
-                  for (var source :
-                      loader.load(
-                          "account-application-prod",
-                          new FileSystemResource("src/main/resources/application-prod.yml"))) {
-                    context.getEnvironment().getPropertySources().addFirst(source);
-                  }
-                }
-              } catch (IOException exception) {
-                throw new IllegalStateException("Could not load Account HTTP auth YAML", exception);
+        .withInitializer(context -> {
+          try {
+            YamlPropertySourceLoader loader = new YamlPropertySourceLoader();
+            for (var source :
+                loader.load(
+                    "account-application",
+                    new FileSystemResource("src/main/resources/application.yml"))) {
+              context.getEnvironment().getPropertySources().addLast(source);
+            }
+            if (productionLayer) {
+              context.getEnvironment().setActiveProfiles("prod");
+              for (var source :
+                  loader.load(
+                      "account-application-prod",
+                      new FileSystemResource("src/main/resources/application-prod.yml"))) {
+                context.getEnvironment().getPropertySources().addFirst(source);
               }
-            });
+            }
+          } catch (IOException exception) {
+            throw new IllegalStateException("Could not load Account HTTP auth YAML", exception);
+          }
+        });
   }
 
   private static void assertOpenApiDeclaresPublicPost() {

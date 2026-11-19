@@ -69,21 +69,19 @@ class AccountAuthoritySourceEvidenceRepositoryTest {
 
   @Test
   void rejectsPartialOrFabricatedSequenceZeroCheckpoints() {
-    assertThatThrownBy(
-            () ->
-                new AccountAuthoritySourceEvidenceRepository.SourceCheckpoint(
-                    "account:auth-authority:v1:issuer/firemud-account-service",
-                    0L,
-                    Optional.of("synthetic-event"),
-                    Optional.empty()))
+    assertThatThrownBy(() ->
+            new AccountAuthoritySourceEvidenceRepository.SourceCheckpoint(
+                "account:auth-authority:v1:issuer/firemud-account-service",
+                0L,
+                Optional.of("synthetic-event"),
+                Optional.empty()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountAuthoritySourceEvidenceRepository.SourceCheckpoint(
-                    "account:auth-authority:v1:issuer/firemud-account-service",
-                    1L,
-                    Optional.empty(),
-                    Optional.empty()))
+    assertThatThrownBy(() ->
+            new AccountAuthoritySourceEvidenceRepository.SourceCheckpoint(
+                "account:auth-authority:v1:issuer/firemud-account-service",
+                1L,
+                Optional.empty(),
+                Optional.empty()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -121,15 +119,13 @@ class AccountAuthoritySourceEvidenceRepositoryTest {
             new AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot(
                 issuer, account, fence))
         .satisfies(snapshot -> assertThat(snapshot.account().issuanceFence()).isEqualTo(fence));
-    assertThatThrownBy(
-            () ->
-                new AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot(
-                    account, account, fence))
+    assertThatThrownBy(() ->
+            new AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot(
+                account, account, fence))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot(
-                    issuer, account, new IssuanceFence(UUID.randomUUID(), 1L, 1L)))
+    assertThatThrownBy(() ->
+            new AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot(
+                issuer, account, new IssuanceFence(UUID.randomUUID(), 1L, 1L)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -169,11 +165,10 @@ class AccountAuthoritySourceEvidenceRepositoryTest {
 
     assertThat(evidence.issuanceFence()).isEqualTo(10L);
     assertThat(evidence.issuanceFenceSourceVersion()).isEqualTo(13L);
-    assertThatThrownBy(
-            () ->
-                new net.firedevops.firemud.accountservice.service
-                    .AccountAuthoritySourceEventReadback.RetainedEventEvidence(
-                    stream, 3L, 4L, 4L, 0L, 13L, new AccountSecurityCutoff("4", stream, "3")))
+    assertThatThrownBy(() ->
+            new net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback
+                .RetainedEventEvidence(
+                stream, 3L, 4L, 4L, 0L, 13L, new AccountSecurityCutoff("4", stream, "3")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -218,20 +213,19 @@ class AccountAuthoritySourceEvidenceRepositoryTest {
   void sourceEvidenceIsRestrictedToIssuerAndAccountScopes() {
     assertThat(ScopeKind.valueOf("ISSUER")).isEqualTo(ScopeKind.ISSUER);
     assertThat(ScopeKind.valueOf("ACCOUNT")).isEqualTo(ScopeKind.ACCOUNT);
-    assertThatThrownBy(
-            () ->
-                new AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence(
-                    AuthorityScope.account(ACCOUNT_ID),
-                    0L,
-                    1L,
-                    new IssuanceFence(ACCOUNT_ID, 1L, 1L),
-                    zeroCheckpoint("account/" + ACCOUNT_ID),
-                    Optional.empty(),
-                    "ACCOUNT_REPOSITORY_INSERT",
-                    9L,
-                    "ACCOUNT_REPOSITORY_INSERT",
-                    1L,
-                    1L))
+    assertThatThrownBy(() ->
+            new AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence(
+                AuthorityScope.account(ACCOUNT_ID),
+                0L,
+                1L,
+                new IssuanceFence(ACCOUNT_ID, 1L, 1L),
+                zeroCheckpoint("account/" + ACCOUNT_ID),
+                Optional.empty(),
+                "ACCOUNT_REPOSITORY_INSERT",
+                9L,
+                "ACCOUNT_REPOSITORY_INSERT",
+                1L,
+                1L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

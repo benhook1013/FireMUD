@@ -34,13 +34,12 @@ class WorldAuthoredVersionIdentityCanonicalTargetReadTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     var repository = new WorldAuthoredVersionIdentityRepository(dsl);
 
-    assertThatThrownBy(
-            () ->
-                repository.readByCanonicalTarget(
-                    "firemud",
-                    UUID.fromString("22222222-2222-4222-8222-222222222222"),
-                    UUID.fromString("33333333-3333-4333-8333-333333333333"),
-                    42L))
+    assertThatThrownBy(() ->
+            repository.readByCanonicalTarget(
+                "firemud",
+                UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                UUID.fromString("33333333-3333-4333-8333-333333333333"),
+                42L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("independent committed owner read");
 
@@ -60,13 +59,12 @@ class WorldAuthoredVersionIdentityCanonicalTargetReadTest {
     when(rows.size()).thenReturn(2);
     var repository = new WorldAuthoredVersionIdentityRepository(dsl);
 
-    assertThatThrownBy(
-            () ->
-                repository.readByCanonicalTarget(
-                    "firemud",
-                    UUID.fromString("22222222-2222-4222-8222-222222222222"),
-                    UUID.fromString("33333333-3333-4333-8333-333333333333"),
-                    42L))
+    assertThatThrownBy(() ->
+            repository.readByCanonicalTarget(
+                "firemud",
+                UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                UUID.fromString("33333333-3333-4333-8333-333333333333"),
+                42L))
         .isInstanceOf(WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException.class)
         .hasMessageContaining("ambiguous World associations");
   }

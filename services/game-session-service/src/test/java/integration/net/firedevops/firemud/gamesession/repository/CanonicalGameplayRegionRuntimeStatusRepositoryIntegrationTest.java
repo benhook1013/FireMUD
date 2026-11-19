@@ -44,16 +44,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
 
   @Test
   void initializesOnlyAnAbsentRegionAtItsFirstEpochAndFirstTick() {
-    assertThatThrownBy(
-            () ->
-                repository.installOwner(
-                    source,
-                    2L,
-                    null,
-                    FIRST_LEASE_CORRELATION,
-                    "game-session-service",
-                    "instance-a",
-                    Instant.parse("2026-10-26T00:00:00Z")))
+    assertThatThrownBy(() ->
+            repository.installOwner(
+                source,
+                2L,
+                null,
+                FIRST_LEASE_CORRELATION,
+                "game-session-service",
+                "instance-a",
+                Instant.parse("2026-10-26T00:00:00Z")))
         .isInstanceOf(IllegalStateException.class);
     assertThat(repository.find(source)).isEmpty();
 
@@ -138,16 +137,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
     assertThat(retry.ownerInstanceId()).isEqualTo("instance-b");
     assertThat(retry.lastCommittedTickId()).isEqualTo(7L);
     assertThat(retry.lastCommittedTickBatchId()).isEqualTo("batch-7");
-    assertThatThrownBy(
-            () ->
-                repository.installOwner(
-                    source,
-                    1L,
-                    initial,
-                    FIRST_LEASE_CORRELATION,
-                    "game-session-service",
-                    "instance-a",
-                    Instant.parse("2026-10-26T00:00:03Z")))
+    assertThatThrownBy(() ->
+            repository.installOwner(
+                source,
+                1L,
+                initial,
+                FIRST_LEASE_CORRELATION,
+                "game-session-service",
+                "instance-a",
+                Instant.parse("2026-10-26T00:00:03Z")))
         .isInstanceOf(IllegalStateException.class);
     assertThat(repository.find(source)).contains(retry);
   }
@@ -163,12 +161,10 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
         "instance-a",
         Instant.parse("2026-10-26T00:00:01Z"));
 
-    assertThatThrownBy(
-            () ->
-                repository.find(
-                    source(
-                        source.gameInstanceId(),
-                        new UUID(0x6666666666666666L, 0x8666666666666666L))))
+    assertThatThrownBy(() ->
+            repository.find(
+                source(
+                    source.gameInstanceId(), new UUID(0x6666666666666666L, 0x8666666666666666L))))
         .isInstanceOf(IllegalStateException.class);
   }
 

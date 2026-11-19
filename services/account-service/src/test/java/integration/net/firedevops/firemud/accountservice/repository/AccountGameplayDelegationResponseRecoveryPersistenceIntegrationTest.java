@@ -281,12 +281,11 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
         source
             .account()
             .accountSecurityCutoff()
-            .map(
-                value ->
-                    new AccountSecurityCutoff(
-                        value.accountAuthorityGeneration(),
-                        value.outboxStreamKey(),
-                        value.outboxSequence()));
+            .map(value ->
+                new AccountSecurityCutoff(
+                    value.accountAuthorityGeneration(),
+                    value.outboxStreamKey(),
+                    value.outboxSequence()));
     return new AccountAuthoritySnapshot(
         source.account().scope().accountId(),
         source.issuer().generation(),
@@ -378,69 +377,62 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
           .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
       when(commands.<Long>evalsha(
               anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
-          .thenAnswer(
-              invocation -> {
-                byte[][] keys = invocation.getArgument(2);
-                byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
-                String key = new String(keys[0], StandardCharsets.US_ASCII);
-                if (!key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
-                  return 0L;
-                }
-                if (arguments.length == 2) {
-                  byte[] existing = tokenRecord.get();
-                  long expiry = Long.parseLong(new String(arguments[1], StandardCharsets.US_ASCII));
-                  if (existing == null) {
-                    tokenRecord.set(arguments[0].clone());
-                    absoluteExpiryMillis.set(expiry);
-                    return 1L;
-                  }
-                  return Arrays.equals(existing, arguments[0])
-                          && absoluteExpiryMillis.get() == expiry
-                      ? 0L
-                      : -1L;
-                }
-                if (arguments.length == 3) {
-                  byte[] observed = tokenRecord.get();
-                  long expiry = Long.parseLong(new String(arguments[2], StandardCharsets.US_ASCII));
-                  if (Arrays.equals(observed, arguments[0])
-                      && absoluteExpiryMillis.get() == expiry) {
-                    tokenRecord.set(arguments[1].clone());
-                    return 1L;
-                  }
-                  return Arrays.equals(observed, arguments[1])
-                          && absoluteExpiryMillis.get() == expiry
-                      ? 0L
-                      : -1L;
-                }
-                return -1L;
-              });
+          .thenAnswer(invocation -> {
+            byte[][] keys = invocation.getArgument(2);
+            byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
+            String key = new String(keys[0], StandardCharsets.US_ASCII);
+            if (!key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
+              return 0L;
+            }
+            if (arguments.length == 2) {
+              byte[] existing = tokenRecord.get();
+              long expiry = Long.parseLong(new String(arguments[1], StandardCharsets.US_ASCII));
+              if (existing == null) {
+                tokenRecord.set(arguments[0].clone());
+                absoluteExpiryMillis.set(expiry);
+                return 1L;
+              }
+              return Arrays.equals(existing, arguments[0]) && absoluteExpiryMillis.get() == expiry
+                  ? 0L
+                  : -1L;
+            }
+            if (arguments.length == 3) {
+              byte[] observed = tokenRecord.get();
+              long expiry = Long.parseLong(new String(arguments[2], StandardCharsets.US_ASCII));
+              if (Arrays.equals(observed, arguments[0]) && absoluteExpiryMillis.get() == expiry) {
+                tokenRecord.set(arguments[1].clone());
+                return 1L;
+              }
+              return Arrays.equals(observed, arguments[1]) && absoluteExpiryMillis.get() == expiry
+                  ? 0L
+                  : -1L;
+            }
+            return -1L;
+          });
       when(commands.get(any(byte[].class)))
-          .thenAnswer(
-              invocation -> {
-                String key = new String(invocation.getArgument(0), StandardCharsets.US_ASCII);
-                if (key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
-                  byte[] value = tokenRecord.get();
-                  return value == null ? null : value.clone();
-                }
-                if ((AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
-                        + GameSessionAccountDelegationProfile.ISSUER)
-                    .equals(key)) {
-                  return projections[0].clone();
-                }
-                if (key.startsWith(
-                    AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX)) {
-                  return projections[1].clone();
-                }
-                return null;
-              });
+          .thenAnswer(invocation -> {
+            String key = new String(invocation.getArgument(0), StandardCharsets.US_ASCII);
+            if (key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
+              byte[] value = tokenRecord.get();
+              return value == null ? null : value.clone();
+            }
+            if ((AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
+                    + GameSessionAccountDelegationProfile.ISSUER)
+                .equals(key)) {
+              return projections[0].clone();
+            }
+            if (key.startsWith(AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX)) {
+              return projections[1].clone();
+            }
+            return null;
+          });
       when(commands.pexpiretime(any(byte[].class)))
-          .thenAnswer(
-              invocation -> {
-                String key = new String(invocation.getArgument(0), StandardCharsets.US_ASCII);
-                return key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)
-                    ? absoluteExpiryMillis.get()
-                    : null;
-              });
+          .thenAnswer(invocation -> {
+            String key = new String(invocation.getArgument(0), StandardCharsets.US_ASCII);
+            return key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)
+                ? absoluteExpiryMillis.get()
+                : null;
+          });
       when(commands.pttl(
               eq(
                   (AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX

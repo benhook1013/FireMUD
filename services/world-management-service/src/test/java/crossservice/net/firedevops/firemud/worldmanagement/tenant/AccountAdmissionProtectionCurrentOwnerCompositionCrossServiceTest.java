@@ -205,17 +205,16 @@ class AccountAdmissionProtectionCurrentOwnerCompositionCrossServiceTest {
                   var authority =
                       StartSessionAuthorityEvidenceBundle.decode(
                           tuple.authorityEvidenceBundleBytes());
-                  write.executeWithoutResult(
-                      ignored ->
-                          attempts.attachAccountRedemptionProjection(
-                              claim.get(),
-                              new GameSessionStartSessionOperatorAttemptRepository
-                                  .AccountRedemptionProjection(
-                                  tuple.authorizationReferenceFingerprint(),
-                                  tuple.authorityEvidenceBundleBytes(),
-                                  authority.issuanceOperationId(),
-                                  Long.parseLong(tuple.issuanceFence()),
-                                  tuple.canonicalBytes())));
+                  write.executeWithoutResult(ignored ->
+                      attempts.attachAccountRedemptionProjection(
+                          claim.get(),
+                          new GameSessionStartSessionOperatorAttemptRepository
+                              .AccountRedemptionProjection(
+                              tuple.authorizationReferenceFingerprint(),
+                              tuple.authorityEvidenceBundleBytes(),
+                              authority.issuanceOperationId(),
+                              Long.parseLong(tuple.issuanceFence()),
+                              tuple.canonicalBytes())));
                 }
               });
       var tuple = original.originalTuple();

@@ -149,10 +149,9 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
       client.init();
       assertThatThrownBy(() -> client.prepare(request, operationInput, evidence.request()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              exception ->
-                  assertThat(Status.fromThrowable(exception).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(exception ->
+              assertThat(Status.fromThrowable(exception).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThat(headers).hasValue(0);
       assertThat(bodies).hasValue(0);
       stopTransport();
@@ -208,37 +207,28 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
 
     var plaintext = pki.clientProperties(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new CanonicalWorldInstancePreparationClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    new GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new CanonicalWorldInstancePreparationClient(
+                new ServiceEndpointsProperties(), plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
 
     var classpath = pki.clientProperties(directory);
     classpath.setCaCert("classpath:ca.crt");
-    assertThatThrownBy(
-            () ->
-                new CanonicalWorldInstancePreparationClient(
-                    new ServiceEndpointsProperties(),
-                    classpath,
-                    new GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new CanonicalWorldInstancePreparationClient(
+                new ServiceEndpointsProperties(), classpath, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("file-backed");
 
     var absentCertificate = pki.clientProperties(directory);
     absentCertificate.setCertChain(directory.resolve("absent-client.crt").toString());
-    assertThatThrownBy(
-            () ->
-                new CanonicalWorldInstancePreparationClient(
-                    new ServiceEndpointsProperties(),
-                    absentCertificate,
-                    new GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new CanonicalWorldInstancePreparationClient(
+                new ServiceEndpointsProperties(),
+                absentCertificate,
+                new GrpcChannelFactory(),
+                NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("existing readable file");
 
@@ -448,19 +438,18 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
             null);
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        selector.request().appliedCommitId(),
-                        selector.request().contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    Long.toString(descriptor.versionId()),
+                    false,
+                    null,
+                    selector.request().appliedCommitId(),
+                    selector.request().contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
             .toList();
     AuthoredWorldReleaseAttestationEvidence release =
         AuthoredWorldReleaseAttestationEvidence.create(

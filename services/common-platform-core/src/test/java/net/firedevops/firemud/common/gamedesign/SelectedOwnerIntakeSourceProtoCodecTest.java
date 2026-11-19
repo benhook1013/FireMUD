@@ -95,16 +95,14 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
 
     for (var substitution : substitutions) {
       var changedEcho = substitution.apply(response.getRequest().toBuilder()).build();
-      assertThatThrownBy(
-              () ->
-                  SelectedOwnerIntakeSourceProtoCodec.fromResponse(
-                      request, response.toBuilder().setRequest(changedEcho).build()))
+      assertThatThrownBy(() ->
+              SelectedOwnerIntakeSourceProtoCodec.fromResponse(
+                  request, response.toBuilder().setRequest(changedEcho).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceProtoCodec.fromResponse(
-                    request, response.toBuilder().clearRequest().build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceProtoCodec.fromResponse(
+                request, response.toBuilder().clearRequest().build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -119,23 +117,20 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
         SelectedOwnerIntakeSourceProtoCodec.toResponse(request, content(request.scope(), 0));
     var unknown = unknownFields();
 
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceProtoCodec.fromRequest(
-                    wireRequest.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceProtoCodec.fromRequest(
+                wireRequest.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceProtoCodec.fromResponse(
-                    request, response.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceProtoCodec.fromResponse(
+                request, response.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceProtoCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(response.getRequest().toBuilder().setUnknownFields(unknown))
-                        .build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceProtoCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(response.getRequest().toBuilder().setUnknownFields(unknown))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -148,26 +143,21 @@ class SelectedOwnerIntakeSourceProtoCodecTest {
     var original = content(request.scope(), 0);
     var response = SelectedOwnerIntakeSourceProtoCodec.toResponse(request, original);
 
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceProtoCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setSelectedSourceDigest("sha256:" + "0".repeat(64))
-                        .build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceProtoCodec.fromResponse(
+                request,
+                response.toBuilder().setSelectedSourceDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceProtoCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setSelectedSourceContent(ByteString.copyFromUtf8("changed"))
-                        .build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceProtoCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setSelectedSourceContent(ByteString.copyFromUtf8("changed"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceProtoCodec.fromResponse(
-                    request, response.toBuilder().clearSelectedSourceContent().build()))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceProtoCodec.fromResponse(
+                request, response.toBuilder().clearSelectedSourceContent().build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var substitutedScope = scope(Owner.AUTOMATION_SCRIPTING, request.scope().selected());

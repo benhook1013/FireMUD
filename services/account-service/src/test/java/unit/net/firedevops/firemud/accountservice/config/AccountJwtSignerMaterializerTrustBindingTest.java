@@ -31,16 +31,14 @@ class AccountJwtSignerMaterializerTrustBindingTest {
 
   @Test
   void disabledOrIncompleteProtectedBindingCannotAuthorizeMaterializer() {
-    assertThatThrownBy(
-            () ->
-                AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
-                    "enabled=false\n".getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
+                "enabled=false\n".getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
-                    protectedConfig("prod", "prod-cluster-1", "firemud-prod", "revision-7", "")
-                        .getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
+                protectedConfig("prod", "prod-cluster-1", "firemud-prod", "revision-7", "")
+                    .getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -48,25 +46,22 @@ class AccountJwtSignerMaterializerTrustBindingTest {
   void duplicateFieldsUnknownFieldsAndWrongNamespaceUriAreRejected() {
     String valid =
         protectedConfig("prod", "prod-cluster-1", "firemud-prod", "revision-7", "a".repeat(64));
-    assertThatThrownBy(
-            () ->
-                AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
-                    (valid + "clusterId=prod-cluster-1\n").getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
+                (valid + "clusterId=prod-cluster-1\n").getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
-                    (valid + "anotherField=not-accepted\n").getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
+                (valid + "anotherField=not-accepted\n").getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
 
     String wrongNamespaceUri =
         valid.replace(
             "spiffe://firemud/ns/firemud-prod/sa/jwt-signer-materializer",
             "spiffe://firemud/ns/other-namespace/sa/jwt-signer-materializer");
-    assertThatThrownBy(
-            () ->
-                AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
-                    wrongNamespaceUri.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountJwtSignerMaterializerTrustBinding.parseProtectedBytes(
+                wrongNamespaceUri.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

@@ -62,12 +62,11 @@ class WorldPublicationTerminalCompletionClientTest {
       GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
       when(channelFactory.buildChannel(
               eq("world.internal:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
-          .thenAnswer(
-              invocation -> {
-                ManagedChannel channel = mock(ManagedChannel.class);
-                channels.add(channel);
-                return channel;
-              });
+          .thenAnswer(invocation -> {
+            ManagedChannel channel = mock(ManagedChannel.class);
+            channels.add(channel);
+            return channel;
+          });
       client = new WorldPublicationTerminalCompletionClient(endpoints, tls, channelFactory, "test");
       client.init();
       WorldPublicationTerminalCompletionClient clientUnderTest = client;

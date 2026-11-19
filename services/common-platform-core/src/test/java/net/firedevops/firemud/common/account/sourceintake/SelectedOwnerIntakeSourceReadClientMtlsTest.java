@@ -165,10 +165,9 @@ class SelectedOwnerIntakeSourceReadClientMtlsTest {
               NAMESPACE, scope(DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, NAMESPACE));
       assertThatThrownBy(() -> client.read(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
     }
   }
 
@@ -177,18 +176,13 @@ class SelectedOwnerIntakeSourceReadClientMtlsTest {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GrpcSelectedOwnerIntakeSourceReadClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcSelectedOwnerIntakeSourceReadClient(
+                endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GrpcSelectedOwnerIntakeSourceReadClient(
-                    endpoints,
-                    new CommonGrpcClientProperties(),
-                    new GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcSelectedOwnerIntakeSourceReadClient(
+                endpoints, new CommonGrpcClientProperties(), new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

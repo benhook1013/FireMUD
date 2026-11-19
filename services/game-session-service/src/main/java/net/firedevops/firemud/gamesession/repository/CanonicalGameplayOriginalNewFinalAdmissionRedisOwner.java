@@ -500,24 +500,23 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       }
       final String submittedAction = actualAction;
       Object result =
-          awaitCommand(
-              () ->
-                  commands.evalsha(
-                      sha,
-                      ScriptOutputType.MULTI,
-                      new byte[][] {
-                        ascii("session:game:capacity-execution:" + suffix),
-                        ascii("session:game:capacity-transfer-receipt:" + suffix)
-                      },
-                      ascii(submittedAction),
-                      execution.canonicalBytes(),
-                      ascii(execution.digest()),
-                      ascii(dispatch.receiptId().toString()),
-                      ascii(dispatch.incarnationDigest()),
-                      ascii(nonce.toString()),
-                      ascii(Long.toString(Math.min(deadline, operationDeadlineMillis))),
-                      ascii(assignment.tenantGameplayTag()),
-                      ascii(assignment.tenantId().toString())));
+          awaitCommand(() ->
+              commands.evalsha(
+                  sha,
+                  ScriptOutputType.MULTI,
+                  new byte[][] {
+                    ascii("session:game:capacity-execution:" + suffix),
+                    ascii("session:game:capacity-transfer-receipt:" + suffix)
+                  },
+                  ascii(submittedAction),
+                  execution.canonicalBytes(),
+                  ascii(execution.digest()),
+                  ascii(dispatch.receiptId().toString()),
+                  ascii(dispatch.incarnationDigest()),
+                  ascii(nonce.toString()),
+                  ascii(Long.toString(Math.min(deadline, operationDeadlineMillis))),
+                  ascii(assignment.tenantGameplayTag()),
+                  ascii(assignment.tenantId().toString())));
       if (!(result instanceof List<?> values)
           || values.size() != 3
           || !(values.get(0) instanceof Long code)
@@ -1097,31 +1096,30 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       String sha = awaitCommand(() -> commands.scriptLoad(script));
       if (!digest("SHA-1", script).equals(sha)) throw unavailable();
       Long result =
-          awaitCommand(
-              () ->
-                  commands.evalsha(
-                      sha,
-                      ScriptOutputType.INTEGER,
-                      keyBytes(keys),
-                      ascii(assignment.tenantId().toString()),
-                      ascii(assignment.accountId().toString()),
-                      ascii(assignment.playableStateNamespaceId().toString()),
-                      ascii(candidate.bindingIdentity().characterId().toString()),
-                      ascii(assignment.gameInstanceId().toString()),
-                      ascii(assignment.sessionId()),
-                      ascii(candidate.transition().bindingGeneration().toString()),
-                      ascii(assignment.tenantGameplayTag()),
-                      candidateBytes,
-                      characterBytes,
-                      templateBytes,
-                      ascii(Long.toString(durationMillis)),
-                      accountJson,
-                      issuerJson,
-                      ascii(Long.toString(absoluteDeadlineMillis)),
-                      issuerPayload,
-                      execution.canonicalBytes(),
-                      ascii(action),
-                      ascii(execution.digest())));
+          awaitCommand(() ->
+              commands.evalsha(
+                  sha,
+                  ScriptOutputType.INTEGER,
+                  keyBytes(keys),
+                  ascii(assignment.tenantId().toString()),
+                  ascii(assignment.accountId().toString()),
+                  ascii(assignment.playableStateNamespaceId().toString()),
+                  ascii(candidate.bindingIdentity().characterId().toString()),
+                  ascii(assignment.gameInstanceId().toString()),
+                  ascii(assignment.sessionId()),
+                  ascii(candidate.transition().bindingGeneration().toString()),
+                  ascii(assignment.tenantGameplayTag()),
+                  candidateBytes,
+                  characterBytes,
+                  templateBytes,
+                  ascii(Long.toString(durationMillis)),
+                  accountJson,
+                  issuerJson,
+                  ascii(Long.toString(absoluteDeadlineMillis)),
+                  issuerPayload,
+                  execution.canonicalBytes(),
+                  ascii(action),
+                  ascii(execution.digest())));
       return result;
     } catch (RuntimeException failure) {
       throw unavailable();

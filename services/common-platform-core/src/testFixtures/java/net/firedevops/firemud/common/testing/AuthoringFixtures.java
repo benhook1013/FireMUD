@@ -72,15 +72,14 @@ public final class AuthoringFixtures {
             new String(account.gameDesignBinding(), StandardCharsets.UTF_8), account.inputDigest());
     List<WorldPublishedStartLocationEvidence.OwnedAffectedTuple> tuples =
         draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList();
     var request =
         new WorldPublishedStartLocationEvidence.Request(
@@ -140,19 +139,18 @@ public final class AuthoringFixtures {
             null);
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        selector.request().appliedCommitId(),
-                        selector.request().contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    Long.toString(descriptor.versionId()),
+                    false,
+                    null,
+                    selector.request().appliedCommitId(),
+                    selector.request().contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
             .toList();
     AuthoredWorldReleaseAttestationEvidence release =
         AuthoredWorldReleaseAttestationEvidence.create(
@@ -341,23 +339,22 @@ public final class AuthoringFixtures {
       result.put(
           "appliedEpochs",
           draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-              .map(
-                  unit ->
-                      Map.of(
-                          "aggregateType",
-                          unit.aggregateType(),
-                          "aggregateId",
-                          unit.aggregateId(),
-                          "scopeType",
-                          unit.scopeType(),
-                          "scopeId",
-                          unit.scopeId(),
-                          "expectedEpoch",
-                          unit.expectedEpoch(),
-                          "resultingEpoch",
-                          new java.math.BigInteger(unit.expectedEpoch())
-                              .add(java.math.BigInteger.ONE)
-                              .toString()))
+              .map(unit ->
+                  Map.of(
+                      "aggregateType",
+                      unit.aggregateType(),
+                      "aggregateId",
+                      unit.aggregateId(),
+                      "scopeType",
+                      unit.scopeType(),
+                      "scopeId",
+                      unit.scopeId(),
+                      "expectedEpoch",
+                      unit.expectedEpoch(),
+                      "resultingEpoch",
+                      new java.math.BigInteger(unit.expectedEpoch())
+                          .add(java.math.BigInteger.ONE)
+                          .toString()))
               .toList());
       return new DraftAuthorizationFenceBinding.OwnerReadback(
           Owner.WORLD,

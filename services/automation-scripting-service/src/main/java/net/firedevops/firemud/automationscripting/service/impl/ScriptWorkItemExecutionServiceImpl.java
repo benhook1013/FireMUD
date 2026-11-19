@@ -596,11 +596,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       applyPostEvaluationFenceDisposition(workItem, fenceFailure);
       return false;
     }
-    transactionTemplate.execute(
-        status -> {
-          applyPostEvaluationFenceDisposition(workItem, fenceFailure);
-          return null;
-        });
+    transactionTemplate.execute(status -> {
+      applyPostEvaluationFenceDisposition(workItem, fenceFailure);
+      return null;
+    });
     return false;
   }
 
@@ -612,11 +611,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       clearAuthorityUnavailableRetryState(workItem);
       return;
     }
-    transactionTemplate.execute(
-        status -> {
-          clearAuthorityUnavailableRetryState(workItem);
-          return null;
-        });
+    transactionTemplate.execute(status -> {
+      clearAuthorityUnavailableRetryState(workItem);
+      return null;
+    });
   }
 
   private void applyPostEvaluationFenceDisposition(ScriptWorkItem workItem, String fenceFailure) {
@@ -1440,15 +1438,14 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       @SuppressWarnings("unchecked")
       Map<String, Object> payload =
           objectMapper.readValue(workItem.getPayloadJson(), LinkedHashMap.class);
-      payload.forEach(
-          (key, value) -> {
-            if (value == null
-                || value instanceof String
-                || value instanceof Number
-                || value instanceof Boolean) {
-              variables.put("payload." + key, value == null ? "" : value.toString());
-            }
-          });
+      payload.forEach((key, value) -> {
+        if (value == null
+            || value instanceof String
+            || value instanceof Number
+            || value instanceof Boolean) {
+          variables.put("payload." + key, value == null ? "" : value.toString());
+        }
+      });
     } catch (Exception ex) {
       throw new IllegalArgumentException("payload_json_invalid");
     }
@@ -1688,14 +1685,13 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       Long workItemId, String stage, String outcome, String reason, Instant now) {
     auditRepository
         .findByWorkItemId(workItemId)
-        .ifPresent(
-            audit -> {
-              audit.setFinalStage(stage);
-              audit.setFinalOutcome(outcome);
-              audit.setFinalReason(reason);
-              audit.setUpdatedAt(now);
-              auditRepository.save(audit);
-            });
+        .ifPresent(audit -> {
+          audit.setFinalStage(stage);
+          audit.setFinalOutcome(outcome);
+          audit.setFinalReason(reason);
+          audit.setUpdatedAt(now);
+          auditRepository.save(audit);
+        });
   }
 
   private void recordTerminalHandoffOutcome(
@@ -1791,10 +1787,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           workItem.getTenantId(), workItem.getGameInstanceId(), pluginId);
     }
     Optional<PluginRuntimeState> state =
-        pluginFenceReadTransactionTemplate.execute(
-            ignored ->
-                pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
-                    workItem.getTenantId(), workItem.getGameInstanceId(), pluginId));
+        pluginFenceReadTransactionTemplate.execute(ignored ->
+            pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+                workItem.getTenantId(), workItem.getGameInstanceId(), pluginId));
     return state == null ? Optional.empty() : state;
   }
 

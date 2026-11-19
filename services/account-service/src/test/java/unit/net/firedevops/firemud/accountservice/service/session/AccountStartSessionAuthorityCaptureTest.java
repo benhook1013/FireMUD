@@ -117,23 +117,21 @@ class AccountStartSessionAuthorityCaptureTest {
         AccountStartSessionAuthorityCapture.create(
             "control-plane-request-3", 1L, 2L, "3", "2026-10-10T12:34:56.789Z", snapshot);
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAuthorityCapture.fromStorage(
-                    capture.controlPlaneRequestId(),
-                    1L,
-                    2L,
-                    "3",
-                    capture.capturedAt(),
-                    snapshot,
-                    "0".repeat(64),
-                    capture.canonicalBytes(),
-                    capture.canonicalSha256()))
+    assertThatThrownBy(() ->
+            AccountStartSessionAuthorityCapture.fromStorage(
+                capture.controlPlaneRequestId(),
+                1L,
+                2L,
+                "3",
+                capture.capturedAt(),
+                snapshot,
+                "0".repeat(64),
+                capture.canonicalBytes(),
+                capture.canonicalSha256()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAuthorityCapture.create(
-                    "control-plane-request-3", 0L, 2L, "3", "2026-10-10T12:34:56.789Z", snapshot))
+    assertThatThrownBy(() ->
+            AccountStartSessionAuthorityCapture.create(
+                "control-plane-request-3", 0L, 2L, "3", "2026-10-10T12:34:56.789Z", snapshot))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

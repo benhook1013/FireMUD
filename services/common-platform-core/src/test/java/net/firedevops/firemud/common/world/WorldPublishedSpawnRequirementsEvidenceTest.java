@@ -34,38 +34,36 @@ class WorldPublishedSpawnRequirementsEvidenceTest {
     var first = evidence.spawnRequirements().get(0);
     var second = evidence.spawnRequirements().get(1);
 
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedSpawnRequirementsEvidence(
-                    evidence.request(),
-                    evidence.launchBinding(),
-                    evidence.captureId(),
-                    evidence.graphDigest(),
-                    evidence.familyCounts(),
-                    List.of(
-                        first,
-                        new WorldPublishedSpawnRequirementsEvidence.SpawnRequirement(
-                            "9007199254740994",
-                            second.revisionId(),
-                            first.spawnBindingId(),
-                            second.roomTemplate(),
-                            second.entityTemplate(),
-                            second.spawnCount(),
-                            second.respawnDelaySeconds())),
-                    evidence.generationRequirements()))
+    assertThatThrownBy(() ->
+            new WorldPublishedSpawnRequirementsEvidence(
+                evidence.request(),
+                evidence.launchBinding(),
+                evidence.captureId(),
+                evidence.graphDigest(),
+                evidence.familyCounts(),
+                List.of(
+                    first,
+                    new WorldPublishedSpawnRequirementsEvidence.SpawnRequirement(
+                        "9007199254740994",
+                        second.revisionId(),
+                        first.spawnBindingId(),
+                        second.roomTemplate(),
+                        second.entityTemplate(),
+                        second.spawnCount(),
+                        second.respawnDelaySeconds())),
+                evidence.generationRequirements()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("binding identity");
 
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedSpawnRequirementsEvidence(
-                    evidence.request(),
-                    evidence.launchBinding(),
-                    evidence.captureId(),
-                    evidence.graphDigest(),
-                    evidence.familyCounts(),
-                    List.of(second, first),
-                    evidence.generationRequirements()))
+    assertThatThrownBy(() ->
+            new WorldPublishedSpawnRequirementsEvidence(
+                evidence.request(),
+                evidence.launchBinding(),
+                evidence.captureId(),
+                evidence.graphDigest(),
+                evidence.familyCounts(),
+                List.of(second, first),
+                evidence.generationRequirements()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("strictly increasing revision order");
   }
@@ -74,16 +72,15 @@ class WorldPublishedSpawnRequirementsEvidenceTest {
   void bindsGraphDigestToTheReleaseSelectorReceipt() {
     var evidence = WorldPublishedSpawnRequirementsGrpcCodecTest.evidence();
 
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedSpawnRequirementsEvidence(
-                    evidence.request(),
-                    evidence.launchBinding(),
-                    evidence.captureId(),
-                    "sha256:" + "f".repeat(64),
-                    evidence.familyCounts(),
-                    evidence.spawnRequirements(),
-                    evidence.generationRequirements()))
+    assertThatThrownBy(() ->
+            new WorldPublishedSpawnRequirementsEvidence(
+                evidence.request(),
+                evidence.launchBinding(),
+                evidence.captureId(),
+                "sha256:" + "f".repeat(64),
+                evidence.familyCounts(),
+                evidence.spawnRequirements(),
+                evidence.generationRequirements()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("graph digest");
   }

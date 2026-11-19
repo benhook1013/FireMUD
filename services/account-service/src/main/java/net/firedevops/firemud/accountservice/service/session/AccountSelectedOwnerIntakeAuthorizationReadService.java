@@ -45,11 +45,10 @@ public final class AccountSelectedOwnerIntakeAuthorizationReadService {
       throw Status.FAILED_PRECONDITION.asRuntimeException();
     }
     try {
-      ownerTransaction.execute(
-          ignored -> {
-            repository.readHeldFinalAuthorization(request.binding());
-            return null;
-          });
+      ownerTransaction.execute(ignored -> {
+        repository.readHeldFinalAuthorization(request.binding());
+        return null;
+      });
     } catch (StatusRuntimeException failure) {
       throw failure;
     } catch (IllegalArgumentException changedOrAbsent) {

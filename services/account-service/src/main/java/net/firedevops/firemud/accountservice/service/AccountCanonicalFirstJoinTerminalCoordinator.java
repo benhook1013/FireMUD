@@ -360,17 +360,15 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
     Account account =
         accountRepository
             .findByAccountUuid(scope.accountId())
-            .orElseThrow(
-                () ->
-                    new CanonicalJoinOperationConflictException("Canonical JOIN intent conflicts"));
+            .orElseThrow(() ->
+                new CanonicalJoinOperationConflictException("Canonical JOIN intent conflicts"));
     requireAccountIdentity(account, scope.accountId());
     joinOperationRepository.lockAccount(account.getId());
     CanonicalJoinOperationEvidence operation =
         joinOperationRepository
             .findCanonicalEvidenceForUpdateByRequestId(requestId)
-            .orElseThrow(
-                () ->
-                    new CanonicalJoinOperationConflictException("Canonical JOIN intent conflicts"));
+            .orElseThrow(() ->
+                new CanonicalJoinOperationConflictException("Canonical JOIN intent conflicts"));
     requireExactOperation(operation, account.getId(), scope, requestId, verifiedCallerBinding);
     if (!Boolean.TRUE.equals(operation.allowPublicJoin())) {
       throw new CanonicalJoinOperationConflictException(

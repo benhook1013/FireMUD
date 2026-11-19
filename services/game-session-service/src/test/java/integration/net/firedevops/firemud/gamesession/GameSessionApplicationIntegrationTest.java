@@ -220,47 +220,42 @@ class GameSessionApplicationIntegrationTest {
             anyString(),
             anyLong(),
             any()))
-        .thenAnswer(
-            invocation ->
-                net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
-                    .setWorldInstance(
-                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                            .newBuilder()
-                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
-                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
-                            .setGameTemplateId(Long.toString(invocation.getArgument(2, Long.class)))
-                            .setControlPlaneRequestId(invocation.getArgument(3, String.class))
-                            .setLaunchDescriptorId(invocation.getArgument(4, String.class))
-                            .setVersionId(Long.toString(invocation.getArgument(5, Long.class)))
-                            .setReleaseBundleId(
-                                Long.toString(invocation.getArgument(9, Long.class)))
-                            .setGenerationConfigRevision(invocation.getArgument(8, String.class))
-                            .setPublishedReleaseBundleRef(invocation.getArgument(10, String.class))
-                            .setVersionStateEpoch(invocation.getArgument(11, Long.class))
-                            .setLifecycleEpoch(1L)
-                            .setStatus(
-                                net.firedevops.firemud.worldmanagement.v1
-                                    .WorldInstanceLifecycleStatus
-                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
-                            .build())
-                    .build());
+        .thenAnswer(invocation ->
+            net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
+                .setWorldInstance(
+                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                        .newBuilder()
+                        .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                        .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                        .setGameTemplateId(Long.toString(invocation.getArgument(2, Long.class)))
+                        .setControlPlaneRequestId(invocation.getArgument(3, String.class))
+                        .setLaunchDescriptorId(invocation.getArgument(4, String.class))
+                        .setVersionId(Long.toString(invocation.getArgument(5, Long.class)))
+                        .setReleaseBundleId(Long.toString(invocation.getArgument(9, Long.class)))
+                        .setGenerationConfigRevision(invocation.getArgument(8, String.class))
+                        .setPublishedReleaseBundleRef(invocation.getArgument(10, String.class))
+                        .setVersionStateEpoch(invocation.getArgument(11, Long.class))
+                        .setLifecycleEpoch(1L)
+                        .setStatus(
+                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
+                                .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
+                        .build())
+                .build());
     when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
-        .thenAnswer(
-            invocation ->
-                net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
-                    .newBuilder()
-                    .setWorldInstance(
-                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                            .newBuilder()
-                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
-                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
-                            .setLifecycleEpoch(invocation.getArgument(2, Long.class) + 1L)
-                            .setStatus(
-                                net.firedevops.firemud.worldmanagement.v1
-                                    .WorldInstanceLifecycleStatus
-                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
-                            .build())
-                    .build());
+        .thenAnswer(invocation ->
+            net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                .newBuilder()
+                .setWorldInstance(
+                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                        .newBuilder()
+                        .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                        .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                        .setLifecycleEpoch(invocation.getArgument(2, Long.class) + 1L)
+                        .setStatus(
+                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
+                                .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+                        .build())
+                .build());
     StartSessionRequest request = new StartSessionRequest(42L, 7L, "cp-1", 100L);
 
     String responseBody =

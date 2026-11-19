@@ -212,11 +212,10 @@ public class CommandServiceImpl implements CommandService {
     sessionContext
         .map(SessionContext::characterId)
         .filter(id -> id > 0)
-        .ifPresent(
-            characterId -> {
-              gameplayCommand.setCharacterId(characterId);
-              gameplayCommand.setTargetEntityId(Long.toString(characterId));
-            });
+        .ifPresent(characterId -> {
+          gameplayCommand.setCharacterId(characterId);
+          gameplayCommand.setTargetEntityId(Long.toString(characterId));
+        });
     gameplayCommand.setCommandName(commandName(command));
     if (authoredAdmission != null) {
       gameplayCommand.setCommandName(authoredAdmission.commandId());

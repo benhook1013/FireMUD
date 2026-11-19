@@ -180,9 +180,8 @@ public class WorldDraftTerminalReadGrpcCodecTest {
             binding.inputDigest(),
             request.originalAccountBinding(),
             new byte[DraftTerminalReadGrpcLimits.MAX_OWNER_READBACK_BYTES]);
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(oversizedReadback)))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(oversizedReadback)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("owner readback");
 
@@ -222,40 +221,37 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     assertThat(decodedAbort.canonicalBytes()).containsExactly(abort.canonicalBytes());
     assertThat(decodedAbort.fullBinding()).containsExactly(request.originalAccountBinding());
     assertThat(decodedAbort.result()).containsExactly(1, 2, 3);
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.toResponse(
-                    request,
-                    Optional.of(
-                        new DraftAuthorizationFenceBinding.OwnerReadback(
-                            Owner.GAME_DESIGN,
-                            Outcome.DEFINITIVELY_ABORTED,
-                            binding.operationId(),
-                            binding.commitId(),
-                            binding.fenceId(),
-                            binding.inputDigest(),
-                            request.originalAccountBinding(),
-                            new byte[] {1}))))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.toResponse(
+                request,
+                Optional.of(
+                    new DraftAuthorizationFenceBinding.OwnerReadback(
+                        Owner.GAME_DESIGN,
+                        Outcome.DEFINITIVELY_ABORTED,
+                        binding.operationId(),
+                        binding.commitId(),
+                        binding.fenceId(),
+                        binding.inputDigest(),
+                        request.originalAccountBinding(),
+                        new byte[] {1}))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("World terminal response");
 
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setReadRequestId(uuid("77777777-7777-4777-8777-777777777777").toString())
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setReadRequestId(uuid("77777777-7777-4777-8777-777777777777").toString())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed the exact read request");
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setOriginalAccountBinding(
-                            com.google.protobuf.ByteString.copyFrom(new byte[] {9}))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setOriginalAccountBinding(
+                        com.google.protobuf.ByteString.copyFrom(new byte[] {9}))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed the exact read request");
   }
@@ -264,16 +260,14 @@ public class WorldDraftTerminalReadGrpcCodecTest {
   void rejectsUnknownFieldsAndContradictoryStatusPayloads() {
     var request = request();
     var encoded = WorldDraftTerminalReadGrpcCodec.toRequest(request);
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.fromRequest(
-                    encoded.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.fromRequest(
+                encoded.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
 
@@ -299,15 +293,14 @@ public class WorldDraftTerminalReadGrpcCodecTest {
         .containsExactly(committed.canonicalBytes());
     assertThat(evidence.appliedIntakeRequestId())
         .isEqualTo(uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setStatus(
-                            WorldDraftTerminalReadStatus
-                                .WORLD_DRAFT_TERMINAL_READ_STATUS_DEFINITIVELY_ABORTED)
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setStatus(
+                        WorldDraftTerminalReadStatus
+                            .WORLD_DRAFT_TERMINAL_READ_STATUS_DEFINITIVELY_ABORTED)
+                    .build()))
         .hasMessageContaining("status differs");
     var abort =
         new DraftAuthorizationFenceBinding.OwnerReadback(
@@ -319,14 +312,13 @@ public class WorldDraftTerminalReadGrpcCodecTest {
             committed.inputDigest(),
             committed.fullBinding(),
             new byte[] {1});
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setOwnerReadbackBytes(
-                            com.google.protobuf.ByteString.copyFrom(abort.canonicalBytes()))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setOwnerReadbackBytes(
+                        com.google.protobuf.ByteString.copyFrom(abort.canonicalBytes()))
+                    .build()))
         .hasMessageContaining("status differs");
     var wrongOwner =
         new DraftAuthorizationFenceBinding.OwnerReadback(
@@ -338,14 +330,13 @@ public class WorldDraftTerminalReadGrpcCodecTest {
             committed.inputDigest(),
             committed.fullBinding(),
             committed.result());
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setOwnerReadbackBytes(
-                            com.google.protobuf.ByteString.copyFrom(wrongOwner.canonicalBytes()))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setOwnerReadbackBytes(
+                        com.google.protobuf.ByteString.copyFrom(wrongOwner.canonicalBytes()))
+                    .build()))
         .hasMessageContaining("World terminal response");
     var substituted =
         new DraftAuthorizationFenceBinding.OwnerReadback(
@@ -357,28 +348,25 @@ public class WorldDraftTerminalReadGrpcCodecTest {
             committed.inputDigest(),
             committed.fullBinding(),
             new byte[] {1, 2, 3});
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setOwnerReadbackBytes(
-                            com.google.protobuf.ByteString.copyFrom(substituted.canonicalBytes()))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setOwnerReadbackBytes(
+                        com.google.protobuf.ByteString.copyFrom(substituted.canonicalBytes()))
+                    .build()))
         .hasMessageContaining("substituted canonical APPLIED result");
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setOriginalAccountBinding(
-                            com.google.protobuf.ByteString.copyFrom(new byte[] {9}))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setOriginalAccountBinding(
+                        com.google.protobuf.ByteString.copyFrom(new byte[] {9}))
+                    .build()))
         .hasMessageContaining("changed the exact read request");
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.fromResponse(
-                    request, response.toBuilder().clearOwnerReadbackBytes().build()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.fromResponse(
+                request, response.toBuilder().clearOwnerReadbackBytes().build()))
         .hasMessageContaining("bytes are required");
   }
 
@@ -711,10 +699,9 @@ public class WorldDraftTerminalReadGrpcCodecTest {
   }
 
   private static void assertGraph3Rejected(Graph3Fixture fixture) {
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalReadGrpcCodec.toResponse(
-                    fixture.request(), Optional.of(fixture.readback())))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalReadGrpcCodec.toResponse(
+                fixture.request(), Optional.of(fixture.readback())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("invalid or substituted canonical APPLIED result");
   }

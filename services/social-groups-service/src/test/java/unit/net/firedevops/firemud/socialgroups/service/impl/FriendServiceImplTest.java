@@ -45,11 +45,10 @@ class FriendServiceImplTest {
     gameSessionClient = Mockito.mock(GameSessionClient.class);
     accountClient = Mockito.mock(AccountClient.class);
     when(accountClient.getPresenceVisibilityPolicies(anyLong(), anyCollection()))
-        .thenAnswer(
-            invocation -> {
-              Collection<String> accountIds = invocation.getArgument(1);
-              return friendsOnlyPolicies(accountIds);
-            });
+        .thenAnswer(invocation -> {
+          Collection<String> accountIds = invocation.getArgument(1);
+          return friendsOnlyPolicies(accountIds);
+        });
     service = new FriendServiceImpl(accountRepository, gameSessionClient, accountClient);
   }
 
@@ -69,12 +68,11 @@ class FriendServiceImplTest {
             11L, accountUuid(2L), accountUuid(3L), "active"))
         .thenReturn(java.util.Optional.empty());
     when(accountRepository.save(any(AccountFriendLink.class)))
-        .thenAnswer(
-            invocation -> {
-              AccountFriendLink link = invocation.getArgument(0);
-              link.setId(7L);
-              return link;
-            });
+        .thenAnswer(invocation -> {
+          AccountFriendLink link = invocation.getArgument(0);
+          link.setId(7L);
+          return link;
+        });
 
     FriendLinkDto result = service.addFriend(request);
 

@@ -46,34 +46,28 @@ class CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodecTest {
   void requestRequiresOneVersionAndOneCanonicalSelectorPayload() {
     var request = CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.toRequest(selector());
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
-                    request.toBuilder().clearSchemaVersion().build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
+                request.toBuilder().clearSchemaVersion().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
-                    request.toBuilder().addSchemaVersion(1).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
+                request.toBuilder().addSchemaVersion(1).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
-                    request.toBuilder()
-                        .addExpectedOriginalAdmissionJson(
-                            request.getExpectedOriginalAdmissionJson(0))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
+                request.toBuilder()
+                    .addExpectedOriginalAdmissionJson(request.getExpectedOriginalAdmissionJson(0))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
-                    request.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
+                request.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -87,30 +81,27 @@ class CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodecTest {
             + UUID.randomUUID()
             + "\"}";
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
-                    request.toBuilder()
-                        .setExpectedOriginalAdmissionJson(
-                            0, ByteString.copyFrom(duplicate, StandardCharsets.UTF_8))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
+                request.toBuilder()
+                    .setExpectedOriginalAdmissionJson(
+                        0, ByteString.copyFrom(duplicate, StandardCharsets.UTF_8))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
-                    request.toBuilder()
-                        .setExpectedOriginalAdmissionJson(
-                            0, ByteString.copyFrom(canonical + " ", StandardCharsets.UTF_8))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
+                request.toBuilder()
+                    .setExpectedOriginalAdmissionJson(
+                        0, ByteString.copyFrom(canonical + " ", StandardCharsets.UTF_8))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     String unknown = canonical.substring(0, canonical.length() - 1) + ",\"unexpected\":\"x\"}";
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
-                    request.toBuilder()
-                        .setExpectedOriginalAdmissionJson(
-                            0, ByteString.copyFrom(unknown, StandardCharsets.UTF_8))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.parseRequest(
+                request.toBuilder()
+                    .setExpectedOriginalAdmissionJson(
+                        0, ByteString.copyFrom(unknown, StandardCharsets.UTF_8))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -123,14 +114,13 @@ class CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodecTest {
     String original = response.getActualFinalAdmissionJson(0).toStringUtf8();
     String changedHash = original.replace(HASH, OTHER_HASH);
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.fromResponse(
-                    selector,
-                    response.toBuilder()
-                        .setActualFinalAdmissionJson(
-                            0, ByteString.copyFrom(changedHash, StandardCharsets.UTF_8))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.fromResponse(
+                selector,
+                response.toBuilder()
+                    .setActualFinalAdmissionJson(
+                        0, ByteString.copyFrom(changedHash, StandardCharsets.UTF_8))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new FinalResult(selector, 1_000L, 60_999L, 60_000L, OTHER_HASH))
         .isInstanceOf(IllegalArgumentException.class);
@@ -149,28 +139,26 @@ class CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodecTest {
             "\"rebindHandleSha256\":\"" + HASH + "\"",
             "\"rebindHandleSha256\":\"" + OTHER_HASH + "\"");
     assertThat(changedHandle).isNotEqualTo(original);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.fromResponse(
-                    selector,
-                    response.toBuilder()
-                        .setActualFinalAdmissionJson(
-                            0, ByteString.copyFrom(changedHandle, StandardCharsets.UTF_8))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.fromResponse(
+                selector,
+                response.toBuilder()
+                    .setActualFinalAdmissionJson(
+                        0, ByteString.copyFrom(changedHandle, StandardCharsets.UTF_8))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     String changedTokenHash =
         original.replace(
             "\"tokenSha256\":\"" + HASH + "\"", "\"tokenSha256\":\"" + OTHER_HASH + "\"");
     assertThat(changedTokenHash).isNotEqualTo(original);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.fromResponse(
-                    selector,
-                    response.toBuilder()
-                        .setActualFinalAdmissionJson(
-                            0, ByteString.copyFrom(changedTokenHash, StandardCharsets.UTF_8))
-                        .build()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.fromResponse(
+                selector,
+                response.toBuilder()
+                    .setActualFinalAdmissionJson(
+                        0, ByteString.copyFrom(changedTokenHash, StandardCharsets.UTF_8))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

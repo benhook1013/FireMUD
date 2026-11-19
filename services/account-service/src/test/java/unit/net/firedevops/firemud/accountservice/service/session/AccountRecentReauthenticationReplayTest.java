@@ -31,11 +31,10 @@ class AccountRecentReauthenticationReplayTest {
     var f = new Fixture();
     AtomicReference<byte[]> transientRequest = new AtomicReference<>();
     when(f.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
-        .thenAnswer(
-            invocation -> {
-              transientRequest.set(invocation.getArgument(1));
-              return "a".repeat(64);
-            });
+        .thenAnswer(invocation -> {
+          transientRequest.set(invocation.getArgument(1));
+          return "a".repeat(64);
+        });
     assertThat(f.service.reauthenticate(f.request(f.operation))).isSameAs(f.evidence);
     verify(f.crypto, times(2)).recentReauthenticationRequestMac(eq("prior-key"), any());
     verify(f.crypto, never()).currentKeyId();

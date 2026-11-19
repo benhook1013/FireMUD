@@ -96,9 +96,8 @@ public final class CanonicalGameplayRosterReferenceOwner {
           String authenticatedEntityUri) {
     requireOutsideTransaction();
     return Objects.requireNonNull(
-        transactions.execute(
-            ignored ->
-                repository.confirmRetirementAcknowledgement(request, authenticatedEntityUri)));
+        transactions.execute(ignored ->
+            repository.confirmRetirementAcknowledgement(request, authenticatedEntityUri)));
   }
 
   public GetCanonicalGameplayRosterReferenceResponse begin(
@@ -125,12 +124,11 @@ public final class CanonicalGameplayRosterReferenceOwner {
     }
     var qualified = requireCurrentTarget(request);
     return Objects.requireNonNull(
-        transactions.execute(
-            ignored -> {
-              var original = repository.begin(request);
-              admissionRepository.lockExactCurrentOpenSnapshot(qualified);
-              return original;
-            }));
+        transactions.execute(ignored -> {
+          var original = repository.begin(request);
+          admissionRepository.lockExactCurrentOpenSnapshot(qualified);
+          return original;
+        }));
   }
 
   public GetCanonicalGameplayRosterReferenceResponse read(
@@ -231,12 +229,11 @@ public final class CanonicalGameplayRosterReferenceOwner {
     requireExactCurrentSnapshot(current, qualified);
     var recoveries =
         Objects.requireNonNull(
-            transactions.execute(
-                ignored -> {
-                  repository.lockActiveTarget(request);
-                  admissionRepository.lockExactCurrentOpenSnapshot(qualified);
-                  return repository.beginRecoveries(request, current);
-                }));
+            transactions.execute(ignored -> {
+              repository.lockActiveTarget(request);
+              admissionRepository.lockExactCurrentOpenSnapshot(qualified);
+              return repository.beginRecoveries(request, current);
+            }));
     for (var recovery : recoveries) {
       try {
         var verified = recoveryClient.read(recovery);
@@ -251,15 +248,14 @@ public final class CanonicalGameplayRosterReferenceOwner {
       }
     }
     return Boolean.TRUE.equals(
-        transactions.execute(
-            ignored -> {
-              repository.lockActiveTarget(request);
-              // This narrow local primitive locks and revalidates the actual pointer, terminal
-              // attempt,
-              // and catalog against the independently obtained snapshot. No suspended fence or RPC.
-              admissionRepository.lockExactCurrentOpenSnapshot(qualified);
-              return repository.sealTargetRetirement(request, current);
-            }));
+        transactions.execute(ignored -> {
+          repository.lockActiveTarget(request);
+          // This narrow local primitive locks and revalidates the actual pointer, terminal
+          // attempt,
+          // and catalog against the independently obtained snapshot. No suspended fence or RPC.
+          admissionRepository.lockExactCurrentOpenSnapshot(qualified);
+          return repository.sealTargetRetirement(request, current);
+        }));
   }
 
   private static String recoveryFailureKind(RuntimeException failure) {

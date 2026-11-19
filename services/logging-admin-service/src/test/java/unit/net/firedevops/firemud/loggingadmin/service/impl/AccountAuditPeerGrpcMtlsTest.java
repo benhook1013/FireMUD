@@ -111,15 +111,13 @@ class AccountAuditPeerGrpcMtlsTest {
         .withPropertyValues(
             "firemud.auth.jwt-secret=" + JWT_SECRET,
             "firemud.auth.grpc.public-methods[0]=" + CLAIM_EVIDENCE_METHOD)
-        .run(
-            context -> {
-              assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
-              assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
-                  .containsExactly(CLAIM_EVIDENCE_METHOD);
-              authInterceptor = context.getBean(AuthTokenInterceptor.class);
-              assertThat(authInterceptor)
-                  .isSameAs(context.getBean("accountAuditAuthTokenInterceptor"));
-            });
+        .run(context -> {
+          assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
+          assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
+              .containsExactly(CLAIM_EVIDENCE_METHOD);
+          authInterceptor = context.getBean(AuthTokenInterceptor.class);
+          assertThat(authInterceptor).isSameAs(context.getBean("accountAuditAuthTokenInterceptor"));
+        });
   }
 
   @Test

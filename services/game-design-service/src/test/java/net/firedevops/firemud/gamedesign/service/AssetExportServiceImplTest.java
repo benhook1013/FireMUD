@@ -134,42 +134,39 @@ class AssetExportServiceImplTest {
         .when(
             publicationService.readFrozenAssetBytes(
                 any(String.class), anyInt(), any(AssetSelection.class)))
-        .thenAnswer(
-            invocation -> {
-              AssetSelection selection = invocation.getArgument(2);
-              byte[] bytes = frozenAssetBytes.get(selection.assetId());
-              if (bytes == null) {
-                throw new IllegalStateException("frozen asset bytes are unavailable");
-              }
-              return bytes.clone();
-            });
+        .thenAnswer(invocation -> {
+          AssetSelection selection = invocation.getArgument(2);
+          byte[] bytes = frozenAssetBytes.get(selection.assetId());
+          if (bytes == null) {
+            throw new IllegalStateException("frozen asset bytes are unavailable");
+          }
+          return bytes.clone();
+        });
     lenient()
         .when(
             candidateService.recordExportCandidate(
                 any(String.class), anyInt(), any(FrozenAssetExportCandidate.class)))
-        .thenAnswer(
-            invocation -> {
-              FrozenAssetExportCandidate requested = invocation.getArgument(2);
-              FrozenAssetExportCandidate existing = storedCandidate.get();
-              if (existing == null) {
-                storedCandidate.set(requested);
-                existing = requested;
-              }
-              if (!existing.equals(requested)) {
-                throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_CONFLICT");
-              }
-              return existing;
-            });
+        .thenAnswer(invocation -> {
+          FrozenAssetExportCandidate requested = invocation.getArgument(2);
+          FrozenAssetExportCandidate existing = storedCandidate.get();
+          if (existing == null) {
+            storedCandidate.set(requested);
+            existing = requested;
+          }
+          if (!existing.equals(requested)) {
+            throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_CONFLICT");
+          }
+          return existing;
+        });
     lenient()
         .when(candidateService.readExportCandidate(any(String.class), anyInt()))
-        .thenAnswer(
-            ignored -> {
-              FrozenAssetExportCandidate existing = storedCandidate.get();
-              if (existing == null) {
-                throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_NOT_FOUND");
-              }
-              return existing;
-            });
+        .thenAnswer(ignored -> {
+          FrozenAssetExportCandidate existing = storedCandidate.get();
+          if (existing == null) {
+            throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_NOT_FOUND");
+          }
+          return existing;
+        });
     lenient()
         .when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
         .thenAnswer(this::putObject);
@@ -195,10 +192,8 @@ class AssetExportServiceImplTest {
     order
         .verify(s3Client)
         .putObject(
-            argThat(
-                (PutObjectRequest request) ->
-                    "*".equals(request.ifNoneMatch())
-                        && request.key().startsWith("artifacts/sha256/")),
+            argThat((PutObjectRequest request) ->
+                "*".equals(request.ifNoneMatch()) && request.key().startsWith("artifacts/sha256/")),
             any(RequestBody.class));
   }
 
@@ -316,15 +311,14 @@ class AssetExportServiceImplTest {
     assertEquals(-1, manifestJson.indexOf("bucket"));
     verify(s3Client)
         .putObject(
-            argThat(
-                (PutObjectRequest request) ->
-                    request
-                            .key()
-                            .equals(
-                                "manifests/sha256/"
-                                    + exported.manifestHash().substring("sha256:".length()))
-                        && "application/json".equals(request.contentType())
-                        && "*".equals(request.ifNoneMatch())),
+            argThat((PutObjectRequest request) ->
+                request
+                        .key()
+                        .equals(
+                            "manifests/sha256/"
+                                + exported.manifestHash().substring("sha256:".length()))
+                    && "application/json".equals(request.contentType())
+                    && "*".equals(request.ifNoneMatch())),
             any(RequestBody.class));
   }
 
@@ -956,14 +950,13 @@ class AssetExportServiceImplTest {
         source.canonicalTenantId(),
         source.canonicalVersionId(),
         source.items().stream()
-            .map(
-                item ->
-                    new AssetSelection(
-                        item.usageKey(),
-                        item.assetId(),
-                        item.byteSize(),
-                        item.contentType(),
-                        item.contentDigest()))
+            .map(item ->
+                new AssetSelection(
+                    item.usageKey(),
+                    item.assetId(),
+                    item.byteSize(),
+                    item.contentType(),
+                    item.contentDigest()))
             .toList());
   }
 

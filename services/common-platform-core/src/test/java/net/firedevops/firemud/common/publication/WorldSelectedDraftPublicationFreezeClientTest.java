@@ -33,16 +33,14 @@ class WorldSelectedDraftPublicationFreezeClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var plaintext = tls(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldSelectedDraftPublicationFreezeClient(
-                    new ServiceEndpointsProperties(), plaintext, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldSelectedDraftPublicationFreezeClient(
+                new ServiceEndpointsProperties(), plaintext, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
-    assertThatThrownBy(
-            () ->
-                new WorldSelectedDraftPublicationFreezeClient(
-                    new ServiceEndpointsProperties(), tls(directory), factory, "Test"))
+    assertThatThrownBy(() ->
+            new WorldSelectedDraftPublicationFreezeClient(
+                new ServiceEndpointsProperties(), tls(directory), factory, "Test"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(factory);
   }

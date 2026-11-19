@@ -254,9 +254,8 @@ class LoggingAdminApplicationIntegrationTest {
         "CREATE TRIGGER fail_test_account_audit_receipt BEFORE INSERT ON account_audit_receipts "
             + "FOR EACH ROW EXECUTE FUNCTION fail_test_account_audit_receipt()");
     try {
-      assertThatThrownBy(
-              () ->
-                  logEventService.createLogEvent(tenantAuditRequest(eventId, "{\"accountId\":93}")))
+      assertThatThrownBy(() ->
+              logEventService.createLogEvent(tenantAuditRequest(eventId, "{\"accountId\":93}")))
           .isInstanceOf(AuditStorageUnavailableException.class);
       assertThat(dsl.fetchCount(LOG_EVENTS, LOG_EVENTS.AUDIT_EVENT_ID.eq(eventId))).isZero();
       assertThat(
@@ -427,17 +426,16 @@ class LoggingAdminApplicationIntegrationTest {
                   "retained negative tenant projection",
                   "retained zero tenant legacy row",
                   "retained zero tenant projection"))
-          .extracting(
-              row ->
-                  List.of(
-                      row.get("tenant_id", Long.class),
-                      row.get("tenant_key", Long.class),
-                      row.get("audit_event_id", String.class) == null
-                          ? "<null>"
-                          : row.get("audit_event_id", String.class),
-                      row.get("type", String.class),
-                      row.get("message", String.class),
-                      row.get("timestamp", LocalDateTime.class)))
+          .extracting(row ->
+              List.of(
+                  row.get("tenant_id", Long.class),
+                  row.get("tenant_key", Long.class),
+                  row.get("audit_event_id", String.class) == null
+                      ? "<null>"
+                      : row.get("audit_event_id", String.class),
+                  row.get("type", String.class),
+                  row.get("message", String.class),
+                  row.get("timestamp", LocalDateTime.class)))
           .containsExactly(
               List.of(
                   -9L,
@@ -548,15 +546,14 @@ class LoggingAdminApplicationIntegrationTest {
           .isFalse();
 
       for (String invalidDigest : List.of("sha256:" + "A".repeat(64), "sha256:" + "g".repeat(64))) {
-        assertThatThrownBy(
-                () ->
-                    dsl.execute(
-                        "UPDATE "
-                            + schema
-                            + ".account_audit_receipts SET payload_digest = ? "
-                            + "WHERE receipt_id = ?",
-                        invalidDigest,
-                        retainedInvalidReceiptId))
+        assertThatThrownBy(() ->
+                dsl.execute(
+                    "UPDATE "
+                        + schema
+                        + ".account_audit_receipts SET payload_digest = ? "
+                        + "WHERE receipt_id = ?",
+                    invalidDigest,
+                    retainedInvalidReceiptId))
             .isInstanceOf(DataIntegrityViolationException.class)
             .hasMessageContaining("chk_account_audit_receipt_digest_format");
       }
@@ -570,28 +567,26 @@ class LoggingAdminApplicationIntegrationTest {
           .isEqualTo(retainedInvalidDigest);
 
       byte[] validPayload = "{\"afterMigration\":true}".getBytes(StandardCharsets.UTF_8);
-      assertThatThrownBy(
-              () ->
-                  insertMigrationReceipt(
-                      schema,
-                      UUID.fromString("80000000-0000-4000-8000-000000000001"),
-                      "70000000-0000-4000-8000-000000000001",
-                      "sha256:" + "A".repeat(64),
-                      validPayload,
-                      "COMMITTED",
-                      "ACCEPTED"))
+      assertThatThrownBy(() ->
+              insertMigrationReceipt(
+                  schema,
+                  UUID.fromString("80000000-0000-4000-8000-000000000001"),
+                  "70000000-0000-4000-8000-000000000001",
+                  "sha256:" + "A".repeat(64),
+                  validPayload,
+                  "COMMITTED",
+                  "ACCEPTED"))
           .isInstanceOf(DataIntegrityViolationException.class)
           .hasMessageContaining("chk_account_audit_receipt_digest_format");
-      assertThatThrownBy(
-              () ->
-                  insertMigrationReceipt(
-                      schema,
-                      UUID.fromString("80000000-0000-4000-8000-000000000002"),
-                      "70000000-0000-4000-8000-000000000002",
-                      "sha256:" + "g".repeat(64),
-                      validPayload,
-                      "COMMITTED",
-                      "ACCEPTED"))
+      assertThatThrownBy(() ->
+              insertMigrationReceipt(
+                  schema,
+                  UUID.fromString("80000000-0000-4000-8000-000000000002"),
+                  "70000000-0000-4000-8000-000000000002",
+                  "sha256:" + "g".repeat(64),
+                  validPayload,
+                  "COMMITTED",
+                  "ACCEPTED"))
           .isInstanceOf(DataIntegrityViolationException.class)
           .hasMessageContaining("chk_account_audit_receipt_digest_format");
 
@@ -694,28 +689,26 @@ class LoggingAdminApplicationIntegrationTest {
             invalidTenantId == 0
                 ? "60000000-0000-4000-8000-000000000003"
                 : "60000000-0000-4000-8000-000000000004";
-        assertThatThrownBy(
-                () ->
-                    dsl.execute(
-                        "INSERT INTO "
-                            + schema
-                            + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message) "
-                            + "VALUES ('tenant', ?, ?, ?, 'ACCOUNT_AUDIT', 'invalid tenant projection')",
-                        invalidTenantId,
-                        invalidTenantId,
-                        eventId))
+        assertThatThrownBy(() ->
+                dsl.execute(
+                    "INSERT INTO "
+                        + schema
+                        + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message) "
+                        + "VALUES ('tenant', ?, ?, ?, 'ACCOUNT_AUDIT', 'invalid tenant projection')",
+                    invalidTenantId,
+                    invalidTenantId,
+                    eventId))
             .isInstanceOf(DataIntegrityViolationException.class)
             .hasMessageContaining("chk_log_events_tenant_audit_positive_tenant_id");
-        assertThatThrownBy(
-                () ->
-                    dsl.execute(
-                        "UPDATE "
-                            + schema
-                            + ".log_events SET tenant_id = ?, tenant_key = ? "
-                            + "WHERE audit_event_id = ?",
-                        invalidTenantId,
-                        invalidTenantId,
-                        "60000000-0000-4000-8000-000000000001"))
+        assertThatThrownBy(() ->
+                dsl.execute(
+                    "UPDATE "
+                        + schema
+                        + ".log_events SET tenant_id = ?, tenant_key = ? "
+                        + "WHERE audit_event_id = ?",
+                    invalidTenantId,
+                    invalidTenantId,
+                    "60000000-0000-4000-8000-000000000001"))
             .isInstanceOf(DataIntegrityViolationException.class)
             .hasMessageContaining("chk_log_events_tenant_audit_positive_tenant_id");
       }
@@ -737,14 +730,13 @@ class LoggingAdminApplicationIntegrationTest {
             legacyTenantId);
       }
 
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "INSERT INTO "
-                          + schema
-                          + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message) "
-                          + "VALUES ('tenant', 73, 74, '50000000-0000-4000-8000-000000000001', "
-                          + "'ACCOUNT_AUDIT', 'mismatched key')"))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "INSERT INTO "
+                      + schema
+                      + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message) "
+                      + "VALUES ('tenant', 73, 74, '50000000-0000-4000-8000-000000000001', "
+                      + "'ACCOUNT_AUDIT', 'mismatched key')"))
           .isInstanceOf(DataIntegrityViolationException.class)
           .hasMessageContaining("chk_log_events_scope_tenant");
     } finally {
@@ -1021,27 +1013,24 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(
             requestMappingHandlerMapping.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream()))
-        .noneMatch(
-            pattern ->
-                pattern.equals("/reports")
-                    || pattern.startsWith("/reports/")
-                    || pattern.equals("/admin/reports")
-                    || pattern.startsWith("/admin/reports/"));
+        .noneMatch(pattern ->
+            pattern.equals("/reports")
+                || pattern.startsWith("/reports/")
+                || pattern.equals("/admin/reports")
+                || pattern.startsWith("/admin/reports/"));
   }
 
   @Test
   void publicTargetOnlyAdmissionPointerWriteMappingsAreAbsent() {
     assertThat(requestMappingHandlerMapping.getHandlerMethods().keySet())
-        .noneMatch(
-            mapping ->
-                (mapping.getMethodsCondition().getMethods().isEmpty()
-                        || mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST))
-                    && mapping.getPatternValues().stream()
-                        .anyMatch(
-                            path ->
-                                path.equals("/admission-pointers")
-                                    || path.equals("/admission-pointers/cutover")
-                                    || path.equals("/admission-pointers/version-upgrades")));
+        .noneMatch(mapping ->
+            (mapping.getMethodsCondition().getMethods().isEmpty()
+                    || mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST))
+                && mapping.getPatternValues().stream()
+                    .anyMatch(path ->
+                        path.equals("/admission-pointers")
+                            || path.equals("/admission-pointers/cutover")
+                            || path.equals("/admission-pointers/version-upgrades")));
   }
 
   @Test
@@ -1055,10 +1044,9 @@ class LoggingAdminApplicationIntegrationTest {
         }) {
       assertThat(requestMappingHandlerMapping.getHandlerMethods().keySet())
           .as("path %s", path)
-          .anyMatch(
-              mapping ->
-                  mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST)
-                      && mapping.getPatternValues().contains(path));
+          .anyMatch(mapping ->
+              mapping.getMethodsCondition().getMethods().contains(RequestMethod.POST)
+                  && mapping.getPatternValues().contains(path));
     }
   }
 

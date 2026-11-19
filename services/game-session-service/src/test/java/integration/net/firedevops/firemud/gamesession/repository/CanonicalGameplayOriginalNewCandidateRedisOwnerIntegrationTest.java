@@ -152,13 +152,12 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
         .hasMessageContaining("irreversibly abandoned");
     assertThatThrownBy(() -> source.repository().beginAccountMemberRepair(TRANSITION_ID))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
-    assertThatThrownBy(
-            () ->
-                source
-                    .dsl()
-                    .execute(
-                        "UPDATE game_session_canonical_binding_transition SET status = 'PROVISIONAL' WHERE transition_id = ?",
-                        TRANSITION_ID))
+    assertThatThrownBy(() ->
+            source
+                .dsl()
+                .execute(
+                    "UPDATE game_session_canonical_binding_transition SET status = 'PROVISIONAL' WHERE transition_id = ?",
+                    TRANSITION_ID))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThat(admin.dbsize()).isZero();
   }
@@ -292,46 +291,45 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
     UUID coverageFence = UUID.randomUUID();
     source
         .dsl()
-        .transaction(
-            configuration -> {
-              DSLContext transaction = DSL.using(configuration);
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              transaction.execute(
-                  "INSERT INTO game_session_canonical_account_coverage_operation"
-                      + " (operation_id, request_id, account_id, legacy_cohort_id, legacy_owner_operation_id,"
-                      + " legacy_writer_fence, legacy_source_snapshot_revision, legacy_canonical_inventory_revision,"
-                      + " legacy_namespace_index_readback_revision, legacy_evidence_digest, lifecycle, operation_fence,"
-                      + " coverage_fence, account_admission_fence, historical_account_admission_fence, resolved_scope_kind,"
-                      + " snapshot_state, inventory_snapshot_revision, coverage_generation, redis_member_count, redis_member_set_digest)"
-                      + " SELECT ?, ?, ?, cohort_id, owner_operation_id, legacy_writer_fence, source_snapshot_revision,"
-                      + " canonical_inventory_revision, namespace_index_readback_revision, evidence_digest, ?, 1,"
-                      + " ?, ?, ?, 'ACCOUNT_WIDE', 'COMPLETE', ?, ?, ?, ?"
-                      + " FROM game_session_canonical_binding_legacy_disposition WHERE singleton_id = 1",
-                  operation,
-                  UUID.randomUUID(),
-                  source.identity().accountId(),
-                  nextControl,
-                  coverageFence,
-                  historical ? null : admissionFence,
-                  historical ? admissionFence : null,
-                  historical ? snapshot : null,
-                  historical ? generation : null,
-                  historical ? 0L : null,
-                  historical ? "sha256:" + "0".repeat(64) : null);
-              transaction.execute(
-                  "UPDATE game_session_canonical_account_coverage_control SET state = ?,"
-                      + " last_operation_fence = 1, current_operation_id = ?, current_operation_fence = 1,"
-                      + " account_admission_fence = ?, historical_account_admission_fence = ?, coverage_fence = ?,"
-                      + " inventory_snapshot_revision = ?, coverage_generation = ? WHERE account_id = ?",
-                  nextControl,
-                  operation,
-                  historical ? null : admissionFence,
-                  historical ? admissionFence : null,
-                  coverageFence,
-                  historical ? snapshot : null,
-                  historical ? generation : null,
-                  source.identity().accountId());
-            });
+        .transaction(configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          transaction.execute(
+              "INSERT INTO game_session_canonical_account_coverage_operation"
+                  + " (operation_id, request_id, account_id, legacy_cohort_id, legacy_owner_operation_id,"
+                  + " legacy_writer_fence, legacy_source_snapshot_revision, legacy_canonical_inventory_revision,"
+                  + " legacy_namespace_index_readback_revision, legacy_evidence_digest, lifecycle, operation_fence,"
+                  + " coverage_fence, account_admission_fence, historical_account_admission_fence, resolved_scope_kind,"
+                  + " snapshot_state, inventory_snapshot_revision, coverage_generation, redis_member_count, redis_member_set_digest)"
+                  + " SELECT ?, ?, ?, cohort_id, owner_operation_id, legacy_writer_fence, source_snapshot_revision,"
+                  + " canonical_inventory_revision, namespace_index_readback_revision, evidence_digest, ?, 1,"
+                  + " ?, ?, ?, 'ACCOUNT_WIDE', 'COMPLETE', ?, ?, ?, ?"
+                  + " FROM game_session_canonical_binding_legacy_disposition WHERE singleton_id = 1",
+              operation,
+              UUID.randomUUID(),
+              source.identity().accountId(),
+              nextControl,
+              coverageFence,
+              historical ? null : admissionFence,
+              historical ? admissionFence : null,
+              historical ? snapshot : null,
+              historical ? generation : null,
+              historical ? 0L : null,
+              historical ? "sha256:" + "0".repeat(64) : null);
+          transaction.execute(
+              "UPDATE game_session_canonical_account_coverage_control SET state = ?,"
+                  + " last_operation_fence = 1, current_operation_id = ?, current_operation_fence = 1,"
+                  + " account_admission_fence = ?, historical_account_admission_fence = ?, coverage_fence = ?,"
+                  + " inventory_snapshot_revision = ?, coverage_generation = ? WHERE account_id = ?",
+              nextControl,
+              operation,
+              historical ? null : admissionFence,
+              historical ? admissionFence : null,
+              coverageFence,
+              historical ? snapshot : null,
+              historical ? generation : null,
+              source.identity().accountId());
+        });
   }
 
   @org.junit.jupiter.api.Test
@@ -512,12 +510,11 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
             source
                 .repository()
                 .readAdmissionDecision(TRANSITION_ID, source.decision().leaseEvidence()))
-        .satisfies(
-            stored -> {
-              assertThat(first.candidate().matchesOriginalDecision(stored)).isTrue();
-              assertThat(stored.leaseEvidence().canonicalJson())
-                  .isEqualTo(source.decision().leaseEvidence().canonicalJson());
-            });
+        .satisfies(stored -> {
+          assertThat(first.candidate().matchesOriginalDecision(stored)).isTrue();
+          assertThat(stored.leaseEvidence().canonicalJson())
+              .isEqualTo(source.decision().leaseEvidence().canonicalJson());
+        });
 
     assertThat(admin.type(ascii(first.sessionKey()))).isEqualTo("string");
     assertThat(admin.get(ascii(first.sessionKey()))).containsExactly(first.exactCandidateBytes());

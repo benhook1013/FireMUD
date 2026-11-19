@@ -244,14 +244,12 @@ final class CanonicalGameplayIssuerBindingLocalRetirementRedisOwner {
     }
     List<CanonicalGameplayIssuerBindingLocalProjectionRepository.LocalEntry> entries =
         work.localEntries().stream()
-            .filter(
-                entry ->
-                    entry
-                        .memberValue()
-                        .reservation()
-                        .partitionId()
-                        .equals(
-                            operation.release().releasedMemberValue().reservation().partitionId()))
+            .filter(entry ->
+                entry
+                    .memberValue()
+                    .reservation()
+                    .partitionId()
+                    .equals(operation.release().releasedMemberValue().reservation().partitionId()))
             .sorted(Comparator.comparing(entry -> entry.operationId().toString()))
             .toList();
     args.add(ascii(Integer.toString(entries.size())));

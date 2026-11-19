@@ -118,9 +118,8 @@ class ExpiredCredentialCleanupJobTest {
     when(emailVerification.deleteExpired(any(), eq(5))).thenReturn(0);
     when(emailLoginChallenge.deleteExpired(any(), eq(5))).thenReturn(0);
     when(passwordReset.findOldestExpiredAt(any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(invocation.getArgument(0, LocalDateTime.class).minusSeconds(7)));
+        .thenAnswer(invocation ->
+            Optional.of(invocation.getArgument(0, LocalDateTime.class).minusSeconds(7)));
     when(emailVerification.findOldestExpiredAt(any())).thenReturn(Optional.empty());
     when(emailLoginChallenge.findOldestExpiredAt(any())).thenReturn(Optional.empty());
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -266,21 +265,14 @@ class ExpiredCredentialCleanupJobTest {
         mock(AccountEmailLoginChallengeRepository.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
-    assertThatThrownBy(
-            () ->
-                new ExpiredCredentialCleanupJob(
-                    passwordReset,
-                    emailVerification,
-                    emailLoginChallenge,
-                    meterRegistry,
-                    0,
-                    60_000))
+    assertThatThrownBy(() ->
+            new ExpiredCredentialCleanupJob(
+                passwordReset, emailVerification, emailLoginChallenge, meterRegistry, 0, 60_000))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("batch-size");
-    assertThatThrownBy(
-            () ->
-                new ExpiredCredentialCleanupJob(
-                    passwordReset, emailVerification, emailLoginChallenge, meterRegistry, 1, 0))
+    assertThatThrownBy(() ->
+            new ExpiredCredentialCleanupJob(
+                passwordReset, emailVerification, emailLoginChallenge, meterRegistry, 1, 0))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("interval-ms");
   }

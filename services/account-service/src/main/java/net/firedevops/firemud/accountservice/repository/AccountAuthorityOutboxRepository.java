@@ -274,10 +274,9 @@ public class AccountAuthorityOutboxRepository {
     }
     Event event =
         findEvent(outboxStreamKey, sequence)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Account authority outbox checkpoint has no matching event evidence"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Account authority outbox checkpoint has no matching event evidence"));
     return Optional.of(
         new Checkpoint(
             outboxStreamKey, event.outboxSequence(), event.eventId(), event.eventDigest()));

@@ -117,36 +117,34 @@ public final class AccountAuthorizedTenantCreationService {
     }
 
     WriteDisposition disposition =
-        ownerWrite.execute(
-            transaction -> {
-              dispatchRepository.applyLocalWriteTimeouts();
-              if (!dispatchRepository.isAuthorizationCurrent(
-                  authorization.validBeforeEpochMillis())) {
-                throw new IllegalStateException(
-                    "Current Account tenant-creation authorization expired before owner writes");
-              }
+        ownerWrite.execute(transaction -> {
+          dispatchRepository.applyLocalWriteTimeouts();
+          if (!dispatchRepository.isAuthorizationCurrent(authorization.validBeforeEpochMillis())) {
+            throw new IllegalStateException(
+                "Current Account tenant-creation authorization expired before owner writes");
+          }
 
-              OriginalOutcomeSnapshot claimed = outcomeRepository.claimLocked(binding);
-              if (claimed.status() == OutcomeStatus.CREATED) {
-                return WriteDisposition.REPLAY;
-              }
-              if (claimed.status() == OutcomeStatus.NOT_CREATED) {
-                throw new IllegalStateException(
-                    "A definitively closed fresh tenant original cannot be reopened");
-              }
+          OriginalOutcomeSnapshot claimed = outcomeRepository.claimLocked(binding);
+          if (claimed.status() == OutcomeStatus.CREATED) {
+            return WriteDisposition.REPLAY;
+          }
+          if (claimed.status() == OutcomeStatus.NOT_CREATED) {
+            throw new IllegalStateException(
+                "A definitively closed fresh tenant original cannot be reopened");
+          }
 
-              FreshTenantCreationEvidence receipt =
-                  creationRepository.createCandidate(
-                      binding.targetNamespace(),
-                      binding.creationRequestId(),
-                      request.sourceGameTenantKey(),
-                      request.name(),
-                      request.description());
-              outcomeRepository.markCreatedLocked(binding, receipt);
-              dispatchRepository.recordAuthorizedDispatch(
-                  binding, authorization.readRequestId(), authorization.validBeforeEpochMillis());
-              return WriteDisposition.CREATED;
-            });
+          FreshTenantCreationEvidence receipt =
+              creationRepository.createCandidate(
+                  binding.targetNamespace(),
+                  binding.creationRequestId(),
+                  request.sourceGameTenantKey(),
+                  request.name(),
+                  request.description());
+          outcomeRepository.markCreatedLocked(binding, receipt);
+          dispatchRepository.recordAuthorizedDispatch(
+              binding, authorization.readRequestId(), authorization.validBeforeEpochMillis());
+          return WriteDisposition.CREATED;
+        });
     if (disposition == null) {
       throw new IllegalStateException("Game Design creation transaction returned no disposition");
     }
@@ -155,10 +153,9 @@ public final class AccountAuthorizedTenantCreationService {
       AuthorizedDispatch dispatch =
           dispatchRepository
               .readCommitted(binding)
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Committed Game Design creation lacks its authorization deadline fence"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Committed Game Design creation lacks its authorization deadline fence"));
       if (!dispatch.authorizationReadRequestId().equals(authorization.readRequestId())
           || dispatch.validBeforeEpochMillis() != authorization.validBeforeEpochMillis()) {
         throw new IllegalStateException(
@@ -168,9 +165,8 @@ public final class AccountAuthorizedTenantCreationService {
     OriginalOutcomeSnapshot terminal =
         outcomeRepository
             .readCommitted(binding)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException("Committed Game Design original outcome is absent"));
+            .orElseThrow(() ->
+                new IllegalStateException("Committed Game Design original outcome is absent"));
     if (!terminal.binding().equals(binding) || terminal.status() != OutcomeStatus.CREATED) {
       throw new IllegalStateException("Committed Game Design original outcome is not CREATED");
     }
@@ -229,11 +225,10 @@ public final class AccountAuthorizedTenantCreationService {
   public void closeOriginal(Binding binding) {
     requireOutsideSql();
     Objects.requireNonNull(binding, "binding");
-    ownerWrite.executeWithoutResult(
-        transaction -> {
-          dispatchRepository.applyLocalWriteTimeouts();
-          outcomeRepository.closeNotCreatedLocked(binding);
-        });
+    ownerWrite.executeWithoutResult(transaction -> {
+      dispatchRepository.applyLocalWriteTimeouts();
+      outcomeRepository.closeNotCreatedLocked(binding);
+    });
   }
 
   private FreshTenantCreationEvidence replayTerminal(
@@ -255,10 +250,9 @@ public final class AccountAuthorizedTenantCreationService {
     FreshTenantCreationEvidence receipt =
         creationRepository
             .read(binding.creationRequestId(), binding.targetNamespace())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "CREATED Game Design original lacks its committed V30 receipt"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "CREATED Game Design original lacks its committed V30 receipt"));
     if (!receipt.targetNamespace().equals(binding.targetNamespace())
         || !receipt.creationRequestId().equals(binding.creationRequestId())
         || !receipt.requestDigest().equals(binding.creationRequestDigest())

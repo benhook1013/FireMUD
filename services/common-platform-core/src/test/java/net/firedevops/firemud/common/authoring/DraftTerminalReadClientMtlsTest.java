@@ -82,17 +82,15 @@ class DraftTerminalReadClientMtlsTest {
       client.init();
       var configuredStub = gameDesignStub(client);
 
-      assertThatThrownBy(
-              () ->
-                  configuredStub
-                      .withMaxInboundMessageSize(4 * 1024 * 1024)
-                      .readGameDesignDraftTerminalOutcome(
-                          GameDesignDraftTerminalReadGrpcCodec.toRequest(request)))
+      assertThatThrownBy(() ->
+              configuredStub
+                  .withMaxInboundMessageSize(4 * 1024 * 1024)
+                  .readGameDesignDraftTerminalOutcome(
+                      GameDesignDraftTerminalReadGrpcCodec.toRequest(request)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
 
       var actual = client.read(request);
       assertThat(actual.ownerReadback().orElseThrow().canonicalBytes())
@@ -116,17 +114,15 @@ class DraftTerminalReadClientMtlsTest {
       client.init();
       var configuredStub = worldStub(client);
 
-      assertThatThrownBy(
-              () ->
-                  configuredStub
-                      .withMaxInboundMessageSize(4 * 1024 * 1024)
-                      .readWorldDraftTerminalOutcome(
-                          WorldDraftTerminalReadGrpcCodec.toRequest(request)))
+      assertThatThrownBy(() ->
+              configuredStub
+                  .withMaxInboundMessageSize(4 * 1024 * 1024)
+                  .readWorldDraftTerminalOutcome(
+                      WorldDraftTerminalReadGrpcCodec.toRequest(request)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
 
       var actual = client.read(request);
       assertThat(actual.ownerReadback().orElseThrow().canonicalBytes())

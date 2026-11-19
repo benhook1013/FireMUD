@@ -84,15 +84,13 @@ class AutomationAuthoredSourceInventoryDeclarationTest {
   void rejectsNullInputMalformedUnicodeAndOversizedInput() {
     assertThatThrownBy(() -> AutomationAuthoredSourceInventoryDeclaration.parse(null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationAuthoredSourceInventoryDeclaration.parse(
-                    "\"" + String.valueOf((char) 0xD800) + "\""))
+    assertThatThrownBy(() ->
+            AutomationAuthoredSourceInventoryDeclaration.parse(
+                "\"" + String.valueOf((char) 0xD800) + "\""))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationAuthoredSourceInventoryDeclaration.parse(
-                    " ".repeat(AutomationAuthoredSourceInventoryDeclaration.MAX_JSON_BYTES + 1)))
+    assertThatThrownBy(() ->
+            AutomationAuthoredSourceInventoryDeclaration.parse(
+                " ".repeat(AutomationAuthoredSourceInventoryDeclaration.MAX_JSON_BYTES + 1)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("too large");
   }

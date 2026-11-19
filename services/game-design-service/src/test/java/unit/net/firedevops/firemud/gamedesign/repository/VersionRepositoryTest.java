@@ -64,14 +64,13 @@ class VersionRepositoryTest {
               VersionLifecycleState.ACTIVE,
               VersionLifecycleState.PUBLISHED);
       assertThat(candidates)
-          .allSatisfy(
-              candidate -> {
-                assertThat(candidate.getCanonicalVersionId()).isNull();
-                assertThat(candidate.getCanonicalTenantId()).isNull();
-                assertThat(candidate.getIdentitySourceGameRowId()).isNull();
-                assertThat(candidate.getIdentitySourceGameTenantKey()).isNull();
-                assertThat(candidate.getIdentitySourceProvenanceKind()).isNull();
-              });
+          .allSatisfy(candidate -> {
+            assertThat(candidate.getCanonicalVersionId()).isNull();
+            assertThat(candidate.getCanonicalTenantId()).isNull();
+            assertThat(candidate.getIdentitySourceGameRowId()).isNull();
+            assertThat(candidate.getIdentitySourceGameTenantKey()).isNull();
+            assertThat(candidate.getIdentitySourceProvenanceKind()).isNull();
+          });
     }
   }
 

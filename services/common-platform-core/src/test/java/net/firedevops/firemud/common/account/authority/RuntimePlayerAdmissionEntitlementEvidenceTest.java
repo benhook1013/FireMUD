@@ -94,10 +94,9 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
             original.issuanceFence(),
             original.checkpoints(),
             original.sourceEvidence());
-    assertThatThrownBy(
-            () ->
-                RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
-                    REQUEST, PEER, SCOPE_HASH, oversized, target(), facts(), sources(), NOW))
+    assertThatThrownBy(() ->
+            RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
+                REQUEST, PEER, SCOPE_HASH, oversized, target(), facts(), sources(), NOW))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Bounded list required");
   }
@@ -210,10 +209,9 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
 
   @Test
   void rawScopeCannotBeSuppliedAsTheVerifiedTokenHash() {
-    assertThatThrownBy(
-            () ->
-                RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
-                    REQUEST, PEER, SCOPE, membership(), target(), facts(), sources(), NOW))
+    assertThatThrownBy(() ->
+            RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
+                REQUEST, PEER, SCOPE, membership(), target(), facts(), sources(), NOW))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Verified connect scope token hash required");
   }

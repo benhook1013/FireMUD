@@ -30,36 +30,33 @@ class RegistryBackedTextCommandMetadataResolverTest {
   void resolvesBuiltInAliasMetadata() {
     assertThat(resolver.resolve("LoGoFf"))
         .get()
-        .satisfies(
-            metadata -> {
-              assertThat(metadata.dispatchGroup()).isEqualTo(TextCommandDispatchGroup.SESSION);
-              assertThat(metadata.promptPolicy()).isEqualTo(TextCommandPromptPolicy.NEVER);
-              assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.META);
-              assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.SESSION);
-              assertThat(metadata.capability()).isEqualTo(PlayerCommandCapability.MANDATORY);
-            });
+        .satisfies(metadata -> {
+          assertThat(metadata.dispatchGroup()).isEqualTo(TextCommandDispatchGroup.SESSION);
+          assertThat(metadata.promptPolicy()).isEqualTo(TextCommandPromptPolicy.NEVER);
+          assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.META);
+          assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.SESSION);
+          assertThat(metadata.capability()).isEqualTo(PlayerCommandCapability.MANDATORY);
+        });
   }
 
   @Test
   void resolvesAuthoredCommandIdMetadata() {
     assertThat(resolver.resolve("wave"))
         .get()
-        .satisfies(
-            metadata -> {
-              assertThat(metadata.dispatchGroup()).isEqualTo(TextCommandDispatchGroup.AUTHORED);
-              assertThat(metadata.promptPolicy()).isEqualTo(TextCommandPromptPolicy.WHEN_GAMEPLAY);
-              assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.SOCIAL);
-              assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.COMMUNICATION);
-              assertThat(metadata.capability()).isEqualTo(PlayerCommandCapability.MANDATORY);
-            });
+        .satisfies(metadata -> {
+          assertThat(metadata.dispatchGroup()).isEqualTo(TextCommandDispatchGroup.AUTHORED);
+          assertThat(metadata.promptPolicy()).isEqualTo(TextCommandPromptPolicy.WHEN_GAMEPLAY);
+          assertThat(metadata.actionCategory()).isEqualTo(TextCommandActionCategory.SOCIAL);
+          assertThat(metadata.actionTags()).containsExactly(TextCommandActionTag.COMMUNICATION);
+          assertThat(metadata.capability()).isEqualTo(PlayerCommandCapability.MANDATORY);
+        });
   }
 
   @Test
   void resolvesOptionalStandardCommandCapabilityMetadata() {
     assertThat(resolver.resolve("say"))
         .get()
-        .satisfies(
-            metadata ->
-                assertThat(metadata.capability()).isEqualTo(PlayerCommandCapability.SOCIAL));
+        .satisfies(metadata ->
+            assertThat(metadata.capability()).isEqualTo(PlayerCommandCapability.SOCIAL));
   }
 }

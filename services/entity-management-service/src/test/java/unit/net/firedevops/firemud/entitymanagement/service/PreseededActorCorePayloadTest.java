@@ -13,29 +13,24 @@ class PreseededActorCorePayloadTest {
     assertThatThrownBy(
             () -> new PreseededActorCorePayload(PreseededActorCorePayload.ActorKind.PLAYER, "  "))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new PreseededActorCorePayload(
-                    PreseededActorCorePayload.ActorKind.PLAYER, "x".repeat(101)))
+    assertThatThrownBy(() ->
+            new PreseededActorCorePayload(
+                PreseededActorCorePayload.ActorKind.PLAYER, "x".repeat(101)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new PreseededActorCorePayload(
-                    PreseededActorCorePayload.ActorKind.PLAYER, "Bad\nName"))
+    assertThatThrownBy(() ->
+            new PreseededActorCorePayload(PreseededActorCorePayload.ActorKind.PLAYER, "Bad\nName"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void rejectsUnpairedUtf16Surrogates() {
-    assertThatThrownBy(
-            () ->
-                new PreseededActorCorePayload(
-                    PreseededActorCorePayload.ActorKind.PLAYER, "Bad\uD800Name"))
+    assertThatThrownBy(() ->
+            new PreseededActorCorePayload(
+                PreseededActorCorePayload.ActorKind.PLAYER, "Bad\uD800Name"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new PreseededActorCorePayload(
-                    PreseededActorCorePayload.ActorKind.PLAYER, "Bad\uDC00Name"))
+    assertThatThrownBy(() ->
+            new PreseededActorCorePayload(
+                PreseededActorCorePayload.ActorKind.PLAYER, "Bad\uDC00Name"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

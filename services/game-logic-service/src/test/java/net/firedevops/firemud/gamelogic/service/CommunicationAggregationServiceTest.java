@@ -286,24 +286,22 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getNpcEchoesList()).containsExactly("Kobold Scout");
     assertThat(resp.getRecipientViewsList()).hasSize(2);
     assertThat(resp.getRecipientViewsList().get(0))
-        .satisfies(
-            view -> {
-              assertThat(view.getRecipientId()).isEqualTo("player-0");
-              assertThat(view.getRecipientName()).isEqualTo("Emberline");
-              assertThat(view.getRole())
-                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
-            });
+        .satisfies(view -> {
+          assertThat(view.getRecipientId()).isEqualTo("player-0");
+          assertThat(view.getRecipientName()).isEqualTo("Emberline");
+          assertThat(view.getRole())
+              .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
+        });
     assertThat(resp.getRecipientViewsList().get(1))
-        .satisfies(
-            view -> {
-              assertThat(view.getRecipientId()).isEqualTo("player-1");
-              assertThat(view.getRecipientName()).isEqualTo("Sora");
-              assertThat(view.getRole())
-                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET);
-              assertThat(view.getPerception())
-                  .isEqualTo(CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT);
-              assertThat(view.getSpeakerName()).isEqualTo("Emberline");
-            });
+        .satisfies(view -> {
+          assertThat(view.getRecipientId()).isEqualTo("player-1");
+          assertThat(view.getRecipientName()).isEqualTo("Sora");
+          assertThat(view.getRole())
+              .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET);
+          assertThat(view.getPerception())
+              .isEqualTo(CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT);
+          assertThat(view.getSpeakerName()).isEqualTo("Emberline");
+        });
 
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());
@@ -385,25 +383,23 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getDeliveredToList()).containsExactly("Emberline", "Sora");
     assertThat(resp.getRecipientViewsList()).hasSize(2);
     assertThat(resp.getRecipientViewsList().get(0))
-        .satisfies(
-            view -> {
-              assertThat(view.getRecipientId()).isEqualTo("player-0");
-              assertThat(view.getRecipientName()).isEqualTo("Emberline");
-              assertThat(view.getRole())
-                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
-              assertThat(view.getSpeakerName()).isEqualTo("Emberline");
-              assertThat(view.getTargetName()).isEqualTo("Sora");
-            });
+        .satisfies(view -> {
+          assertThat(view.getRecipientId()).isEqualTo("player-0");
+          assertThat(view.getRecipientName()).isEqualTo("Emberline");
+          assertThat(view.getRole())
+              .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
+          assertThat(view.getSpeakerName()).isEqualTo("Emberline");
+          assertThat(view.getTargetName()).isEqualTo("Sora");
+        });
     assertThat(resp.getRecipientViewsList().get(1))
-        .satisfies(
-            view -> {
-              assertThat(view.getRecipientId()).isEqualTo("player-1");
-              assertThat(view.getRecipientName()).isEqualTo("Sora");
-              assertThat(view.getRole())
-                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET);
-              assertThat(view.getSpeakerName()).isEqualTo("Emberline");
-              assertThat(view.getTargetName()).isEqualTo("Sora");
-            });
+        .satisfies(view -> {
+          assertThat(view.getRecipientId()).isEqualTo("player-1");
+          assertThat(view.getRecipientName()).isEqualTo("Sora");
+          assertThat(view.getRole())
+              .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET);
+          assertThat(view.getSpeakerName()).isEqualTo("Emberline");
+          assertThat(view.getTargetName()).isEqualTo("Sora");
+        });
 
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());
@@ -434,21 +430,19 @@ class CommunicationAggregationServiceTest {
                     .build())
             .build();
     when(entityStub.listRoomEntities(any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(MDC.get("tenantId")).isEqualTo("1");
-              assertThat(MDC.get("gameInstanceId")).isEqualTo("7");
-              assertThat(MDC.get("characterId")).isEqualTo("player-0");
-              return roomEntities;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(MDC.get("tenantId")).isEqualTo("1");
+          assertThat(MDC.get("gameInstanceId")).isEqualTo("7");
+          assertThat(MDC.get("characterId")).isEqualTo("player-0");
+          return roomEntities;
+        });
     when(socialStub.sendMessage(any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(MDC.get("tenantId")).isEqualTo("1");
-              assertThat(MDC.get("gameInstanceId")).isEqualTo("7");
-              assertThat(MDC.get("characterId")).isEqualTo("player-0");
-              return SendMessageResponse.newBuilder().setSuccess(true).build();
-            });
+        .thenAnswer(ignored -> {
+          assertThat(MDC.get("tenantId")).isEqualTo("1");
+          assertThat(MDC.get("gameInstanceId")).isEqualTo("7");
+          assertThat(MDC.get("characterId")).isEqualTo("player-0");
+          return SendMessageResponse.newBuilder().setSuccess(true).build();
+        });
 
     service.send(
         SendCommunicationRequest.newBuilder()
@@ -518,19 +512,17 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getSuccess()).isTrue();
     assertThat(resp.getRecipientViewsList()).hasSize(3);
     assertThat(resp.getRecipientViewsList())
-        .filteredOn(
-            view ->
-                view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER)
+        .filteredOn(view ->
+            view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER)
         .singleElement()
-        .satisfies(
-            view -> {
-              assertThat(view.getRecipientId()).isEqualTo("player-2");
-              assertThat(view.getRecipientName()).isEqualTo("Nyx");
-              assertThat(view.getPerception())
-                  .isEqualTo(CommunicationPerception.COMMUNICATION_PERCEPTION_METADATA_ONLY);
-              assertThat(view.getSpeakerName()).isEqualTo("Emberline");
-              assertThat(view.getTargetName()).isEqualTo("Sora");
-            });
+        .satisfies(view -> {
+          assertThat(view.getRecipientId()).isEqualTo("player-2");
+          assertThat(view.getRecipientName()).isEqualTo("Nyx");
+          assertThat(view.getPerception())
+              .isEqualTo(CommunicationPerception.COMMUNICATION_PERCEPTION_METADATA_ONLY);
+          assertThat(view.getSpeakerName()).isEqualTo("Emberline");
+          assertThat(view.getTargetName()).isEqualTo("Sora");
+        });
   }
 
   @Test
@@ -577,9 +569,8 @@ class CommunicationAggregationServiceTest {
 
     assertThat(resp.getSuccess()).isTrue();
     assertThat(resp.getRecipientViewsList())
-        .filteredOn(
-            view ->
-                view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER)
+        .filteredOn(view ->
+            view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER)
         .isEmpty();
   }
 
@@ -606,25 +597,23 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getSpeakerName()).isEqualTo("Emberline");
     assertThat(resp.getRecipientViewsList()).hasSize(2);
     assertThat(resp.getRecipientViewsList().get(0))
-        .satisfies(
-            view -> {
-              assertThat(view.getRecipientId()).isEqualTo("player-0");
-              assertThat(view.getRecipientName()).isEqualTo("Emberline");
-              assertThat(view.getRole())
-                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
-              assertThat(view.getSpeakerName()).isEqualTo("Emberline");
-              assertThat(view.getTargetName()).isEqualTo("Sora");
-            });
+        .satisfies(view -> {
+          assertThat(view.getRecipientId()).isEqualTo("player-0");
+          assertThat(view.getRecipientName()).isEqualTo("Emberline");
+          assertThat(view.getRole())
+              .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
+          assertThat(view.getSpeakerName()).isEqualTo("Emberline");
+          assertThat(view.getTargetName()).isEqualTo("Sora");
+        });
     assertThat(resp.getRecipientViewsList().get(1))
-        .satisfies(
-            view -> {
-              assertThat(view.getRecipientId()).isEqualTo("player-9");
-              assertThat(view.getRecipientName()).isEqualTo("Sora");
-              assertThat(view.getRole())
-                  .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET);
-              assertThat(view.getSpeakerName()).isEqualTo("Emberline");
-              assertThat(view.getTargetName()).isEqualTo("Sora");
-            });
+        .satisfies(view -> {
+          assertThat(view.getRecipientId()).isEqualTo("player-9");
+          assertThat(view.getRecipientName()).isEqualTo("Sora");
+          assertThat(view.getRole())
+              .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET);
+          assertThat(view.getSpeakerName()).isEqualTo("Emberline");
+          assertThat(view.getTargetName()).isEqualTo("Sora");
+        });
 
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());

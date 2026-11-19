@@ -49,10 +49,9 @@ class AccountHostingPlanCatalogTest {
     assertThatThrownBy(() -> new AccountHostingPlanCatalog(List.of(entry, entry)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Ambiguous");
-    assertThatThrownBy(
-            () ->
-                new AccountHostingPlanCatalog(
-                    List.of(entry, configuration("basic-hosting", "price_other"))))
+    assertThatThrownBy(() ->
+            new AccountHostingPlanCatalog(
+                List.of(entry, configuration("basic-hosting", "price_other"))))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new AccountHostingPlanCatalog(Arrays.asList(entry, null)))
         .isInstanceOf(IllegalArgumentException.class);
@@ -72,12 +71,11 @@ class AccountHostingPlanCatalogTest {
             .isInstanceOf(IllegalArgumentException.class);
       }
     }
-    assertThatThrownBy(
-            () ->
-                new AccountHostingPlanCatalog(
-                    List.of(
-                        new ConfiguredPlan(
-                            "basic-hosting", "price_explicit", "0", "100", "2", "1048576"))))
+    assertThatThrownBy(() ->
+            new AccountHostingPlanCatalog(
+                List.of(
+                    new ConfiguredPlan(
+                        "basic-hosting", "price_explicit", "0", "100", "2", "1048576"))))
         .isInstanceOf(IllegalArgumentException.class);
     var maximum =
         new AccountHostingPlanCatalog(

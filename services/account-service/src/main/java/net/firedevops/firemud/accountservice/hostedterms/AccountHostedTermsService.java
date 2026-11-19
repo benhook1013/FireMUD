@@ -122,17 +122,15 @@ public final class AccountHostedTermsService {
     requireEnvironmentBindingRepository();
     HostedTermsEncoding.requireUuid(requestId, "environment binding publication request");
     return Objects.requireNonNull(
-        ownerTransaction.execute(
-            ignored -> {
-              HostedTermsEnvironmentBindingRepository.PublicationOperation operation =
-                  environmentBindings
-                      .readPublication(requestId, true)
-                      .orElseThrow(
-                          () ->
-                              new IllegalArgumentException(
-                                  "Original environment binding publication is absent"));
-              return advanceEnvironmentBinding(operation);
-            }),
+        ownerTransaction.execute(ignored -> {
+          HostedTermsEnvironmentBindingRepository.PublicationOperation operation =
+              environmentBindings
+                  .readPublication(requestId, true)
+                  .orElseThrow(() ->
+                      new IllegalArgumentException(
+                          "Original environment binding publication is absent"));
+          return advanceEnvironmentBinding(operation);
+        }),
         "Account environment binding recovery result");
   }
 
@@ -204,17 +202,14 @@ public final class AccountHostedTermsService {
   public PublicationResult resumePublication(UUID requestId) {
     HostedTermsEncoding.requireUuid(requestId, "publication request");
     return Objects.requireNonNull(
-        ownerTransaction.execute(
-            ignored -> {
-              HostedTermsRepository.PublicationOperation operation =
-                  repository
-                      .readPublication(requestId, true)
-                      .orElseThrow(
-                          () ->
-                              new IllegalArgumentException(
-                                  "Original publication request is absent"));
-              return advancePublication(operation, null);
-            }),
+        ownerTransaction.execute(ignored -> {
+          HostedTermsRepository.PublicationOperation operation =
+              repository
+                  .readPublication(requestId, true)
+                  .orElseThrow(
+                      () -> new IllegalArgumentException("Original publication request is absent"));
+          return advancePublication(operation, null);
+        }),
         "Account publication recovery result");
   }
 
@@ -802,10 +797,9 @@ public final class AccountHostedTermsService {
     IndividualHostedTermsAcceptance acceptance =
         repository
             .readCurrentAcceptance(partyId, scopeId, current)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "No current affirmative party-wide hosted terms acceptance"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "No current affirmative party-wide hosted terms acceptance"));
     byte[] currentParty = HostedTermsEncoding.individualParty(party);
     if (!acceptance.accountId().equals(accountId)
         || !acceptance.creatorPartyId().equals(partyId)
@@ -1072,27 +1066,24 @@ public final class AccountHostedTermsService {
       if (sourceEvidence.size() != 3
           || sourceEvidence.stream().map(SourceEvidence::key).distinct().count() != 3
           || sourceEvidence.stream()
-              .noneMatch(
-                  source ->
-                      source.key().equals(binding.sourceEvidence().key())
-                          && Arrays.equals(
-                              source.canonicalBytes(), binding.sourceEvidence().canonicalBytes()))
+              .noneMatch(source ->
+                  source.key().equals(binding.sourceEvidence().key())
+                      && Arrays.equals(
+                          source.canonicalBytes(), binding.sourceEvidence().canonicalBytes()))
           || sourceEvidence.stream()
-              .noneMatch(
-                  source ->
-                      source.kind() == SourceKind.HOSTED_TERMS
-                          && source.scopeId().equals(terms.hostedScopeId().toString())
-                          && Objects.equals(
-                              source.generation(), Long.toString(terms.materialGeneration()))
-                          && source.sourceVersion().equals(Long.toString(terms.sourceVersion()))
-                          && Arrays.equals(source.evidence(), terms.exactCurrentnessSource()))
+              .noneMatch(source ->
+                  source.kind() == SourceKind.HOSTED_TERMS
+                      && source.scopeId().equals(terms.hostedScopeId().toString())
+                      && Objects.equals(
+                          source.generation(), Long.toString(terms.materialGeneration()))
+                      && source.sourceVersion().equals(Long.toString(terms.sourceVersion()))
+                      && Arrays.equals(source.evidence(), terms.exactCurrentnessSource()))
           || sourceEvidence.stream()
-              .noneMatch(
-                  source ->
-                      source.kind() == SourceKind.CREATOR_PARTY
-                          && source.scopeId().equals(terms.creatorPartyId().toString())
-                          && source.generation() != null
-                          && source.sourceVersion() != null)) {
+              .noneMatch(source ->
+                  source.kind() == SourceKind.CREATOR_PARTY
+                      && source.scopeId().equals(terms.creatorPartyId().toString())
+                      && source.generation() != null
+                      && source.sourceVersion() != null)) {
         throw new IllegalArgumentException(
             "Bound currentness must retain exact binding, catalog/acceptance and party sources");
       }

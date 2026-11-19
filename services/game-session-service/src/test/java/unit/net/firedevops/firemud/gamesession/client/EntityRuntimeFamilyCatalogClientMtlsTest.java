@@ -209,10 +209,9 @@ class EntityRuntimeFamilyCatalogClientMtlsTest {
     }
     var tls = new CommonGrpcClientProperties();
     tls.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new EntityRuntimeFamilyCatalogClient(
-                    new ServiceEndpointsProperties(), tls, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new EntityRuntimeFamilyCatalogClient(
+                new ServiceEndpointsProperties(), tls, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

@@ -65,34 +65,32 @@ final class AccountTenantCreationDispatchRepository {
     outsideSql();
     Objects.requireNonNull(original);
     return Boolean.TRUE.equals(
-        transactions.execute(
-            status -> {
-              Original retained = read(original.intent.creationOperationId()).original;
-              if (!Arrays.equals(original.intent.requestPayload(), retained.intent.requestPayload())
-                  || !original.intent.requestDigest().equals(retained.intent.requestDigest())
-                  || !Arrays.equals(
-                      original.admitted.receiptPayload(), retained.admitted.receiptPayload())
-                  || !original.admitted.receiptDigest().equals(retained.admitted.receiptDigest())
-                  || !Arrays.equals(
-                      original.holder.canonicalBytes(), retained.holder.canonicalBytes()))
-                throw denied();
-              // Without a claim, a concurrent first claimant may still use the original's whole
-              // immutable operation window. Absence must never become an immediate close permit.
-              long validBefore = retained.admitted.binding().operationDeadlineEpochMillis();
-              Record claim = row(retained.intent.creationOperationId());
-              if (claim != null) {
-                requireRow(retained, claim);
-                validBefore = claim.get("valid_before_epoch_millis", Long.class);
-              }
-              if (validBefore <= 0
-                  || validBefore > AccountTenantCreationAdmissionBinding.MAX_REDIS_SAFE_INTEGER)
-                throw denied();
-              Record clock = dsl.fetchOne("SELECT clock_timestamp() AS observed_at");
-              OffsetDateTime observed =
-                  clock == null ? null : clock.get("observed_at", OffsetDateTime.class);
-              if (observed == null) throw denied();
-              return !observed.toInstant().isBefore(Instant.ofEpochMilli(validBefore));
-            }));
+        transactions.execute(status -> {
+          Original retained = read(original.intent.creationOperationId()).original;
+          if (!Arrays.equals(original.intent.requestPayload(), retained.intent.requestPayload())
+              || !original.intent.requestDigest().equals(retained.intent.requestDigest())
+              || !Arrays.equals(
+                  original.admitted.receiptPayload(), retained.admitted.receiptPayload())
+              || !original.admitted.receiptDigest().equals(retained.admitted.receiptDigest())
+              || !Arrays.equals(original.holder.canonicalBytes(), retained.holder.canonicalBytes()))
+            throw denied();
+          // Without a claim, a concurrent first claimant may still use the original's whole
+          // immutable operation window. Absence must never become an immediate close permit.
+          long validBefore = retained.admitted.binding().operationDeadlineEpochMillis();
+          Record claim = row(retained.intent.creationOperationId());
+          if (claim != null) {
+            requireRow(retained, claim);
+            validBefore = claim.get("valid_before_epoch_millis", Long.class);
+          }
+          if (validBefore <= 0
+              || validBefore > AccountTenantCreationAdmissionBinding.MAX_REDIS_SAFE_INTEGER)
+            throw denied();
+          Record clock = dsl.fetchOne("SELECT clock_timestamp() AS observed_at");
+          OffsetDateTime observed =
+              clock == null ? null : clock.get("observed_at", OffsetDateTime.class);
+          if (observed == null) throw denied();
+          return !observed.toInstant().isBefore(Instant.ofEpochMilli(validBefore));
+        }));
   }
 
   Optional<InitialDispatch> claim(
@@ -114,65 +112,63 @@ final class AccountTenantCreationDispatchRepository {
     AccountControlUiActorService.requireAcceptedSignerKey(first.issuance, accepted);
     UUID callId = UUID.randomUUID();
     Long deadline =
-        transactions.execute(
-            status -> {
-              Stored current = read(operation);
-              same(first, current);
-              var checked =
-                  AccountTenantCreationOwnerChecks.captureCurrent(
-                      capture,
-                      orders,
-                      current.original.intent,
-                      current.original.admitted,
-                      current.issuance,
-                      current.original.holder,
-                      environment,
-                      recent,
-                      accepted,
-                      AccountTenantCreationDispatchRepository::denied);
-              if (existing(current.original)) return null;
-              long validBefore =
-                  AccountTenantCreationOwnerChecks.currentValidBefore(
-                          current.original.admitted.binding(), checked.captured())
-                      .toEpochMilli();
-              int inserted =
-                  dsl.execute(
-                      "INSERT INTO "
-                          + TABLE
-                          + " (creation_operation_id, dispatch_call_id, authorization_binding_payload, authorization_digest, valid_before_epoch_millis)"
-                          + " VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-                      operation,
-                      callId,
-                      checked.lockedHolder().canonicalBytes(),
-                      checked.lockedHolder().authorizationDigest(),
-                      validBefore);
-              if (inserted == 0) {
-                if (!existing(current.original)) throw denied();
-                return null;
-              }
-              if (inserted != 1) throw denied();
-              return validBefore;
-            });
+        transactions.execute(status -> {
+          Stored current = read(operation);
+          same(first, current);
+          var checked =
+              AccountTenantCreationOwnerChecks.captureCurrent(
+                  capture,
+                  orders,
+                  current.original.intent,
+                  current.original.admitted,
+                  current.issuance,
+                  current.original.holder,
+                  environment,
+                  recent,
+                  accepted,
+                  AccountTenantCreationDispatchRepository::denied);
+          if (existing(current.original)) return null;
+          long validBefore =
+              AccountTenantCreationOwnerChecks.currentValidBefore(
+                      current.original.admitted.binding(), checked.captured())
+                  .toEpochMilli();
+          int inserted =
+              dsl.execute(
+                  "INSERT INTO "
+                      + TABLE
+                      + " (creation_operation_id, dispatch_call_id, authorization_binding_payload, authorization_digest, valid_before_epoch_millis)"
+                      + " VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                  operation,
+                  callId,
+                  checked.lockedHolder().canonicalBytes(),
+                  checked.lockedHolder().authorizationDigest(),
+                  validBefore);
+          if (inserted == 0) {
+            if (!existing(current.original)) throw denied();
+            return null;
+          }
+          if (inserted != 1) throw denied();
+          return validBefore;
+        });
     if (deadline == null) return Optional.empty();
     // The committed claim is independently read before returning the sole initial-send value.
     return Optional.of(
         Objects.requireNonNull(
-            transactions.execute(
-                status -> {
-                  Stored committed = read(operation);
-                  same(first, committed);
-                  Record row = row(operation);
-                  requireRow(committed.original, row);
-                  if (!callId.equals(row.get("dispatch_call_id", UUID.class))
-                      || !deadline.equals(row.get("valid_before_epoch_millis", Long.class))
-                      || orders.readSettlement(operation).isPresent()) throw denied();
-                  Record clock = dsl.fetchOne("SELECT clock_timestamp() AS observed_at");
-                  if (clock == null
-                      || !Objects.requireNonNull(clock.get("observed_at", OffsetDateTime.class))
-                          .toInstant()
-                          .isBefore(Instant.ofEpochMilli(deadline))) throw denied();
-                  return new InitialDispatch(committed.original, callId, deadline);
-                })));
+            transactions.execute(status -> {
+              Stored committed = read(operation);
+              same(first, committed);
+              Record row = row(operation);
+              requireRow(committed.original, row);
+              if (!callId.equals(row.get("dispatch_call_id", UUID.class))
+                  || !deadline.equals(row.get("valid_before_epoch_millis", Long.class))
+                  || orders.readSettlement(operation).isPresent()) throw denied();
+              Record clock = dsl.fetchOne("SELECT clock_timestamp() AS observed_at");
+              if (clock == null
+                  || !Objects.requireNonNull(clock.get("observed_at", OffsetDateTime.class))
+                      .toInstant()
+                      .isBefore(Instant.ofEpochMilli(deadline))) throw denied();
+              return new InitialDispatch(committed.original, callId, deadline);
+            })));
   }
 
   private Stored read(UUID operation) {

@@ -307,10 +307,9 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
     IntakeReceipt sourceReceipt =
         Objects.requireNonNull(
             new TransactionTemplate(new DataSourceTransactionManager(dataSource))
-                .execute(
-                    status ->
-                        new GameSessionAuthoredWorldSourceRepository(dsl)
-                            .register(sourceIntakeRequestId, sourceEvidence)),
+                .execute(status ->
+                    new GameSessionAuthoredWorldSourceRepository(dsl)
+                        .register(sourceIntakeRequestId, sourceEvidence)),
             "registered V34.3 authored-world source through its owner");
     PriorRuntime target =
         new PriorRuntime(
@@ -341,17 +340,16 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             "launch-" + token,
             "published-release-" + shortToken);
     // The V22 source uses its owner above; remaining rows use only deployed V23/V26 columns.
-    dsl.transaction(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          seedV34_3SourceAndCatalog(tx, target, sourceEvidence, sourceReceipt);
-          seedV34_3TenantAssociation(tx, target);
-          seedV34_3StartingRuntimeAndLaunch(tx, target);
-          tx.execute(
-              "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
-              target.gameSessionTenantId(),
-              target.gameInstanceId());
-        });
+    dsl.transaction(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      seedV34_3SourceAndCatalog(tx, target, sourceEvidence, sourceReceipt);
+      seedV34_3TenantAssociation(tx, target);
+      seedV34_3StartingRuntimeAndLaunch(tx, target);
+      tx.execute(
+          "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+          target.gameSessionTenantId(),
+          target.gameInstanceId());
+    });
     return target;
   }
 
@@ -842,11 +840,10 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
     AccountRedemptionProjection exact =
         projection(FINGERPRINT, exactBundle, ISSUANCE_ID, 23L, tuple);
 
-    fixture.transactions.executeWithoutResult(
-        status -> {
-          fixture.repository.attachAccountRedemptionProjection(claim, exact);
-          status.setRollbackOnly();
-        });
+    fixture.transactions.executeWithoutResult(status -> {
+      fixture.repository.attachAccountRedemptionProjection(claim, exact);
+      status.setRollbackOnly();
+    });
     assertThat(fixture.reserve(tuple).snapshot().accountRedemptionProjection()).isNull();
 
     AttemptSnapshot attached = fixture.attach(claim, exact);
@@ -993,10 +990,9 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
     AttemptClaim unattachedClaim = unattached.reserve(unattachedTuple).claim().orElseThrow();
     String unattachedBefore =
         unattached.ownerAttemptRowJson(unattachedTuple.controlPlaneRequestId());
-    assertThatThrownBy(
-            () ->
-                unattached.currentOriginalAttempt(
-                    currentAttemptRequest(unattachedTuple, unattachedClaim)))
+    assertThatThrownBy(() ->
+            unattached.currentOriginalAttempt(
+                currentAttemptRequest(unattachedTuple, unattachedClaim)))
         .isInstanceOf(StaleStartSessionOperatorAttemptClaimException.class)
         .hasMessageContaining("no attached Account projection");
     assertThat(unattached.ownerAttemptRowJson(unattachedTuple.controlPlaneRequestId()))
@@ -1015,32 +1011,29 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             23L,
             tuple));
     String before = mismatched.ownerAttemptRowJson(tuple.controlPlaneRequestId());
-    assertThatThrownBy(
-            () ->
-                mismatched.currentOriginalAttempt(
-                    currentAttemptRequest(
-                        tuple,
-                        UUID.fromString("1819a1ce-04d2-4e3f-bb64-4a672d4eb711"),
-                        claim.ownerMutationId(),
-                        claim.ownerFence())))
+    assertThatThrownBy(() ->
+            mismatched.currentOriginalAttempt(
+                currentAttemptRequest(
+                    tuple,
+                    UUID.fromString("1819a1ce-04d2-4e3f-bb64-4a672d4eb711"),
+                    claim.ownerMutationId(),
+                    claim.ownerFence())))
         .isInstanceOf(StaleStartSessionOperatorAttemptClaimException.class);
-    assertThatThrownBy(
-            () ->
-                mismatched.currentOriginalAttempt(
-                    currentAttemptRequest(
-                        tuple,
-                        claim.ownerAttemptId(),
-                        UUID.fromString("2819a1ce-04d2-4e3f-bb64-4a672d4eb711"),
-                        claim.ownerFence())))
+    assertThatThrownBy(() ->
+            mismatched.currentOriginalAttempt(
+                currentAttemptRequest(
+                    tuple,
+                    claim.ownerAttemptId(),
+                    UUID.fromString("2819a1ce-04d2-4e3f-bb64-4a672d4eb711"),
+                    claim.ownerFence())))
         .isInstanceOf(StaleStartSessionOperatorAttemptClaimException.class);
-    assertThatThrownBy(
-            () ->
-                mismatched.currentOriginalAttempt(
-                    currentAttemptRequest(
-                        tuple,
-                        claim.ownerAttemptId(),
-                        claim.ownerMutationId(),
-                        claim.ownerFence() + 1L)))
+    assertThatThrownBy(() ->
+            mismatched.currentOriginalAttempt(
+                currentAttemptRequest(
+                    tuple,
+                    claim.ownerAttemptId(),
+                    claim.ownerMutationId(),
+                    claim.ownerFence() + 1L)))
         .isInstanceOf(StaleStartSessionOperatorAttemptClaimException.class);
     StartSessionPostAuthorizationExecutionTuple changedTuple =
         tuple(tuple.controlPlaneRequestId(), "different complete action");
@@ -1197,41 +1190,34 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             23L,
             tuple));
 
-    assertThatThrownBy(
-            () ->
-                fixture.historical(
-                    tuple(tuple.controlPlaneRequestId(), "different complete action"),
-                    claim.ownerAttemptId(),
-                    claim.ownerFence()))
+    assertThatThrownBy(() ->
+            fixture.historical(
+                tuple(tuple.controlPlaneRequestId(), "different complete action"),
+                claim.ownerAttemptId(),
+                claim.ownerFence()))
         .isInstanceOf(
             GameSessionStartSessionOperatorAttemptRepository
                 .StartSessionOperatorAttemptConflictException.class);
-    assertThatThrownBy(
-            () ->
-                fixture.historical(
-                    tupleWithTenant(
-                        tuple.controlPlaneRequestId(),
-                        UUID.fromString("4d2cde3b-0834-4e65-84aa-436d88e5f6c5")),
-                    claim.ownerAttemptId(),
-                    claim.ownerFence()))
+    assertThatThrownBy(() ->
+            fixture.historical(
+                tupleWithTenant(
+                    tuple.controlPlaneRequestId(),
+                    UUID.fromString("4d2cde3b-0834-4e65-84aa-436d88e5f6c5")),
+                claim.ownerAttemptId(),
+                claim.ownerFence()))
         .isInstanceOf(
             GameSessionStartSessionOperatorAttemptRepository
                 .StartSessionOperatorAttemptConflictException.class);
-    assertThatThrownBy(
-            () ->
-                fixture.historical(
-                    tuple,
-                    UUID.fromString("1819a1ce-04d2-4e3f-bb64-4a672d4eb711"),
-                    claim.ownerFence()))
+    assertThatThrownBy(() ->
+            fixture.historical(
+                tuple, UUID.fromString("1819a1ce-04d2-4e3f-bb64-4a672d4eb711"), claim.ownerFence()))
         .isInstanceOf(StaleStartSessionOperatorAttemptClaimException.class);
     assertThatThrownBy(
             () -> fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence() + 1L))
         .isInstanceOf(StaleStartSessionOperatorAttemptClaimException.class);
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.execute(
-                    status ->
-                        fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence())))
+    assertThatThrownBy(() ->
+            fixture.transactions.execute(
+                status -> fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("outside the owner transaction");
     assertThat(fixture.attemptCount()).isEqualTo(1);
@@ -1243,10 +1229,9 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
     StartSessionPostAuthorizationExecutionTuple missingTuple =
         tuple("operator-attempt-historical-no-projection");
     AttemptClaim missingClaim = missing.reserve(missingTuple).claim().orElseThrow();
-    assertThatThrownBy(
-            () ->
-                missing.historical(
-                    missingTuple, missingClaim.ownerAttemptId(), missingClaim.ownerFence()))
+    assertThatThrownBy(() ->
+            missing.historical(
+                missingTuple, missingClaim.ownerAttemptId(), missingClaim.ownerFence()))
         .isInstanceOf(StaleStartSessionOperatorAttemptClaimException.class)
         .hasMessageContaining("no attached Account projection");
 
@@ -1277,10 +1262,9 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
           "ALTER TABLE game_session_start_session_operator_attempt "
               + "ENABLE TRIGGER game_session_start_session_operator_attempt_immutable");
     }
-    assertThatThrownBy(
-            () ->
-                corrupted.historical(
-                    corruptedTuple, corruptedClaim.ownerAttemptId(), corruptedClaim.ownerFence()))
+    assertThatThrownBy(() ->
+            corrupted.historical(
+                corruptedTuple, corruptedClaim.ownerAttemptId(), corruptedClaim.ownerFence()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("projection differs");
     assertThat(corrupted.attemptCount()).isEqualTo(1);
@@ -1313,10 +1297,9 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
     ReservationResult exactReplay = fixture.reserve(tuple);
     assertThat(exactReplay.claim()).isEmpty();
     assertThat(exactReplay.disposition()).isEqualTo(ReservationDisposition.EXACT_REPLAY);
-    assertThatThrownBy(
-            () ->
-                fixture.continueEvidence(
-                    tuple(tuple.controlPlaneRequestId(), "changed complete action")))
+    assertThatThrownBy(() ->
+            fixture.continueEvidence(
+                tuple(tuple.controlPlaneRequestId(), "changed complete action")))
         .isInstanceOf(
             GameSessionStartSessionOperatorAttemptRepository
                 .StartSessionOperatorAttemptConflictException.class)
@@ -1411,24 +1394,23 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
     ExecutorService executor = Executors.newSingleThreadExecutor();
     AtomicReference<Future<?>> pinAttempt = new AtomicReference<>();
     try {
-      fixture.transactions.executeWithoutResult(
-          status -> {
-            fixture.dsl.execute(
-                "LOCK TABLE game_session_start_session_launch_descriptor_pin IN SHARE MODE");
-            pinAttempt.set(executor.submit(() -> fixture.pin(continuation, descriptor)));
-            awaitDescriptorPinInsertWait(fixture);
-            long remainingMillis =
-                Duration.between(Instant.now(), authorityExpiresAt.plusMillis(500)).toMillis();
-            if (remainingMillis > 0L) {
-              try {
-                Thread.sleep(remainingMillis);
-              } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(
-                    "Interrupted while holding descriptor pin lock", interrupted);
-              }
-            }
-          });
+      fixture.transactions.executeWithoutResult(status -> {
+        fixture.dsl.execute(
+            "LOCK TABLE game_session_start_session_launch_descriptor_pin IN SHARE MODE");
+        pinAttempt.set(executor.submit(() -> fixture.pin(continuation, descriptor)));
+        awaitDescriptorPinInsertWait(fixture);
+        long remainingMillis =
+            Duration.between(Instant.now(), authorityExpiresAt.plusMillis(500)).toMillis();
+        if (remainingMillis > 0L) {
+          try {
+            Thread.sleep(remainingMillis);
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                "Interrupted while holding descriptor pin lock", interrupted);
+          }
+        }
+      });
 
       try {
         pinAttempt.get().get(10, TimeUnit.SECONDS);
@@ -1518,11 +1500,10 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
     Fixture fixture = fixture(Duration.ofSeconds(30));
     StartSessionPostAuthorizationExecutionTuple tuple = tuple("operator-attempt-rollback");
 
-    fixture.transactions.executeWithoutResult(
-        status -> {
-          fixture.repository.reserve(tuple);
-          status.setRollbackOnly();
-        });
+    fixture.transactions.executeWithoutResult(status -> {
+      fixture.repository.reserve(tuple);
+      status.setRollbackOnly();
+    });
 
     assertThat(fixture.attemptCount()).isZero();
   }

@@ -360,10 +360,9 @@ public final class AccountAuthoritySourceEventV1Codec {
     }
     object
         .fieldNames()
-        .forEachRemaining(
-            field -> {
-              if (!expected.contains(field)) throw invalid(field, "is not declared by this schema");
-            });
+        .forEachRemaining(field -> {
+          if (!expected.contains(field)) throw invalid(field, "is not declared by this schema");
+        });
   }
 
   private static void exact(ObjectNode object, String field, String expected) {

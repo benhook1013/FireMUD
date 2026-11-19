@@ -24,12 +24,11 @@ public final class GameSessionRuntimeFamilyCatalogCodec {
 
   public static byte[] requestBytes(Request request) {
     Objects.requireNonNull(request, "request");
-    return encode(
-        out -> {
-          out.writeInt(REQUEST_V1);
-          uuid(out, request.readRequestId());
-          bytes(out, request.targetNamespace().getBytes(StandardCharsets.US_ASCII));
-        });
+    return encode(out -> {
+      out.writeInt(REQUEST_V1);
+      uuid(out, request.readRequestId());
+      bytes(out, request.targetNamespace().getBytes(StandardCharsets.US_ASCII));
+    });
   }
 
   public static Request requestFromStored(byte[] bytes) {
@@ -48,14 +47,13 @@ public final class GameSessionRuntimeFamilyCatalogCodec {
   public static byte[] evidenceBytes(Evidence evidence) {
     Objects.requireNonNull(evidence, "evidence");
     byte[] result =
-        encode(
-            out -> {
-              out.writeInt(EVIDENCE_V1);
-              bytes(out, requestBytes(evidence.request()));
-              uuid(out, evidence.snapshotId());
-              bytes(out, evidence.catalog().digest().getBytes(StandardCharsets.US_ASCII));
-              bytes(out, evidence.catalog().exactBytes());
-            });
+        encode(out -> {
+          out.writeInt(EVIDENCE_V1);
+          bytes(out, requestBytes(evidence.request()));
+          uuid(out, evidence.snapshotId());
+          bytes(out, evidence.catalog().digest().getBytes(StandardCharsets.US_ASCII));
+          bytes(out, evidence.catalog().exactBytes());
+        });
     if (result.length > MAX_EVIDENCE_BYTES)
       throw new IllegalArgumentException("Oversized complete catalog evidence");
     return result;

@@ -70,16 +70,14 @@ public final class AuthenticatedDirectTextCommandReceiver {
               || request.worldSelector() == null
               || request.worldSelector().isBlank())
             yield failure("INVALID_ARGUMENT", "Usage: REALMS <world>");
-          yield connection.withLogin(
-              (original, result) -> {
-                if (connection.menu == null)
-                  return failure("INVALID_ARGUMENT", "Run WORLDS before REALMS <world>");
-                connection.selectedScope =
-                    required(lobbies)
-                        .realms(
-                            original, result, connection, connection.menu, request.worldSelector());
-                return success(connection.selectedScope.publicTarget().realmDisplayName());
-              });
+          yield connection.withLogin((original, result) -> {
+            if (connection.menu == null)
+              return failure("INVALID_ARGUMENT", "Run WORLDS before REALMS <world>");
+            connection.selectedScope =
+                required(lobbies)
+                    .realms(original, result, connection, connection.menu, request.worldSelector());
+            return success(connection.selectedScope.publicTarget().realmDisplayName());
+          });
         }
         case JOIN -> {
           var request = command.joinRequestPayload().orElse(null);
@@ -88,24 +86,23 @@ public final class AuthenticatedDirectTextCommandReceiver {
               || request.worldSelector() == null
               || request.worldSelector().isBlank())
             yield failure("INVALID_ARGUMENT", "Usage: JOIN <world>");
-          yield connection.withLogin(
-              (original, result) -> {
-                if (connection.menu == null || connection.selectedScope == null)
-                  return failure(
-                      "INVALID_ARGUMENT", "Run WORLDS and REALMS <world> before JOIN <world>");
-                var selected =
-                    required(selections)
-                        .resolve(connection.menu, request.worldSelector())
-                        .orElseThrow();
-                if (!selected.equals(connection.selectedScope.publicTarget()))
-                  return failure(
-                      "INVALID_ARGUMENT", "Use REALMS <world> before JOIN of a different world");
-                var observation = required(lobbies).join(original, result, connection);
-                if (observation.status()
-                        != DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING
-                    || observation.currentReply().isEmpty()) throw new IllegalStateException();
-                return success("Joined public production realm");
-              });
+          yield connection.withLogin((original, result) -> {
+            if (connection.menu == null || connection.selectedScope == null)
+              return failure(
+                  "INVALID_ARGUMENT", "Run WORLDS and REALMS <world> before JOIN <world>");
+            var selected =
+                required(selections)
+                    .resolve(connection.menu, request.worldSelector())
+                    .orElseThrow();
+            if (!selected.equals(connection.selectedScope.publicTarget()))
+              return failure(
+                  "INVALID_ARGUMENT", "Use REALMS <world> before JOIN of a different world");
+            var observation = required(lobbies).join(original, result, connection);
+            if (observation.status()
+                    != DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING
+                || observation.currentReply().isEmpty()) throw new IllegalStateException();
+            return success("Joined public production realm");
+          });
         }
         // LOGIN and JOIN are not admission. Until the canonical binding owner is qualified, the
         // retired numeric entitlement route must never be selected by this protected receiver.

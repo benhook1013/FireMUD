@@ -193,16 +193,15 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     parseNumericSessionId(resolveTransportSessionId(session))
-        .ifPresent(
-            sessionId -> {
-              if (!activeTransportSessionRegistry.unregister(sessionId, session)) {
-                return;
-              }
-              firstPartyConnectContextRegistry.unregister(sessionId);
-              promptBurstCoordinator.evict(Long.toString(sessionId));
-              gameplayPresenceLifecycleService.recordDisconnected(
-                  sessionId, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
-            });
+        .ifPresent(sessionId -> {
+          if (!activeTransportSessionRegistry.unregister(sessionId, session)) {
+            return;
+          }
+          firstPartyConnectContextRegistry.unregister(sessionId);
+          promptBurstCoordinator.evict(Long.toString(sessionId));
+          gameplayPresenceLifecycleService.recordDisconnected(
+              sessionId, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+        });
   }
 
   @Override
@@ -321,11 +320,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     try {
       return parseNumericSessionId(sessionId)
           .flatMap(activeTransportSessionRegistry::find)
-          .map(
-              registered ->
-                  registered == session
-                      || registered instanceof WebSocketSessionDecorator decorator
-                          && decorator.getDelegate() == session)
+          .map(registered ->
+              registered == session
+                  || registered instanceof WebSocketSessionDecorator decorator
+                      && decorator.getDelegate() == session)
           .orElse(false);
     } catch (RuntimeException unavailable) {
       return false;
@@ -528,11 +526,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     parseNumericSessionId(sessionId)
-        .ifPresent(
-            numericSessionId -> {
-              gameplayPresenceLifecycleService.recordActivity(
-                  numericSessionId, interpretation.meaningfulGameplayActivity());
-            });
+        .ifPresent(numericSessionId -> {
+          gameplayPresenceLifecycleService.recordActivity(
+              numericSessionId, interpretation.meaningfulGameplayActivity());
+        });
   }
 
   private void maybeAppendToScreenBuffer(
@@ -549,13 +546,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     maybeContext
         .filter(SessionContext::hasGameplayIdentity)
-        .ifPresent(
-            context ->
-                screenBufferService.append(
-                    context.tenantId(),
-                    context.gameInstanceId(),
-                    context.characterId(),
-                    replayEntries));
+        .ifPresent(context ->
+            screenBufferService.append(
+                context.tenantId(),
+                context.gameInstanceId(),
+                context.characterId(),
+                replayEntries));
   }
 
   private void maybeRefreshReconnectLook(
@@ -575,32 +571,28 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     maybeContext
         .filter(SessionContext::hasGameplayIdentity)
-        .ifPresent(
-            context -> {
-              try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
-                // Private retained context stays closed until current generation, episode,
-                // and authorization evidence is qualified end to end. Retention is unchanged;
-                // reconnect recommendations and connect contexts alone are not replay authority.
-                String localeTag = resolveLocaleTag(session, sessionId);
-                PresentationProperties effectivePresentation =
-                    settingsResolver.presentation(context);
-                PlayerOutput look = renderReconnectLook(sessionId);
-                if (look != null) {
-                  sendProjectedOutput(
-                      session, look, localeTag, effectivePresentation, "fresh LOOK");
-                }
-                if (effectivePresentation.prompt().enabled()
-                    && effectivePresentation.prompt().emitAfterReconnectRestore()) {
-                  composePrompt(context)
-                      .ifPresent(
-                          prompt -> {
-                            sendProjectedOutput(
-                                session, prompt, localeTag, effectivePresentation, "fresh prompt");
-                            promptBurstCoordinator.recordPromptEmission(sessionId);
-                          });
-                }
-              }
-            });
+        .ifPresent(context -> {
+          try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
+            // Private retained context stays closed until current generation, episode,
+            // and authorization evidence is qualified end to end. Retention is unchanged;
+            // reconnect recommendations and connect contexts alone are not replay authority.
+            String localeTag = resolveLocaleTag(session, sessionId);
+            PresentationProperties effectivePresentation = settingsResolver.presentation(context);
+            PlayerOutput look = renderReconnectLook(sessionId);
+            if (look != null) {
+              sendProjectedOutput(session, look, localeTag, effectivePresentation, "fresh LOOK");
+            }
+            if (effectivePresentation.prompt().enabled()
+                && effectivePresentation.prompt().emitAfterReconnectRestore()) {
+              composePrompt(context)
+                  .ifPresent(prompt -> {
+                    sendProjectedOutput(
+                        session, prompt, localeTag, effectivePresentation, "fresh prompt");
+                    promptBurstCoordinator.recordPromptEmission(sessionId);
+                  });
+            }
+          }
+        });
   }
 
   private void sendProjectedOutput(
@@ -709,28 +701,27 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     maybeContext
         .filter(context -> !StringUtils.hasText(context.localeTag()))
-        .ifPresent(
-            context ->
-                sessionContextService.save(
-                    new SessionContext(
-                        context.sessionId(),
-                        context.tenantId(),
-                        context.accountId(),
-                        context.loginName(),
-                        context.characterId(),
-                        context.characterName(),
-                        context.gameInstanceId(),
-                        context.roomInstanceId(),
-                        context.jwt(),
-                        localeTag,
-                        context.bootstrapGameInstanceId(),
-                        context.worldSlug(),
-                        context.realmSlug(),
-                        context.pointerVersion(),
-                        context.playableStateScope(),
-                        context.connectScopeId(),
-                        context.connectRequestId(),
-                        context.firstPartyConnectContext())));
+        .ifPresent(context ->
+            sessionContextService.save(
+                new SessionContext(
+                    context.sessionId(),
+                    context.tenantId(),
+                    context.accountId(),
+                    context.loginName(),
+                    context.characterId(),
+                    context.characterName(),
+                    context.gameInstanceId(),
+                    context.roomInstanceId(),
+                    context.jwt(),
+                    localeTag,
+                    context.bootstrapGameInstanceId(),
+                    context.worldSlug(),
+                    context.realmSlug(),
+                    context.pointerVersion(),
+                    context.playableStateScope(),
+                    context.connectScopeId(),
+                    context.connectRequestId(),
+                    context.firstPartyConnectContext())));
   }
 
   private PlayerOutput renderReconnectLook(String sessionId) {

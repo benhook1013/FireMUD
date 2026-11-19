@@ -66,95 +66,92 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
             ? null
             : sha256(sourceCheckpoint.latestEventBytes());
 
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
 
-          // This is the same first lock as binding preparation. It serializes the immutable
-          // inventory cut with every canonical source row that follows this clock.
-          BigInteger snapshotRevision = lockInventoryRevision(transaction);
-          Record existingControl = lockControl(transaction, descriptor.issuerId());
-          if (existingControl != null) {
-            UUID currentOperationId =
-                Objects.requireNonNull(
-                    existingControl.get("current_operation_id", UUID.class),
-                    "issuer bootstrap control operation id");
-            Record existingIntent = lockIntent(transaction, currentOperationId);
-            if (existingIntent == null) {
-              throw conflict("Issuer bootstrap control lost its original intent row");
-            }
-            CanonicalGameplayIssuerLayoutBootstrapIntent prior =
-                loadAndRequireCurrent(transaction, existingControl, existingIntent);
-            if (!prior.requestId().equals(requestId)) {
-              throw conflict(
-                  "A different initial issuer-layout bootstrap already owns this issuer");
-            }
-            requireSameTrustedInputs(
-                prior,
-                descriptor,
-                sourceCheckpoint,
-                descriptorDigest,
-                checkpointDigest,
-                sourceEventDigest);
-            return prior;
-          }
+      // This is the same first lock as binding preparation. It serializes the immutable
+      // inventory cut with every canonical source row that follows this clock.
+      BigInteger snapshotRevision = lockInventoryRevision(transaction);
+      Record existingControl = lockControl(transaction, descriptor.issuerId());
+      if (existingControl != null) {
+        UUID currentOperationId =
+            Objects.requireNonNull(
+                existingControl.get("current_operation_id", UUID.class),
+                "issuer bootstrap control operation id");
+        Record existingIntent = lockIntent(transaction, currentOperationId);
+        if (existingIntent == null) {
+          throw conflict("Issuer bootstrap control lost its original intent row");
+        }
+        CanonicalGameplayIssuerLayoutBootstrapIntent prior =
+            loadAndRequireCurrent(transaction, existingControl, existingIntent);
+        if (!prior.requestId().equals(requestId)) {
+          throw conflict("A different initial issuer-layout bootstrap already owns this issuer");
+        }
+        requireSameTrustedInputs(
+            prior,
+            descriptor,
+            sourceCheckpoint,
+            descriptorDigest,
+            checkpointDigest,
+            sourceEventDigest);
+        return prior;
+      }
 
-          Record priorIntent =
-              transaction.fetchOne(
-                  "SELECT operation_id FROM " + INTENT + " WHERE issuer_id = ?",
-                  descriptor.issuerId());
-          if (priorIntent != null) {
-            throw conflict("Issuer bootstrap intent exists without its positive control row");
-          }
+      Record priorIntent =
+          transaction.fetchOne(
+              "SELECT operation_id FROM " + INTENT + " WHERE issuer_id = ?", descriptor.issuerId());
+      if (priorIntent != null) {
+        throw conflict("Issuer bootstrap intent exists without its positive control row");
+      }
 
-          CanonicalGameplayLegacyMigrationDisposition legacy =
-              readVerifiedLegacyDisposition(transaction, snapshotRevision, true);
-          requireNoFutureInventoryRows(transaction, snapshotRevision);
-          List<CohortSourceRow> sourceRows = captureCohort(transaction, snapshotRevision);
-          List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> cohortRows =
-              freezeCohort(sourceRows);
-          String cohortDigest = digestCohort(cohortRows);
+      CanonicalGameplayLegacyMigrationDisposition legacy =
+          readVerifiedLegacyDisposition(transaction, snapshotRevision, true);
+      requireNoFutureInventoryRows(transaction, snapshotRevision);
+      List<CohortSourceRow> sourceRows = captureCohort(transaction, snapshotRevision);
+      List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> cohortRows =
+          freezeCohort(sourceRows);
+      String cohortDigest = digestCohort(cohortRows);
 
-          UUID operationId = randomNonNilUuid();
-          while (operationId.equals(requestId)) operationId = randomNonNilUuid();
-          // The only operation in this migration is the initial intent. The first durable epoch
-          // is positive; operationFence and coverageFence consume distinct ordered values.
-          BigInteger operationFence = BigInteger.ONE;
-          BigInteger coverageFence = BigInteger.TWO;
-          BigInteger controlEpoch = operationFence;
+      UUID operationId = randomNonNilUuid();
+      while (operationId.equals(requestId)) operationId = randomNonNilUuid();
+      // The only operation in this migration is the initial intent. The first durable epoch
+      // is positive; operationFence and coverageFence consume distinct ordered values.
+      BigInteger operationFence = BigInteger.ONE;
+      BigInteger coverageFence = BigInteger.TWO;
+      BigInteger controlEpoch = operationFence;
 
-          insertIntent(
-              transaction,
-              operationId,
-              requestId,
-              descriptor,
-              descriptorDigest,
-              sourceCheckpoint,
-              checkpointDigest,
-              sourceEventDigest,
-              snapshotRevision,
-              controlEpoch,
-              operationFence,
-              coverageFence,
-              legacy,
-              cohortRows,
-              cohortDigest);
-          insertCohort(transaction, operationId, descriptor.issuerId(), cohortRows);
-          insertControl(
-              transaction,
-              descriptor.issuerId(),
-              operationId,
-              controlEpoch,
-              operationFence,
-              coverageFence);
+      insertIntent(
+          transaction,
+          operationId,
+          requestId,
+          descriptor,
+          descriptorDigest,
+          sourceCheckpoint,
+          checkpointDigest,
+          sourceEventDigest,
+          snapshotRevision,
+          controlEpoch,
+          operationFence,
+          coverageFence,
+          legacy,
+          cohortRows,
+          cohortDigest);
+      insertCohort(transaction, operationId, descriptor.issuerId(), cohortRows);
+      insertControl(
+          transaction,
+          descriptor.issuerId(),
+          operationId,
+          controlEpoch,
+          operationFence,
+          coverageFence);
 
-          Record savedControl = lockControl(transaction, descriptor.issuerId());
-          Record savedIntent = lockIntent(transaction, operationId);
-          if (savedControl == null || savedIntent == null) {
-            throw conflict("Persisted initial issuer-bootstrap intent is incomplete");
-          }
-          return loadAndRequireCurrent(transaction, savedControl, savedIntent);
-        });
+      Record savedControl = lockControl(transaction, descriptor.issuerId());
+      Record savedIntent = lockIntent(transaction, operationId);
+      if (savedControl == null || savedIntent == null) {
+        throw conflict("Persisted initial issuer-bootstrap intent is incomplete");
+      }
+      return loadAndRequireCurrent(transaction, savedControl, savedIntent);
+    });
   }
 
   /**
@@ -180,157 +177,151 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
         sourceCheckpoint.latestEventBytes() == null
             ? null
             : sha256(sourceCheckpoint.latestEventBytes());
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          BigInteger snapshotRevision = lockInventoryRevision(transaction);
-          Record control = lockControl(transaction, descriptor.issuerId());
-          if (control == null)
-            throw conflict("Initial bootstrap supersession requires current control");
-          UUID currentId = control.get("current_operation_id", UUID.class);
-          Record currentRow = lockIntent(transaction, currentId);
-          if (currentRow == null) throw conflict("Current initial bootstrap intent is missing");
-          var current = loadAndRequireCurrent(transaction, control, currentRow);
-          if (transaction.fetchExists(
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      BigInteger snapshotRevision = lockInventoryRevision(transaction);
+      Record control = lockControl(transaction, descriptor.issuerId());
+      if (control == null)
+        throw conflict("Initial bootstrap supersession requires current control");
+      UUID currentId = control.get("current_operation_id", UUID.class);
+      Record currentRow = lockIntent(transaction, currentId);
+      if (currentRow == null) throw conflict("Current initial bootstrap intent is missing");
+      var current = loadAndRequireCurrent(transaction, control, currentRow);
+      if (transaction.fetchExists(
+          DSL.selectOne()
+              .from("game_session_canonical_issuer_installed_anchor")
+              .where(DSL.field("issuer_id").eq(descriptor.issuerId())))) {
+        throw conflict("An installed issuer anchor forbids initial bootstrap supersession");
+      }
+      if (!expectedOldOperationId.equals(currentId)) {
+        Record replay =
+            transaction.fetchOne(
+                "SELECT * FROM game_session_canonical_issuer_bootstrap_supersession"
+                    + " WHERE old_operation_id = ? AND new_operation_id = ?",
+                expectedOldOperationId,
+                currentId);
+        if (replay == null
+            || !current.requestId().equals(newRequestId)
+            || !current
+                .inventorySnapshotRevision()
+                .equals(readBigInteger(replay, "new_inventory_revision"))) {
+          throw conflict("Expected original initial bootstrap is no longer current");
+        }
+        requireSameTrustedInputs(
+            current,
+            descriptor,
+            sourceCheckpoint,
+            descriptorDigest,
+            checkpointDigest,
+            sourceEventDigest);
+        return current;
+      }
+      if (newRequestId.equals(expectedOldOperationId)
+          || newRequestId.equals(current.requestId())
+          || transaction.fetchExists(
               DSL.selectOne()
-                  .from("game_session_canonical_issuer_installed_anchor")
-                  .where(DSL.field("issuer_id").eq(descriptor.issuerId())))) {
-            throw conflict("An installed issuer anchor forbids initial bootstrap supersession");
-          }
-          if (!expectedOldOperationId.equals(currentId)) {
-            Record replay =
-                transaction.fetchOne(
-                    "SELECT * FROM game_session_canonical_issuer_bootstrap_supersession"
-                        + " WHERE old_operation_id = ? AND new_operation_id = ?",
-                    expectedOldOperationId,
-                    currentId);
-            if (replay == null
-                || !current.requestId().equals(newRequestId)
-                || !current
-                    .inventorySnapshotRevision()
-                    .equals(readBigInteger(replay, "new_inventory_revision"))) {
-              throw conflict("Expected original initial bootstrap is no longer current");
-            }
-            requireSameTrustedInputs(
-                current,
-                descriptor,
-                sourceCheckpoint,
-                descriptorDigest,
-                checkpointDigest,
-                sourceEventDigest);
-            return current;
-          }
-          if (newRequestId.equals(expectedOldOperationId)
-              || newRequestId.equals(current.requestId())
-              || transaction.fetchExists(
-                  DSL.selectOne()
-                      .from(INTENT)
-                      .where(
-                          DSL.field("request_id")
-                              .eq(newRequestId)
-                              .or(DSL.field("operation_id").eq(newRequestId))))) {
-            throw conflict("Initial bootstrap supersession requires a fresh distinct request");
-          }
-          if (snapshotRevision.compareTo(current.inventorySnapshotRevision()) <= 0) {
-            throw conflict("Initial bootstrap supersession requires strictly newer inventory");
-          }
-          if (descriptor.layoutVersion().compareTo(current.layoutDescriptor().layoutVersion())
-              <= 0) {
-            throw conflict(
-                "Initial bootstrap supersession requires a strictly newer layout version");
-          }
-          var legacy = readVerifiedLegacyDisposition(transaction, snapshotRevision, true);
-          requireNoFutureInventoryRows(transaction, snapshotRevision);
-          var rows = freezeCohort(captureCohort(transaction, snapshotRevision));
-          BigInteger previousLastFence = readBigInteger(control, "last_issued_fence");
-          BigInteger operationFence = previousLastFence.add(BigInteger.ONE);
-          BigInteger coverageFence = operationFence.add(BigInteger.ONE);
-          UUID operationId = randomNonNilUuid();
-          while (operationId.equals(newRequestId) || operationId.equals(expectedOldOperationId)) {
-            operationId = randomNonNilUuid();
-          }
-          insertIntent(
-              transaction,
-              operationId,
-              newRequestId,
-              descriptor,
-              descriptorDigest,
-              sourceCheckpoint,
-              checkpointDigest,
-              sourceEventDigest,
-              snapshotRevision,
-              operationFence,
-              operationFence,
-              coverageFence,
-              legacy,
-              rows,
-              digestCohort(rows));
-          insertCohort(transaction, operationId, descriptor.issuerId(), rows);
+                  .from(INTENT)
+                  .where(
+                      DSL.field("request_id")
+                          .eq(newRequestId)
+                          .or(DSL.field("operation_id").eq(newRequestId))))) {
+        throw conflict("Initial bootstrap supersession requires a fresh distinct request");
+      }
+      if (snapshotRevision.compareTo(current.inventorySnapshotRevision()) <= 0) {
+        throw conflict("Initial bootstrap supersession requires strictly newer inventory");
+      }
+      if (descriptor.layoutVersion().compareTo(current.layoutDescriptor().layoutVersion()) <= 0) {
+        throw conflict("Initial bootstrap supersession requires a strictly newer layout version");
+      }
+      var legacy = readVerifiedLegacyDisposition(transaction, snapshotRevision, true);
+      requireNoFutureInventoryRows(transaction, snapshotRevision);
+      var rows = freezeCohort(captureCohort(transaction, snapshotRevision));
+      BigInteger previousLastFence = readBigInteger(control, "last_issued_fence");
+      BigInteger operationFence = previousLastFence.add(BigInteger.ONE);
+      BigInteger coverageFence = operationFence.add(BigInteger.ONE);
+      UUID operationId = randomNonNilUuid();
+      while (operationId.equals(newRequestId) || operationId.equals(expectedOldOperationId)) {
+        operationId = randomNonNilUuid();
+      }
+      insertIntent(
+          transaction,
+          operationId,
+          newRequestId,
+          descriptor,
+          descriptorDigest,
+          sourceCheckpoint,
+          checkpointDigest,
+          sourceEventDigest,
+          snapshotRevision,
+          operationFence,
+          operationFence,
+          coverageFence,
+          legacy,
+          rows,
+          digestCohort(rows));
+      insertCohort(transaction, operationId, descriptor.issuerId(), rows);
+      transaction.execute(
+          "INSERT INTO game_session_canonical_issuer_bootstrap_supersession"
+              + " (issuer_id, old_operation_id, new_operation_id, old_inventory_revision,"
+              + " new_inventory_revision, old_operation_fence, old_coverage_fence,"
+              + " previous_last_issued_fence, new_operation_fence, new_coverage_fence)"
+              + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          descriptor.issuerId(),
+          expectedOldOperationId,
+          operationId,
+          decimal(current.inventorySnapshotRevision()),
+          decimal(snapshotRevision),
+          decimal(current.operationFence()),
+          decimal(current.coverageFence()),
+          decimal(previousLastFence),
+          decimal(operationFence),
+          decimal(coverageFence));
+      int changed =
           transaction.execute(
-              "INSERT INTO game_session_canonical_issuer_bootstrap_supersession"
-                  + " (issuer_id, old_operation_id, new_operation_id, old_inventory_revision,"
-                  + " new_inventory_revision, old_operation_fence, old_coverage_fence,"
-                  + " previous_last_issued_fence, new_operation_fence, new_coverage_fence)"
-                  + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "UPDATE "
+                  + CONTROL
+                  + " SET control_epoch = ?, last_issued_fence = ?, current_operation_id = ?,"
+                  + " current_operation_fence = ?, current_coverage_fence = ?,"
+                  + " updated_at = CURRENT_TIMESTAMP WHERE issuer_id = ?"
+                  + " AND current_operation_id = ? AND control_epoch = ?"
+                  + " AND current_operation_fence = ? AND current_coverage_fence = ?"
+                  + " AND last_issued_fence = ? AND state = 'INITIAL_BOOTSTRAP_INTENT'",
+              decimal(operationFence),
+              decimal(coverageFence),
+              operationId,
+              decimal(operationFence),
+              decimal(coverageFence),
               descriptor.issuerId(),
               expectedOldOperationId,
-              operationId,
-              decimal(current.inventorySnapshotRevision()),
-              decimal(snapshotRevision),
+              decimal(current.controlEpoch()),
               decimal(current.operationFence()),
               decimal(current.coverageFence()),
-              decimal(previousLastFence),
-              decimal(operationFence),
-              decimal(coverageFence));
-          int changed =
-              transaction.execute(
-                  "UPDATE "
-                      + CONTROL
-                      + " SET control_epoch = ?, last_issued_fence = ?, current_operation_id = ?,"
-                      + " current_operation_fence = ?, current_coverage_fence = ?,"
-                      + " updated_at = CURRENT_TIMESTAMP WHERE issuer_id = ?"
-                      + " AND current_operation_id = ? AND control_epoch = ?"
-                      + " AND current_operation_fence = ? AND current_coverage_fence = ?"
-                      + " AND last_issued_fence = ? AND state = 'INITIAL_BOOTSTRAP_INTENT'",
-                  decimal(operationFence),
-                  decimal(coverageFence),
-                  operationId,
-                  decimal(operationFence),
-                  decimal(coverageFence),
-                  descriptor.issuerId(),
-                  expectedOldOperationId,
-                  decimal(current.controlEpoch()),
-                  decimal(current.operationFence()),
-                  decimal(current.coverageFence()),
-                  decimal(previousLastFence));
-          if (changed != 1)
-            throw conflict("Initial bootstrap supersession lost exact current control");
-          return loadAndRequireCurrent(
-              transaction,
-              Objects.requireNonNull(lockControl(transaction, descriptor.issuerId())),
-              Objects.requireNonNull(lockIntent(transaction, operationId)));
-        });
+              decimal(previousLastFence));
+      if (changed != 1) throw conflict("Initial bootstrap supersession lost exact current control");
+      return loadAndRequireCurrent(
+          transaction,
+          Objects.requireNonNull(lockControl(transaction, descriptor.issuerId())),
+          Objects.requireNonNull(lockIntent(transaction, operationId)));
+    });
   }
 
   /** Reads the exact persisted pending intent and its frozen cohort by owner-allocated ID. */
   CanonicalGameplayIssuerLayoutBootstrapIntent readCurrentInitialBootstrapIntent(UUID operationId) {
     requireNonNil(operationId, "operationId");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          Record intent =
-              transaction.fetchOne(
-                  "SELECT * FROM " + INTENT + " WHERE operation_id = ?", operationId);
-          if (intent == null) throw conflict("Exact initial issuer-bootstrap intent is missing");
-          String issuerId = Objects.requireNonNull(intent.get("issuer_id", String.class));
-          Record control = readControl(transaction, issuerId);
-          if (control == null) {
-            throw conflict("Initial issuer-bootstrap intent lost its positive control row");
-          }
-          return loadAndRequireCurrent(transaction, control, intent);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      Record intent =
+          transaction.fetchOne("SELECT * FROM " + INTENT + " WHERE operation_id = ?", operationId);
+      if (intent == null) throw conflict("Exact initial issuer-bootstrap intent is missing");
+      String issuerId = Objects.requireNonNull(intent.get("issuer_id", String.class));
+      Record control = readControl(transaction, issuerId);
+      if (control == null) {
+        throw conflict("Initial issuer-bootstrap intent lost its positive control row");
+      }
+      return loadAndRequireCurrent(transaction, control, intent);
+    });
   }
 
   private static void requireTrustedInputScopes(
@@ -460,24 +451,22 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
             .fetch(
                 "SELECT * FROM " + COHORT + " WHERE operation_id = ? ORDER BY row_ordinal",
                 operationId)
-            .map(
-                row -> {
-                  String sourceJson =
-                      Objects.requireNonNull(row.get("source_row_json", String.class));
-                  String sourceDigest =
-                      Objects.requireNonNull(row.get("source_row_digest", String.class));
-                  if (!sha256(sourceJson.getBytes(StandardCharsets.UTF_8)).equals(sourceDigest)) {
-                    throw conflict("Stored issuer cohort source-row digest is invalid");
-                  }
-                  return new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
-                      Objects.requireNonNull(row.get("row_ordinal", Long.class)),
-                      CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
-                          Objects.requireNonNull(row.get("source_kind", String.class))),
-                      Objects.requireNonNull(row.get("source_key", String.class)),
-                      readBigInteger(row, "source_inventory_revision"),
-                      sourceJson,
-                      sourceDigest);
-                });
+            .map(row -> {
+              String sourceJson = Objects.requireNonNull(row.get("source_row_json", String.class));
+              String sourceDigest =
+                  Objects.requireNonNull(row.get("source_row_digest", String.class));
+              if (!sha256(sourceJson.getBytes(StandardCharsets.UTF_8)).equals(sourceDigest)) {
+                throw conflict("Stored issuer cohort source-row digest is invalid");
+              }
+              return new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
+                  Objects.requireNonNull(row.get("row_ordinal", Long.class)),
+                  CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
+                      Objects.requireNonNull(row.get("source_kind", String.class))),
+                  Objects.requireNonNull(row.get("source_key", String.class)),
+                  readBigInteger(row, "source_inventory_revision"),
+                  sourceJson,
+                  sourceDigest);
+            });
     if (cohortRows.stream()
             .anyMatch(row -> row.sourceInventoryRevision().compareTo(snapshotRevision) > 0)
         || cohortRows.size() != readLong(intent, "cohort_row_count")) {
@@ -559,14 +548,13 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
         .fetch(
             CanonicalGameplayIssuerCohortSql.cohortSql(),
             CanonicalGameplayIssuerCohortSql.cohortBindings(ISSUER, decimal(snapshotRevision)))
-        .map(
-            row ->
-                new CohortSourceRow(
-                    CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
-                        Objects.requireNonNull(row.get("source_kind", String.class))),
-                    Objects.requireNonNull(row.get("source_key", String.class)),
-                    readBigInteger(row, "source_revision"),
-                    Objects.requireNonNull(row.get("source_row_json", String.class))));
+        .map(row ->
+            new CohortSourceRow(
+                CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
+                    Objects.requireNonNull(row.get("source_kind", String.class))),
+                Objects.requireNonNull(row.get("source_key", String.class)),
+                readBigInteger(row, "source_revision"),
+                Objects.requireNonNull(row.get("source_row_json", String.class))));
   }
 
   private static List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> freezeCohort(
@@ -599,17 +587,14 @@ final class CanonicalGameplayIssuerLayoutBootstrapRepository {
         .sorted(
             Comparator.comparingLong(
                 CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::rowOrdinal))
-        .forEach(
-            row -> {
-              updateFramed(
-                  digest, Long.toString(row.rowOrdinal()).getBytes(StandardCharsets.US_ASCII));
-              updateFramed(digest, row.kind().name().getBytes(StandardCharsets.UTF_8));
-              updateFramed(digest, row.sourceKey().getBytes(StandardCharsets.UTF_8));
-              updateFramed(
-                  digest,
-                  row.sourceInventoryRevision().toString().getBytes(StandardCharsets.US_ASCII));
-              updateFramed(digest, row.sourceRowDigest().getBytes(StandardCharsets.US_ASCII));
-            });
+        .forEach(row -> {
+          updateFramed(digest, Long.toString(row.rowOrdinal()).getBytes(StandardCharsets.US_ASCII));
+          updateFramed(digest, row.kind().name().getBytes(StandardCharsets.UTF_8));
+          updateFramed(digest, row.sourceKey().getBytes(StandardCharsets.UTF_8));
+          updateFramed(
+              digest, row.sourceInventoryRevision().toString().getBytes(StandardCharsets.US_ASCII));
+          updateFramed(digest, row.sourceRowDigest().getBytes(StandardCharsets.US_ASCII));
+        });
     return "sha256:" + HexFormat.of().formatHex(digest.digest());
   }
 

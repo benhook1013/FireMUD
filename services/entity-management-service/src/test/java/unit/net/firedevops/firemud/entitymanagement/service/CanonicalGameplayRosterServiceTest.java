@@ -83,23 +83,18 @@ class CanonicalGameplayRosterServiceTest {
     CanonicalGameplayRosterService service =
         new CanonicalGameplayRosterService(ownerPort, repository);
 
-    assertThatThrownBy(
-            () ->
-                service.read(
-                    request(
-                        withPolicy(target(), CanonicalGameplayRosterEntryPolicy.PLAYER_CREATED))))
+    assertThatThrownBy(() ->
+            service.read(
+                request(withPolicy(target(), CanonicalGameplayRosterEntryPolicy.PLAYER_CREATED))))
         .isInstanceOf(UnsupportedOperationException.class)
         .hasMessage("CANONICAL_GAMEPLAY_ROSTER_ENTRY_POLICY_UNSUPPORTED");
-    assertThatThrownBy(
-            () ->
-                service.read(
-                    request(
-                        withPolicy(target(), CanonicalGameplayRosterEntryPolicy.AUTO_PROVISIONED))))
+    assertThatThrownBy(() ->
+            service.read(
+                request(withPolicy(target(), CanonicalGameplayRosterEntryPolicy.AUTO_PROVISIONED))))
         .isInstanceOf(UnsupportedOperationException.class);
-    assertThatThrownBy(
-            () ->
-                service.read(
-                    request(withPolicy(target(), CanonicalGameplayRosterEntryPolicy.UNSPECIFIED))))
+    assertThatThrownBy(() ->
+            service.read(
+                request(withPolicy(target(), CanonicalGameplayRosterEntryPolicy.UNSPECIFIED))))
         .isInstanceOf(UnsupportedOperationException.class);
 
     verifyNoInteractions(ownerPort, repository);

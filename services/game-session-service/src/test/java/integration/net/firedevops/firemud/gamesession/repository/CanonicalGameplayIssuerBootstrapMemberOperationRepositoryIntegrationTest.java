@@ -207,14 +207,13 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
           .containsExactly(operation.exactMemberValueBytes());
       assertThat(rowSnapshots(fixture.testSchema().dsl())).isEqualTo(retainedBefore);
 
-      assertThatThrownBy(
-              () ->
-                  owner.beginOrResumePendingPhysicalProof(
-                      fixture.intent().operationId(),
-                      fixture.requestId(),
-                      0,
-                      fixture.currentAccountCheckpoint(),
-                      stableIncarnation("changed-incarnation")))
+      assertThatThrownBy(() ->
+              owner.beginOrResumePendingPhysicalProof(
+                  fixture.intent().operationId(),
+                  fixture.requestId(),
+                  0,
+                  fixture.currentAccountCheckpoint(),
+                  stableIncarnation("changed-incarnation")))
           .isInstanceOf(IllegalStateException.class);
       assertThat(
               rowImages(
@@ -222,61 +221,54 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
                   "game_session_canonical_issuer_bootstrap_member_operation"))
           .hasSize(1);
 
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .testSchema()
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_issuer_bootstrap_member_operation"
-                              + " SET member_status = 'PHYSICAL_PROOF_COMPLETE' WHERE member_operation_id = ?",
-                          operation.operationId()))
+      assertThatThrownBy(() ->
+              fixture
+                  .testSchema()
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_issuer_bootstrap_member_operation"
+                          + " SET member_status = 'PHYSICAL_PROOF_COMPLETE' WHERE member_operation_id = ?",
+                      operation.operationId()))
           .isInstanceOf(DataAccessException.class);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .testSchema()
-                      .dsl()
-                      .execute(
-                          "DELETE FROM game_session_canonical_issuer_bootstrap_member_operation"
-                              + " WHERE member_operation_id = ?",
-                          operation.operationId()))
+      assertThatThrownBy(() ->
+              fixture
+                  .testSchema()
+                  .dsl()
+                  .execute(
+                      "DELETE FROM game_session_canonical_issuer_bootstrap_member_operation"
+                          + " WHERE member_operation_id = ?",
+                      operation.operationId()))
           .isInstanceOf(DataAccessException.class);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .testSchema()
-                      .dsl()
-                      .execute("TRUNCATE game_session_canonical_issuer_bootstrap_member_operation"))
+      assertThatThrownBy(() ->
+              fixture
+                  .testSchema()
+                  .dsl()
+                  .execute("TRUNCATE game_session_canonical_issuer_bootstrap_member_operation"))
           .isInstanceOf(DataAccessException.class);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .testSchema()
-                      .dsl()
-                      .execute(
-                          "UPDATE game_session_canonical_issuer_bootstrap_member_op_counter"
-                              + " SET last_issued_operation_fence = last_issued_operation_fence + 1"
-                              + " WHERE issuer_id = ?",
-                          ISSUER))
+      assertThatThrownBy(() ->
+              fixture
+                  .testSchema()
+                  .dsl()
+                  .execute(
+                      "UPDATE game_session_canonical_issuer_bootstrap_member_op_counter"
+                          + " SET last_issued_operation_fence = last_issued_operation_fence + 1"
+                          + " WHERE issuer_id = ?",
+                      ISSUER))
           .isInstanceOf(DataAccessException.class);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .testSchema()
-                      .dsl()
-                      .execute(
-                          "DELETE FROM game_session_canonical_issuer_bootstrap_member_op_counter"
-                              + " WHERE issuer_id = ?",
-                          ISSUER))
+      assertThatThrownBy(() ->
+              fixture
+                  .testSchema()
+                  .dsl()
+                  .execute(
+                      "DELETE FROM game_session_canonical_issuer_bootstrap_member_op_counter"
+                          + " WHERE issuer_id = ?",
+                      ISSUER))
           .isInstanceOf(DataAccessException.class);
-      assertThatThrownBy(
-              () ->
-                  fixture
-                      .testSchema()
-                      .dsl()
-                      .execute(
-                          "TRUNCATE game_session_canonical_issuer_bootstrap_member_op_counter"))
+      assertThatThrownBy(() ->
+              fixture
+                  .testSchema()
+                  .dsl()
+                  .execute("TRUNCATE game_session_canonical_issuer_bootstrap_member_op_counter"))
           .isInstanceOf(DataAccessException.class);
       assertThat(
               rowImages(
@@ -396,23 +388,21 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
       migrateRemaining(fixture.testSchema());
       var owner =
           new CanonicalGameplayIssuerBootstrapMemberOperationRepository(fixture.testSchema().dsl());
-      assertThatThrownBy(
-              () ->
-                  owner.preparePartitionWork(
-                      fixture.intent().operationId(),
-                      UUID.randomUUID(),
-                      fixture.partitionId(),
-                      fixture.currentAccountCheckpoint(),
-                      stableIncarnation("stable-a")))
+      assertThatThrownBy(() ->
+              owner.preparePartitionWork(
+                  fixture.intent().operationId(),
+                  UUID.randomUUID(),
+                  fixture.partitionId(),
+                  fixture.currentAccountCheckpoint(),
+                  stableIncarnation("stable-a")))
           .isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(
-              () ->
-                  owner.preparePartitionWork(
-                      fixture.intent().operationId(),
-                      fixture.requestId(),
-                      fixture.partitionId(),
-                      sourceCheckpoint(BigInteger.valueOf(8)),
-                      stableIncarnation("stable-a")))
+      assertThatThrownBy(() ->
+              owner.preparePartitionWork(
+                  fixture.intent().operationId(),
+                  fixture.requestId(),
+                  fixture.partitionId(),
+                  sourceCheckpoint(BigInteger.valueOf(8)),
+                  stableIncarnation("stable-a")))
           .isInstanceOf(IllegalStateException.class);
       assertThat(
               fixture
@@ -430,14 +420,13 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
               "UPDATE game_session_canonical_issuer_partition_reservation"
                   + " SET coverage_fence = coverage_fence + 1 WHERE reservation_id = ?",
               fixture.preparedBinding().issuerReservationId());
-      assertThatThrownBy(
-              () ->
-                  owner.preparePartitionWork(
-                      fixture.intent().operationId(),
-                      fixture.requestId(),
-                      fixture.partitionId(),
-                      fixture.currentAccountCheckpoint(),
-                      stableIncarnation("stable-a")))
+      assertThatThrownBy(() ->
+              owner.preparePartitionWork(
+                  fixture.intent().operationId(),
+                  fixture.requestId(),
+                  fixture.partitionId(),
+                  fixture.currentAccountCheckpoint(),
+                  stableIncarnation("stable-a")))
           .isInstanceOf(IllegalStateException.class);
       assertThat(
               rowImages(
@@ -464,16 +453,15 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
             "gs_bootstrap_member_no_plan_", PARTITION_CAPACITY, LAYOUT_VERSION, false, false);
     try {
       migrateRemaining(missingPlan.testSchema());
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayIssuerBootstrapMemberOperationRepository(
-                          missingPlan.testSchema().dsl())
-                      .preparePartitionWork(
-                          missingPlan.intent().operationId(),
-                          missingPlan.requestId(),
-                          missingPlan.partitionId(),
-                          missingPlan.currentAccountCheckpoint(),
-                          stableIncarnation("stable-a")))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayIssuerBootstrapMemberOperationRepository(
+                      missingPlan.testSchema().dsl())
+                  .preparePartitionWork(
+                      missingPlan.intent().operationId(),
+                      missingPlan.requestId(),
+                      missingPlan.partitionId(),
+                      missingPlan.currentAccountCheckpoint(),
+                      stableIncarnation("stable-a")))
           .isInstanceOf(IllegalStateException.class);
       assertNoIssuedRows(missingPlan.testSchema().dsl());
     } finally {
@@ -497,16 +485,15 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
           .execute(
               "DELETE FROM game_session_canonical_issuer_layout_bootstrap_control WHERE issuer_id = ?",
               ISSUER);
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayIssuerBootstrapMemberOperationRepository(
-                          missingControl.testSchema().dsl())
-                      .preparePartitionWork(
-                          missingControl.intent().operationId(),
-                          missingControl.requestId(),
-                          missingControl.partitionId(),
-                          missingControl.currentAccountCheckpoint(),
-                          stableIncarnation("stable-a")))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayIssuerBootstrapMemberOperationRepository(
+                      missingControl.testSchema().dsl())
+                  .preparePartitionWork(
+                      missingControl.intent().operationId(),
+                      missingControl.requestId(),
+                      missingControl.partitionId(),
+                      missingControl.currentAccountCheckpoint(),
+                      stableIncarnation("stable-a")))
           .isInstanceOf(IllegalStateException.class);
       assertNoIssuedRows(missingControl.testSchema().dsl());
     } finally {
@@ -524,16 +511,15 @@ class CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest {
       assertThat(blockedLayout.plan().state())
           .isEqualTo(CanonicalGameplayIssuerPartitionBuildPlan.State.BLOCKED);
       migrateRemaining(blockedLayout.testSchema());
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayIssuerBootstrapMemberOperationRepository(
-                          blockedLayout.testSchema().dsl())
-                      .preparePartitionWork(
-                          blockedLayout.intent().operationId(),
-                          blockedLayout.requestId(),
-                          blockedLayout.partitionId(),
-                          blockedLayout.currentAccountCheckpoint(),
-                          stableIncarnation("stable-a")))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayIssuerBootstrapMemberOperationRepository(
+                      blockedLayout.testSchema().dsl())
+                  .preparePartitionWork(
+                      blockedLayout.intent().operationId(),
+                      blockedLayout.requestId(),
+                      blockedLayout.partitionId(),
+                      blockedLayout.currentAccountCheckpoint(),
+                      stableIncarnation("stable-a")))
           .isInstanceOf(IllegalStateException.class);
       assertNoIssuedRows(blockedLayout.testSchema().dsl());
     } finally {

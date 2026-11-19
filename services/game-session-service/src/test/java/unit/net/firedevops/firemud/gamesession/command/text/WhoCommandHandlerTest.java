@@ -40,12 +40,11 @@ class WhoCommandHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.any(),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "WHO".equals(gameplayCommand.getCommandName())
-                        && "who".equals(gameplayCommand.getCommandText())
-                        && gameplayCommand.getCommandId() != null
-                        && gameplayCommand.getCommandId().startsWith("who-")));
+            Mockito.argThat(gameplayCommand ->
+                "WHO".equals(gameplayCommand.getCommandName())
+                    && "who".equals(gameplayCommand.getCommandText())
+                    && gameplayCommand.getCommandId() != null
+                    && gameplayCommand.getCommandId().startsWith("who-")));
   }
 
   @Test
@@ -155,11 +154,9 @@ class WhoCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
         .singleElement()
-        .satisfies(
-            output ->
-                assertThat(output.payload())
-                    .isInstanceOf(
-                        net.firedevops.firemud.gamesession.presentation.WhoViewOutput.class));
+        .satisfies(output ->
+            assertThat(output.payload())
+                .isInstanceOf(net.firedevops.firemud.gamesession.presentation.WhoViewOutput.class));
     assertThat(render(result)).isEqualTo("Gods [0]: \nPlayers [2]: Aster, Ben (AFK)");
   }
 

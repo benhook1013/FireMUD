@@ -119,16 +119,13 @@ class WorldCanonicalAuthoredGraphReaderTest {
     ((tools.jackson.databind.node.ObjectNode) wrongSchema).put("schemaVersion", "2");
     for (var malformed : List.of(missing, changed, unsupported, extra, wrongSchema)) {
       assertThat(malformed).isNotEqualTo(original);
-      assertThatThrownBy(
-              () ->
-                  new WorldCanonicalAuthoredGraphReader()
-                      .read(selected, json.writeValueAsBytes(malformed)))
+      assertThatThrownBy(() ->
+              new WorldCanonicalAuthoredGraphReader()
+                  .read(selected, json.writeValueAsBytes(malformed)))
           .isExactlyInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
     }
-    assertThatThrownBy(
-            () ->
-                new WorldCanonicalAuthoredGraphReader()
-                    .read(plan(), json.writeValueAsBytes(original)))
+    assertThatThrownBy(() ->
+            new WorldCanonicalAuthoredGraphReader().read(plan(), json.writeValueAsBytes(original)))
         .isExactlyInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
     assertThat(
             new WorldCanonicalAuthoredGraphReader()
@@ -250,15 +247,15 @@ class WorldCanonicalAuthoredGraphReaderTest {
   // Synthetic bytes are deliberate decoder fixtures; real V30 storage is covered by PostgreSQL.
   private String graphJson() {
     return """
-        {"schemaVersion":"2","canonicalTenantId":"%s","canonicalVersionId":"%s","rows":[
-        {"mapping":{"id":1,"target_namespace":"firemud","canonical_tenant_id":"%s",
-        "canonical_version_id":"%s","family":"REGION","template_id":"%s","private_row_key":11,
-        "tenant_id":9007199254740993,"version_id":31,"version_identity_operation_id":"%s",
-        "request_id":"%s","commit_id":"%s","revision_id":"%s","revision_order":"0"},
-        "content":{"id":11,"tenant_id":9007199254740993,"version_id":31,"version":0,"name":"region",
-        "shard_id":0,"weather":"rain","generation_seed":0,"generator_type":"","generator_params":"",
-        "spacing_multiplier":1.0}}]}
-        """
+    {"schemaVersion":"2","canonicalTenantId":"%s","canonicalVersionId":"%s","rows":[
+    {"mapping":{"id":1,"target_namespace":"firemud","canonical_tenant_id":"%s",
+    "canonical_version_id":"%s","family":"REGION","template_id":"%s","private_row_key":11,
+    "tenant_id":9007199254740993,"version_id":31,"version_identity_operation_id":"%s",
+    "request_id":"%s","commit_id":"%s","revision_id":"%s","revision_order":"0"},
+    "content":{"id":11,"tenant_id":9007199254740993,"version_id":31,"version":0,"name":"region",
+    "shard_id":0,"weather":"rain","generation_seed":0,"generator_type":"","generator_params":"",
+    "spacing_multiplier":1.0}}]}
+    """
         .replace("\n", "")
         .formatted(
             TENANT,

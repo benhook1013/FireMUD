@@ -61,10 +61,9 @@ public final class DatabaseCanonicalInitialAdmissionService
       String targetNamespace, String requestId) {
     return repository
         .read(targetNamespace, requestId)
-        .orElseThrow(
-            () ->
-                new CanonicalInitialAdmissionRepository
-                    .CanonicalInitialAdmissionReconciliationRequiredException(
-                    "Initial-admission attempt has no durable owner result"));
+        .orElseThrow(() ->
+            new CanonicalInitialAdmissionRepository
+                .CanonicalInitialAdmissionReconciliationRequiredException(
+                "Initial-admission attempt has no durable owner result"));
   }
 }

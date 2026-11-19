@@ -131,9 +131,8 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
       assertThatThrownBy(
               () -> f.client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(status.getCode()));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(status.getCode()));
     }
     Fixture f = fixture();
     when(f.stub.listVisiblePublicProductionAdmissionTargets(any()))
@@ -184,16 +183,13 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
     when(f.stub.resolvePublishedRealmAdmissionTarget(request)).thenReturn(response);
     try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionRequest(
-                      f.selector))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionRequest(f.selector))
           .thenReturn(request);
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
-                      f.selector, response))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+                  f.selector, response))
           .thenReturn(result);
       assertThat(f.client.resolvePublishedRealmAdmissionTarget(f.selector)).isSameAs(result);
     }
@@ -216,21 +212,17 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
     when(f.stub.getPublishedRealmAdmissionOwnerRead(request)).thenReturn(response);
     try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmRequest(selector))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmRequest(selector))
           .thenReturn(request);
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
-                      request))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(request))
           .thenReturn(parsed);
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
-                      parsed, response))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                  parsed, response))
           .thenReturn(result);
       assertThat(f.client.readPublishedRealmAdmissionOwner(selector)).isSameAs(result);
     }
@@ -249,9 +241,8 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
           .thenThrow(status.asRuntimeException());
       assertThatThrownBy(() -> f.client.resolvePublishedRealmAdmissionTarget(f.selector))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(status.getCode()));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(status.getCode()));
       when(f.stub.getPublishedRealmAdmissionOwnerRead(any()))
           .thenThrow(status.asRuntimeException());
       assertThatThrownBy(() -> f.client.readPublishedRealmAdmissionOwner(f.strictSelector()))

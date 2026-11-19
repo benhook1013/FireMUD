@@ -151,10 +151,9 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
     client.init();
     assertThatThrownBy(() -> client.readIdentity(request))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(serverCallStarts).hasValue(0);
     assertThat(applicationCalls).hasValue(0);
     stopTransport();
@@ -217,12 +216,10 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
     assertThatThrownBy(() -> client.acquire(request, lifecycleRequest("other")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact initial-admission target");
-    assertThatThrownBy(
-            () ->
-                client.readState(
-                    identity,
-                    lifecycleRequest(
-                        NAMESPACE, true, uuid("99999999-9999-4999-8999-999999999999"))))
+    assertThatThrownBy(() ->
+            client.readState(
+                identity,
+                lifecycleRequest(NAMESPACE, true, uuid("99999999-9999-4999-8999-999999999999"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact initial-admission target");
     assertThatThrownBy(() -> lifecycleRequest(NAMESPACE, false))
@@ -363,10 +360,9 @@ class WorldCanonicalInitialAdmissionHoldClientTest {
     client.init();
     assertThatThrownBy(() -> client.readState(identity, lifecycle))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(serverCallStarts).hasValue(0);
     assertThat(applicationCalls).hasValue(0);
     stopTransport();

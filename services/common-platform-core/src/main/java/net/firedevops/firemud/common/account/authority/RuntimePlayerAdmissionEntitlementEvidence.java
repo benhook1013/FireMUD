@@ -141,10 +141,9 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
     requireUuid(requestId.toString());
     var peer =
         GrpcPeerIdentity.parseUri(callerWorkload)
-            .filter(
-                value ->
-                    value.uri().equals(callerWorkload)
-                        && "game-session-service".equals(value.service()))
+            .filter(value ->
+                value.uri().equals(callerWorkload)
+                    && "game-session-service".equals(value.service()))
             .orElseThrow(() -> invalid("Exact Game Session caller required"));
     if (verifiedConnectScopeTokenHash == null
         || !verifiedConnectScopeTokenHash.matches("sha256:[0-9a-f]{64}"))
@@ -229,21 +228,19 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
     fields.put(
         "outboxCheckpoints",
         membership.checkpoints().stream()
-            .map(
-                checkpoint -> {
-                  Map<String, Object> entry = new LinkedHashMap<>();
-                  entry.put("outboxStreamKey", checkpoint.outboxStreamKey());
-                  entry.put("outboxSequence", checkpoint.outboxSequence());
-                  membership.sourceEvidence().stream()
-                      .filter(event -> event.outboxStreamKey().equals(checkpoint.outboxStreamKey()))
-                      .findFirst()
-                      .ifPresent(
-                          event -> {
-                            entry.put("sourceEventId", event.eventId());
-                            entry.put("sourceEventDigest", event.eventDigest());
-                          });
-                  return entry;
-                })
+            .map(checkpoint -> {
+              Map<String, Object> entry = new LinkedHashMap<>();
+              entry.put("outboxStreamKey", checkpoint.outboxStreamKey());
+              entry.put("outboxSequence", checkpoint.outboxSequence());
+              membership.sourceEvidence().stream()
+                  .filter(event -> event.outboxStreamKey().equals(checkpoint.outboxStreamKey()))
+                  .findFirst()
+                  .ifPresent(event -> {
+                    entry.put("sourceEventId", event.eventId());
+                    entry.put("sourceEventDigest", event.eventDigest());
+                  });
+              return entry;
+            })
             .toList());
     fields.put("authoritySourceEvidence", membership.sourceEvidence());
     fields.put("sourceReferences", source);
@@ -304,10 +301,9 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
               "privateRealmGrantVersions");
       if (!authority.keySet().containsAll(requiredTuple)
           || authority.keySet().stream()
-              .anyMatch(
-                  k ->
-                      !requiredTuple.contains(k)
-                          && !Set.of("accountSecurityCutoff", "tenantBillingCutoff").contains(k))
+              .anyMatch(k ->
+                  !requiredTuple.contains(k)
+                      && !Set.of("accountSecurityCutoff", "tenantBillingCutoff").contains(k))
           || !list(authority.get("privateRealmGrantVersions")).isEmpty())
         throw invalid("Closed public authority tuple required");
       Optional<MembershipAuthorityEventV1Codec.AccountSecurityCutoff> accountCutoff =
@@ -325,23 +321,22 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
       Map<String, MembershipAuthorityEventV1Codec.TenantBillingCutoff> tenantCutoffs =
           new LinkedHashMap<>();
       object(authority.get("tenantBillingCutoff"))
-          .forEach(
-              (tenant, raw) -> {
-                var cutoff = object(raw);
-                exact(
-                    cutoff,
-                    Set.of(
-                        "tenantAuthorityGeneration",
-                        "tenantBillingSequence",
-                        "outboxStreamKey",
-                        "outboxSequence"));
-                tenantCutoffs.put(
-                    tenant,
-                    new MembershipAuthorityEventV1Codec.TenantBillingCutoff(
-                        text(cutoff.get("tenantAuthorityGeneration")),
-                            text(cutoff.get("tenantBillingSequence")),
-                        text(cutoff.get("outboxStreamKey")), text(cutoff.get("outboxSequence"))));
-              });
+          .forEach((tenant, raw) -> {
+            var cutoff = object(raw);
+            exact(
+                cutoff,
+                Set.of(
+                    "tenantAuthorityGeneration",
+                    "tenantBillingSequence",
+                    "outboxStreamKey",
+                    "outboxSequence"));
+            tenantCutoffs.put(
+                tenant,
+                new MembershipAuthorityEventV1Codec.TenantBillingCutoff(
+                    text(cutoff.get("tenantAuthorityGeneration")),
+                        text(cutoff.get("tenantBillingSequence")),
+                    text(cutoff.get("outboxStreamKey")), text(cutoff.get("outboxSequence"))));
+          });
       var tuple =
           new MembershipAuthorityEventV1Codec.AuthorityTuple(
               text(authority.get("issuerAuthGeneration")),
@@ -353,35 +348,32 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
               Optional.of(tenantCutoffs));
       var checkpoints =
           list(fields.get("outboxCheckpoints")).stream()
-              .map(
-                  raw -> {
-                    var checkpoint = object(raw);
-                    String stream = text(checkpoint.get("outboxStreamKey"));
-                    String sequence = text(checkpoint.get("outboxSequence"));
-                    return new RuntimeMembershipAuthorityEvidenceValidator.Checkpoint(
-                        stream, sequence);
-                  })
+              .map(raw -> {
+                var checkpoint = object(raw);
+                String stream = text(checkpoint.get("outboxStreamKey"));
+                String sequence = text(checkpoint.get("outboxSequence"));
+                return new RuntimeMembershipAuthorityEvidenceValidator.Checkpoint(stream, sequence);
+              })
               .toList();
       var events =
           list(fields.get("authoritySourceEvidence")).stream()
-              .map(
-                  raw -> {
-                    var event = object(raw);
-                    exact(
-                        event,
-                        Set.of(
-                            "outboxStreamKey",
-                            "outboxSequence",
-                            "eventId",
-                            "eventDigest",
-                            "canonicalEventJson"));
-                    return new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
-                        text(event.get("outboxStreamKey")),
-                        text(event.get("outboxSequence")),
-                        text(event.get("eventId")),
-                        text(event.get("eventDigest")),
-                        text(event.get("canonicalEventJson")));
-                  })
+              .map(raw -> {
+                var event = object(raw);
+                exact(
+                    event,
+                    Set.of(
+                        "outboxStreamKey",
+                        "outboxSequence",
+                        "eventId",
+                        "eventDigest",
+                        "canonicalEventJson"));
+                return new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
+                    text(event.get("outboxStreamKey")),
+                    text(event.get("outboxSequence")),
+                    text(event.get("eventId")),
+                    text(event.get("eventDigest")),
+                    text(event.get("canonicalEventJson")));
+              })
               .toList();
       Snapshot membership =
           new Snapshot(
@@ -494,11 +486,10 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
       throw invalid("Complete quotas required");
     quotas
         .values()
-        .forEach(
-            value -> {
-              if (!text(value).matches("0|[1-9][0-9]{0,18}") || Long.parseLong(text(value)) < 0)
-                throw invalid("Nonnegative quota required");
-            });
+        .forEach(value -> {
+          if (!text(value).matches("0|[1-9][0-9]{0,18}") || Long.parseLong(text(value)) < 0)
+            throw invalid("Nonnegative quota required");
+        });
   }
 
   private static Map<String, Object> tuple(Snapshot membership) {

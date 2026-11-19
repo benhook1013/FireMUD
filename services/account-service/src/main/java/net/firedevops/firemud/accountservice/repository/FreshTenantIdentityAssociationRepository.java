@@ -77,10 +77,9 @@ public class FreshTenantIdentityAssociationRepository {
 
     FreshTenantCreationEvidence readback =
         read(ownerEvidence.canonicalTenantId())
-            .orElseThrow(
-                () ->
-                    new InvalidTenantIdentityEvidenceException(
-                        "Fresh Account tenant identity import did not read back"));
+            .orElseThrow(() ->
+                new InvalidTenantIdentityEvidenceException(
+                    "Fresh Account tenant identity import did not read back"));
     if (!ownerEvidence.equals(readback)) {
       throw new InvalidTenantIdentityEvidenceException(
           "Fresh Account tenant identity import conflicts with immutable stored evidence");

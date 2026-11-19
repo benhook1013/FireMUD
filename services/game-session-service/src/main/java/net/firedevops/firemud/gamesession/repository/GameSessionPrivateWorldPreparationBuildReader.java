@@ -102,10 +102,9 @@ public final class GameSessionPrivateWorldPreparationBuildReader {
     }
     List<RealmPolicyPublishedEvidence.Policy> targetPolicies =
         policy.policies().stream()
-            .filter(
-                candidate ->
-                    candidate.source().policy().worldSlug().equals(scope.worldSlug())
-                        && candidate.source().policy().realmSlug().equals(scope.realmSlug()))
+            .filter(candidate ->
+                candidate.source().policy().worldSlug().equals(scope.worldSlug())
+                    && candidate.source().policy().realmSlug().equals(scope.realmSlug()))
             .toList();
     if (targetPolicies.size() != 1 || !targetPolicies.getFirst().equals(s.targetPolicy())) {
       throw new IllegalStateException("Retained Human build differs from selected private policy");

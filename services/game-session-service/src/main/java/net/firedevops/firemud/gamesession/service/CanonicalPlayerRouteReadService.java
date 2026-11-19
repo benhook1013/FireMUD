@@ -99,10 +99,9 @@ public final class CanonicalPlayerRouteReadService {
       catalog =
           catalogRepository
               .readUniqueVisiblePublicProduction(targetNamespace, canonicalTenantId)
-              .orElseThrow(
-                  () ->
-                      new InvalidAuthorityException(
-                          "Canonical public-production realm catalog is missing"));
+              .orElseThrow(() ->
+                  new InvalidAuthorityException(
+                      "Canonical public-production realm catalog is missing"));
     } catch (ReadUnavailableException | InvalidAuthorityException ex) {
       throw ex;
     } catch (DataAccessException ex) {
@@ -150,10 +149,9 @@ public final class CanonicalPlayerRouteReadService {
                   catalog.tenantId(),
                   catalog.realmId(),
                   proof.canonicalGameInstanceId())
-              .orElseThrow(
-                  () ->
-                      new InvalidAuthorityException(
-                          "Canonical OPEN target has no owner-qualified launch association"));
+              .orElseThrow(() ->
+                  new InvalidAuthorityException(
+                      "Canonical OPEN target has no owner-qualified launch association"));
     } catch (DataAccessException ex) {
       throw new ReadUnavailableException("Canonical launch association read is unavailable", ex);
     } catch (InvalidAuthorityException | ReadUnavailableException ex) {

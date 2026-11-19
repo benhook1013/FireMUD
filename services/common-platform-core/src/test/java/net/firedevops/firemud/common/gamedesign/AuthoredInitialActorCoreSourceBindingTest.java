@@ -60,24 +60,19 @@ class AuthoredInitialActorCoreSourceBindingTest {
     assertThat(binding.canonicalBytes()).isNotEmpty();
     assertThat(binding.digest()).matches("sha256:[0-9a-f]{64}");
     assertThat(binding.canonicalBytes())
-        .satisfies(
-            value ->
-                assertThat(new String(value, StandardCharsets.ISO_8859_1))
-                    .contains(
-                        new String(
-                            fixture.policy().canonicalJson().getBytes(StandardCharsets.UTF_8),
-                            StandardCharsets.ISO_8859_1)));
+        .satisfies(value ->
+            assertThat(new String(value, StandardCharsets.ISO_8859_1))
+                .contains(
+                    new String(
+                        fixture.policy().canonicalJson().getBytes(StandardCharsets.UTF_8),
+                        StandardCharsets.ISO_8859_1)));
     assertThat(binding.canonicalBytes())
-        .satisfies(
-            value ->
-                assertThat(new String(value, StandardCharsets.ISO_8859_1))
-                    .contains(
-                        new String(
-                            fixture
-                                .gameplaySnapshot()
-                                .snapshotJson()
-                                .getBytes(StandardCharsets.UTF_8),
-                            StandardCharsets.ISO_8859_1)));
+        .satisfies(value ->
+            assertThat(new String(value, StandardCharsets.ISO_8859_1))
+                .contains(
+                    new String(
+                        fixture.gameplaySnapshot().snapshotJson().getBytes(StandardCharsets.UTF_8),
+                        StandardCharsets.ISO_8859_1)));
   }
 
   @Test
@@ -97,10 +92,9 @@ class AuthoredInitialActorCoreSourceBindingTest {
     byte[] exposed = decoded.canonicalBytes();
     exposed[0] ^= 0x01;
     assertThat(decoded.canonicalBytes()).isEqualTo(original.canonicalBytes());
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreSourceBinding.fromStored(
-                    original.canonicalBytes(), digest('0')))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreSourceBinding.fromStored(
+                original.canonicalBytes(), digest('0')))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest differs");
   }
@@ -113,10 +107,9 @@ class AuthoredInitialActorCoreSourceBindingTest {
     var unknownSchema = new ByteArrayOutputStream();
     DraftAuthorizationFenceBinding.frame(unknownSchema, "unknown-authored-core-binding/v9");
     byte[] unknownBytes = unknownSchema.toByteArray();
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreSourceBinding.fromStored(
-                    unknownBytes, CommandSource.sha256(unknownBytes)))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreSourceBinding.fromStored(
+                unknownBytes, CommandSource.sha256(unknownBytes)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("source frame");
 
@@ -124,10 +117,9 @@ class AuthoredInitialActorCoreSourceBindingTest {
     trailingFrame.writeBytes(canonicalBytes);
     DraftAuthorizationFenceBinding.frame(trailingFrame, "unexpected");
     byte[] trailingBytes = trailingFrame.toByteArray();
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreSourceBinding.fromStored(
-                    trailingBytes, CommandSource.sha256(trailingBytes)))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreSourceBinding.fromStored(
+                trailingBytes, CommandSource.sha256(trailingBytes)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Trailing");
 
@@ -136,10 +128,9 @@ class AuthoredInitialActorCoreSourceBindingTest {
     assertThat(policySnapshot).contains("Wayfarer");
     frames.set(18, policySnapshot.replace("Wayfarer", "Wanderer").getBytes(StandardCharsets.UTF_8));
     byte[] substitutedBytes = joinFrames(frames);
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreSourceBinding.fromStored(
-                    substitutedBytes, CommandSource.sha256(substitutedBytes)))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreSourceBinding.fromStored(
+                substitutedBytes, CommandSource.sha256(substitutedBytes)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Policy source");
 
@@ -149,10 +140,9 @@ class AuthoredInitialActorCoreSourceBindingTest {
     frames.set(
         27, gameplaySnapshot.replace("newcomer", "intruder").getBytes(StandardCharsets.UTF_8));
     byte[] corruptRulesBytes = joinFrames(frames);
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreSourceBinding.fromStored(
-                    corruptRulesBytes, CommandSource.sha256(corruptRulesBytes)))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreSourceBinding.fromStored(
+                corruptRulesBytes, CommandSource.sha256(corruptRulesBytes)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Gameplay rule source");
 
@@ -160,10 +150,9 @@ class AuthoredInitialActorCoreSourceBindingTest {
     frames = splitFrames(canonicalBytes);
     frames.set(27, splitFrames(changedSelectedCommit.canonicalBytes()).get(27));
     byte[] changedRulesBytes = joinFrames(frames);
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreSourceBinding.fromStored(
-                    changedRulesBytes, CommandSource.sha256(changedRulesBytes)))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreSourceBinding.fromStored(
+                changedRulesBytes, CommandSource.sha256(changedRulesBytes)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Gameplay rules differ");
   }
@@ -206,18 +195,14 @@ class AuthoredInitialActorCoreSourceBindingTest {
     assertThat(bindings).hasSize(1);
     assertThat(bindings.getFirst().policySource().policy().worldSlug()).isEqualTo("world");
     assertThat(bindings.getFirst().canonicalBytes())
-        .satisfies(
-            value ->
-                assertThat(new String(value, StandardCharsets.ISO_8859_1))
-                    .contains(
-                        new String(
-                            fixture.policySnapshot().canonicalBytes(),
-                            StandardCharsets.ISO_8859_1)));
+        .satisfies(value ->
+            assertThat(new String(value, StandardCharsets.ISO_8859_1))
+                .contains(
+                    new String(
+                        fixture.policySnapshot().canonicalBytes(), StandardCharsets.ISO_8859_1)));
     assertThat(bindings.getFirst().canonicalBytes())
-        .satisfies(
-            value ->
-                assertThat(new String(value, StandardCharsets.ISO_8859_1))
-                    .contains("foreign-only"));
+        .satisfies(value ->
+            assertThat(new String(value, StandardCharsets.ISO_8859_1)).contains("foreign-only"));
   }
 
   @Test
@@ -289,18 +274,17 @@ class AuthoredInitialActorCoreSourceBindingTest {
             fixture.binding().revisions(),
             fixture.binding().affectedUnits());
 
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreSourceBinding.resolveAll(
-                    SOURCE_OPERATION,
-                    digest('a'),
-                    "world",
-                    "workflow-1",
-                    bytes("publication operation bytes"),
-                    bytes("release evidence bytes"),
-                    otherCommit,
-                    fixture.policySnapshot(),
-                    fixture.gameplaySnapshot()))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreSourceBinding.resolveAll(
+                SOURCE_OPERATION,
+                digest('a'),
+                "world",
+                "workflow-1",
+                bytes("publication operation bytes"),
+                bytes("release evidence bytes"),
+                otherCommit,
+                fixture.policySnapshot(),
+                fixture.gameplaySnapshot()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("selected authored commit");
 
@@ -340,23 +324,17 @@ class AuthoredInitialActorCoreSourceBindingTest {
     var feedbackOnly = List.of(fixture.entries().getLast());
     var feedbackOnlySnapshot =
         new GameplayRuleSelectedSource(snapshot(fixture.binding(), feedbackOnly));
-    assertThatThrownBy(
-            () ->
-                resolve(
-                    fixture,
-                    SOURCE_OPERATION,
-                    "world",
-                    fixture.policySnapshot(),
-                    feedbackOnlySnapshot))
+    assertThatThrownBy(() ->
+            resolve(
+                fixture, SOURCE_OPERATION, "world", fixture.policySnapshot(), feedbackOnlySnapshot))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("disposition is absent");
 
     Feedback changedFeedback = feedback("otherWelcome", "Welcome, traveler");
-    assertThatThrownBy(
-            () ->
-                fixtureWithDefinitions(
-                        List.of(disposition("newcomer", "welcome"), changedFeedback), List.of())
-                    .resolve())
+    assertThatThrownBy(() ->
+            fixtureWithDefinitions(
+                    List.of(disposition("newcomer", "welcome"), changedFeedback), List.of())
+                .resolve())
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("FEEDBACK");
 
@@ -384,14 +362,13 @@ class AuthoredInitialActorCoreSourceBindingTest {
   void rejectsEntryProvenanceThatDoesNotBelongToItsOriginalRevision() {
     Fixture fixture = fixture(List.of());
     GameplayRuleSource.Entry entry = fixture.entries().getFirst();
-    assertThatThrownBy(
-            () ->
-                new GameplayRuleSource.Entry(
-                    entry.family(),
-                    entry.definition(),
-                    entry.sourceBinding(),
-                    entry.revisionOrder(),
-                    uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")))
+    assertThatThrownBy(() ->
+            new GameplayRuleSource.Entry(
+                entry.family(),
+                entry.definition(),
+                entry.sourceBinding(),
+                entry.revisionOrder(),
+                uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("original Game Design revision");
   }
@@ -521,14 +498,13 @@ class AuthoredInitialActorCoreSourceBindingTest {
             binding, "1", List.of(selectedPolicy, otherWorldPolicy));
     List<GameplayRuleSource.Entry> entries =
         fixture.entries().stream()
-            .map(
-                entry ->
-                    new GameplayRuleSource.Entry(
-                        entry.family(),
-                        entry.definition(),
-                        binding,
-                        entry.revisionOrder(),
-                        entry.revisionId()))
+            .map(entry ->
+                new GameplayRuleSource.Entry(
+                    entry.family(),
+                    entry.definition(),
+                    binding,
+                    entry.revisionOrder(),
+                    entry.revisionId()))
             .toList();
     return new Fixture(
         binding,

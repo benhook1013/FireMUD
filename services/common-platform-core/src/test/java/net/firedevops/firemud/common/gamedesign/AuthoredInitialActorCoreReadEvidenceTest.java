@@ -438,15 +438,14 @@ final class AuthoredInitialActorCoreReadTestFixture {
     snapshot.put(
         "entries",
         entries.stream()
-            .map(
-                entry ->
-                    Map.of(
-                        "family", entry.family().name(),
-                        "definitionJson", GameplayRuleManifest.canonical(entry.definition()),
-                        "sourceBindingJson", entry.sourceBinding().canonicalJson(),
-                        "sourceBindingDigest", entry.sourceBinding().digest(),
-                        "revisionOrder", entry.revisionOrder(),
-                        "revisionId", entry.revisionId().toString()))
+            .map(entry ->
+                Map.of(
+                    "family", entry.family().name(),
+                    "definitionJson", GameplayRuleManifest.canonical(entry.definition()),
+                    "sourceBindingJson", entry.sourceBinding().canonicalJson(),
+                    "sourceBindingDigest", entry.sourceBinding().digest(),
+                    "revisionOrder", entry.revisionOrder(),
+                    "revisionId", entry.revisionId().toString()))
             .toList());
     return CommandSource.canonical(snapshot);
   }

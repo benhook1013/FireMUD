@@ -26,10 +26,8 @@ class GameplaySessionAttestationServiceTest {
         service.issueGameplaySessionAttestation(
             "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
 
-    assertDoesNotThrow(
-        () ->
-            service.requireGameplaySessionMatch(
-                token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
+    assertDoesNotThrow(() ->
+        service.requireGameplaySessionMatch(token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
   }
 
   @Test
@@ -119,10 +117,8 @@ class GameplaySessionAttestationServiceTest {
         service.issueGameplaySessionAttestation(
             "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
 
-    assertDoesNotThrow(
-        () ->
-            service.requireGameplaySessionMatch(
-                token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
+    assertDoesNotThrow(() ->
+        service.requireGameplaySessionMatch(token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
   }
 
   @Test

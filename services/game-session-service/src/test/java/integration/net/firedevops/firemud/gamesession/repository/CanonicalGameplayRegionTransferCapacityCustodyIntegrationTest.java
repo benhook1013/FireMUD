@@ -81,11 +81,10 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       assertThatThrownBy(() -> proof.fence(item)).isInstanceOf(IllegalStateException.class);
       assertThat(proof.physicalExecutionExists(item.execution())).isFalse();
       assertThat(proof.itemImage(id)).isEqualTo(retained);
-      assertThatThrownBy(
-              () ->
-                  proof.sql.execute(
-                      "UPDATE game_session_region_owner_transfer_item SET fence_apply_issued=false WHERE transfer_id=?",
-                      id))
+      assertThatThrownBy(() ->
+              proof.sql.execute(
+                  "UPDATE game_session_region_owner_transfer_item SET fence_apply_issued=false WHERE transfer_id=?",
+                  id))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
     }
   }
@@ -173,20 +172,18 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
           new CanonicalGameplayRegionOwnerTransferRepository(
               DSL.using(proof.sql.configuration().derive(provider)), proof.clock, proof.tags);
       long deadline = transferDeadline();
-      assertThatThrownBy(
-              () ->
-                  broken.within(
-                      deadline,
-                      budget -> {
-                        var before =
-                            proof.receiver.observeForRegionOwnerTransfer(
-                                id, item.ordinal(), deadline);
-                        var dispatch = broken.fenceDispatch(item, before);
-                        return proof
-                            .capacity(proof.sql)
-                            .forTransferBudget(budget)
-                            .fenceForTransfer(item, dispatch, deadline);
-                      }))
+      assertThatThrownBy(() ->
+              broken.within(
+                  deadline,
+                  budget -> {
+                    var before =
+                        proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+                    var dispatch = broken.fenceDispatch(item, before);
+                    return proof
+                        .capacity(proof.sql)
+                        .forTransferBudget(budget)
+                        .fenceForTransfer(item, dispatch, deadline);
+                  }))
           .isInstanceOf(RuntimeException.class);
       assertThat(failed).isTrue();
       assertThat(
@@ -393,28 +390,26 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               OriginalNewCapacityExecution, java.util.concurrent.Future<Boolean>>
           compete =
               attempt ->
-                  callers.submit(
-                      () -> {
-                        ready.countDown();
-                        if (!start.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
-                          throw new IllegalStateException("Concurrent proof start unavailable");
-                        }
-                        try {
-                          proof.sql.transaction(
-                              configuration ->
-                                  CanonicalGameplayCapacityEvidenceBudget.precharge(
-                                      DSL.using(configuration),
-                                      attempt.request(),
-                                      attempt.candidateDigest(),
-                                      selected,
-                                      assignment.tenantGameplayTag()));
-                          return true;
-                        } catch (IllegalStateException refused) {
-                          assertThat(refused)
-                              .hasMessage("Original NEW capacity evidence budget is unavailable");
-                          return false;
-                        }
-                      });
+                  callers.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                      throw new IllegalStateException("Concurrent proof start unavailable");
+                    }
+                    try {
+                      proof.sql.transaction(configuration ->
+                          CanonicalGameplayCapacityEvidenceBudget.precharge(
+                              DSL.using(configuration),
+                              attempt.request(),
+                              attempt.candidateDigest(),
+                              selected,
+                              assignment.tenantGameplayTag()));
+                      return true;
+                    } catch (IllegalStateException refused) {
+                      assertThat(refused)
+                          .hasMessage("Original NEW capacity evidence budget is unavailable");
+                      return false;
+                    }
+                  });
       var firstResult = compete.apply(first);
       var secondResult = compete.apply(second);
       assertThat(ready.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
@@ -515,25 +510,22 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       assertThat(first).hasSize(32);
       assertThat(first)
           .allMatch(item -> item.execution().transitionId().equals(proof.execution.transitionId()));
-      assertThatThrownBy(
-              () ->
-                  proof.transfers.within(
-                      transferDeadline(),
-                      ignored -> proof.transfers.frozenOriginal(proof.execution.transitionId())))
+      assertThatThrownBy(() ->
+              proof.transfers.within(
+                  transferDeadline(),
+                  ignored -> proof.transfers.frozenOriginal(proof.execution.transitionId())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Normal region owner transfer is held");
-      assertThatThrownBy(
-              () ->
-                  proof.transfers.within(
-                      transferDeadline(), ignored -> proof.transfers.verificationCursor(id)))
+      assertThatThrownBy(() ->
+              proof.transfers.within(
+                  transferDeadline(), ignored -> proof.transfers.verificationCursor(id)))
           .isInstanceOf(IllegalStateException.class);
       proof.recreateTransferOwners();
       assertThat(proof.begin()).isEqualTo(id);
       assertThat(proof.captureAndFence(id)).hasSize(32);
-      assertThatThrownBy(
-              () ->
-                  proof.transfers.within(
-                      transferDeadline(), ignored -> proof.transfers.verificationCursor(id)))
+      assertThatThrownBy(() ->
+              proof.transfers.within(
+                  transferDeadline(), ignored -> proof.transfers.verificationCursor(id)))
           .isInstanceOf(IllegalStateException.class);
       proof.recreateTransferOwners();
       assertThat(proof.captureAndFence(id)).hasSize(1);
@@ -662,10 +654,9 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                   proof.execution,
                   transferDeadline())) {
         UUID id = proof.begin();
-        assertThatThrownBy(
-                () ->
-                    proof.coordinator.recoverCompleted(
-                        id, "sql-proof-successor", "e".repeat(64), transferDeadline()))
+        assertThatThrownBy(() ->
+                proof.coordinator.recoverCompleted(
+                    id, "sql-proof-successor", "e".repeat(64), transferDeadline()))
             .isInstanceOf(IllegalStateException.class);
 
         new CanonicalGameplayBindingInventoryRepository(proof.sql)
@@ -687,10 +678,9 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                     installed.leaseTokenCorrelation(),
                     transferDeadline()))
             .isEqualTo(installed);
-        assertThatThrownBy(
-                () ->
-                    proof.coordinator.recoverCompleted(
-                        id, installed.ownerInstanceId(), "f".repeat(64), transferDeadline()))
+        assertThatThrownBy(() ->
+                proof.coordinator.recoverCompleted(
+                    id, installed.ownerInstanceId(), "f".repeat(64), transferDeadline()))
             .isInstanceOf(IllegalStateException.class);
         assertThat(proof.currentOwner()).isEqualTo(installed);
         assertThat(proof.transferImage(id)).isEqualTo(completion);
@@ -774,16 +764,15 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       String before = proof.transferImage(id);
       expireAfterLock.set(true);
       long deadline = wall.get() + 5_000;
-      assertThatThrownBy(
-              () ->
-                  coordinator.install(
-                      id,
-                      proof.scope,
-                      proof.prior,
-                      "e".repeat(64),
-                      "game-session-service",
-                      "sql-proof-successor",
-                      deadline))
+      assertThatThrownBy(() ->
+              coordinator.install(
+                  id,
+                  proof.scope,
+                  proof.prior,
+                  "e".repeat(64),
+                  "game-session-service",
+                  "sql-proof-successor",
+                  deadline))
           .isInstanceOf(IllegalStateException.class);
       assertThat(expireAfterLock).isFalse();
       assertThat(wall.get()).isLessThan(deadline);
@@ -844,16 +833,15 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         assertThat(proof.itemImage(id)).isEqualTo(inventory);
         var status = new CanonicalGameplayRegionRuntimeStatusRepository(proof.sql);
 
-        assertThatThrownBy(
-                () ->
-                    status.installOwner(
-                        proof.scope,
-                        proof.prior.regionEpoch(),
-                        proof.prior,
-                        "e".repeat(64),
-                        "game-session-service",
-                        "sql-proof-successor",
-                        proof.clock.instant()))
+        assertThatThrownBy(() ->
+                status.installOwner(
+                    proof.scope,
+                    proof.prior.regionEpoch(),
+                    proof.prior,
+                    "e".repeat(64),
+                    "game-session-service",
+                    "sql-proof-successor",
+                    proof.clock.instant()))
             .isInstanceOf(IllegalStateException.class)
             .hasRootCauseMessage("Normal region owner transfer is held");
         assertThat(proof.currentOwner()).isEqualTo(proof.prior);
@@ -964,10 +952,9 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       }
       try {
         long start = System.nanoTime();
-        assertThatThrownBy(
-                () ->
-                    proof.receiver.observeForRegionOwnerTransfer(
-                        id, captured.getFirst().ordinal(), proof.clock.millis() + 500L))
+        assertThatThrownBy(() ->
+                proof.receiver.observeForRegionOwnerTransfer(
+                    id, captured.getFirst().ordinal(), proof.clock.millis() + 500L))
             .isInstanceOf(ObservationUnavailableException.class);
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(3));
       } finally {
@@ -1019,27 +1006,25 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
           "sha256:" + "a".repeat(64),
           id);
       String dispatched = proof.itemImage(id);
-      assertThatThrownBy(
-              () ->
-                  proof.sql.transaction(
-                      configuration -> {
-                        var transaction = DSL.using(configuration);
-                        var changed = "sha256:" + "b".repeat(64);
-                        var round = UUID.randomUUID();
-                        transaction.execute(
-                            "UPDATE game_session_region_owner_transfer SET incarnation_digest=?,verification_round=? WHERE transfer_id=?",
-                            changed,
-                            round,
-                            id);
-                        transaction.execute(
-                            "UPDATE game_session_region_owner_transfer_item SET fence_readback=?,incarnation_digest=?,before_payload_digest=?,after_payload_digest=?,verified_round=? WHERE transfer_id=?",
-                            new byte[] {1},
-                            changed,
-                            changed,
-                            changed,
-                            round,
-                            id);
-                      }))
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration -> {
+                var transaction = DSL.using(configuration);
+                var changed = "sha256:" + "b".repeat(64);
+                var round = UUID.randomUUID();
+                transaction.execute(
+                    "UPDATE game_session_region_owner_transfer SET incarnation_digest=?,verification_round=? WHERE transfer_id=?",
+                    changed,
+                    round,
+                    id);
+                transaction.execute(
+                    "UPDATE game_session_region_owner_transfer_item SET fence_readback=?,incarnation_digest=?,before_payload_digest=?,after_payload_digest=?,verified_round=? WHERE transfer_id=?",
+                    new byte[] {1},
+                    changed,
+                    changed,
+                    changed,
+                    round,
+                    id);
+              }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("gs_region_fence_receipt_dispatch_incarnation");
       assertThat(proof.itemImage(id)).isEqualTo(dispatched);
@@ -1058,16 +1043,14 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   @Test
   void rawOwnerReplacementCannotSkipFrozenIncompleteOrChangedExactTransfer() throws Exception {
     try (var proof = new TransferSqlProof()) {
-      assertThatThrownBy(
-              () ->
-                  proof.sql.transaction(
-                      configuration ->
-                          CanonicalGameplayRegionOwnerTransferRepository.completeTerminalOnly(
-                              DSL.using(configuration),
-                              proof.prior,
-                              "unretained-terminal-successor",
-                              proof.prior.executorFence().longValueExact() + 1,
-                              "e".repeat(64))))
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration ->
+                  CanonicalGameplayRegionOwnerTransferRepository.completeTerminalOnly(
+                      DSL.using(configuration),
+                      proof.prior,
+                      "unretained-terminal-successor",
+                      proof.prior.executorFence().longValueExact() + 1,
+                      "e".repeat(64))))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Normal region owner transfer is held");
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
@@ -1083,62 +1066,59 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               .get(0, Long.class);
       for (String state : List.of("COMPLETED", "FROZEN")) {
         boolean completed = "COMPLETED".equals(state);
-        assertThatThrownBy(
-                () ->
-                    proof.sql.execute(
-                        "INSERT INTO game_session_region_owner_transfer"
-                            + " (transfer_id,tenant_id,game_instance_id,region_id,region_epoch,old_owner_id,old_owner_fence,"
-                            + " old_lease_correlation,source_digest,intent_digest,state,incarnation_digest,verification_round,"
-                            + " verification_cursor,verification_complete,new_owner_id,new_owner_fence,new_lease_correlation)"
-                            + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,true,?,?,?)",
-                        UUID.randomUUID(),
-                        proof.scope.tenantId(),
-                        proof.scope.gameInstanceId(),
-                        proof.scope.regionId(),
-                        proof.prior.regionEpoch(),
-                        proof.prior.ownerInstanceId(),
-                        proof.prior.executorFence().longValueExact(),
-                        proof.prior.leaseTokenCorrelation(),
-                        "sha256:" + "b".repeat(64),
-                        "sha256:" + "c".repeat(64),
-                        state,
-                        "sha256:" + "a".repeat(64),
-                        UUID.randomUUID(),
-                        0L,
-                        completed ? forgedOwner : null,
-                        completed ? forgedFence : null,
-                        completed ? forgedLease : null))
+        assertThatThrownBy(() ->
+                proof.sql.execute(
+                    "INSERT INTO game_session_region_owner_transfer"
+                        + " (transfer_id,tenant_id,game_instance_id,region_id,region_epoch,old_owner_id,old_owner_fence,"
+                        + " old_lease_correlation,source_digest,intent_digest,state,incarnation_digest,verification_round,"
+                        + " verification_cursor,verification_complete,new_owner_id,new_owner_fence,new_lease_correlation)"
+                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,true,?,?,?)",
+                    UUID.randomUUID(),
+                    proof.scope.tenantId(),
+                    proof.scope.gameInstanceId(),
+                    proof.scope.regionId(),
+                    proof.prior.regionEpoch(),
+                    proof.prior.ownerInstanceId(),
+                    proof.prior.executorFence().longValueExact(),
+                    proof.prior.leaseTokenCorrelation(),
+                    "sha256:" + "b".repeat(64),
+                    "sha256:" + "c".repeat(64),
+                    state,
+                    "sha256:" + "a".repeat(64),
+                    UUID.randomUUID(),
+                    0L,
+                    completed ? forgedOwner : null,
+                    completed ? forgedFence : null,
+                    completed ? forgedLease : null))
             .isInstanceOf(org.jooq.exception.DataAccessException.class)
             .hasMessageContaining("Region transfer must start as a clean frozen intent");
       }
-      assertSqlGuard(
-          () ->
-              proof.sql.execute(
-                  "UPDATE game_session_region_runtime_status SET"
-                      + " owner_instance_id=?,executor_fence=?,lease_token_correlation=? WHERE"
-                      + " tenant_id=? AND game_instance_id=? AND region_id=?",
-                  forgedOwner,
-                  forgedFence,
-                  forgedLease,
-                  proof.scope.tenantId(),
-                  proof.scope.gameInstanceId(),
-                  proof.scope.regionId()));
+      assertSqlGuard(() ->
+          proof.sql.execute(
+              "UPDATE game_session_region_runtime_status SET"
+                  + " owner_instance_id=?,executor_fence=?,lease_token_correlation=? WHERE"
+                  + " tenant_id=? AND game_instance_id=? AND region_id=?",
+              forgedOwner,
+              forgedFence,
+              forgedLease,
+              proof.scope.tenantId(),
+              proof.scope.gameInstanceId(),
+              proof.scope.regionId()));
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       UUID id = proof.begin();
       assertSqlGuard(() -> proof.rawReplaceOwner("frozen-successor", "e".repeat(64)));
       proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id));
-      assertSqlGuard(
-          () ->
-              proof.sql.execute(
-                  "UPDATE game_session_region_owner_transfer SET state='COMPLETED',"
-                      + " new_owner_id='forged-successor',new_owner_fence=?,new_lease_correlation=?,"
-                      + " incarnation_digest=?,verification_round=?,verification_complete=true"
-                      + " WHERE transfer_id=?",
-                  proof.prior.executorFence().longValueExact() + 1,
-                  "e".repeat(64),
-                  "sha256:" + "a".repeat(64),
-                  UUID.randomUUID(),
-                  id));
+      assertSqlGuard(() ->
+          proof.sql.execute(
+              "UPDATE game_session_region_owner_transfer SET state='COMPLETED',"
+                  + " new_owner_id='forged-successor',new_owner_fence=?,new_lease_correlation=?,"
+                  + " incarnation_digest=?,verification_round=?,verification_complete=true"
+                  + " WHERE transfer_id=?",
+              proof.prior.executorFence().longValueExact() + 1,
+              "e".repeat(64),
+              "sha256:" + "a".repeat(64),
+              UUID.randomUUID(),
+              id));
       assertThat(proof.originalImage()).isEqualTo(original);
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       proof.captureAndFence(id);
@@ -1302,33 +1282,29 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
           .containsExactly(item.execution().canonicalBytes());
       proof.fence(replay);
       assertThat(proof.itemImage(id)).isEqualTo(receipt);
-      assertSqlGuard(
-          () ->
-              proof.sql.execute(
-                  "UPDATE game_session_original_new_capacity_execution SET"
-                      + " selected_owner_id='changed' WHERE execution_digest=?",
-                  proof.execution.digest()));
-      assertSqlGuard(
-          () ->
-              proof.sql.execute(
-                  "UPDATE game_session_region_owner_transfer SET intent_digest=? WHERE"
-                      + " transfer_id=?",
-                  "sha256:" + "f".repeat(64),
-                  id));
-      assertSqlGuard(
-          () ->
-              proof.sql.execute(
-                  "UPDATE game_session_region_owner_transfer_item SET canonical_execution=? WHERE"
-                      + " transfer_id=?",
-                  "changed-original".getBytes(StandardCharsets.UTF_8),
-                  id));
-      assertSqlGuard(
-          () ->
-              proof.sql.execute(
-                  "UPDATE game_session_region_owner_transfer_item SET fence_readback=? WHERE"
-                      + " transfer_id=?",
-                  "changed-readback".getBytes(StandardCharsets.UTF_8),
-                  id));
+      assertSqlGuard(() ->
+          proof.sql.execute(
+              "UPDATE game_session_original_new_capacity_execution SET"
+                  + " selected_owner_id='changed' WHERE execution_digest=?",
+              proof.execution.digest()));
+      assertSqlGuard(() ->
+          proof.sql.execute(
+              "UPDATE game_session_region_owner_transfer SET intent_digest=? WHERE"
+                  + " transfer_id=?",
+              "sha256:" + "f".repeat(64),
+              id));
+      assertSqlGuard(() ->
+          proof.sql.execute(
+              "UPDATE game_session_region_owner_transfer_item SET canonical_execution=? WHERE"
+                  + " transfer_id=?",
+              "changed-original".getBytes(StandardCharsets.UTF_8),
+              id));
+      assertSqlGuard(() ->
+          proof.sql.execute(
+              "UPDATE game_session_region_owner_transfer_item SET fence_readback=? WHERE"
+                  + " transfer_id=?",
+              "changed-readback".getBytes(StandardCharsets.UTF_8),
+              id));
       for (String table :
           List.of(
               "game_session_original_new_capacity_execution",
@@ -1346,24 +1322,20 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       proof.recreateTransferOwners();
       assertThat(proof.transfers.readCurrent(id, 0).controlState()).isEqualTo("COMPLETED");
       assertThat(proof.transfers.readCurrent(id, 0).completionDigest()).isNotBlank();
-      assertThatThrownBy(
-              () ->
-                  proof.transfers.within(
-                      transferDeadline(), ignored -> proof.transfers.capture(id)))
+      assertThatThrownBy(() ->
+              proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id)))
           .isInstanceOf(IllegalStateException.class);
-      assertSqlGuard(
-          () ->
-              proof.sql.execute(
-                  "UPDATE game_session_region_owner_transfer SET new_owner_id='changed-successor'"
-                      + " WHERE transfer_id=?",
-                  id));
-      assertSqlGuard(
-          () ->
-              proof.sql.execute(
-                  "UPDATE game_session_region_owner_transfer_item SET verified_round=? WHERE"
-                      + " transfer_id=?",
-                  UUID.randomUUID(),
-                  id));
+      assertSqlGuard(() ->
+          proof.sql.execute(
+              "UPDATE game_session_region_owner_transfer SET new_owner_id='changed-successor'"
+                  + " WHERE transfer_id=?",
+              id));
+      assertSqlGuard(() ->
+          proof.sql.execute(
+              "UPDATE game_session_region_owner_transfer_item SET verified_round=? WHERE"
+                  + " transfer_id=?",
+              UUID.randomUUID(),
+              id));
       assertThat(proof.transferImage(id)).isEqualTo(completion);
       assertThat(proof.originalImage()).isEqualTo(original);
       assertThat(proof.currentOwner()).isEqualTo(installed);

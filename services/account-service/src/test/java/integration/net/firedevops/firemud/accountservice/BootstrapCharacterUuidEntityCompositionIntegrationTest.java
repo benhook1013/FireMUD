@@ -232,16 +232,14 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     var closed = new ArrayList<String>();
     Deque<AutoCloseable> resources = new ArrayDeque<>();
     resources.push(() -> closed.add("postgres"));
-    resources.push(
-        () -> {
-          closed.add("source server");
-          throw sourceFailure;
-        });
-    resources.push(
-        () -> {
-          closed.add("owner client");
-          throw clientFailure;
-        });
+    resources.push(() -> {
+      closed.add("source server");
+      throw sourceFailure;
+    });
+    resources.push(() -> {
+      closed.add("owner client");
+      throw clientFailure;
+    });
     resources.push(() -> closed.add("meters"));
     resources.push(() -> closed.add("entity server"));
 
@@ -417,27 +415,26 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
                 rowId,
                 key,
                 "NEW_GAME_ROW"));
-    transaction.executeWithoutResult(
-        status -> {
-          tenants.importVerified(source);
-          generations.initializeTenantIfAbsent(target.canonicalTenantId());
-          accountSources.initializeIssuerIfAbsent("firemud-account-service");
-          demos.provision(
-              new DemoTenantEntitlementRequest(
-                  UUID.randomUUID(),
-                  target.canonicalTenantId(),
-                  source.creationRequestId(),
-                  source.requestDigest(),
-                  null,
-                  null,
-                  null,
-                  true,
-                  true,
-                  true,
-                  true,
-                  new DemoTenantEntitlementRequest.Quotas(10L, 3L, 4096L)),
-              source);
-        });
+    transaction.executeWithoutResult(status -> {
+      tenants.importVerified(source);
+      generations.initializeTenantIfAbsent(target.canonicalTenantId());
+      accountSources.initializeIssuerIfAbsent("firemud-account-service");
+      demos.provision(
+          new DemoTenantEntitlementRequest(
+              UUID.randomUUID(),
+              target.canonicalTenantId(),
+              source.creationRequestId(),
+              source.requestDigest(),
+              null,
+              null,
+              null,
+              true,
+              true,
+              true,
+              true,
+              new DemoTenantEntitlementRequest.Quotas(10L, 3L, 4096L)),
+          source);
+    });
     var targets = controlledAccountTargets(target);
     var hosting = Mockito.mock(AccountHostingSubscriptionLifecycleRepository.class);
     var observer = Mockito.mock(StripeHostingSubscriptionObserver.class);
@@ -479,55 +476,50 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
   private CanonicalGameplayAdmissionDecisionReadClient controlledAccountTargets(Target target) {
     var client = Mockito.mock(CanonicalGameplayAdmissionDecisionReadClient.class);
     Mockito.when(client.listVisiblePublicProductionAdmissionTargets(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
-                      invocation.getArgument(0, UUID.class), TEST_NAMESPACE);
-              return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                  request,
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
-                      request, List.of(target)));
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+                  invocation.getArgument(0, UUID.class), TEST_NAMESPACE);
+          return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+              request,
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                  request, List.of(target)));
+        });
     Mockito.when(client.resolvePublishedRealmAdmissionTarget(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  invocation.getArgument(
-                      0,
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
-              return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
-                  request,
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
-                      request, target));
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              invocation.getArgument(
+                  0, CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
+          return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+              request,
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+                  request, target));
+        });
     Mockito.when(client.readPublishedRealmAdmissionOwner(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  invocation.getArgument(0, CanonicalGameplayRosterOwnerReadEvidence.Request.class);
-              var published =
-                  Mockito.mock(
-                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
-              Mockito.when(published.selector()).thenReturn(request);
-              Mockito.when(published.currentTarget()).thenReturn(target);
-              Mockito.when(published.sourceEvidence()).thenReturn(ownerEvidence(request));
-              var world = Mockito.mock(WorldCanonicalInstanceLifecycleEvidence.class);
-              Mockito.when(world.lifecycleStatus()).thenReturn("ACTIVE");
-              Mockito.when(world.lifecycleEpoch()).thenReturn(target.activeWorldEpoch());
-              Mockito.when(published.worldLifecycleEvidence()).thenReturn(world);
-              return published;
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              invocation.getArgument(0, CanonicalGameplayRosterOwnerReadEvidence.Request.class);
+          var published =
+              Mockito.mock(
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
+          Mockito.when(published.selector()).thenReturn(request);
+          Mockito.when(published.currentTarget()).thenReturn(target);
+          Mockito.when(published.sourceEvidence()).thenReturn(ownerEvidence(request));
+          var world = Mockito.mock(WorldCanonicalInstanceLifecycleEvidence.class);
+          Mockito.when(world.lifecycleStatus()).thenReturn("ACTIVE");
+          Mockito.when(world.lifecycleEpoch()).thenReturn(target.activeWorldEpoch());
+          Mockito.when(published.worldLifecycleEvidence()).thenReturn(world);
+          return published;
+        });
     return client;
   }
 
   private void initializeMemberAuthority(TestAccount account) {
     new TransactionTemplate(transactionManager)
-        .executeWithoutResult(
-            status ->
-                generations.initialize(
-                    AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                        account.accountUuid(), SOURCE.target().tenantUuid())));
+        .executeWithoutResult(status ->
+            generations.initialize(
+                AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                    account.accountUuid(), SOURCE.target().tenantUuid())));
   }
 
   private static Target accountTarget() {
@@ -653,10 +645,9 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     if (response.statusCode() != 200) {
       // Preserve the HTTP assertion while exposing an owner/proxy exception otherwise hidden by
       // the public INTERNAL_ERROR projection. This uses the same actual caller and owner setup.
-      org.assertj.core.api.Assertions.assertThatCode(
-              () ->
-                  facade.listBootstrapRealms(
-                      token, accountTarget().tenantSlug(), SOURCE.target().worldSlug()))
+      org.assertj.core.api.Assertions.assertThatCode(() ->
+              facade.listBootstrapRealms(
+                  token, accountTarget().tenantSlug(), SOURCE.target().worldSlug()))
           .as("REALMS owner composition after HTTP response: %s", response.body())
           .doesNotThrowAnyException();
     }
@@ -747,21 +738,20 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
                 target.playableStateScope()));
     var result =
         new TransactionTemplate(runtime.transactionManager())
-            .execute(
-                status ->
-                    runtime
-                        .characterRepository()
-                        .assignPreseededActor(
-                            request,
-                            evidence,
-                            new RuntimeAccountIdentityEvidence(
-                                1,
-                                TEST_NAMESPACE,
-                                operation,
-                                account.accountUuid(),
-                                account.storageId(),
-                                "ACCOUNT_REPOSITORY_INSERT"),
-                            request.mutationIntentDigest()));
+            .execute(status ->
+                runtime
+                    .characterRepository()
+                    .assignPreseededActor(
+                        request,
+                        evidence,
+                        new RuntimeAccountIdentityEvidence(
+                            1,
+                            TEST_NAMESPACE,
+                            operation,
+                            account.accountUuid(),
+                            account.storageId(),
+                            "ACCOUNT_REPOSITORY_INSERT"),
+                        request.mutationIntentDigest()));
     assertThat(result.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
     assertThat(
             runtime
@@ -850,10 +840,9 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
   private static synchronized EntityRuntime requireEntityRuntime() {
     if (entityRuntime != null) return entityRuntime;
     Deque<AutoCloseable> startedResources = new ArrayDeque<>();
-    startedResources.push(
-        () -> {
-          if (entityPostgres.isRunning()) entityPostgres.stop();
-        });
+    startedResources.push(() -> {
+      if (entityPostgres.isRunning()) entityPostgres.stop();
+    });
     try {
       if (!entityPostgres.isRunning()) entityPostgres.start();
       var ds =

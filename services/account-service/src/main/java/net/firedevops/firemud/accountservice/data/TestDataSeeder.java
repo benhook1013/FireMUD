@@ -44,13 +44,12 @@ public class TestDataSeeder implements ApplicationRunner {
       throw new IllegalStateException("Demo account identity does not match configured email");
     }
     Account account =
-        existingDemoAccount.orElseGet(
-            () -> {
-              Account seeded = new Account();
-              seeded.setUsername(DEMO_USERNAME);
-              seeded.setEmail(DEMO_EMAIL);
-              return seeded;
-            });
+        existingDemoAccount.orElseGet(() -> {
+          Account seeded = new Account();
+          seeded.setUsername(DEMO_USERNAME);
+          seeded.setEmail(DEMO_EMAIL);
+          return seeded;
+        });
 
     account.setUsername(DEMO_USERNAME);
     account.setEmail(DEMO_EMAIL);

@@ -62,36 +62,31 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
     UnknownFieldSet unknown = unknown();
     var wire = AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.toRequest(request);
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
-                    wire.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
+                wire.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
-                    wire.toBuilder().setSchemaVersion(2).build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
+                wire.toBuilder().setSchemaVersion(2).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unsupported");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
-                    wire.toBuilder().setReadRequestId(READ_ID + " ").build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
+                wire.toBuilder().setReadRequestId(READ_ID + " ").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical non-nil UUID");
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionWorldParticipationHistoricalReadRequest(
-                    READ_ID, NAMESPACE, new byte[0]))
+    assertThatThrownBy(() ->
+            new AccountStartSessionWorldParticipationHistoricalReadRequest(
+                READ_ID, NAMESPACE, new byte[0]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("empty or oversized");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
-                    wire.toBuilder()
-                        .setOriginalPostAuthorizationTuple(com.google.protobuf.ByteString.EMPTY)
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
+                wire.toBuilder()
+                    .setOriginalPostAuthorizationTuple(com.google.protobuf.ByteString.EMPTY)
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("empty or oversized");
   }
@@ -99,10 +94,9 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
   @Test
   void rejectsOnlyReservationOwnerCollisionAtRequestBoundary() {
     var original = originalTuple(NAMESPACE);
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionWorldParticipationHistoricalReadRequest(
-                    original.reservationOwnerId(), NAMESPACE, original.canonicalBytes()))
+    assertThatThrownBy(() ->
+            new AccountStartSessionWorldParticipationHistoricalReadRequest(
+                original.reservationOwnerId(), NAMESPACE, original.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("distinct from the reservation owner");
 
@@ -134,35 +128,29 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
                     .setReadRequestId("0fd3d542-a9f8-4b8f-b1df-79413650126c")
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromResponse(
-                    request, changedEcho))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromResponse(
+                request, changedEcho))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed the exact");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromResponse(
-                    request, response.toBuilder().setUnknownFields(unknown()).build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromResponse(
+                request, response.toBuilder().setUnknownFields(unknown()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setPreparationInputDigest("sha256:" + "0".repeat(64))
-                        .build()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder().setPreparationInputDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("differs from the exact retained");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.toResponse(
-                    request,
-                    evidence(
-                        new AccountStartSessionWorldParticipationHistoricalReadRequest(
-                            READ_ID, NAMESPACE, originalTuple(NAMESPACE, 20L).canonicalBytes()))))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.toResponse(
+                request,
+                evidence(
+                    new AccountStartSessionWorldParticipationHistoricalReadRequest(
+                        READ_ID, NAMESPACE, originalTuple(NAMESPACE, 20L).canonicalBytes()))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed the exact");
   }
@@ -171,40 +159,36 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
   void rejectsOversizedPreparationInputAndTupleAtClosedCarrierBoundary() {
     var request = request();
     String oversized = "x".repeat(WorldStartSessionExecutionTerminal.MAX_CANONICAL_BYTES + 1);
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionWorldParticipationHistoricalReadEvidence(
-                    request,
-                    PARTICIPATION_ID,
-                    31L,
-                    GAME_SESSION_ATTEMPT_ID,
-                    37L,
-                    GAME_INSTANCE_ID,
-                    oversized,
-                    digest(oversized)))
+    assertThatThrownBy(() ->
+            new AccountStartSessionWorldParticipationHistoricalReadEvidence(
+                request,
+                PARTICIPATION_ID,
+                31L,
+                GAME_SESSION_ATTEMPT_ID,
+                37L,
+                GAME_INSTANCE_ID,
+                oversized,
+                digest(oversized)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("byte limit");
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionWorldParticipationHistoricalReadRequest(
-                    READ_ID,
-                    NAMESPACE,
-                    new byte
-                        [StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES
-                            + 1]))
+    assertThatThrownBy(() ->
+            new AccountStartSessionWorldParticipationHistoricalReadRequest(
+                READ_ID,
+                NAMESPACE,
+                new byte
+                    [StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("empty or oversized");
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionWorldParticipationHistoricalReadEvidence(
-                    request,
-                    PARTICIPATION_ID,
-                    0L,
-                    GAME_SESSION_ATTEMPT_ID,
-                    37L,
-                    GAME_INSTANCE_ID,
-                    PREPARATION_INPUT,
-                    digest(PREPARATION_INPUT)))
+    assertThatThrownBy(() ->
+            new AccountStartSessionWorldParticipationHistoricalReadEvidence(
+                request,
+                PARTICIPATION_ID,
+                0L,
+                GAME_SESSION_ATTEMPT_ID,
+                37L,
+                GAME_INSTANCE_ID,
+                PREPARATION_INPUT,
+                digest(PREPARATION_INPUT)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("fence must be positive");
   }
