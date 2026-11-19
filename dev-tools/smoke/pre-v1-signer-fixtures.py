@@ -9,6 +9,8 @@ Compose smoke only, under the pre-v1 gate waiver (ADR 0185). Writes, under OUTPU
   materializer/    Materializer stand-in mTLS leaf (spiffe://firemud/ns/dev/sa/account-jwt-materializer)
   materializer-binding/ Account's protected materializer trust binding (binding.properties)
   validator-inventory/ Account's protected validator inventory binding (binding.json)
+  readiness-binding/ Account's protected readiness trust binding (binding.properties); the
+                   self-attested readiness driver presents its harness identity
   identity.json    The fixed environment identity the stand-ins share
 
 The init container copies these into root-owned volumes. Real cluster identity, Kubernetes RBAC
@@ -22,6 +24,7 @@ import json
 import os
 import secrets
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
@@ -155,6 +158,33 @@ def main():
     (binding_dir / "binding.properties").write_text(
         "".join(f"{key}={value}\n" for key, value in trust_file.items())
     )
+
+    harness_uri = f"spiffe://firemud/ns/{NAMESPACE}/sa/account-jwt-readiness-harness"
+    readiness = {
+        "digestVersion": "account-jwt-readiness-trust-binding/v1",
+        "configRevision": "pre-v1-compose-1",
+        "environmentId": ENVIRONMENT_ID,
+        "clusterId": CLUSTER_ID,
+        "namespace": NAMESPACE,
+        "expectedClusterIncarnationUid": identity["expectedClusterIncarnationUid"],
+        "expectedNamespaceUid": identity["expectedNamespaceUid"],
+        "expectedPeerUri": harness_uri,
+        "peerSpkiSha256Pins": [spki_sha256(crt)],
+        "validatorId": "account-service",
+        "validatorInstanceId": "compose-account-service",
+        "validUntilEpochSecond": int(time.time()) + 30 * 24 * 3600,
+    }
+    readiness_file = {k: v for k, v in readiness.items() if k != "digestVersion"}
+    readiness_file["peerSpkiSha256Pins"] = ",".join(readiness["peerSpkiSha256Pins"])
+    readiness_file["enabled"] = "true"
+    readiness_file["bindingDigest"] = sha256_hex(canonical_json(readiness))
+    readiness_dir = out / "readiness-binding"
+    readiness_dir.mkdir(exist_ok=True)
+    (readiness_dir / "binding.properties").write_text(
+        "".join(f"{key}={value}\n" for key, value in readiness_file.items())
+    )
+    identity["readinessHarnessUri"] = harness_uri
+    identity["readinessHarnessSpkiSha256"] = readiness["peerSpkiSha256Pins"][0]
 
     inventory = {
         "version": "account-jwt-validator-inventory-binding/v2",
