@@ -4191,22 +4191,25 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   if (kind === "nested-callback") event.event = "workflow_run";
   if (kind === "fork") event.head_repository.full_name = "fork/repo";
   if (kind === "success") event.conclusion = "success";
-  let clock = 0, tupleReads = 0, sourceReads = 0;
+  let clock = 0, tupleReads = 0, sourceReads = 0, metadataReads = 0;
   const github = {rest: {
     actions: {
       getWorkflow: async ({workflow_id}) => ({data: workflow_id === "ci.yml"
         ? {id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation"}
         : {id: 7, path: source.path, name: source.name}}),
       getWorkflowRun: async ({run_id}) => {
-        if (run_id === 90 || run_id === 91) return {data: {...ci, id: run_id, ...(kind === "ci-rerun" ? {run_attempt: 2} : {})}};
+        if (run_id === 91) metadataReads++;
+        if (run_id === 90 || run_id === 91) return {data: {...ci, id: run_id,
+          ...(kind === "ci-rerun" || ["new-meta-rerun", "old-meta-rerun"].includes(kind) && run_id === 91 && metadataReads > 1 ? {run_attempt: 2} : {})}};
         sourceReads++;
         return {data: {...source, ...((kind === "stale-attempt" || kind === "late-rerun" && sourceReads > 1) ? {run_attempt: 2} : {})}};
       },
       listWorkflowRuns: async ({workflow_id, page, event: runEvent}) => {
         let runs = workflow_id === "ci.yml" ? [{...ci, ...(kind === "ci-pending" ? {status: "in_progress"} : {})}]
           : shared.visible ? [refresh] : [];
-        if (workflow_id === "ci.yml" && ["metadata-newer", "unclassified-newer", "pending-newer"].includes(kind)) {
+        if (workflow_id === "ci.yml" && (["metadata-newer", "old-meta-rerun", "unclassified-newer", "pending-newer"].includes(kind) || kind.startsWith("new-meta"))) {
           runs = [{...ci, id: 91, ...(kind === "pending-newer" ? {status: "in_progress"} : {})}, ci];
+          if (kind === "new-meta-only") runs = runs.slice(0, 1);
         }
         if (workflow_id === "runtime-images.yml" && runEvent === "pull_request") {
           runs = kind === "newer-original" ? [{...source, id: 105, status: "in_progress"}] : [source];
@@ -4232,7 +4235,27 @@ async function run(kind, shared = {visible: false, posts: 0}) {
       },
     },
   }, paginate: async (_route, request) => {
-    const metadata = kind === "metadata" || kind === "metadata-newer" && request.run_id === 91;
+    assert.equal(_route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+    assert.equal(request.attempt_number, 1);
+    if (kind.startsWith("new-meta") && request.run_id === 91) {
+      const expression = "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'";
+      const job = {id: 31, run_id: 91, run_attempt: 1, head_sha: head,
+        name: kind === "new-meta-expression" ? expression : kind === "new-meta-wrapped" ? "${{ " + expression + " }}" : "PR Metadata Edit (Validation Gate)",
+        workflow_name: "CI — Validation", status: "completed", conclusion: "skipped",
+        check_run_url: `https://api.github.com/repos/${repository}/check-runs/31`};
+      if (kind === "new-meta-wrong-attempt") job.run_attempt = 2;
+      if (kind === "new-meta-wrong-head") job.head_sha = base;
+      if (kind === "new-meta-wrong-url") job.check_run_url = "https://api.github.com/repos/foreign/repo/check-runs/31";
+      if (kind === "new-meta-pending") job.status = "in_progress";
+      if (kind === "new-meta-success") job.conclusion = "success";
+      if (kind === "new-meta-unknown") job.name = "unknown " + expression;
+      if (kind === "new-meta-open-wrapper") job.name = "${{ " + expression;
+      if (kind === "new-meta-close-wrapper") job.name = expression + " }}";
+      if (kind === "new-meta-duplicate") return [job, {...job, id: 32}];
+      if (kind === "new-meta-mixed") return [job, {...job, id: 32, name: "Validation Gate"}];
+      return [job];
+    }
+    const metadata = kind === "metadata" || ["metadata-newer", "old-meta-rerun"].includes(kind) && request.run_id === 91;
     return [{id: 30, run_id: request.run_id, run_attempt: 1, head_sha: head, name: "Validation Gate",
       workflow_name: "CI — Validation", status: "completed", check_run_url: `https://api.github.com/repos/${repository}/check-runs/30`,
       steps: kind === "unclassified-newer" && request.run_id === 91 ? [] : [
@@ -4249,6 +4272,14 @@ async function run(kind, shared = {visible: false, posts: 0}) {
 (async () => {
   assert.equal(await run("valid"), 1);
   assert.equal(await run("metadata-newer"), 1, "proven metadata completion cannot hide substantive CI");
+  for (const scenario of ["new-meta", "new-meta-expression", "new-meta-wrapped"]) {
+    assert.equal(await run(scenario), 1, scenario);
+  }
+  for (const scenario of ["new-meta-only", "new-meta-wrong-attempt", "new-meta-wrong-head", "new-meta-wrong-url",
+    "new-meta-pending", "new-meta-success", "new-meta-unknown", "new-meta-duplicate", "new-meta-mixed", "new-meta-rerun",
+    "old-meta-rerun", "new-meta-open-wrapper", "new-meta-close-wrapper"]) {
+    assert.equal(await run(scenario), 0, scenario);
+  }
   assert.equal(await run("merge-pending"), 1, "mergeability may converge without tuple changes");
   for (const scenario of ["typed-callback", "nested-callback", "fork", "success", "stale-attempt", "late-rerun", "ci-rerun", "ci-pending", "metadata", "late-drift", "second-page", "newer-original", "unclassified-newer", "pending-newer", "merge-unknown", "merge-conflict", "merge-drift"]) {
     assert.equal(await run(scenario), 0, scenario);

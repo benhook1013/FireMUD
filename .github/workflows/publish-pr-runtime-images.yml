@@ -128,11 +128,36 @@ jobs:
               if (!matchesCi(ciNative)) return;
               const jobs = await github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
                 {...context.repo, run_id: ci.id, attempt_number: ci.run_attempt, per_page: 100});
+              const metadataName = "PR Metadata Edit (Validation Gate)";
+              const metadataExpression = "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'";
+              const normalizedName = name => {
+                if (typeof name !== "string") return "";
+                const trimmed = name.trim();
+                const wrapped = trimmed.match(/^\$\{\{([\s\S]*)\}\}$/);
+                return (wrapped ? wrapped[1].trim() : trimmed).replace(/\s+/g, " ");
+              };
+              const metadata = jobs.filter(job => job.name === metadataName ||
+                normalizedName(job.name) === metadataExpression);
+              const checkPrefix = `https://api.github.com/repos/${repository}/check-runs/`;
+              const nativeJob = job => job && positive(job.id) && job.run_id === ci.id &&
+                job.run_attempt === ci.run_attempt && job.head_sha === head &&
+                [ciWorkflow.name, ciTitle].includes(job.workflow_name) && job.status === "completed" &&
+                typeof job.check_run_url === "string" && job.check_run_url.startsWith(checkPrefix) &&
+                /^[1-9][0-9]*$/.test(job.check_run_url.slice(checkPrefix.length));
               const gates = jobs.filter(job => job.name === "Validation Gate");
+              if (metadata.length) {
+                // Only one positively skipped native metadata job can be ignored.
+                // Unknown/mixed identities must never reveal an older CI result.
+                if (metadata.length !== 1 || gates.length || !nativeJob(metadata[0]) ||
+                    metadata[0].conclusion !== "skipped") return;
+                const {data: latestMetadata} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
+                if (!matchesCi(latestMetadata)) return;
+                ci = null;
+                continue;
+              }
               const gate = gates.length === 1 ? gates[0] : null;
               const preservation = gate?.steps?.filter(step => step.name === "Preserve successful required gate on metadata-only edit") || [];
               const enforcement = gate?.steps?.filter(step => step.name === "Enforce validation success") || [];
-              const checkPrefix = `https://api.github.com/repos/${repository}/check-runs/`;
               if (!gate || !positive(gate.id) || gate.run_id !== ci.id || gate.run_attempt !== ci.run_attempt ||
                   gate.head_sha !== head || ![ciWorkflow.name, ciTitle].includes(gate.workflow_name) || gate.status !== "completed" ||
                   typeof gate.check_run_url !== "string" || !gate.check_run_url.startsWith(checkPrefix) ||
@@ -147,6 +172,8 @@ jobs:
                     gate.check_run_url.startsWith(checkPrefix) && /^[1-9][0-9]*$/.test(gate.check_run_url.slice(checkPrefix.length)) &&
                     preservation.length === 1 && preservation[0].status === "completed" && preservation[0].conclusion === "success" &&
                     enforcement.length === 1 && enforcement[0].status === "completed" && enforcement[0].conclusion === "skipped") {
+                  const {data: latestMetadata} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
+                  if (!matchesCi(latestMetadata)) return;
                   ci = null;
                   continue;
                 }
