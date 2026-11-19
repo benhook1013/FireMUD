@@ -523,6 +523,8 @@ async function scenario(kind, event = "pull_request") {
     head_repository: {full_name: repository}, path: ".github/workflows/runtime-images.yml",
     event, head_sha: event === "pull_request" ? head : defaultSha, head_branch: "develop", display_title: title,
     status: "completed", conclusion: "success", pull_requests: []};
+  const incompleteSnapshot = kind.startsWith("incomplete-snapshot-");
+  let snapshotRerunVisible = false;
   const job = {id: 100, run_id: 42, run_attempt: 1, head_sha: source.head_sha,
     check_run_url: `https://api.github.com/repos/${repository}/check-runs/100`,
     name: "PR Full-Stack Smoke (runtime-required=true)", status: "completed", conclusion: "success",
@@ -567,6 +569,10 @@ async function scenario(kind, event = "pull_request") {
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
       getWorkflowRun: async () => {
         currentRunReads += 1;
+        if (incompleteSnapshot) {
+          snapshotRerunVisible = kind === "incomplete-snapshot-superseded";
+          return {data: {...source, run_attempt: snapshotRerunVisible ? 2 : 1}};
+        }
         const superseded = kind === "newer-attempt" || (kind === "rerun-after-proof" && currentRunReads > 1);
         return {data: {...source, run_attempt: superseded ? 2 : 1, status: superseded ? "in_progress" : "completed"}};
       },
@@ -578,7 +584,16 @@ async function scenario(kind, event = "pull_request") {
   }, paginate: async (method, input) => {
     if (method === listJobs) { snapshots += 1; return kind === "duplicate-jobs" ? [job, {...job, id: 101}] : [job]; }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
-    assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
+    assert.equal(input.run_id, 42);
+    if (incompleteSnapshot) {
+      snapshots += 1;
+      if (input.attempt_number === 1) return [];
+      assert.equal(input.attempt_number, 2);
+      return [{...job, run_attempt: 2, steps: [
+        ...job.steps, {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"},
+      ]}];
+    }
+    assert.equal(input.attempt_number, 1);
     const mutations = {
       "wrong-job": {id: 101}, "wrong-job-run": {run_id: 43}, "wrong-job-attempt": {run_attempt: 2},
       "wrong-job-head": {head_sha: defaultSha}, "wrong-check-url": {check_run_url: "https://example.com/check"},
@@ -599,6 +614,9 @@ async function scenario(kind, event = "pull_request") {
       const forbidden = kind.endsWith("-forbidden");
       throw Object.assign(new Error(forbidden ? "optional inventory forbidden" : "optional inventory unavailable"),
         {status: forbidden ? 403 : 503});
+    }
+    if (incompleteSnapshot) {
+      yield {data: [{...source, run_attempt: snapshotRerunVisible ? 2 : 1}]}; return;
     }
     yield {data: kind.startsWith("duplicate-") && !["duplicate-jobs", "duplicate-attempt-jobs"].includes(kind)
       ? [{...source, id: 43, created_at: "2026-09-01T00:00:01Z", status: "in_progress", conclusion: null}, source] : [source]};
@@ -643,6 +661,11 @@ async function scenario(kind, event = "pull_request") {
     assert.equal((await scenario(kind)).failures.length, 1, `${kind} must not supply successful proof`);
   }
   assert.equal((await scenario("wrong-dispatch-branch", "repository_dispatch")).failures.length, 1);
+  const supersededSnapshot = await scenario("incomplete-snapshot-superseded");
+  assert(supersededSnapshot.info.some(line => line.includes("superseded the incomplete smoke snapshot")));
+  assert.deepEqual(supersededSnapshot.failures, [], "reselection must qualify the newer attempt's own exact smoke evidence");
+  const unchangedSnapshot = await scenario("incomplete-snapshot-unchanged");
+  assert.match(unchangedSnapshot.failures[0], /did not expose a terminal PR Full-Stack Smoke job/);
   const stableFallback = await scenario("trusted-current-base-stable", "repository_dispatch");
   assert.deepEqual(stableFallback.failures, [], "unchanged current-base tuple still accepts exact refresh proof");
   const advancedFallback = await scenario("trusted-current-base-advances", "repository_dispatch");

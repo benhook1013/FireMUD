@@ -1388,6 +1388,19 @@ jobs:
                     ));
                     continue;
                   }
+                  // A rerun may have superseded the attempt whose snapshot never materialized.
+                  // Only the same run's provably newer attempt warrants reselection.
+                  const { data: latestSnapshotAttempt } = await withTransientGitHubRetry(
+                    "runtime attempt lookup after incomplete smoke snapshot",
+                    () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                  );
+                  if (positiveInteger(matching.run_attempt) && latestSnapshotAttempt.id === matching.id &&
+                      positiveInteger(latestSnapshotAttempt.run_attempt) &&
+                      latestSnapshotAttempt.run_attempt > matching.run_attempt) {
+                    core.info("Runtime attempt superseded the incomplete smoke snapshot; resume exact selection.");
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
                   const snapshotRetrySummary = maxCompletedJobSnapshotRetries === 0
                     ? "before the remaining workflow deadline allowed a retry"
                     : `after ${maxCompletedJobSnapshotRetries} retries`;
