@@ -426,6 +426,10 @@ fake_labels_json() {
   fi
   printf '%s' "$labels_json"
 }
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/preview.yml' ]]; then
+  printf '%s\n' '{"id":173511323,"name":"PR Preview Environment","path":".github/workflows/preview.yml"}'
+  exit 0
+fi
 if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == */actions/runs\?event=pull_request\&status=* || "$resource" == */actions/runs\?event=pull_request_target\&status=* || "$resource" == */actions/runs\?event=workflow_run\&status=*) ]]; then
   active_query_status="${resource##*&status=}"
   active_query_status="${active_query_status%%&*}"
@@ -2576,7 +2580,7 @@ for tuple_case in current qualified old_merge missing ambiguous stale_attempt wr
       else {jobs:.,total_count:length} end')"
   latest_source="$(jq -cn --arg head "$preview_head_sha" --arg variant "$tuple_case" '
     {id:5254,run_attempt:(if $variant == "stale_attempt" or $variant == "stale_attempt_old_tuple" then 3 else 2 end),
-     head_sha:$head,event:"pull_request",path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_latest_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),status:"in_progress"}
+     head_sha:$head,event:"pull_request",workflow_id:173511323,repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},pull_requests:[{number:901}],path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_latest_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),status:"in_progress"}
      | if $variant == "latest_missing_head" then del(.head_sha)
        elif $variant == "latest_missing_path" then del(.path) else . end')"
   (
@@ -2589,7 +2593,7 @@ for tuple_case in current qualified old_merge missing ambiguous stale_attempt wr
       FAKE_PREVIEW_SOURCE_LATEST_FAIL="$([[ "$tuple_case" == latest_unavailable ]] && echo true || echo false)" \
       FAKE_PREVIEW_PLAN_JOBS_JSON="$plan_jobs" \
       FAKE_PREVIEW_SOURCE_LATEST_JSON="$latest_source" \
-      FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn --arg variant "$tuple_case" '[{workflow_runs:[{id:5254,run_attempt:2,event:"pull_request",path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_list_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",pull_requests:[{number:901}],name:"PR Preview Environment",head_branch:"feature-preview",display_title:"PR preview 901",status:"in_progress"}]}]')" \
+      FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn --arg variant "$tuple_case" '[{workflow_runs:[{id:5254,run_attempt:2,event:"pull_request",workflow_id:173511323,repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_list_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",pull_requests:[{number:901}],name:"PR Preview Environment",head_branch:"feature-preview",display_title:"PR preview 901",status:"in_progress"}]}]')" \
       PREVIEW_MAX_ACTIVE=2 \
       bash "$RECONCILER_RUN"
   ) > "$reconciler_pull_request_output"
@@ -2765,7 +2769,7 @@ reconciler_paginated_active_output="$TEMP_DIR/reconciler-paginated-active.out"
       --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" \
       '[
         {workflow_runs: []},
-        {workflow_runs: [{id: 4242, path: ".github/workflows/preview.yml", name: "PR Preview Environment", head_branch: "develop", display_title: $title, status: "queued"}]}
+        {workflow_runs: [{id: 4242, run_attempt: 1, workflow_id: 173511323, event: "repository_dispatch", path: ".github/workflows/preview.yml", name: $title, head_branch: "develop", head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", repository: {full_name: "example/FireMUD"}, head_repository: {full_name: "example/FireMUD"}, display_title: $title, status: "queued"}]}
       ]')" \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
