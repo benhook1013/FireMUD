@@ -95,7 +95,6 @@ import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdm
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadClient;
-import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementInput;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountInitialAdmissionSettlementReadClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionSettlementClient;
@@ -2084,13 +2083,59 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 .isEqualTo(protectedAccount);
             assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
                 .isEqualTo(gsBefore);
+            UUID settlementRequestId = UUID.randomUUID();
+            var originalRecoveryIdentity = identity.get();
             var participationSettlement =
-                worldParticipationSettlement.settle(
-                    new AccountStartSessionWorldParticipationSettlementInput(
-                        NAMESPACE,
-                        UUID.randomUUID(),
-                        identity.get().accountWorldParticipationId(),
-                        identity.get().accountWorldParticipationFence()));
+                new WorldOriginalOperationSettlementRecovery(
+                        serviceFactory.get(), worldParticipationSettlement)
+                    .recover(originalRecoveryIdentity, settlementRequestId)
+                    .orElseThrow();
+            // Recreate the recovery service and every outbound recovery client, preserving only
+            // the original lookup/correlation and actual owner storage. This is component restart,
+            // not an operating-system crash or a restarted database/server deployment.
+            var worldRowsBeforeRecoveryReplay = allRows(world.dsl());
+            var accountRowsBeforeRecoveryReplay = allRows(issuer.sourceDsl());
+            var gameSessionRowsBeforeRecoveryReplay = allRows(gs.dsl());
+            try (var restartedSettlement =
+                    new GrpcAccountStartSessionWorldParticipationSettlementClient(
+                        accountEndpoints,
+                        pki.client("world-management-service"),
+                        factory,
+                        NAMESPACE);
+                var restartedAccountHistory =
+                    new AccountStartSessionWorldParticipationHistoricalReadClient(
+                        accountEndpoints,
+                        pki.client("world-management-service"),
+                        factory,
+                        NAMESPACE);
+                var restartedGameSessionHistory =
+                    new HistoricalOriginalStartSessionOwnerEvidenceReadClient(
+                        gsEndpoints, pki.client("world-management-service"), factory, NAMESPACE)) {
+              restartedSettlement.init();
+              restartedAccountHistory.init();
+              restartedGameSessionHistory.init();
+              var restartedPreparation =
+                  new WorldCanonicalInstancePreparationService(
+                      repository,
+                      verifiedOwner,
+                      new WorldCanonicalInstanceOriginalOperationRecoveryVerifier(
+                          restartedAccountHistory, restartedGameSessionHistory),
+                      world.installationRegistry());
+              var restartedRecovery =
+                  new WorldOriginalOperationSettlementRecovery(
+                      restartedPreparation, restartedSettlement);
+              var replay =
+                  restartedRecovery
+                      .recover(originalRecoveryIdentity, settlementRequestId)
+                      .orElseThrow();
+              assertThat(replay.settlementRequestId()).isEqualTo(settlementRequestId);
+              assertThat(replay.terminal().canonicalBytes())
+                  .containsExactly(participationSettlement.terminal().canonicalBytes());
+              assertThat(replay.settledAt()).isEqualTo(participationSettlement.settledAt());
+            }
+            assertThat(allRows(world.dsl())).isEqualTo(worldRowsBeforeRecoveryReplay);
+            assertThat(allRows(issuer.sourceDsl())).isEqualTo(accountRowsBeforeRecoveryReplay);
+            assertThat(allRows(gs.dsl())).isEqualTo(gameSessionRowsBeforeRecoveryReplay);
             assertThat(participationSettlement.terminal().canonicalBytes())
                 .containsExactly(recovered.get().canonicalBytes());
             byte[] participationTerminalBytes =
