@@ -64,7 +64,6 @@ run_telnet_smoke_session(
         login_expect,
         play_expect,
         look_expect,
-        lobby=True,
     ),
     timeout_seconds,
     retry_window_seconds=timeout_seconds,

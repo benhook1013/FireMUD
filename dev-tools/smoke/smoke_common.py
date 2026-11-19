@@ -354,9 +354,7 @@ def login_play_look_steps(
     look_timeout=None,
     realm=None,
     character=None,
-    lobby=False,
 ):
-    """Authenticated Telnet LOGIN admits only after the explicit REALMS/JOIN lobby steps."""
     play_parts = ["PLAY", world]
     if realm:
         play_parts.append(realm)
@@ -365,13 +363,6 @@ def login_play_look_steps(
     steps = [
         ("WORLDS", [worlds_expect], "WORLDS"),
         (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
-    ]
-    if lobby:
-        steps += [
-            (f"REALMS {world}", ["OK REALMS"], "REALMS"),
-            (f"JOIN {world}", ["OK JOIN"], "JOIN"),
-        ]
-    steps += [
         (" ".join(play_parts), [play_expect], "PLAY"),
         ("LOOK", [look_expect], "LOOK"),
     ]
@@ -380,6 +371,19 @@ def login_play_look_steps(
     return [
         (line, expected, label, look_timeout) if label == "LOOK" else (line, expected, label)
         for (line, expected, label) in steps
+    ]
+
+
+def authenticated_telnet_login_steps(username, password, world, login_expect):
+    """Telnet steps the authenticated Gateway path supports before canonical admission.
+
+    Telnet WORLDS/REALMS/JOIN/PLAY/LOOK is deferred until the canonical admission chain
+    (realm catalog, initial admission, final binding) has a runtime owner; WebSocket keeps
+    the LOGIN -> PLAY -> LOOK proof. Until then Telnet PLAY must stay fail-closed.
+    """
+    return [
+        (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+        (f"PLAY {world}", ["ERROR ADMISSION_UNAVAILABLE"], "PLAY"),
     ]
 
 
@@ -543,7 +547,6 @@ def gameplay_item_container_equipment_steps(
     look_expect,
     world="demo",
     look_timeout=None,
-    lobby=False,
 ):
     steps = login_play_look_steps(
         username,
@@ -553,7 +556,6 @@ def gameplay_item_container_equipment_steps(
         login_expect,
         play_expect,
         look_expect,
-        lobby=lobby,
     ) + [
         ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"),
         ("GET Torch", ["You pick up Torch."], "GET"),
