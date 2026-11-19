@@ -35,6 +35,7 @@ import io.grpc.stub.ServerCalls;
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,6 +43,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
@@ -3190,6 +3192,74 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     return sql.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant();
   }
 
+  private record TableFingerprint(long rowCount, String sha256) {}
+
+  private static Map<String, TableFingerprint> orderedRowFingerprints(DSLContext sql) {
+    return sql.connectionResult(
+        connection -> {
+          // pgJDBC needs a transaction and a positive fetch size to use a server cursor.
+          if (!connection.getAutoCommit()) {
+            throw new SQLException("Owner-pair fingerprint requires its own read-only transaction");
+          }
+          boolean originalReadOnly = connection.isReadOnly();
+          connection.setReadOnly(true);
+          try {
+            connection.setAutoCommit(false);
+            try {
+              return readOrderedRowFingerprints(connection);
+            } finally {
+              connection.rollback();
+              connection.setAutoCommit(true);
+            }
+          } finally {
+            connection.setReadOnly(originalReadOnly);
+          }
+        });
+  }
+
+  private static Map<String, TableFingerprint> readOrderedRowFingerprints(Connection connection)
+      throws SQLException {
+    var tables = new ArrayList<String>();
+    try (var statement = connection.createStatement();
+        var result =
+            statement.executeQuery(
+                "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename")) {
+      while (result.next()) {
+        tables.add(result.getString(1));
+      }
+    }
+    var fingerprints = new TreeMap<String, TableFingerprint>();
+    try (var statement =
+        connection.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+      statement.setFetchSize(1);
+      var frame = ByteBuffer.allocate(Integer.BYTES);
+      var sha256 = MessageDigest.getInstance("SHA-256");
+      for (String table : tables) {
+        sha256.reset();
+        long count = 0;
+        String quotedTable = "\"" + table.replace("\"", "\"\"") + "\"";
+        try (var result =
+            statement.executeQuery(
+                "SELECT row_to_json(t)::text || '|xmin=' || t.xmin::text AS body FROM "
+                    + quotedTable
+                    + " t ORDER BY row_to_json(t)::text,t.xmin::text")) {
+          while (result.next()) {
+            byte[] row = result.getString(1).getBytes(StandardCharsets.UTF_8);
+            frame.putInt(0, row.length);
+            sha256.update(frame.array());
+            sha256.update(row);
+            count++;
+          }
+        }
+        fingerprints.put(
+            table, new TableFingerprint(count, HexFormat.of().formatHex(sha256.digest())));
+      }
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 unavailable", e);
+    }
+    return fingerprints;
+  }
+
   private static void assertActualOperationPair(OperationProof first, OperationProof second) {
     assertThat(first.world()).isSameAs(second.world());
     assertThat(first.input().canonicalGameInstanceId())
@@ -3250,11 +3320,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     assertThat(alternateVersion.canonicalVersionId())
         .isNotEqualTo(first.input().versionIdentity().canonicalVersionId());
 
-    var worldBefore = allRows(first.world().dsl());
-    var firstGsBefore = allRows(first.gs().dsl());
-    var secondGsBefore = allRows(second.gs().dsl());
-    var firstAccountBefore = allRows(first.account());
-    var secondAccountBefore = allRows(second.account());
+    var worldBefore = orderedRowFingerprints(first.world().dsl());
+    var firstGsBefore = orderedRowFingerprints(first.gs().dsl());
+    var secondGsBefore = orderedRowFingerprints(second.gs().dsl());
+    var firstAccountBefore = orderedRowFingerprints(first.account());
+    var secondAccountBefore = orderedRowFingerprints(second.account());
     for (var own : List.of(first, second)) {
       var foreign = own == first ? second : first;
       assertThatThrownBy(
@@ -3304,7 +3374,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       assertThat(own.candidateReads()).hasValue(candidates);
       assertThat(own.association().readOwnerAssociation(own.input().canonicalGameInstanceId()))
           .contains(own.result().association());
-      assertThat(allRows(first.world().dsl())).isEqualTo(worldBefore);
+      assertThat(orderedRowFingerprints(first.world().dsl())).isEqualTo(worldBefore);
     }
     assertThatThrownBy(
             () ->
@@ -3382,11 +3452,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     assertThat(first.repository().readOwnerPreparation(currentObservation))
         .contains(first.result());
     assertThat(first.verificationCalls()).hasValue(verificationBeforeHistoricalRead);
-    assertThat(allRows(first.world().dsl())).isEqualTo(worldBefore);
-    assertThat(allRows(first.gs().dsl())).isEqualTo(firstGsBefore);
-    assertThat(allRows(second.gs().dsl())).isEqualTo(secondGsBefore);
-    assertThat(allRows(first.account())).isEqualTo(firstAccountBefore);
-    assertThat(allRows(second.account())).isEqualTo(secondAccountBefore);
+    assertThat(orderedRowFingerprints(first.world().dsl())).isEqualTo(worldBefore);
+    assertThat(orderedRowFingerprints(first.gs().dsl())).isEqualTo(firstGsBefore);
+    assertThat(orderedRowFingerprints(second.gs().dsl())).isEqualTo(secondGsBefore);
+    assertThat(orderedRowFingerprints(first.account())).isEqualTo(firstAccountBefore);
+    assertThat(orderedRowFingerprints(second.account())).isEqualTo(secondAccountBefore);
     assertThat(
             first
                 .repository()
