@@ -183,6 +183,11 @@ async function noWrites(config, reject = false) {
         + ': `' + conclusion + '`'));
     }
   }
+  const newModules = harness({jobs: [...clone(jobs),
+    row('Build and Test (recovery-controller-service / full)', 995),
+    row('Build and Test (common-redis-contracts / full)', 996)]});
+  await newModules.run();
+  assert.match(newModules.calls.creates[0].body, /All validation checks passed/);
   const metadataSplit = clone(jobs);
   for (const job of metadataSplit) { job.conclusion = 'skipped'; job.steps = []; }
   assert.equal((await noWrites({ jobs: metadataSplit })).comments.length, 0);

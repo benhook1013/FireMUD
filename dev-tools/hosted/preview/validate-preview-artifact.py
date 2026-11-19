@@ -882,6 +882,11 @@ def _expected_gateway_container_env(expected_namespace: str) -> list[dict]:
         {"name": "SPRING_FLYWAY_TABLE", "value": "flyway_schema_history_gateway"},
         {"name": "SERVICE_SCHEMA", "value": "gateway"},
         {
+            "name": "JAVA_TOOL_OPTIONS",
+            "value": "-XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=64m -Xss512k",
+        },
+        {"name": "MALLOC_ARENA_MAX", "value": "2"},
+        {
             "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
             "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
         },

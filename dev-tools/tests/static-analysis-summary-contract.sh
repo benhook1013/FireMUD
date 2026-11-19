@@ -15,8 +15,8 @@ if ! awk '
 fi
 
 grep -Fq 'github.paginate(github.rest.actions.listWorkflowRuns' "$workflow"
-grep -Fq 'workflowRunFor("codeql.yml", "CodeQL Gate", checkRuns)' "$workflow"
-grep -Fq 'workflowRunFor("license-scan.yml", "License Gate", checkRuns)' "$workflow"
+grep -Fq 'workflowRunFor("codeql.yml", "CodeQL Gate")' "$workflow"
+grep -Fq 'workflowRunFor("license-scan.yml", "License Gate")' "$workflow"
 grep -Fq 'head_sha: headSha,' "$workflow"
 grep -Fq 'return "skipped";' "$workflow"
 grep -Fq 'run_attempt' "$workflow"
@@ -31,7 +31,7 @@ grep -Fq 'group: static-analysis-summary-pr-${{ needs.resolve-summary-target.out
 grep -Fq 'const headSha = currentPullRequest.head?.sha;' "$workflow"
 grep -Fq 'context.payload.workflow_run.display_title !== expectedSourceTitle' "$workflow"
 grep -Fq 'finalPullRequest.base?.sha !== baseSha' "$workflow"
-grep -Fq 'workflowRun?.display_title === expectedTitle' "$workflow"
+grep -Fq 'run?.display_title === expectedTitle' "$workflow"
 grep -Fq 'comment.user?.login === "github-actions[bot]"' "$workflow"
 grep -Fq 'if (comment.id === existing?.id) continue;' "$workflow"
 
@@ -159,7 +159,17 @@ const calls = { paginate: [], deleted: [], updated: [], created: [] };
 const codeqlListWorkflowRuns = async () => undefined;
 const checksListForRef = async () => undefined;
 const commentsList = async () => undefined;
+const jobRequests = [];
 const github = {
+  request: async (route, input) => {
+    if (route !== "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs") throw new Error("unexpected native request");
+    jobRequests.push(input);
+    if (input.attempt_number !== 1 || input.per_page !== 100) throw new Error("candidate must use exact attempt and bounded jobs");
+    const metadata = input.run_id === 270;
+    const name = metadata ? "github.event.action == 'edited' && 'PR Metadata Edit (CodeQL Gate)' || 'CodeQL Gate'" :
+      input.run_id % 1000 === 300 ? "License Gate" : "CodeQL Gate";
+    return { data: { total_count: 1, jobs: [{ name, status: "completed", conclusion: metadata ? "skipped" : "success" }] } };
+  },
   rest: {
     pulls: { get: async () => {
       pullRequestReads += 1;
@@ -264,8 +274,8 @@ const github = {
         },
         {
           id: 2701,
-          // Native skipped-job name: GitHub leaves the expression unevaluated.
-          name: "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (CodeQL Gate)' || 'CodeQL Gate'",
+          // Initial checks precede the new metadata run; candidate jobs classify it later.
+          name: "Unrelated earlier snapshot",
           status: "completed",
           conclusion: "skipped",
           created_at: "2026-09-20T12:00:01Z",
@@ -653,6 +663,21 @@ run(github, context, core).then(async () => {
                 await assertCompletionOrders();
                 await assertInterruptedRecovery();
                 await assertAssociationSelection();
+                if (!jobRequests.some(input => input.run_id === 270)) throw new Error("metadata race was not classified from candidate jobs");
+                const savedRequest = github.request;
+                github.request = async () => ({ data: { total_count: 1, jobs: [{ name: "Unrelated job", status: "completed", conclusion: "success" }] } });
+                const unknownStart = calls.updated.length;
+                await run(github, context, core);
+                const unknownWrites = calls.updated.slice(unknownStart);
+                if (!unknownWrites.length || unknownWrites.some(row => row.body.includes("checks passed"))) throw new Error("unclassified successful jobs must not yield a green summary");
+                if (!unknownWrites.some(row => row.body.includes("in_progress"))) throw new Error("unclassified candidate must remain pending");
+                const writesBefore = calls.updated.length + calls.created.length;
+                github.request = async () => ({ data: { total_count: 101, jobs: [] } });
+                let refused = false;
+                try { await run(github, context, core); } catch (error) {
+                  refused = error.message.includes("jobs are incomplete");
+                } finally { github.request = savedRequest; }
+                if (!refused || calls.updated.length + calls.created.length !== writesBefore) throw new Error("incomplete candidate jobs must not publish success");
                 console.log("static analysis summary behavioral contract passed");
               },
             );

@@ -2689,6 +2689,29 @@ class PreviewArtifactGatewayContractTest(unittest.TestCase):
         ):
             self.validator.validate_service_consumers([document], "pr-42")
 
+    def test_gateway_jvm_profile_matches_chart_and_rejects_value_changes(self):
+        defaults = yaml.safe_load((ROOT / "k8s/helm/firemud/values.yaml").read_text())
+        expected = {
+            "JAVA_TOOL_OPTIONS": defaults["previewStack"]["jvm"]["javaToolOptions"],
+            "MALLOC_ARENA_MAX": defaults["previewStack"]["jvm"]["mallocArenaMax"],
+        }
+        env = self.validator._expected_gateway_container_env("pr-42")
+        self.assertEqual(
+            {row["name"]: row["value"] for row in env if row["name"] in expected},
+            expected,
+        )
+        for name in expected:
+            with self.subTest(name=name):
+                document = self._gateway_document()
+                for row in document["spec"]["template"]["spec"]["containers"][0]["env"]:
+                    if row["name"] == name:
+                        row["value"] = "unapproved"
+                with (
+                    patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}),
+                    self.assertRaisesRegex(ValueError, "unsafe container env"),
+                ):
+                    self.validator.validate_service_consumers([document], "pr-42")
+
     def test_gateway_rejects_redirect_and_jvm_environment_injection(self):
         for injected in (
             {

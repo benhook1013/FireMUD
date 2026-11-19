@@ -110,15 +110,16 @@ def active_ids(row: dict[str, Any]) -> str:
         "--arg", "default_branch", "develop", "--arg", "pr_title", "PR preview 7",
         "--argjson", "pr_number", "7", "--arg", "head_sha", "a" * 40,
         "--arg", "run_name", "Preview dispatch pr-7-base-b-head-a-merge-c",
-        active_filter,
+        "(" + active_filter + ") | .id",
     ], input=json.dumps([row]), text=True).strip()
 active_run = {
     "id": 1, "name": "PR Preview Environment", "path": ".github/workflows/preview.yml",
     "head_branch": "feature", "head_sha": "a" * 40, "pull_requests": [{"number": 7}],
-    "display_title": "PR preview 7", "status": "in_progress",
+    "display_title": "PR preview 7", "status": "in_progress", "run_attempt": 1, "event": "pull_request",
     "firemud_reconciler_branch_filtered": False,
 }
 assert active_ids(active_run) == "1"
+assert active_ids({key: value for key, value in active_run.items() if key != "run_attempt"}) == ""
 assert active_ids({**active_run, "pull_requests": [{"number": 8}, {"number": 7}]}) == "1"
 assert active_ids({**active_run, "pull_requests": [{"number": 7}, {"number": 7}]}) == ""
 for fields in (

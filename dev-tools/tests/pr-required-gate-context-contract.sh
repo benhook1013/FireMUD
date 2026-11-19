@@ -50,6 +50,50 @@ def evaluate(expression, action, base_ref, event="pull_request"):
     return eval(body, {"__builtins__": {}})
 
 
+def excludes_metadata(expression):
+    body = expression.strip()
+    if body.startswith("${{") and body.endswith("}}"):
+        body = body[3:-2].strip()
+    if body == SUBSTANTIVE[1:-1] or body == PR_SUBSTANTIVE[1:-1]:
+        return True
+    # Only a required top-level conjunction can enforce the exclusion.
+    # Parenthesized additional conditions may contain OR without bypassing it.
+    depth = 0
+    quoted = False
+    start = 0
+    terms = []
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char == "'":
+            if quoted and index + 1 < len(body) and body[index + 1] == "'":
+                index += 2
+                continue
+            quoted = not quoted
+        elif not quoted:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth < 0:
+                    return False
+            elif depth == 0 and body[index:index + 2] == "||":
+                return False
+            elif depth == 0 and body[index:index + 2] == "&&":
+                terms.append(body[start:index].strip())
+                start = index + 2
+                index += 1
+        index += 1
+    terms.append(body[start:].strip())
+    return not quoted and depth == 0 and any(term in (SUBSTANTIVE, PR_SUBSTANTIVE) for term in terms)
+
+
+assert excludes_metadata("${{ " + SUBSTANTIVE + " && needs.changes.result == 'success' }}")
+assert excludes_metadata("${{ always() && " + PR_SUBSTANTIVE + " && (true || false) }}")
+assert not excludes_metadata("${{ github.event_name == 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}")
+assert not excludes_metadata("${{ " + SUBSTANTIVE + " || always() }}")
+assert not excludes_metadata("${{ (" + SUBSTANTIVE + " || always()) }}")
+
 for directory in (".github/actions/preserve-required-gate", ".github/actions/publish-required-gate-status"):
     if (root / directory).exists():
         raise SystemExit(f"retired metadata preservation machinery must stay deleted: {directory}")
@@ -108,7 +152,7 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
         if job_id == gate_job:
             continue
         condition = job.get("if", "")
-        if "github.event.action != 'edited' || github.event.changes.base.ref != null" not in condition:
+        if not excludes_metadata(condition):
             raise SystemExit(f"{workflow} job {job_id} can run for a metadata-only edit")
         if job.get("name") in {name for _, _, name, *_ in gates.values()}:
             raise SystemExit(f"{workflow} job {job_id} must not reuse a required gate name")

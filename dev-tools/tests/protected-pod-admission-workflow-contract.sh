@@ -29,10 +29,10 @@ with tempfile.TemporaryDirectory(prefix="firemud-policy-wait-") as directory:
     command("kubectl", '''import os,pathlib,json,sys
 p=pathlib.Path(os.environ["CALLS"]);n=int(p.read_text()) if p.exists() else 0;p.write_text(str(n+1))
 if os.environ["CASE"]=="api-error":sys.exit(1)
-ready=os.environ["CASE"]=="ready" or (os.environ["CASE"]=="late" and n>0)
-print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Fail"},"status":{"observedGeneration":2 if ready else 1,"typeChecking":{"expressionWarnings":["bad"] if os.environ["CASE"]=="warnings" else []}}}))
+ready=os.environ["CASE"] in ("ready", "warnings", "ignore") or (os.environ["CASE"]=="late" and n>0)
+print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" if os.environ["CASE"]=="ignore" else "Fail"},"status":{"observedGeneration":2 if ready else 1,"typeChecking":{"expressionWarnings":["bad"] if os.environ["CASE"]=="warnings" else []}}}))
 ''')
-    for case, success in [("ready", True), ("late", True), ("stale", False), ("warnings", False), ("api-error", False)]:
+    for case, success in [("ready", True), ("late", True), ("stale", False), ("warnings", False), ("ignore", False), ("api-error", False)]:
         for name in ("clock", "calls"):
             (tmp/name).unlink(missing_ok=True)
         env = dict(os.environ, PATH=str(tmp)+":"+os.environ["PATH"], CASE=case,

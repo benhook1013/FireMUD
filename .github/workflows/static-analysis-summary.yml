@@ -161,19 +161,6 @@ jobs:
               return numericIdentity(left?.id) - numericIdentity(right?.id);
             };
 
-            const selectLatestWorkflowRun = (workflowRuns) => {
-              const candidates = (Array.isArray(workflowRuns) ? workflowRuns : []).filter(
-                (workflowRun) =>
-                  workflowRun?.event === "pull_request" &&
-                  workflowRun?.head_sha === headSha
-              );
-              return candidates.reduce(
-                (latest, candidate) =>
-                  !latest || compareWorkflowRuns(candidate, latest) > 0 ? candidate : latest,
-                null
-              );
-            };
-
             const checkRunWorkflowId = (checkRun) => {
               const match = String(checkRun?.details_url || "").match(/\/actions\/runs\/(\d+)(?:\/|$)/);
               return match?.[1] || null;
@@ -183,17 +170,8 @@ jobs:
             // earlier substantive run for the same title remains the result.
             // GitHub leaves a skipped job's name expression unevaluated, so match
             // the metadata label inside it.
-            const workflowRunFor = async (workflowId, gateName, checkRuns) => {
+            const workflowRunFor = async (workflowId, gateName) => {
               const workflowName = workflowId === "codeql.yml" ? "CodeQL Analysis" : "License Gate";
-              const metadataRunIds = new Set((Array.isArray(checkRuns) ? checkRuns : [])
-                .filter((checkRun) => {
-                  if (checkRun?.status !== "completed" || checkRun?.conclusion !== "skipped") return false;
-                  const name = String(checkRun.name || "");
-                  const metadataName = `PR Metadata Edit (${gateName})`;
-                  return name === metadataName || name.includes(`'${metadataName}'`);
-                })
-                .map(checkRunWorkflowId)
-                .filter(Boolean));
               const expectedTitle = `${workflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
               const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
                 ...context.repo,
@@ -202,10 +180,32 @@ jobs:
                 head_sha: headSha,
                 per_page: 100,
               });
-              return selectLatestWorkflowRun(
-                workflowRuns.filter((workflowRun) =>
-                  workflowRun?.display_title === expectedTitle && !metadataRunIds.has(String(workflowRun.id)))
-              );
+              const candidates = workflowRuns.filter((run) =>
+                run?.display_title === expectedTitle && run.event === "pull_request" &&
+                run.head_sha === headSha).sort((a, b) => compareWorkflowRuns(b, a));
+              for (const candidate of candidates) {
+                if (!Number.isSafeInteger(candidate.id) || candidate.id <= 0 ||
+                    !Number.isSafeInteger(candidate.run_attempt) || candidate.run_attempt <= 0) {
+                  throw new Error("Static summary candidate identity is unavailable.");
+                }
+                const { data } = await github.request(
+                  "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                  { ...context.repo, run_id: candidate.id, attempt_number: candidate.run_attempt, per_page: 100 }
+                );
+                if (!Array.isArray(data.jobs) || !Number.isSafeInteger(data.total_count) ||
+                    data.total_count !== data.jobs.length || data.total_count >= 100) {
+                  throw new Error("Static summary candidate jobs are incomplete.");
+                }
+                const metadataName = `PR Metadata Edit (${gateName})`;
+                const metadata = data.jobs.some(job => job.status === "completed" &&
+                  job.conclusion === "skipped" &&
+                  (job.name === metadataName || String(job.name || "").includes("'" + metadataName + "'")));
+                const substantive = data.jobs.some(job => job.name === gateName);
+                if (metadata && !substantive) continue;
+                if (!substantive) return { ...candidate, status: "in_progress", conclusion: null };
+                return candidate;
+              }
+              return null;
             };
 
             const compareCheckRuns = (left, right) => {
@@ -282,8 +282,8 @@ jobs:
 
             const checkRuns = await loadChecks();
             const workflowRuns = {
-              codeql: await workflowRunFor("codeql.yml", "CodeQL Gate", checkRuns),
-              license: await workflowRunFor("license-scan.yml", "License Gate", checkRuns),
+              codeql: await workflowRunFor("codeql.yml", "CodeQL Gate"),
+              license: await workflowRunFor("license-scan.yml", "License Gate"),
             };
             // Each serialized producer completion publishes one bounded snapshot.
             // A running counterpart stays pending until its completion callback refreshes this comment.

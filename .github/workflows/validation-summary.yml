@@ -172,6 +172,7 @@ jobs:
               "entity-management-service", "game-design-service", "game-logic-service", "game-session-service",
               "logging-admin-service", "social-groups-service", "spring-cloud-gateway", "tcp-proxy-service",
               "world-management-service", "hosted-environment-identity-controller", "load-testing",
+              "recovery-controller-service", "common-redis-contracts",
             ]);
             const placeholders = new Map([
               ["Build and Test ($" + "{{ matrix.module }})", "legacy"],
