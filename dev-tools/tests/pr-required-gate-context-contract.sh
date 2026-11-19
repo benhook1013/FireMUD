@@ -147,6 +147,8 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     result_steps = [step for step in gate.get("steps", []) if step.get("name") == result_step]
     if len(result_steps) != 1 or result_steps[0].get("env", {}).get("CHANGES_RESULT") != "${{ needs.changes.result }}":
         raise SystemExit(f"{workflow} {gate_name} must enforce through one {result_step!r} step reading CHANGES_RESULT")
+    if "if" in result_steps[0]:
+        raise SystemExit(f"{workflow} {gate_name} result step must run unconditionally")
     if any("if" in step and "edited" in step["if"] for step in gate.get("steps", [])):
         raise SystemExit(f"{workflow} {gate_name} steps must not branch on edits; the job condition owns that")
 
@@ -507,7 +509,7 @@ const repository = "example/firemud";
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
 async function scenario(kind, event = "pull_request") {
   let now = 1000, snapshots = 0, reads = 0, currentRunReads = 0;
-  const failures = [], refs = [];
+  const failures = [], refs = [], info = [];
   const context = {repo: {owner: "example", repo: "firemud"}, sha: merge, payload: {
     repository: {default_branch: "develop"},
     pull_request: {number: 42, head: {sha: head, repo: {full_name: repository}},
@@ -592,9 +594,9 @@ async function scenario(kind, event = "pull_request") {
       ? [{...source, id: 43, created_at: "2026-09-01T00:00:01Z", status: "in_progress", conclusion: null}, source] : [source]};
   };
   const clock = {now: () => now, parse: Date.parse};
-  await execute(github, context, {info: () => {}, warning: () => {}, setFailed: message => failures.push(message)},
+  await execute(github, context, {info: message => info.push(message), warning: () => {}, setFailed: message => failures.push(message)},
     clock, (callback, duration) => {now += duration; queueMicrotask(callback);}, require);
-  return {failures, refs, snapshots};
+  return {failures, refs, snapshots, info};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -605,7 +607,12 @@ async function scenario(kind, event = "pull_request") {
   assert.deepEqual((await scenario("legacy-positive")).failures, []);
   assert.deepEqual((await scenario("pending-native-refresh", "repository_dispatch")).failures, [], "trusted successful refresh releases queued native wait");
   for (const kind of ["pending-native-refresh-skipped", "pending-native-refresh-failed"]) {
-    assert.equal((await scenario(kind, "repository_dispatch")).failures.length, 1, `${kind} cannot release queued native wait`);
+    const result = await scenario(kind, "repository_dispatch");
+    assert.equal(result.failures.length, 1, `${kind} cannot release queued native wait`);
+    assert(result.info.some(line => line.startsWith("Found runtime-images run 43 with status=queued")),
+      `${kind} must leave the native run selected`);
+    assert(!result.info.some(line => line.startsWith("Found runtime-images run 42 with status=")),
+      `${kind} must not select the refresh`);
   }
   for (const kind of ["duplicate-missing-step", "duplicate-nonterminal-step"]) {
     assert.deepEqual((await scenario(kind)).failures, [], `${kind} preserves canonical fallback`);
