@@ -36,7 +36,11 @@ class GatewayAuthRoutesTest {
           new Endpoint("recover-username", "recover-username", HttpMethod.POST));
 
   static void assertCatalog(GatewayProperties properties) {
-    assertThat(properties.getRoutes().stream().filter(r -> r.getId().startsWith("account-auth")))
+    properties.getRoutes().forEach(route -> assertThat(route.getId()).isNotNull());
+    assertThat(
+            properties.getRoutes().stream()
+                .filter(
+                    r -> java.util.Objects.requireNonNull(r.getId()).startsWith("account-auth")))
         .hasSize(ENDPOINTS.size());
     assertNoConfiguredPath(properties, "/api/account/auth/**");
     for (Endpoint endpoint : ENDPOINTS) {
@@ -85,7 +89,7 @@ class GatewayAuthRoutesTest {
           route.getPredicates().stream()
               .allMatch(
                   predicate -> {
-                    if (predicate.getName().equals("Path")) {
+                    if ("Path".equals(predicate.getName())) {
                       var config = new PathRoutePredicateFactory.Config();
                       config.setPatterns(List.copyOf(predicate.getArgs().values()));
                       return new PathRoutePredicateFactory(
@@ -94,7 +98,7 @@ class GatewayAuthRoutesTest {
                           .apply(config)
                           .test(exchange);
                     }
-                    if (predicate.getName().equals("Method")) {
+                    if ("Method".equals(predicate.getName())) {
                       var config = new MethodRoutePredicateFactory.Config();
                       config.setMethods(
                           predicate.getArgs().values().stream()
