@@ -371,7 +371,7 @@ jobs:
               .id == $id and .run_attempt != $attempt and .head_sha == $head
               and .event == $event and .workflow_id == $workflow_id
               and .repository.full_name == $repository and .head_repository.full_name == $repository
-              and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1)
+              and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1
               and (.path == ".github/workflows/preview.yml" or ($event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge")))
               and (.status | IN("requested", "queued", "in_progress", "waiting", "pending"))
               ' <<<"$latest" >/dev/null; then
@@ -381,7 +381,7 @@ jobs:
               .id == $id and .run_attempt == $attempt and .head_sha == $head
               and .event == $event and .workflow_id == $workflow_id
               and .repository.full_name == $repository and .head_repository.full_name == $repository
-              and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1)
+              and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1
               and (.path == ".github/workflows/preview.yml" or ($event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge")))
               and (.status | IN("requested", "queued", "in_progress", "waiting", "pending"))
             ' <<<"$latest" >/dev/null || return 1
