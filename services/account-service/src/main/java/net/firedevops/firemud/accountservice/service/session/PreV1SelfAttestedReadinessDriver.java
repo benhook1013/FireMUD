@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
@@ -26,6 +27,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * records a self-attested acceptance for each expected Pod from the protected inventory. Genuine
  * per-Pod verification is owed before v1 and listed in the player access tracker.
  */
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Private Account owner collaborators.")
 public final class PreV1SelfAttestedReadinessDriver {
   private static final Logger LOG = LoggerFactory.getLogger(PreV1SelfAttestedReadinessDriver.class);
 
