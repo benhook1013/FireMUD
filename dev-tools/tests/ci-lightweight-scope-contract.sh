@@ -43,6 +43,39 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     assert.deepEqual(JSON.parse(outputs.bootable_modules),
       compatible ? ["account-service"] : [...BOOTABLE_MODULES]);
   }
+  for (const [entries, count, expected, drift] of [
+    [[{filename: "design/README.md"}], 1, true],
+    [[{filename: "design/README.md"}], 1, false, "head-before"],
+    [[{filename: "design/README.md"}], 1, false, "head-after"],
+    [[{filename: "design/README.md"}], 1, false, "base-after"],
+    [[{filename: "design/README.md"}], 2, false],
+    [[{filename: "design/README.md", status: "renamed"}], 1, false],
+    [[{filename: "services/new-service/README.md"}], 1, false],
+    [[{filename: "design/README.md", previous_filename: "services/new-service/Main.java"}], 1, false],
+    [[{filename: "design/../services/Main.md"}], 1, false],
+    [[{filename: "design/README.md", previous_filename: "docs/old.md"}], 1, true],
+  ]) {
+    const outputs = {};
+    await execute(name => name === "node:fs" ? {existsSync: () => true} : {
+      ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
+      classifyGithubChangeScope: async () => ({runAll: false, affectedModules: [],
+        bootableModules: [], affectedServices: [], lightweightOnly: true}),
+    }, {rest: {pulls: {listFiles() {}, get: (() => {
+      let calls = 0;
+      return async () => { const call = calls++; return ({data: {number: 42, changed_files: count,
+        head: {sha: (drift === "head-before" || (drift === "head-after" && call > 0)) ? "c".repeat(40) : "a".repeat(40)},
+        base: {sha: drift === "base-after" && call > 0 ? "c".repeat(40) : "b".repeat(40)},
+      }}); };
+    })()}}, paginate: async () => entries.map(entry => ({status: "modified", ...entry}))},
+    {eventName: "pull_request", repo: {owner: "example", repo: "FireMUD"},
+      payload: {pull_request: {number: 42, changed_files: count,
+        head: {sha: "a".repeat(40)}, base: {sha: "b".repeat(40)}}}},
+    {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    assert.equal(outputs.lightweight_only, String(expected));
+    assert.equal(outputs.run_all, String(!expected));
+    assert.deepEqual(JSON.parse(outputs.affected_modules), expected ? [] : ALL_MODULES);
+    assert.deepEqual(JSON.parse(outputs.bootable_modules), expected ? [] : [...BOOTABLE_MODULES]);
+  }
   const shared = classifyChangeScope(["services/common-redis-contracts/src/main/java/Example.java"]);
   assert.deepEqual(shared.affectedModules, ALL_MODULES);
   assert.ok(!shared.bootableModules.includes("common-redis-contracts"));

@@ -112,11 +112,47 @@ jobs:
               const moduleScopeAvailable =
                 Array.isArray(scope.affectedModules) && Array.isArray(scope.bootableModules) &&
                 Array.isArray(ALL_MODULES) && completeModules.every(module => ALL_MODULES.includes(module));
+              // An old module inventory must not turn proven documentation-only PRs
+              // into full builds. Re-read complete native paths rather than trusting
+              // an old classifier's module knowledge for new service directories.
+              let documentationOnly = false;
+              if (!moduleScopeAvailable && scope.lightweightOnly === true &&
+                  context.eventName === "pull_request") {
+                try {
+                  const eventPr = context.payload.pull_request;
+                  const exactEvent = pr => pr && /^[0-9a-f]{40}$/i.test(eventPr.head?.sha || "") &&
+                    /^[0-9a-f]{40}$/i.test(eventPr.base?.sha || "") &&
+                    pr.number === eventPr.number && pr.head?.sha === eventPr.head.sha &&
+                    pr.base?.sha === eventPr.base.sha &&
+                    pr.changed_files === eventPr.changed_files;
+                  const before = (await github.rest.pulls.get({
+                    ...context.repo, pull_number: eventPr.number,
+                  })).data;
+                  const entries = await github.paginate(github.rest.pulls.listFiles, {
+                    ...context.repo, pull_number: context.payload.pull_request.number, per_page: 100,
+                  }, response => response.data);
+                  const knownDoc = path => typeof path === "string" &&
+                    /^(?:design\/|docs\/)[A-Za-z0-9_./-]+\.md$/.test(path) &&
+                    !path.split("/").includes("..");
+                  const after = (await github.rest.pulls.get({
+                    ...context.repo, pull_number: eventPr.number,
+                  })).data;
+                  documentationOnly = exactEvent(before) && exactEvent(after) &&
+                    Number.isInteger(context.payload.pull_request.changed_files) &&
+                    entries.length > 0 && entries.length === context.payload.pull_request.changed_files &&
+                    entries.every(entry => entry && knownDoc(entry.filename) &&
+                      ["added", "removed", "modified", "renamed"].includes(entry.status) &&
+                      (entry.status !== "renamed" || knownDoc(entry.previous_filename)) &&
+                      (entry.previous_filename === undefined || knownDoc(entry.previous_filename)));
+                } catch {
+                  // Missing or incomplete native evidence keeps the full fallback.
+                }
+              }
               outputs = {
-                run_all: scope.runAll || !moduleScopeAvailable,
+                run_all: scope.runAll || (!moduleScopeAvailable && !documentationOnly),
                 affected_services: scope.affectedServices,
-                affected_modules: moduleScopeAvailable ? scope.affectedModules : completeModules,
-                bootable_modules: moduleScopeAvailable ? scope.bootableModules : completeBootableModules,
+                affected_modules: documentationOnly ? [] : (moduleScopeAvailable ? scope.affectedModules : completeModules),
+                bootable_modules: documentationOnly ? [] : (moduleScopeAvailable ? scope.bootableModules : completeBootableModules),
                 docs_changed: scope.docsChanged,
                 frontend_changed: scope.frontendChanged,
                 python_changed: scope.pythonChanged,
@@ -124,7 +160,7 @@ jobs:
                 validation_python_changed: scope.validationPythonChanged,
                 postgres_runtime_proof_changed:
                   scope.postgresRuntimeProofChanged === undefined ? true : scope.postgresRuntimeProofChanged,
-                lightweight_only: moduleScopeAvailable && scope.lightweightOnly,
+                lightweight_only: (moduleScopeAvailable || documentationOnly) && scope.lightweightOnly,
               };
             } else {
               core.warning("Base revision predates the change classifier; using complete validation scope.");
