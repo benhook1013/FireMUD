@@ -710,7 +710,7 @@ jobs:
               if (!validTimestamp(ciCompletedAt)) return initial;
               const refinementSince = [...inFlightRuns.map(run => run.created_at), ciCompletedAt]
                 .sort((a, b) => Date.parse(a) - Date.parse(b))[0];
-              // The inclusive created lower bound makes the refined pages a complete candidate set without relying on API ordering.
+              // Refinement can confirm a producer, but cannot prove absence outside its narrower range.
               const refined = await readInventory(refinementSince);
               if (!refined.complete) {
                 return {
@@ -726,7 +726,7 @@ jobs:
                   reason: "refined inventory did not retain every initially observed in-flight run",
                 };
               }
-              return refined;
+              return {...refined, absenceProven: false};
             };
 
             const findExactExistingProducer = (tuple, inventory) => {
@@ -991,6 +991,8 @@ jobs:
                       // The REST contract does not specify a sort order, so a truncated page cannot prove omitted runs are older.
                       existingProducers = [];
                       fallbackReason = inventory.reason || "recent run inventory is incomplete";
+                    } else if (existingProducers.length === 0 && inventory.absenceProven === false) {
+                      fallbackReason = "truncated initial inventory cannot prove exact producer absence from a narrower refinement";
                     }
                   } catch (error) {
                     fallbackReason = error.message || String(error);
@@ -1010,7 +1012,13 @@ jobs:
                 } else {
                   core.info(`No reusable in-flight exact producer was verified in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
                   // Refresh tuple custody after preceding fan-out/API work under the shared dispatcher lock.
-                  const current = await resolveExactMerge(tuple.prNumber, tuple.baseRef, tuple.baseSha, tuple.headSha);
+                  let current;
+                  try {
+                    current = await resolveExactMerge(tuple.prNumber, tuple.baseRef, tuple.baseSha, tuple.headSha);
+                  } catch (error) {
+                    core.setFailed(`Cannot verify runtime tuple for PR #${tuple.prNumber}; no dispatch issued: ${error.message || error}`);
+                    break runtimeRefresh;
+                  }
                   if (!current || current.tuple.mergeSha !== tuple.mergeSha) {
                     core.info(`Skipping changed runtime tuple for PR #${tuple.prNumber}.`);
                     continue;
@@ -1020,7 +1028,7 @@ jobs:
                     ({data: currentBase} = await github.rest.git.getRef({...context.repo, ref: `heads/${tuple.baseRef}`}));
                   } catch (error) {
                     core.setFailed(`Cannot read current base for PR #${tuple.prNumber}: ${error.message || error}`);
-                    continue;
+                    break runtimeRefresh;
                   }
                   if (currentBase.object?.sha !== tuple.baseSha) {
                     core.info(`Skipping changed runtime tuple for PR #${tuple.prNumber}.`);
@@ -1052,7 +1060,13 @@ jobs:
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
               }
               // Preview has its own exact-image proof. An uncertain runtime handoff must not suppress it.
-              const previewCurrent = await resolveExactMerge(tuple.prNumber, tuple.baseRef, tuple.baseSha, tuple.headSha);
+              let previewCurrent;
+              try {
+                previewCurrent = await resolveExactMerge(tuple.prNumber, tuple.baseRef, tuple.baseSha, tuple.headSha);
+              } catch (error) {
+                core.setFailed(`Cannot verify preview tuple for PR #${tuple.prNumber}; no dispatch issued: ${error.message || error}`);
+                continue;
+              }
               if (!previewCurrent || previewCurrent.tuple.mergeSha !== tuple.mergeSha) continue;
               if (!isPreviewEligible(previewCurrent.pullRequest)) {
                 core.info(`Skipping preview deploy reconciliation for #${tuple.prNumber}: target is not preview-eligible.`);
