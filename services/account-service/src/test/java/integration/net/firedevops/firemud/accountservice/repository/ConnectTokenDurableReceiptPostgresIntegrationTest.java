@@ -9,6 +9,9 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.accountservice.repository.ConnectTokenReceiptClassifier;
+import net.firedevops.firemud.accountservice.repository.ConnectTokenReceiptClassifier.Lookup;
+import net.firedevops.firemud.accountservice.repository.ConnectTokenReceiptClassifier.State;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -241,6 +244,194 @@ class ConnectTokenDurableReceiptPostgresIntegrationTest {
             db.fetchValue(
                 "SELECT count(*) FROM connect_token_issuance_operation WHERE operation_id=?", id))
         .isEqualTo(0L);
+  }
+
+  @Test
+  void classifierRequiresExplicitValidDigestAndOwnerTransaction() {
+    DSLContext db = database();
+    UUID id = claim(db, UUID.randomUUID(), "classification", 60);
+    Lookup lookup = lookup(db, id, digest('a'));
+    assertThatThrownBy(() -> new ConnectTokenReceiptClassifier(db).classify(lookup))
+        .hasMessageContaining("existing Account transaction");
+    assertThatThrownBy(
+            () -> new Lookup(lookup.accountId(), lookup.tenantId(), "scope", "request", 1, "bad"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new Lookup(
+                    lookup.accountId(), lookup.tenantId(), "scope", "request", 2, digest('a')))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> new Lookup(new UUID(0, 0), lookup.tenantId(), "scope", "request", 1, digest('a')))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void classifierPreservesPendingAndUnreconciledEvidenceAndPrioritizesDigestConflict() {
+    DSLContext db = database();
+    UUID id = claim(db, UUID.randomUUID(), "classification", 60);
+    Lookup lookup = lookup(db, id, digest('a'));
+    assertThat(classify(db, lookup)).isEqualTo(State.PENDING);
+    assertThat(classify(db, lookup(db, id, digest('b')))).isEqualTo(State.IDEMPOTENCY_CONFLICT);
+    envelope(db, id);
+    db.execute(
+        "UPDATE connect_token_issuance_operation SET status='FAILED',failure_code='JOIN_REQUIRED' WHERE operation_id=?",
+        id);
+    assertThat(classify(db, lookup)).isEqualTo(State.RECONCILIATION_REQUIRED);
+    assertThat(classify(db, lookup(db, id, digest('b')))).isEqualTo(State.IDEMPOTENCY_CONFLICT);
+    db.execute(
+        "UPDATE connect_token_issuance_operation SET reconciliation_blocked=FALSE,reconciliation_evidence=? WHERE operation_id=?",
+        new byte[] {1},
+        id);
+    assertThat(classify(db, lookup)).isEqualTo(State.FAILURE_ENVELOPE_RETAINED);
+    assertThat(
+            db.fetchValue(
+                "SELECT failure_code FROM connect_token_issuance_operation WHERE operation_id=?",
+                id))
+        .isEqualTo("JOIN_REQUIRED");
+  }
+
+  @Test
+  void classifierDoesNotConfuseRetainedFailureWithRemovedEnvelopeOrRemint() {
+    DSLContext db = database();
+    UUID id = claim(db, UUID.randomUUID(), "expired", 1);
+    Lookup lookup = lookup(db, id, digest('a'));
+    envelope(db, id);
+    db.execute(
+        "UPDATE connect_token_issuance_operation SET status='FAILED',failure_code='JOIN_REQUIRED',"
+            + "reconciliation_blocked=FALSE,reconciliation_evidence=? WHERE operation_id=?",
+        new byte[] {1},
+        id);
+    db.execute("SELECT pg_sleep(1.1)");
+    assertThat(classify(db, lookup)).isEqualTo(State.FAILURE_ENVELOPE_RETAINED);
+    db.execute("DELETE FROM connect_token_response_envelope WHERE operation_id=?", id);
+    assertThat(classify(db, lookup)).isEqualTo(State.RESPONSE_RECOVERY_EXPIRED);
+    assertThat(classify(db, lookup(db, id, digest('b')))).isEqualTo(State.IDEMPOTENCY_CONFLICT);
+    assertThat(db.fetchValue("SELECT count(*) FROM connect_token_response_envelope")).isEqualTo(0L);
+    assertThat(db.fetchValue("SELECT count(*) FROM connect_token_issuance_operation"))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void classifierNeverAuthorizesSuccessfulReplayOrResumesAbortedAttempt() {
+    DSLContext db = database();
+    UUID id = claim(db, UUID.randomUUID(), "success", 60);
+    envelope(db, id);
+    db.execute(
+        "UPDATE connect_token_issuance_operation SET status='COMMITTED',token_jti=?,token_hash=?,"
+            + "replay_admission_fence=1,issuance_evidence=?,reconciliation_blocked=FALSE,reconciliation_evidence=?"
+            + " WHERE operation_id=?",
+        UUID.randomUUID(),
+        digest('b'),
+        new byte[] {1},
+        new byte[] {2},
+        id);
+    assertThat(classify(db, lookup(db, id, digest('a'))))
+        .isEqualTo(State.SUCCESS_REVALIDATION_REQUIRED);
+    UUID aborted = claim(db, UUID.randomUUID(), "aborted", 60);
+    db.execute(
+        "UPDATE connect_token_issuance_operation SET status='ABORTED',failure_code='UNKNOWN_COMMIT' WHERE operation_id=?",
+        aborted);
+    assertThat(classify(db, lookup(db, aborted, digest('a')))).isEqualTo(State.ABORTED);
+  }
+
+  @Test
+  void missingOrRolledBackReceiptIsUncertainAndCreatesNothing() {
+    DSLContext db = database();
+    UUID account = account(db);
+    UUID tenant = UUID.randomUUID();
+    Lookup lookup = new Lookup(account, tenant, "scope", "missing", 1, digest('a'));
+    assertThat(classify(db, lookup)).isEqualTo(State.MISSING_UNCERTAIN);
+    assertThatThrownBy(
+            () ->
+                db.transaction(
+                    configuration -> {
+                      insert(
+                          DSL.using(configuration),
+                          UUID.randomUUID(),
+                          account,
+                          tenant,
+                          "missing",
+                          digest('a'),
+                          60);
+                      throw new IllegalStateException("simulate rolled back owner transaction");
+                    }))
+        .hasMessageContaining("rolled back");
+    assertThat(classify(db, lookup)).isEqualTo(State.MISSING_UNCERTAIN);
+    assertThat(db.fetchValue("SELECT count(*) FROM connect_token_issuance_operation"))
+        .isEqualTo(0L);
+  }
+
+  @Test
+  void classifierWaitsForConcurrentTerminalCommitAndReadsItsEnvelope() throws Exception {
+    DSLContext db = database();
+    UUID id = claim(db, UUID.randomUUID(), "concurrent-readback", 60);
+    Lookup lookup = lookup(db, id, digest('a'));
+    CountDownLatch updated = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    CompletableFuture<Void> owner =
+        CompletableFuture.runAsync(
+            () ->
+                db.transaction(
+                    configuration -> {
+                      DSLContext tx = DSL.using(configuration);
+                      envelope(tx, id);
+                      tx.execute(
+                          "UPDATE connect_token_issuance_operation SET status='FAILED',failure_code='JOIN_REQUIRED',"
+                              + "reconciliation_blocked=FALSE,reconciliation_evidence=? WHERE operation_id=?",
+                          new byte[] {1},
+                          id);
+                      updated.countDown();
+                      try {
+                        if (!release.await(10, TimeUnit.SECONDS))
+                          throw new IllegalStateException("owner release timeout");
+                      } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(e);
+                      }
+                    }));
+    try {
+      assertThat(updated.await(10, TimeUnit.SECONDS)).isTrue();
+      CompletableFuture<State> reader = CompletableFuture.supplyAsync(() -> classify(db, lookup));
+      boolean blocked = false;
+      for (int i = 0; i < 100 && !blocked; i++) {
+        blocked =
+            Boolean.TRUE.equals(
+                Objects.requireNonNull(
+                        db.fetchOne(
+                            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' "
+                                + "AND query LIKE 'SELECT op.request_digest_version%')"))
+                    .get(0, Boolean.class));
+        if (!blocked) Thread.sleep(20);
+      }
+      assertThat(blocked).as("classification waits for owner transaction").isTrue();
+      release.countDown();
+      owner.get(15, TimeUnit.SECONDS);
+      assertThat(reader.get(15, TimeUnit.SECONDS)).isEqualTo(State.FAILURE_ENVELOPE_RETAINED);
+    } finally {
+      release.countDown();
+    }
+  }
+
+  private static State classify(DSLContext db, Lookup lookup) {
+    return db.transactionResult(
+        configuration ->
+            new ConnectTokenReceiptClassifier(DSL.using(configuration)).classify(lookup));
+  }
+
+  private static Lookup lookup(DSLContext db, UUID id, String digest) {
+    var row =
+        Objects.requireNonNull(
+            db.fetchOne(
+                "SELECT account_uuid,tenant_uuid,connect_scope_id,request_id FROM connect_token_issuance_operation WHERE operation_id=?",
+                id));
+    return new Lookup(
+        row.get(0, UUID.class),
+        row.get(1, UUID.class),
+        row.get(2, String.class),
+        row.get(3, String.class),
+        1,
+        digest);
   }
 
   private static UUID claim(DSLContext db, UUID tenant, String request, int horizonSeconds) {
