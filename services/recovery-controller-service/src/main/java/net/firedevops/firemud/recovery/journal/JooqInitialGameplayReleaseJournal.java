@@ -312,7 +312,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           if (current.lastAttemptId() != null && !current.lastAttemptId().equals(attemptId)) {
             throw conflict("effect attempt identity changed");
           }
-          if (current.state() == resultState || current.state() == EffectOutboxState.ACKNOWLEDGED) {
+          if (current.state() == resultState
+              || current.state() == EffectOutboxState.ACKNOWLEDGED
+              || (current.lastAttemptId() != null
+                  && current.state() == EffectOutboxState.RETRYABLE
+                  && resultState == EffectOutboxState.AMBIGUOUS)) {
             return current;
           }
           if (current.state() != EffectOutboxState.DISPATCHED
@@ -348,28 +352,38 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           Operation operation = selectOperation(tx, operationId, true);
           OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
           requireReadbackMatches(readback, current, operationId, effectId);
+          if (current.lastAttemptId() == null || !current.lastAttemptId().equals(attemptId)) {
+            throw conflict("effect readback belongs to another attempt");
+          }
           String readbackDigest = tupleCodec.digest(readback);
-          if (current.state() == EffectOutboxState.ACKNOWLEDGED) {
+          if (current.state() == EffectOutboxState.ACKNOWLEDGED
+              || current.state() == EffectOutboxState.RETRYABLE) {
             Record stored =
                 tx.fetchOne(
-                    "SELECT readback_digest FROM "
+                    "SELECT readback_digest, readback_payload FROM "
                         + OUTBOX_TABLE
                         + " WHERE operation_id = ? AND effect_id = ?",
                     operationId,
                     effectId);
-            if (current.lastAttemptId() != null
-                && current.lastAttemptId().equals(attemptId)
-                && stored != null
-                && readbackDigest.equals(stored.get("readback_digest", String.class))) {
+            String storedDigest =
+                stored == null ? null : stored.get("readback_digest", String.class);
+            if (current.state() == EffectOutboxState.ACKNOWLEDGED) {
+              if (readbackDigest.equals(storedDigest)
+                  || (stored != null
+                      && !readback.observedAt().isAfter(now)
+                      && sameAcknowledgedOutcome(readback, stored, storedDigest))) {
+                return operation;
+              }
+              throw conflict("effect readback changed after acknowledgement");
+            }
+            if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
+                && readbackDigest.equals(storedDigest)) {
               return operation;
             }
-            throw conflict("effect readback changed after acknowledgement");
+            throw conflict("effect readback changed after definitive no effect");
           }
           if (readback.observedAt().isAfter(now)) {
             throw conflict("effect readback observation is in the future");
-          }
-          if (current.lastAttemptId() == null || !current.lastAttemptId().equals(attemptId)) {
-            throw conflict("effect readback belongs to another attempt");
           }
           if (current.state() != EffectOutboxState.DISPATCHED
               && current.state() != EffectOutboxState.AMBIGUOUS) {
@@ -648,6 +662,31 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || !tuple.evidenceDigest().equals(tupleCodec.digest(operation.evidence()))) {
       throw conflict("public transition tuple does not match the operation-owned tuple");
     }
+  }
+
+  private boolean sameAcknowledgedOutcome(
+      EffectReadback readback, Record stored, String storedDigest) {
+    JSONB payload = stored.get("readback_payload", JSONB.class);
+    if (payload == null || storedDigest == null) {
+      return false;
+    }
+    EffectReadback acknowledged = tupleCodec.readEffectReadback(payload.data());
+    if (!storedDigest.equals(tupleCodec.digest(acknowledged))) {
+      return false;
+    }
+    // A new observation time does not replace the first durable receipt.
+    return acknowledged.equals(
+        new EffectReadback(
+            readback.operationId(),
+            readback.effectId(),
+            readback.attemptId(),
+            readback.effectKind(),
+            readback.operationTupleDigest(),
+            readback.payloadDigest(),
+            readback.state(),
+            readback.authority(),
+            readback.readbackIdentity(),
+            acknowledged.observedAt()));
   }
 
   private void requireReadbackMatches(

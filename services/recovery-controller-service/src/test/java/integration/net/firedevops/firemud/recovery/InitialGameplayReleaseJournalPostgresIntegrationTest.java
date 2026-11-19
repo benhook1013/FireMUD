@@ -228,6 +228,51 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 .state())
         .isEqualTo(EffectOutboxState.ACKNOWLEDGED);
     UUID preparedEffectId = prepare.effect().effectId();
+    String retainedAcknowledgement = storedOutbox(scope.operationId(), preparedEffectId);
+    EffectReadback laterObservation =
+        readbackFor(
+            prepare,
+            prepareAttempt,
+            EffectReadbackState.PREPARED_FENCED,
+            prepareReadback.readbackIdentity(),
+            base.plusSeconds(8));
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    scope.operationId(),
+                    preparedEffectId,
+                    prepareAttempt,
+                    laterObservation,
+                    base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(storedOutbox(scope.operationId(), preparedEffectId))
+        .isEqualTo(retainedAcknowledgement);
+    assertThat(
+            journal.recordEffectReadback(
+                scope.operationId(),
+                preparedEffectId,
+                prepareAttempt,
+                laterObservation,
+                base.plusSeconds(9)))
+        .isEqualTo(releasing);
+    EffectReadback changedReceipt =
+        readbackFor(
+            prepare,
+            prepareAttempt,
+            EffectReadbackState.PREPARED_FENCED,
+            "different-durable-receipt",
+            base.plusSeconds(8));
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    scope.operationId(),
+                    preparedEffectId,
+                    prepareAttempt,
+                    changedReceipt,
+                    base.plusSeconds(9)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(storedOutbox(scope.operationId(), preparedEffectId))
+        .isEqualTo(retainedAcknowledgement);
     assertThatThrownBy(
             () ->
                 journal.recordAmbiguousEffect(
@@ -354,6 +399,128 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             scope.operationId(), prepare.effect().effectId(), nextAttempt, base.plusSeconds(9));
     assertThat(next.lastAttemptId()).isEqualTo(nextAttempt);
     assertThat(next.attemptCount()).isEqualTo(2);
+  }
+
+  @Test
+  void definitiveAttemptClosureIsReplayableAndCannotBeOverwritten() {
+    Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(60);
+    Scope scope = scope();
+    journal.create(scope, UUID.randomUUID());
+    InitialGameplayReleaseEvidence proof = evidence(scope);
+    Operation ready =
+        journal.bindVerifiedEvidence(
+            scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), base.plusSeconds(1));
+    Operation awaitingResume =
+        journal.transition(
+            transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(2));
+    Operation authorized =
+        journal.transition(
+            transitionTuple(awaitingResume, TransitionVerb.RESUME), base.plusSeconds(3));
+    UUID effectId =
+        journal
+            .findEffect(scope.operationId(), EffectKind.PREPARE_PLAYABLE_STATE_FENCED)
+            .orElseThrow()
+            .effect()
+            .effectId();
+    UUID firstAttempt = UUID.randomUUID();
+    OutboxEntry dispatched =
+        journal.claimEffect(scope.operationId(), effectId, firstAttempt, base.plusSeconds(4));
+    EffectReadback terminal =
+        readbackFor(
+            dispatched,
+            firstAttempt,
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "durable-closure",
+            base.plusSeconds(5));
+    assertThat(
+            journal.recordEffectReadback(
+                scope.operationId(), effectId, firstAttempt, terminal, base.plusSeconds(6)))
+        .isEqualTo(authorized);
+    String retained = storedOutbox(scope.operationId(), effectId);
+
+    assertThat(
+            journal.recordEffectReadback(
+                scope.operationId(), effectId, firstAttempt, terminal, base.plusSeconds(7)))
+        .isEqualTo(authorized);
+    assertThat(
+            journal
+                .recordAmbiguousEffect(
+                    scope.operationId(),
+                    effectId,
+                    firstAttempt,
+                    "LATE_TIMEOUT",
+                    base.plusSeconds(7))
+                .state())
+        .isEqualTo(EffectOutboxState.RETRYABLE);
+    assertThatThrownBy(
+            () ->
+                journal.recordAmbiguousEffect(
+                    scope.operationId(),
+                    effectId,
+                    UUID.randomUUID(),
+                    "WRONG_ATTEMPT",
+                    base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    EffectReadback changed =
+        readbackFor(
+            dispatched,
+            firstAttempt,
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "durable-closure",
+            base.plusSeconds(6));
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    scope.operationId(), effectId, firstAttempt, changed, base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(retained);
+
+    UUID replacementAttempt = UUID.randomUUID();
+    assertThat(
+            journal
+                .claimEffect(scope.operationId(), effectId, replacementAttempt, base.plusSeconds(8))
+                .lastAttemptId())
+        .isEqualTo(replacementAttempt);
+    String replacement = storedOutbox(scope.operationId(), effectId);
+    assertThat(replacement)
+        .contains(
+            "\"readback_identity\":null", "\"readback_payload\":null", "\"readback_digest\":null");
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    scope.operationId(), effectId, firstAttempt, terminal, base.plusSeconds(9)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(replacement);
+  }
+
+  private static String storedOutbox(UUID operationId, UUID effectId) {
+    return dsl.fetchOne(
+            "SELECT row_to_json(o)::text AS row_json FROM recovery_control.initial_gameplay_release_outbox o"
+                + " WHERE operation_id = ? AND effect_id = ?",
+            operationId,
+            effectId)
+        .get("row_json", String.class);
+  }
+
+  private static EffectReadback readbackFor(
+      OutboxEntry entry,
+      UUID attempt,
+      EffectReadbackState state,
+      String identity,
+      Instant observedAt) {
+    return new EffectReadback(
+        entry.effect().operationId(),
+        entry.effect().effectId(),
+        attempt,
+        entry.effect().kind(),
+        entry.effect().operationTupleDigest(),
+        entry.payloadDigest(),
+        state,
+        state == EffectReadbackState.PROVEN_NO_EFFECT
+            ? EffectReadbackAuthority.GAME_SESSION_DURABLE_CLOSED_ATTEMPT
+            : EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
+        identity,
+        observedAt);
   }
 
   @Test

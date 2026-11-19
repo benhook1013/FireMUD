@@ -97,6 +97,15 @@ public final class InitialGameplayReleaseTupleCodec {
     }
   }
 
+  InitialGameplayReleaseModel.EffectReadback readEffectReadback(String json) {
+    try {
+      return objectMapper.readValue(json, InitialGameplayReleaseModel.EffectReadback.class);
+    } catch (JacksonException exception) {
+      throw new IllegalStateException(
+          "Unable to read persisted initial gameplay release effect readback", exception);
+    }
+  }
+
   public InitialGameplayReleaseModel.TypedEffect readEffect(String kind, String json) {
     try {
       if (InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED

@@ -6,6 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 RUNTIME_WORKFLOW="$ROOT_DIR/.github/workflows/runtime-images.yml"
 
+# The contract intentionally uses Python assertions; never report success when disabled.
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Runtime image publication contract requires Python assertions; unset PYTHONOPTIMIZE.")'
+
 # Evaluate the workflow's actual string/boolean concurrency expression against fixed event fixtures.
 # This bounded expression uses only property reads, equality, boolean operators and format.
 python3 - "$RUNTIME_WORKFLOW" <<'PY_CONCURRENCY'

@@ -460,8 +460,25 @@ if len(plan_checkouts) != 1 or plan_checkouts[0].get("with", {}).get("ref") != "
 render_checkouts = checkouts(preview_jobs["preview-render"])
 if len(render_checkouts) != 2:
     raise AssertionError("preview render must isolate trusted tools and candidate chart checkouts")
-if render_checkouts[0].get("with", {}).get("ref") != "${{ github.event.repository.default_branch }}" or render_checkouts[0].get("with", {}).get("path") is not None:
-    raise AssertionError("preview render tools must remain rooted at the trusted default branch")
+def check_render_tools_checkout(checkout: dict[str, Any]) -> None:
+    options = checkout.get("with", {})
+    if options.get("ref") != "${{ github.event.repository.default_branch }}" or options.get("path") is not None:
+        raise AssertionError("preview render tools must remain rooted at the trusted default branch")
+    if "repository" in options and options["repository"] != "${{ github.repository }}":
+        raise AssertionError("preview render tools must check out the current repository")
+
+check_render_tools_checkout(render_checkouts[0])
+foreign_tools_checkout = {
+    **render_checkouts[0],
+    "with": {**render_checkouts[0]["with"], "repository": "other-owner/other-repo"},
+}
+try:
+    check_render_tools_checkout(foreign_tools_checkout)
+except AssertionError as error:
+    if str(error) != "preview render tools must check out the current repository":
+        raise
+else:
+    raise AssertionError("foreign render tools checkout escaped repository checking")
 if render_checkouts[1].get("with", {}).get("ref") != "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge" or render_checkouts[1].get("with", {}).get("path") != "candidate":
     raise AssertionError("preview render must isolate the exact PR merge ref under candidate/")
 def check_trusted_working_directories(workflow: dict[str, Any], job: dict[str, Any]) -> None:

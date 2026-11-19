@@ -3517,6 +3517,18 @@ const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set(JSON.parse(
   script.match(/const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set\((\[[\s\S]*?\])\);/)[1]
     .replace(/,\s*\]/, "]")));
 
+for (const fingerprint of [
+  "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
+  "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
+]) assert.ok(outgoingTrustedRefreshRuntimeWorkflowSha256.has(fingerprint),
+  `outgoing trusted refresh fingerprint missing: ${fingerprint}`);
+const outgoingRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Outgoing trusted refresh fixture\n")]);
+const outgoingRefreshFixtureSha256 = require("node:crypto").createHash("sha256")
+  .update(outgoingRefreshBytes).digest("hex");
+assert.ok(![canonicalRuntimeWorkflowSha256, canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
+  canonicalLegacyRuntimeWorkflowSha256].includes(outgoingRefreshFixtureSha256));
+assert.ok(!outgoingTrustedRefreshRuntimeWorkflowSha256.has(outgoingRefreshFixtureSha256));
+
 const canonicalPlayClassifierSha256 = JSON.parse(script.match(/const canonicalPlayClassifierSha256 = (\{[\s\S]*?\});/)[1]);
 const classifierDefinitions = JSON.parse(fs.readFileSync(process.argv[2] + ".classifiers.json", "utf8"));
 const headSha = "a".repeat(40), baseSha = "b".repeat(40), mergeSha = "c".repeat(40);
@@ -3573,7 +3585,7 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
       canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
       data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256,
-      outgoingTrustedRefreshRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
+      new Set([...outgoingTrustedRefreshRuntimeWorkflowSha256, outgoingRefreshFixtureSha256]), canonicalPlayClassifierSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {repository: {default_branch: "develop"}, pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}},
       "benhook1013", "FireMUD", require, data);
@@ -3696,6 +3708,15 @@ function markerAccepted(overrides = {}) {
       "trusted refresh may retain the previous successful producer proof");
     assert.equal(await verify(usePreviousRefresh, "pull_request", knownPlay), false,
       "the previous successful definition cannot attest a PR producer");
+  }
+  const useOutgoingRefresh = data => Object.assign(data.definitions[workflowPath], {
+    content: outgoingRefreshBytes.toString("base64"), size: outgoingRefreshBytes.length,
+  });
+  for (const knownPlay of [true, false]) {
+    assert.equal(await verify(useOutgoingRefresh, "repository_dispatch", knownPlay), true,
+      "trusted refresh may retain an outgoing producer proof");
+    assert.equal(await verify(useOutgoingRefresh, "pull_request", knownPlay), false,
+      "an outgoing definition cannot attest a PR producer");
   }
   for (const path of Object.keys(classifierDefinitions)) {
     assert.equal(await verify(d => {
