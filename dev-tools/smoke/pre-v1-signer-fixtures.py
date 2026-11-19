@@ -8,6 +8,7 @@ Compose smoke only, under the pre-v1 gate waiver (ADR 0185). Writes, under OUTPU
   api-token/       Account's bearer token for that API
   materializer/    Materializer stand-in mTLS leaf (spiffe://firemud/ns/dev/sa/account-jwt-materializer)
   materializer-binding/ Account's protected materializer trust binding (binding.properties)
+  validator-inventory/ Account's protected validator inventory binding (binding.json)
   identity.json    The fixed environment identity the stand-ins share
 
 The init container copies these into root-owned volumes. Real cluster identity, Kubernetes RBAC
@@ -79,6 +80,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("compose_ca_dir", type=Path, help="directory holding ca.crt and ca.key")
+    parser.add_argument("--validator-leaf", type=Path, required=True,
+                        help="Game Session mTLS leaf certificate (receiver Pod pin)")
+    parser.add_argument("--validator-ip", required=True, help="fixed Game Session container IP")
     args = parser.parse_args()
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -151,6 +155,49 @@ def main():
     (binding_dir / "binding.properties").write_text(
         "".join(f"{key}={value}\n" for key, value in trust_file.items())
     )
+
+    inventory = {
+        "version": "account-jwt-validator-inventory-binding/v2",
+        "enabled": "true",
+        "configRevision": "pre-v1-compose-1",
+        "environmentId": ENVIRONMENT_ID,
+        "clusterId": CLUSTER_ID,
+        "namespace": NAMESPACE,
+        "expectedClusterIncarnationUid": identity["expectedClusterIncarnationUid"],
+        "expectedNamespaceUid": identity["expectedNamespaceUid"],
+        "apiBindingRevision": api_binding["configRevision"],
+        "apiBindingDigest": api_binding["bindingDigest"],
+        "validators": [
+            {
+                "validatorId": "game-session-service",
+                "deploymentName": "game-session-service",
+                "deploymentUid": str(uuid.uuid4()),
+                "selector": {"app": "game-session-service"},
+                "replicas": 1,
+                "containerName": "game-session-service",
+                # Compose builds have no registry digest; the stand-in API reports this one.
+                "image": "firemud/game-session-service@sha256:" + "0" * 63 + "1",
+                "jwksUri": "https://account-service/.well-known/jwks.json",
+                "maxCacheAgeSeconds": 60,
+                "profiles": [
+                    {"tokenProfile": "game-session-account-delegation", "audience": "account-service"}
+                ],
+                "receiverServiceUri": f"spiffe://firemud/ns/{NAMESPACE}/sa/game-session-service",
+                "receiverPort": 6565,
+                "receiverPods": [
+                    {
+                        "podUid": str(uuid.uuid4()),
+                        "podIp": args.validator_ip,
+                        "leafSpkiSha256": spki_sha256(args.validator_leaf),
+                    }
+                ],
+            }
+        ],
+    }
+    inventory["bindingDigest"] = sha256_hex(canonical_json(inventory))
+    inventory_dir = out / "validator-inventory"
+    inventory_dir.mkdir(exist_ok=True)
+    (inventory_dir / "binding.json").write_text(json.dumps(inventory, indent=2) + "\n")
 
     (out / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     os.chmod(out, 0o755)
