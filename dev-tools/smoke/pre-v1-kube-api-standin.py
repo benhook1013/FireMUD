@@ -197,7 +197,8 @@ class State:
         self.namespace = args.namespace
         self.namespace_uid = args.namespace_uid
         self.cluster_uid = args.cluster_uid
-        self.token = open(args.token_file, encoding="ascii").read().strip()
+        with open(args.token_file, encoding="ascii") as token_file:
+            self.token = token_file.read().strip()
         self.config_map_uid = args.config_map_uid
         self.projection_dir = args.projection_dir
         self.validators = Validators(args.inventory, args.namespace)
@@ -214,7 +215,7 @@ class State:
         if not self.projection_dir:
             return
         root = self.projection_dir
-        version = tempfile.mkdtemp(prefix="..%d_" % self.resource_version, dir=root)
+        version = tempfile.mkdtemp(prefix=f"..{self.resource_version}_", dir=root)
         os.chmod(version, 0o755)
         for key, value in self.data.items():
             path = os.path.join(version, key)
