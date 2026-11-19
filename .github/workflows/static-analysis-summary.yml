@@ -56,10 +56,12 @@ jobs:
     needs: [resolve-summary-target]
     if: ${{ needs.resolve-summary-target.outputs.pull-number != '' }}
     # Only validated PR callbacks enter this queue. Old heads refresh the same
-    # live PR; other PRs and skipped push callbacks cannot replace its pending work.
+    # live PR. Retain up to 100 pending callbacks, so a failing late callback
+    # cannot replace the pending terminal update; other PRs have separate queues.
     concurrency:
       group: static-analysis-summary-pr-${{ needs.resolve-summary-target.outputs.pull-number }}
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -107,7 +109,7 @@ jobs:
               ".github/workflows/license-scan.yml": "License Gate",
             })[sourceWorkflowPath];
             // The completion is a wake signal, never proof for the current base.
-            // An older-head or older-base callback may replace pending work for this PR.
+            // An older-head or older-base callback may run after newer work for this PR.
             // Validate its original identity, then derive proof only from the live tuple.
             const sourceBaseSha = String(context.payload.workflow_run.display_title || "")
               .match(/ base-([0-9a-f]{40}) head-/)?.[1];

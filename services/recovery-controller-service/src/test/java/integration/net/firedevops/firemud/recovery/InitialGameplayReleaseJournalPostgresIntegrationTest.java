@@ -360,7 +360,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     Operation awaiting =
         journal.transition(
             transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(3));
-    journal.transition(transitionTuple(awaiting, TransitionVerb.RESUME), base.plusSeconds(4));
+    Operation authorized =
+        journal.transition(transitionTuple(awaiting, TransitionVerb.RESUME), base.plusSeconds(4));
     OutboxEntry prepare = journal.findNextEffect(scope.operationId()).orElseThrow();
     UUID attemptId = UUID.randomUUID();
     OutboxEntry dispatched =
@@ -383,8 +384,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(retryRead.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
     assertThat(retryRead.lastAttemptId()).isEqualTo(attemptId);
     assertThat(retryRead.attemptCount()).isEqualTo(1);
-    assertThat(journal.find(scope.operationId()).orElseThrow().phase())
-        .isEqualTo(Phase.RESUME_AUTHORIZED);
+    assertThat(journal.find(scope.operationId())).contains(authorized);
+    assertThat(journal.findEffect(scope.operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+        .isEmpty();
     OutboxEntry definitiveNoEffect =
         journal.recordRetryableEffect(
             scope.operationId(),

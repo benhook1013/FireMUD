@@ -4,8 +4,11 @@ self-hosted-runner:
 
 # GitHub Actions added concurrency.queue in May 2026. The repository-pinned
 # actionlint release does not parse it, so suppress only that known parser lag
-# in workflows that use the shared preview lifecycle queue.
+# only in workflows explicitly using this documented queue option.
 paths:
+  .github/workflows/static-analysis-summary.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
   .github/workflows/preview.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'

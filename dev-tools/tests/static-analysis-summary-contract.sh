@@ -93,6 +93,7 @@ assert publisher["if"] == "${{ needs.resolve-summary-target.outputs.pull-number 
 assert publisher["concurrency"] == {
     "group": "static-analysis-summary-pr-${{ needs.resolve-summary-target.outputs.pull-number }}",
     "cancel-in-progress": "false",
+    "queue": "max",
 }
 step = next(step for step in resolver["steps"] if step.get("id") == "target")
 assert resolver["outputs"]["pull-number"] == "${{ steps.target.outputs.pull-number }}"
