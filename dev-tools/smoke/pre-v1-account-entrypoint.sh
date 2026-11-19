@@ -17,9 +17,11 @@ install -o root -g root -m 0444 "$fixtures/readiness-binding/binding.properties"
   /etc/firemud/account-jwt-readiness/binding.properties
 
 install -d -o root -g root -m 0755 /var/run/secrets/firemud
-install -d -o root -g firemud -m 0750 /var/run/secrets/firemud/account-jwt-api-token
-install -o root -g firemud -m 0440 "$fixtures/api-token/token" \
-  /var/run/secrets/firemud/account-jwt-api-token/token
+# Mirror a Kubernetes projected token: token -> ..pre-v1/token, all root-owned.
+token_root=/var/run/secrets/firemud/account-jwt-api-token
+install -d -o root -g firemud -m 0750 "$token_root" "$token_root/..pre-v1"
+install -o root -g firemud -m 0440 "$fixtures/api-token/token" "$token_root/..pre-v1/token"
+ln -sfn ..pre-v1/token "$token_root/token"
 
 for keyring in request-digest response-envelope; do
   install -d -o root -g firemud -m 0750 "/var/run/secrets/firemud/$keyring"
