@@ -496,11 +496,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   private static String storedOutbox(UUID operationId, UUID effectId) {
-    return dsl.fetchOne(
-            "SELECT row_to_json(o)::text AS row_json FROM recovery_control.initial_gameplay_release_outbox o"
-                + " WHERE operation_id = ? AND effect_id = ?",
-            operationId,
-            effectId)
+    return java.util.Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT row_to_json(o)::text AS row_json FROM recovery_control.initial_gameplay_release_outbox o"
+                    + " WHERE operation_id = ? AND effect_id = ?",
+                operationId,
+                effectId),
+            "expected persisted outbox row")
         .get("row_json", String.class);
   }
 

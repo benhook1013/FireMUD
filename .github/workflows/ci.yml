@@ -1407,6 +1407,12 @@ jobs:
       - name: Declare dev tool contract split
         run: ':'
 
+      # Transitional native marker for the currently deployed workflow_run reader.
+      # It never executes or preserves a status; metadata edits skip this whole job.
+      - name: Preserve successful required gate on metadata-only edit
+        if: ${{ !always() }}
+        run: ':'
+
       - name: Enforce validation success
         env:
           DOCS_CHANGED: ${{ needs.changes.outputs.docs_changed }}

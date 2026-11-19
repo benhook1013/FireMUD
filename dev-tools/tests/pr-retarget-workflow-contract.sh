@@ -902,7 +902,7 @@ const assertCompleteRefinementPreservesEligibleInitialRuns = (initialRuns, cutof
 
 async function runDispatcher({
   tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
-  branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
+  branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {}, legacyMarkerReader = false,
 }) {
   const dispatches = [];
   const errors = [];
@@ -939,6 +939,7 @@ async function runDispatcher({
     workflow_name: "CI — Validation", name: "Validation Gate", status: "completed", conclusion: "success",
     check_run_url: `https://api.github.com/repos/${repository}/check-runs/8001`,
     steps: [
+      { name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped" },
       { name: "Enforce validation success", status: "completed", conclusion: "success" },
     ],
     ...(ciEvidence.gate ?? {}),
@@ -1048,7 +1049,16 @@ async function runDispatcher({
   global.setTimeout = (resolve) => { resolve(); };
   Date.now = () => Date.parse("2026-01-08T00:00:00Z");
   try {
-    await new AsyncFunction("github", "context", "core", dispatcherScript)(github, context, core);
+    // Default-branch reader at 3474c809 additionally requires this skipped marker.
+    // Run the identical identity/enforcement/dispatch checks with that historical predicate.
+    const script = legacyMarkerReader ? dispatcherScript.replace(
+      "enforcement.length !== 1",
+      "(gate?.steps?.filter(step => step.name === 'Preserve successful required gate on metadata-only edit').length !== 1 || " +
+      "gate.steps.find(step => step.name === 'Preserve successful required gate on metadata-only edit').status !== 'completed' || " +
+      "gate.steps.find(step => step.name === 'Preserve successful required gate on metadata-only edit').conclusion !== 'skipped') || enforcement.length !== 1"
+    ) : dispatcherScript;
+    if (legacyMarkerReader) assert.notEqual(script, dispatcherScript);
+    await new AsyncFunction("github", "context", "core", script)(github, context, core);
   } finally {
     Date.now = originalDateNow;
     global.setTimeout = originalSetTimeout;
@@ -1128,6 +1138,18 @@ async function runDispatcher({
   const emptyBranch = await runDispatcher({ tuples: [child], callback: { ...prCallback, head_branch: "" } });
   assert.equal(emptyBranch.dispatches.length, 0);
   assert.equal(emptyBranch.refRequests.length, 0, "empty callback branch must be rejected before ref lookup");
+  for (const legacyMarkerReader of [false, true]) {
+    const compatible = await runDispatcher({tuples:[child], sourceTuples:[source], callback:prCallback, legacyMarkerReader});
+    assert.equal(runtimeDispatches(compatible).length, 2, "substantive attempt works with both reader versions");
+    for (const gate of [
+      {name:"PR Metadata Edit (Validation Gate)", conclusion:"skipped", steps:[]},
+      {run_attempt:2}, {head_sha:sha("f")}, {run_id:7002},
+    ]) {
+      const invalid = await runDispatcher({tuples:[child], sourceTuples:[source], callback:prCallback,
+        legacyMarkerReader, ciEvidence:{gate}});
+      assert.equal(invalid.dispatches.length, 0, "compatibility marker cannot authorize metadata or wrong native identity");
+    }
+  }
   const enforcementStep = { name: "Enforce validation success", status: "completed", conclusion: "success" };
   for (const [label, ciEvidence] of [
     ["metadata-only edit gate", { gate: { name: "PR Metadata Edit (Validation Gate)", conclusion: "skipped", steps: [] } }],

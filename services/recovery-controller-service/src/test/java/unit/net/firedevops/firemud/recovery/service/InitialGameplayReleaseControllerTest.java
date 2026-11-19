@@ -164,6 +164,95 @@ class InitialGameplayReleaseControllerTest {
   }
 
   @Test
+  void pendingEffectClaimedByAnotherAttemptDoesNotDispatch() {
+    assertPendingClaimHandling(false);
+  }
+
+  @Test
+  void pendingEffectApplyExceptionRecordsAmbiguousNotRetryable() {
+    assertPendingClaimHandling(true);
+  }
+
+  private void assertPendingClaimHandling(boolean ownsClaim) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var operation = mock(Operation.class);
+    var after = mock(Operation.class);
+    var scope = mock(Scope.class);
+    var operationId = UUID.randomUUID();
+    var effect = mock(PreparePlayableStateFencedEffect.class);
+    var effectId = UUID.randomUUID();
+    when(scope.operationId()).thenReturn(operationId);
+    when(operation.scope()).thenReturn(scope);
+    when(effect.effectId()).thenReturn(effectId);
+    var pending =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry.class);
+    when(pending.effect()).thenReturn(effect);
+    when(pending.state())
+        .thenReturn(
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState
+                .PENDING);
+    when(journal.find(operationId))
+        .thenReturn(java.util.Optional.of(operation), java.util.Optional.of(after));
+    when(journal.findNextEffect(operationId)).thenReturn(java.util.Optional.of(pending));
+    var claimedAttempt = new java.util.concurrent.atomic.AtomicReference<UUID>();
+    when(journal.claimEffect(
+            org.mockito.ArgumentMatchers.eq(operationId),
+            org.mockito.ArgumentMatchers.eq(effectId),
+            any(),
+            any()))
+        .thenAnswer(
+            invocation -> {
+              UUID requested = invocation.getArgument(2);
+              claimedAttempt.set(requested);
+              var claimed =
+                  mock(
+                      net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry
+                          .class);
+              when(claimed.state())
+                  .thenReturn(
+                      net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel
+                          .EffectOutboxState.DISPATCHED);
+              when(claimed.lastAttemptId())
+                  .thenReturn(
+                      ownsClaim
+                          ? requested
+                          : new UUID(
+                              ~requested.getMostSignificantBits(),
+                              requested.getLeastSignificantBits()));
+              if (ownsClaim) when(claimed.effect()).thenReturn(effect);
+              return claimed;
+            });
+    if (ownsClaim)
+      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any()))
+          .thenThrow(new IllegalStateException("response lost after possible owner send"));
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port);
+    assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
+    assertThat(claimedAttempt.get()).isNotNull();
+    verify(journal, never()).recordRetryableEffect(any(), any(), any(), any(), any());
+    verify(journal, never()).recordEffectReadback(any(), any(), any(), any(), any());
+    if (ownsClaim) {
+      verify(port).apply(effect, claimedAttempt.get());
+      verify(port, never()).readback(any(), any());
+      verify(journal)
+          .recordAmbiguousEffect(
+              org.mockito.ArgumentMatchers.eq(operationId),
+              org.mockito.ArgumentMatchers.eq(effectId),
+              org.mockito.ArgumentMatchers.eq(claimedAttempt.get()),
+              org.mockito.ArgumentMatchers.eq("EFFECT_CALL_OUTCOME_UNKNOWN"),
+              any());
+    } else {
+      verifyNoInteractions(port);
+      verify(journal, never()).recordAmbiguousEffect(any(), any(), any(), any(), any());
+    }
+  }
+
+  @Test
   void applyOutcomeCodesUseJournalContract() {
     for (String invalid :
         java.util.List.of("owner_busy", "owner-unavailable", "X".repeat(65), "")) {

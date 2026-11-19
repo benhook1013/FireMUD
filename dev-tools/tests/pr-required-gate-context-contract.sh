@@ -140,6 +140,10 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     needs = gate.get("needs")
     if "changes" not in (needs if isinstance(needs, list) else [needs]):
         raise SystemExit(f"{workflow} {gate_name} must depend on change detection")
+    compatibility = [step for step in gate.get("steps", []) if step.get("name") == "Preserve successful required gate on metadata-only edit"]
+    expected_compatibility = [{"name": "Preserve successful required gate on metadata-only edit", "if": "${{ !always() }}", "run": ":"}] if workflow == "ci.yml" else []
+    if compatibility != expected_compatibility:
+        raise SystemExit(f"{workflow} must retain only the inert CI callback compatibility marker")
     result_steps = [step for step in gate.get("steps", []) if step.get("name") == result_step]
     if len(result_steps) != 1 or result_steps[0].get("env", {}).get("CHANGES_RESULT") != "${{ needs.changes.result }}":
         raise SystemExit(f"{workflow} {gate_name} must enforce through one {result_step!r} step reading CHANGES_RESULT")
