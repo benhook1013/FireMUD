@@ -581,6 +581,7 @@ deletion_nodes = nodes_by_name(json.loads(deletion_diff.stdout))
 assert all(row["files"] == 0 and row["lines"] == 0 for row in deletion_nodes.values())
 assert "omitted 1 tracked path(s) that are deleted or missing" in deletion_diff.stderr
 
+OPEN_REFS = {"state": "OPEN", "baseRefName": "stack/base", "headRefName": "feature/forked"}
 mock_metadata = cloc_report.PullRequestMetadata(
     number=2736,
     repository="example/example",
@@ -859,7 +860,7 @@ def fake_changed_head_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}
         ).encode(),
         stderr=b"",
     )
@@ -886,7 +887,7 @@ def fake_changed_base_command(args, _root, *, timeout=None):
             args,
             0,
             stdout=json.dumps(
-                {"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
+                {**OPEN_REFS, "baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}
             ).encode(),
             stderr=b"",
         )
@@ -921,7 +922,7 @@ def fake_changed_merge_base_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
         ).encode(),
         stderr=b"",
     )
@@ -952,6 +953,7 @@ def fake_oversized_body_command(args, _root, *, timeout=None):
         0,
         stdout=json.dumps(
             {
+                **OPEN_REFS,
                 "baseRefOid": "a" * 40,
                 "headRefOid": "b" * 40,
                 "body": "x" * cloc_report.GITHUB_PR_BODY_MAX_CHARACTERS,
@@ -982,7 +984,7 @@ def fake_stable_update_command(args, _root, *, timeout=None):
             args,
             0,
             stdout=json.dumps(
-                {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
+                {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
             ).encode(),
             stderr=b"",
         )
@@ -1014,14 +1016,16 @@ finally:
     cloc_report.run_command = original_run_command
 
 for changed_state, change_name in (
-    ({"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "concurrent"}, "body"),
-    ({"baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}, "base"),
-    ({"baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}, "revision"),
+    ({**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "concurrent"}, "body"),
+    ({**OPEN_REFS, "baseRefOid": "d" * 40, "headRefOid": "b" * 40, "body": "existing"}, "base"),
+    ({**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}, "revision"),
+    ({**OPEN_REFS, "state": "CLOSED", "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}, "close"),
+    ({**OPEN_REFS, "baseRefName": "other/base", "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}, "same-SHA retarget"),
 ):
     conflict_calls = []
     update_states = iter(
         (
-            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"},
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"},
             changed_state,
         )
     )
@@ -1042,7 +1046,9 @@ for changed_state, change_name in (
         try:
             cloc_report.update_pull_request_body(repo, 2736, impact)
         except cloc_report.ReportError as error:
-            assert "body, base, or head changed" in str(error)
+            assert any(
+                text in str(error) for text in ("body, base, or head changed", "no longer open", "branch changed")
+            ), str(error)
         else:
             raise AssertionError(f"second-read {change_name} change must block body update")
         assert len(conflict_calls) == 2
@@ -1061,7 +1067,7 @@ def fake_unchanged_body_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": impact_snippet}
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": impact_snippet}
         ).encode(),
         stderr=b"",
     )
@@ -1085,7 +1091,7 @@ def fake_crlf_unchanged_body_command(args, _root, *, timeout=None):
         args,
         0,
         stdout=json.dumps(
-            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": crlf_body}
+            {**OPEN_REFS, "baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": crlf_body}
         ).encode(),
         stderr=b"",
     )
@@ -1093,6 +1099,72 @@ cloc_report.run_command = fake_crlf_unchanged_body_command
 try:
     assert cloc_report.update_pull_request_body(repo, 2736, impact) is False
     assert len(crlf_update_calls) == 1
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
+def guarded_update_command(calls, *, base="a" * 40, statuses="", running="", processing=""):
+    def command(args, _root, *, timeout=None):
+        calls.append(args)
+        assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
+        if args[:3] == ("gh", "pr", "view"):
+            payload = {**OPEN_REFS, "baseRefOid": base, "headRefOid": "b" * 40, "body": "existing"}
+            return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload).encode(), stderr=b"")
+        if args[:2] == ("gh", "api"):
+            endpoint = args[3]
+            assert ("b" * 40) in endpoint or "/issues/2736/" in endpoint
+            output = statuses if "/statuses" in endpoint else running if "/check-runs" in endpoint else processing
+            if "/issues/2736/comments" in endpoint:
+                assert cloc_report.CODERABBIT_PROCESSING_MARKER in args[-1]
+            return subprocess.CompletedProcess(args, 0, stdout=output.encode(), stderr=b"")
+        if args[:3] == ("gh", "pr", "edit"):
+            return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+        raise AssertionError(f"unexpected guarded update command: {args}")
+    return command
+
+cloc_report.require_tool = lambda _name: None
+try:
+    # A base that moved away from the CI run's base refuses before any API check or edit.
+    guarded_calls = []
+    cloc_report.run_command = guarded_update_command(guarded_calls, base="d" * 40)
+    merge_base_metadata.clear()
+    try:
+        cloc_report.update_pull_request_body(repo, 2736, impact, expect_base="a" * 40)
+    except cloc_report.ReportError as error:
+        assert "--expect-base" in str(error)
+    else:
+        raise AssertionError("an unexpected PR base must block body update")
+    assert [args[:3] for args in guarded_calls] == [("gh", "pr", "view")]
+
+    # Any sign of an active CodeRabbit review skips the edit.
+    for active in ({"statuses": "pending\nsuccess\n"}, {"running": "123\n"}, {"processing": "456\n"}):
+        guarded_calls = []
+        cloc_report.run_command = guarded_update_command(guarded_calls, **{"statuses": "success\n", **active})
+        try:
+            cloc_report.update_pull_request_body(
+                repo, 2736, impact, expect_base="a" * 40, skip_while_hosted_review=True
+            )
+        except cloc_report.HostedReviewActive as error:
+            assert "CodeRabbit review in progress" in str(error)
+        else:
+            raise AssertionError(f"active CodeRabbit review {active} must skip body update")
+        assert ("gh", "pr", "edit") not in [args[:3] for args in guarded_calls]
+
+    # An older pending status behind a newer success, and no other activity, lets the edit through.
+    guarded_calls = []
+    cloc_report.run_command = guarded_update_command(guarded_calls, statuses="success\npending\n")
+    assert cloc_report.update_pull_request_body(
+        repo, 2736, impact, expect_base="a" * 40, skip_while_hosted_review=True
+    ) is True
+    guarded_steps = [args[:3] if args[1] == "pr" else ("gh", "api", args[3].split("?")[0].rsplit("/", 1)[-1]) for args in guarded_calls]
+    assert guarded_steps == [
+        ("gh", "pr", "view"),
+        ("gh", "api", "statuses"),
+        ("gh", "api", "check-runs"),
+        ("gh", "api", "comments"),
+        ("gh", "pr", "view"),
+        ("gh", "pr", "edit"),
+    ], guarded_steps
 finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
@@ -1137,6 +1209,36 @@ try:
             assert cloc_report.PR_REPORT_END in stdout.getvalue()
         assert "cloc-report: remote update failed" in stderr.getvalue()
         assert "Updated the marked LOC section" not in stderr.getvalue()
+
+    main_guard_calls = []
+
+    def guarded_main_update(_root, _number, _report, **guards):
+        main_guard_calls.append(guards)
+        raise cloc_report.HostedReviewActive("CodeRabbit review in progress on PR #2736")
+
+    cloc_report.update_pull_request_body = guarded_main_update
+    stderr = StringIO()
+    with redirect_stdout(StringIO()), redirect_stderr(stderr):
+        status = cloc_report.main([
+            "pr", "2736", "--update-pr", "--skip-while-hosted-review",
+            "--expect-head", "b" * 40, "--expect-base", "a" * 40,
+        ])
+    assert status == 0, stderr.getvalue()
+    assert "Skipping: CodeRabbit review in progress" in stderr.getvalue()
+    assert main_guard_calls == [{"expect_base": "a" * 40, "skip_while_hosted_review": True}]
+
+    for bad_args, message in (
+        (["--expect-head", "d" * 40], "PR head does not match --expect-head"),
+        (["--expect-base", "d" * 40], "PR base does not match --expect-base"),
+        (["--expect-head", "not-a-sha"], "invalid --expect-head commit SHA"),
+        (["--skip-while-hosted-review"], "--skip-while-hosted-review requires --update-pr"),
+    ):
+        main_guard_calls.clear()
+        stderr = StringIO()
+        with redirect_stdout(StringIO()), redirect_stderr(stderr):
+            status = cloc_report.main(["pr", "2736", *bad_args])
+        assert status == 1 and message in stderr.getvalue(), (bad_args, stderr.getvalue())
+        assert main_guard_calls == []
 finally:
     (
         cloc_report.repository_root,
@@ -1209,6 +1311,9 @@ native_gh.write_text(
                 state["body"] = state["changed_body"]
             state_path.write_text(json.dumps(state), encoding="utf-8")
             print(json.dumps({
+                "state": "OPEN",
+                "baseRefName": "stack/base",
+                "headRefName": "feature/forked",
                 "baseRefOid": state["baseRefOid"],
                 "headRefOid": state["headRefOid"],
                 "body": state["body"],
@@ -1499,8 +1604,122 @@ pr_help_output = subprocess.check_output(
     [*script, "pr", "--help"], cwd=repo, env=help_env, text=True
 )
 assert cloc_report.PR_COMMAND_DESCRIPTION in pr_help_output
-for pr_argument in ("number", "--repo", "--json", "--update-pr", "--body-file"):
+for pr_argument in (
+    "number", "--repo", "--json", "--update-pr", "--body-file",
+    "--expect-head", "--expect-base", "--skip-while-hosted-review",
+):
     assert pr_argument in pr_help_output
 
 print("cloc report contract checks passed")
 PY
+
+# PR LOC Report callback: run its "Decide whether to update" step against fake
+# source runs to prove PR selection and edit-only eligibility.
+WORKFLOW_DIR="$TMP_DIR/loc-workflow"
+mkdir -p "$WORKFLOW_DIR/bin"
+python3 - "$ROOT_DIR/.github/workflows/pr-loc-report.yml" "$WORKFLOW_DIR/decide.sh" <<'PY'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+start = lines.index("      - name: Decide whether to update")
+run = next(i for i in range(start, len(lines)) if lines[i] == "        run: |")
+body = []
+for line in lines[run + 1:]:
+    if line and not line.startswith("          "):
+        break
+    body.append(line[10:])
+open(sys.argv[2], "w", encoding="utf-8").write("\n".join(body) + "\n")
+PY
+cat >"$WORKFLOW_DIR/bin/gh" <<'GH'
+#!/usr/bin/env bash
+echo "$*" >>"$FAKE_GH_LOG"
+case "$*" in
+  *"/jobs?per_page=100"*) printf '%s\n' "$FAKE_DETECTOR" ;;
+  *"/pulls/42"*) printf '%s\n' "$FAKE_PR" ;;
+  *) echo "unexpected fake gh call: $*" >&2; exit 1 ;;
+esac
+GH
+chmod +x "$WORKFLOW_DIR/bin/gh"
+
+loc_base="$(printf 'a%.0s' {1..40})"
+loc_head="$(printf 'b%.0s' {1..40})"
+run_decide() {
+  : >"$WORKFLOW_DIR/out"
+  : >"$WORKFLOW_DIR/gh.log"
+  PATH="$WORKFLOW_DIR/bin:$PATH" GITHUB_OUTPUT="$WORKFLOW_DIR/out" FAKE_GH_LOG="$WORKFLOW_DIR/gh.log" \
+    REPOSITORY="example/example" CI_RUN_ID=7 CI_RUN_ATTEMPT=1 \
+    CI_TITLE="CI — Validation pr-42 base-${loc_base} head-${loc_head}" CI_HEAD_SHA="$loc_head" \
+    CI_PATH="${CI_PATH:-.github/workflows/ci.yml}" CI_PULL_REQUESTS="${CI_PULL_REQUESTS:-[]}" \
+    FAKE_DETECTOR="${FAKE_DETECTOR:-success}" \
+    FAKE_PR="{\"state\":\"open\",\"head\":\"${loc_head}\",\"base\":\"${loc_base}\",\"base_ref\":\"develop\",\"head_repo\":\"example/example\",\"base_repo\":\"example/example\",\"author\":\"someone\",\"body\":${FAKE_BODY:-\"\"}}" \
+    bash "$WORKFLOW_DIR/decide.sh" >"$WORKFLOW_DIR/stdout"
+}
+expect_skip() {
+  if ! { grep -qx 'update=false' "$WORKFLOW_DIR/out" && grep -qF "$1" "$WORKFLOW_DIR/stdout"; }; then
+    echo "PR LOC Report must skip: $1" >&2; cat "$WORKFLOW_DIR/stdout" >&2; exit 1
+  fi
+}
+
+CI_PULL_REQUESTS="[{\"number\":41,\"base\":{\"sha\":\"${loc_base}\"},\"head\":{\"sha\":\"${loc_head}\"}}]" run_decide
+expect_skip "native PR association does not match"
+[[ ! -s "$WORKFLOW_DIR/gh.log" ]] || { echo "a mismatched association must skip before any API call" >&2; exit 1; }
+
+CI_PULL_REQUESTS="null" run_decide
+expect_skip "native PR association does not match"
+
+CI_PATH=".github/workflows/other.yml" run_decide
+expect_skip "source run is not ci.yml"
+
+FAKE_DETECTOR="skipped" run_decide
+expect_skip "metadata-only CI run"
+
+CI_PULL_REQUESTS="[{\"number\":42,\"base\":{\"sha\":\"${loc_base}\"},\"head\":{\"sha\":\"${loc_head}\"}}]" run_decide
+if ! { grep -qx 'update=true' "$WORKFLOW_DIR/out" && grep -qx 'number=42' "$WORKFLOW_DIR/out" \
+  && grep -qx "base=${loc_base}" "$WORKFLOW_DIR/out" && grep -qx "head=${loc_head}" "$WORKFLOW_DIR/out"; }; then
+  echo "PR LOC Report must target the run's exact PR, base, and head" >&2; cat "$WORKFLOW_DIR/stdout" "$WORKFLOW_DIR/out" >&2; exit 1
+fi
+loc_meta="<!-- firemud:cloc-report:metadata {\\\"base_oid\\\":\\\"${loc_base}\\\",\\\"head_oid\\\":\\\"${loc_head}\\\"} -->"
+FAKE_BODY="\"${loc_meta}\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "a metadata line without a complete marked block must not count as current" >&2; exit 1; }
+FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n<!-- firemud:cloc-report:end -->\\n${loc_meta}\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "metadata outside an empty marked block must not count as current" >&2; exit 1; }
+FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n<!-- firemud:cloc-report:end -->\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "metadata without a rendered report must be regenerated" >&2; exit 1; }
+FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n### FireMUD LOC impact\\n<!-- firemud:cloc-report:end -->\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "a heading without LOC counts must be regenerated" >&2; exit 1; }
+loc_table='| Section | Base LOC | Head LOC | Δ LOC | Change |\n|---|---:|---:|---:|---:|'
+loc_block_start="<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n### FireMUD LOC impact\\n\\n${loc_table}"
+loc_block_end='<!-- firemud:cloc-report:end -->'
+FAKE_BODY="\"${loc_block_start}\\n| **Overall** | — | 0 | 0 | n/a |\\n${loc_block_end}\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "non-numeric LOC counts must be regenerated" >&2; exit 1; }
+FAKE_BODY="\"${loc_block_start}\\n${loc_block_end}\\n| **Overall** | 0 | 0 | 0 | n/a |\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "LOC counts outside the marker block must be regenerated" >&2; exit 1; }
+FAKE_BODY="\"<!-- firemud:cloc-report:start -->\\n${loc_meta}\\n<!-- firemud:cloc-report:start -->\\n### FireMUD LOC impact\\n\\n${loc_table}\\n| **Overall** | 0 | 0 | 0 | n/a |\\n${loc_block_end}\\n${loc_block_end}\"" run_decide
+grep -qx 'update=true' "$WORKFLOW_DIR/out" || { echo "nested LOC marker blocks must not count as current" >&2; exit 1; }
+for loc_counts in '0 0' '1000 998'; do
+  read -r loc_before loc_after <<<"$loc_counts"
+  loc_body="$(python3 - "$SCRIPT_SOURCE" "$loc_base" "$loc_head" "$loc_before" "$loc_after" <<'PYLOC'
+import json
+import runpy
+import sys
+
+script, base, head, before, after = sys.argv[1:]
+before, after = int(before), int(after)
+report = {
+    "classifier_sha256": "d" * 64,
+    "base": {"oid": base, "merge_base": base},
+    "head": {"oid": head},
+    "sections": [{
+        "name": "repo",
+        "base": {"lines": before},
+        "head": {"lines": after},
+        "delta": {"lines": after - before},
+        "change_percent": (after - before) * 100 / before if before else None,
+    }],
+}
+print(json.dumps(runpy.run_path(script)["render_pr_report"](report)))
+PYLOC
+)"
+  FAKE_BODY="$loc_body" run_decide
+  expect_skip "LOC section already matches this head and base"
+done
+echo "PR LOC Report callback contract checks passed"
