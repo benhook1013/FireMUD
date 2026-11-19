@@ -4220,7 +4220,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   if (kind === "nested-callback") event.event = "workflow_run";
   if (kind === "fork") event.head_repository.full_name = "fork/repo";
   if (kind === "success") event.conclusion = "success";
-  let clock = 0, tupleReads = 0, sourceReads = 0, metadataReads = 0;
+  let clock = 0, tupleReads = 0, sourceReads = 0, metadataReads = 0, ciInventoryReads = 0;
   const github = {rest: {
     actions: {
       getWorkflow: async ({workflow_id}) => ({data: workflow_id === "ci.yml"
@@ -4234,11 +4234,15 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         return {data: {...source, ...((kind === "stale-attempt" || kind === "late-rerun" && sourceReads > 1) ? {run_attempt: 2} : {})}};
       },
       listWorkflowRuns: async ({workflow_id, page, event: runEvent}) => {
+        if (workflow_id === "ci.yml") ciInventoryReads++;
         let runs = workflow_id === "ci.yml" ? [{...ci, ...(kind === "ci-pending" ? {status: "in_progress"} : {})}]
           : shared.visible ? [refresh] : [];
         if (workflow_id === "ci.yml" && (["metadata-newer", "old-meta-rerun", "unclassified-newer", "pending-newer"].includes(kind) || kind.startsWith("new-meta"))) {
           runs = [{...ci, id: 91, ...(kind === "pending-newer" ? {status: "in_progress"} : {})}, ci];
           if (kind === "new-meta-only") runs = runs.slice(0, 1);
+        }
+        if (workflow_id === "ci.yml" && ciInventoryReads > 1 && kind.startsWith("late-ci-")) {
+          runs = kind === "late-ci-absent" ? [] : [{...ci, id: 91, ...(kind === "late-ci-pending" ? {status: "in_progress"} : {})}, ci];
         }
         if (workflow_id === "runtime-images.yml" && runEvent === "pull_request") {
           runs = kind === "newer-original" ? [{...source, id: 105, status: "in_progress"}] : [source];
@@ -4268,7 +4272,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   }, paginate: async (_route, request) => {
     assert.equal(_route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
     assert.equal(request.attempt_number, 1);
-    if (kind.startsWith("new-meta") && request.run_id === 91) {
+    if ((kind.startsWith("new-meta") || kind === "late-ci-new-metadata") && request.run_id === 91) {
       const expression = "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'";
       const job = {id: 31, run_id: 91, run_attempt: 1, head_sha: head,
         name: kind === "new-meta-expression" ? expression : kind === "new-meta-wrapped" ? "${{ " + expression + " }}" : "PR Metadata Edit (Validation Gate)",
@@ -4286,10 +4290,10 @@ async function run(kind, shared = {visible: false, posts: 0}) {
       if (kind === "new-meta-mixed") return [job, {...job, id: 32, name: "Validation Gate"}];
       return [job];
     }
-    const metadata = kind === "metadata" || ["metadata-newer", "old-meta-rerun"].includes(kind) && request.run_id === 91;
+    const metadata = kind === "metadata" || ["metadata-newer", "old-meta-rerun", "late-ci-old-metadata"].includes(kind) && request.run_id === 91;
     return [{id: 30, run_id: request.run_id, run_attempt: 1, head_sha: head, name: "Validation Gate",
       workflow_name: "CI — Validation", status: "completed", check_run_url: `https://api.github.com/repos/${repository}/check-runs/30`,
-      steps: kind === "unclassified-newer" && request.run_id === 91 ? [] : [
+      steps: ["unclassified-newer", "late-ci-unknown"].includes(kind) && request.run_id === 91 ? [] : [
         {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: metadata ? "success" : "skipped"},
         {name: "Enforce validation success", status: "completed", conclusion: metadata ? "skipped" : "failure"}]}];
   }};
@@ -4310,6 +4314,12 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     "new-meta-pending", "new-meta-success", "new-meta-unknown", "new-meta-duplicate", "new-meta-mixed", "new-meta-rerun",
     "old-meta-rerun", "new-meta-open-wrapper", "new-meta-close-wrapper"]) {
     assert.equal(await run(scenario), 0, scenario);
+  }
+  for (const scenario of ["late-ci-pending", "late-ci-substantive", "late-ci-unknown", "late-ci-absent"]) {
+    assert.equal(await run(scenario), 0, "newer exact CI owns recovery: " + scenario);
+  }
+  for (const scenario of ["late-ci-old-metadata", "late-ci-new-metadata"]) {
+    assert.equal(await run(scenario), 1, "proven newer metadata must not hide selected substantive CI: " + scenario);
   }
   assert.equal(await run("cached-base-stale"), 1, "live ref and ordered parents override cached PR base SHA");
   for (const scenario of ["head-moved", "merge-moved", "ref-moved", "wrong-ref", "parents-reversed", "base-ref-moved"]) {
