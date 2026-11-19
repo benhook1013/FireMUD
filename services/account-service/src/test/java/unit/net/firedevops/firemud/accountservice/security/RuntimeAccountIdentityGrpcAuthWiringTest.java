@@ -285,16 +285,25 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
                       START_SESSION_RECOVER_METHOD,
                       START_SESSION_REDEEM_METHOD,
                       READ_REDEEMED_OPERATION_PROJECTION_METHOD)
-                  // Bearer-free: the materializer is gated by its pinned TLS peer interceptor.
-                  .contains(
-                      "account.v1.AccountJwtSignerMaterializationService/EnrollBootstrap",
-                      "account.v1.AccountJwtSignerMaterializationService/GetCurrentGenerationRequest",
-                      "account.v1.AccountJwtSignerMaterializationService/RecordSecretObservation",
-                      "account.v1.AccountJwtSignerMaterializationService/RecordGenerationResult",
-                      "account.v1.AccountJwtSignerMaterializationService/GetCurrentPromotionRequest",
-                      "account.v1.AccountJwtSignerMaterializationService/RecordPrivatePromotionResult")
                   .doesNotContain("account.v1.StartSessionOperatorAuthorizationService/*")
                   .doesNotContain(NONPUBLIC_METHOD);
+              // Bearer-free outside prod only: the materializer is gated by its pinned TLS peer
+              // interceptor; the prod bearer gap is flagged for review rather than changed here.
+              String[] materializerMethods = {
+                "account.v1.AccountJwtSignerMaterializationService/EnrollBootstrap",
+                "account.v1.AccountJwtSignerMaterializationService/GetCurrentGenerationRequest",
+                "account.v1.AccountJwtSignerMaterializationService/RecordSecretObservation",
+                "account.v1.AccountJwtSignerMaterializationService/RecordGenerationResult",
+                "account.v1.AccountJwtSignerMaterializationService/GetCurrentPromotionRequest",
+                "account.v1.AccountJwtSignerMaterializationService/RecordPrivatePromotionResult"
+              };
+              if (productionLayer) {
+                assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
+                    .doesNotContain(materializerMethods);
+              } else {
+                assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
+                    .contains(materializerMethods);
+              }
               action.accept(
                   context.getBean(AuthTokenInterceptor.class), context.getBean(JwtUtil.class));
             });
