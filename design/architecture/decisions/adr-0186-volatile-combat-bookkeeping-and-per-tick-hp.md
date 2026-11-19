@@ -43,7 +43,7 @@ Making HP itself volatile was considered and rejected for now. It voids fights o
 ## Consequences
 
 - Combat writes drop from an effect ledger row, guard row and HP update per hit to the same three rows per fighter per tick. A load probe must measure the saving.
-- Crash and failover behavior for HP and outcomes is unchanged; after a failover an NPC may switch target.
+- Durable HP and committed-outcome recovery is unchanged; after failover an NPC may switch target, and lost damage shares can change reward credit for a later death.
 - The tick design goal against in-service volatile state and the Entity Management damage example are amended to match.
 
 ## Alternatives Considered
