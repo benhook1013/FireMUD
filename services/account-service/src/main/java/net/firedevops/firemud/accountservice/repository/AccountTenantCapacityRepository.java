@@ -149,6 +149,7 @@ public final class AccountTenantCapacityRepository {
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
     if (delta > request.evidence().quota() - occupied) return Optional.empty();
     new AccountCapacityOriginDecisionRepository(dsl).accept(request);
+    requireCurrentLifetime(request.evidence(), clock.instant());
     long held = Math.addExact(number(usage, "held_units"), delta);
     updateUsage(request, usage, held, number(usage, "used_units"));
     int created =
@@ -256,6 +257,8 @@ public final class AccountTenantCapacityRepository {
 
     public CapacityException(Failure code) {
       super(code.name());
+      if (code == Failure.CAPACITY_QUOTA_EXCEEDED)
+        throw new IllegalArgumentException("A quota refusal requires a durable denial");
       this.code = code;
       this.durableDenialId = null;
     }

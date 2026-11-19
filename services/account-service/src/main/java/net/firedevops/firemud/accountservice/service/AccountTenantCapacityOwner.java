@@ -110,6 +110,7 @@ public final class AccountTenantCapacityOwner {
               if (request.capacityRearmFence() != 1) throw conflict();
               UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
               if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
+              originDecisions.requireFreshAttemptBinding(request);
               lockPlayerAccount(request);
               current(request);
               requireSupportedShape(request);
@@ -120,7 +121,9 @@ public final class AccountTenantCapacityOwner {
               if (reservation.isPresent()) {
                 return new CommitDecision(reservation.orElseThrow(), null);
               }
-              return new CommitDecision(null, originDecisions.refuseQuota(request));
+              UUID denialId = originDecisions.refuseQuota(request);
+              requireCurrentLifetime(request.evidence(), clock.instant());
+              return new CommitDecision(null, denialId);
             });
     // Throw only after the transaction has committed the exact denial.
     if (decision.denialId() != null)
@@ -145,7 +148,7 @@ public final class AccountTenantCapacityOwner {
         || !Objects.equals(
             prior.evidence().fields().get("authorityTuple"),
             next.evidence().fields().get("authorityTuple"))) throw conflict();
-    return inTransaction(
+    return commitWithFreshSnapshot(
         () -> {
           lockPlayerAccount(next);
           Record row = capacity.find(prior.identity());
@@ -163,6 +166,7 @@ public final class AccountTenantCapacityOwner {
           current(next);
           requireSupportedShape(next);
           originDecisions.accept(next);
+          requireClaim(row, recoveryOwner, claimFence, clock.instant());
           requireCurrentLifetime(next.evidence(), clock.instant());
           int history =
               dsl.execute(
@@ -261,6 +265,9 @@ public final class AccountTenantCapacityOwner {
         || !scope.realmId().equals(player.realmId())
         || !scope.playableStateScope().equals(player.playableStateScope())
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
+    // Source reads can consume the remaining evaluation lifetime. Retained replays
+    // return before current(), but a fresh refusal must still be current after qualification.
+    requireCurrentLifetime(evidence, clock.instant());
   }
 
   private static <T> T qualifiedSource(Supplier<T> read) {

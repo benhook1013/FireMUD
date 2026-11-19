@@ -12,6 +12,265 @@ run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title 
 permissions: {}
 
 jobs:
+  reconcile-failed-pr-runtime:
+    name: Reconcile Failed Original PR Runtime
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && contains(fromJSON('["failure","cancelled","timed_out"]'), github.event.workflow_run.conclusion) && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: runtime-pr-refresh-dispatch
+      queue: max
+    permissions:
+      actions: read
+      pull-requests: read
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: Reconcile exact failed original runtime
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const event = context.payload.workflow_run;
+            const positive = value => Number.isSafeInteger(value) && value > 0;
+            const sha = value => typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
+            const titlePattern = /^Build Runtime Images secure-pr-artifact pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40}) mode-required$/;
+            if (context.eventName !== "workflow_run" || event?.event !== "pull_request" ||
+                event.status !== "completed" || !["failure", "cancelled", "timed_out"].includes(event.conclusion) ||
+                event.repository?.full_name !== repository || event.head_repository?.full_name !== repository ||
+                !positive(event.id) || !positive(event.run_attempt)) return;
+            const {data: workflow} = await github.rest.actions.getWorkflow({...context.repo, workflow_id: "runtime-images.yml"});
+            if (!positive(workflow.id) || workflow.path !== ".github/workflows/runtime-images.yml" ||
+                workflow.name !== "Build Runtime Images") throw new Error("Untrusted runtime workflow identity");
+            const matchesPath = (path, expected) => path === expected ||
+              (typeof path === "string" && path.startsWith(`${expected}@refs/`) &&
+               !/[\s~^:?*[\\]/.test(path.slice(expected.length + 1)) && !path.includes("..") && !path.includes("@{"));
+            const trusted = run => run?.workflow_id === workflow.id && matchesPath(run.path, workflow.path) &&
+              run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
+              [workflow.name, run.display_title].includes(run.name) && positive(run.id) && positive(run.run_attempt);
+            const match = titlePattern.exec(event.display_title || "");
+            if (!match) return;
+            const [ , number, base, head, merge] = match;
+            const sourceCurrent = async () => {
+              const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: event.id});
+              return trusted(run) && run.id === event.id && run.run_attempt === event.run_attempt &&
+                run.event === "pull_request" && run.status === "completed" && run.conclusion === event.conclusion &&
+                run.head_sha === head && run.display_title === event.display_title && run.head_branch === event.head_branch;
+            };
+            if (!await sourceCurrent()) return;
+            const currentTuple = async () => {
+              let pr;
+              for (let attempt = 0; attempt < 6; attempt++) {
+                ({data: pr} = await github.rest.pulls.get({...context.repo, pull_number: Number(number)}));
+                if (pr.state !== "open" || pr.head?.sha !== head ||
+                    pr.mergeable !== null || attempt === 5) break;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+              }
+              if (pr.state !== "open" || pr.head?.repo?.full_name !== repository || pr.base?.repo?.full_name !== repository ||
+                  pr.head?.sha !== head || pr.head?.ref !== event.head_branch ||
+                  typeof pr.base?.ref !== "string" || !pr.base.ref || pr.mergeable !== true || pr.merge_commit_sha !== merge) return null;
+              const {data: ref} = await github.rest.git.getRef({...context.repo, ref: `heads/${pr.base.ref}`});
+              const {data: commit} = await github.rest.repos.getCommit({...context.repo, ref: merge});
+              if (ref.ref !== `refs/heads/${pr.base.ref}` || ref.object?.sha !== base || commit.sha !== merge || commit.parents?.length !== 2 ||
+                  commit.parents[0]?.sha !== base || commit.parents[1]?.sha !== head) return null;
+              return pr.base.ref;
+            };
+            const baseRef = await currentTuple();
+            if (!baseRef) return;
+            // Inventory incompleteness is unknown, never permission to dispatch duplicates.
+            const inventory = async (workflowId, filter) => {
+              const runs = [], ids = new Set();
+              let total;
+              for (let page = 1; page <= 10; page++) {
+                const {data} = await github.rest.actions.listWorkflowRuns({
+                  ...context.repo, workflow_id: workflowId, per_page: 100, page, ...filter,
+                });
+                total ??= data?.total_count;
+                if (!Number.isInteger(total) || total < 0 || total >= 1000 || data?.total_count !== total ||
+                    !Array.isArray(data.workflow_runs) || data.workflow_runs.length !== Math.min(100, total - runs.length)) {
+                  throw new Error("Reconciliation inventory is incomplete; no dispatch issued");
+                }
+                for (const run of data.workflow_runs) {
+                  if (!positive(run.id) || ids.has(run.id)) throw new Error("Reconciliation inventory shifted; no dispatch issued");
+                  ids.add(run.id); runs.push(run);
+                }
+                if (runs.length === total) return runs;
+              }
+              throw new Error("Reconciliation inventory exceeds bounded pagination");
+            };
+            const originalSuperseded = async () => {
+              const runs = await inventory("runtime-images.yml", {event: "pull_request", head_sha: head});
+              return runs.some(run => run.display_title === event.display_title && run.id > event.id);
+            };
+            if (await originalSuperseded()) return;
+            const {data: ciWorkflow} = await github.rest.actions.getWorkflow({...context.repo, workflow_id: "ci.yml"});
+            if (!positive(ciWorkflow.id) || ciWorkflow.path !== ".github/workflows/ci.yml" || ciWorkflow.name !== "CI — Validation") {
+              throw new Error("Untrusted CI workflow identity");
+            }
+            const ciTitle = `CI — Validation pr-${number} base-${base} head-${head}`;
+            let ci;
+            const matchesCi = run => run && run.id === ci?.id && run.run_attempt === ci?.run_attempt && positive(run.run_attempt) &&
+              run.workflow_id === ciWorkflow.id && matchesPath(run.path, ciWorkflow.path) &&
+              run.event === "pull_request" && run.status === "completed" &&
+              run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
+              run.head_sha === head && run.head_branch === event.head_branch && run.display_title === ciTitle &&
+              [ciWorkflow.name, ciTitle].includes(run.name);
+            const selectCi = async () => {
+              ci = null;
+              const ciRuns = (await inventory("ci.yml", {event: "pull_request", head_sha: head}))
+                .filter(run => run.display_title === ciTitle).sort((a, b) => b.id - a.id);
+              let skippedPreEnforcementCancellation = false;
+              // Metadata-only completions cannot conceal an earlier substantive attempt for this exact tuple.
+              for (const candidate of ciRuns) {
+                ci = candidate;
+                if (!positive(ci.id) || !matchesCi(ci)) return null; // Unfinished/new unclassified CI owns its later callback.
+                const {data: ciNative} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
+                if (!matchesCi(ciNative)) return null;
+                const jobs = await github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                  {...context.repo, run_id: ci.id, attempt_number: ci.run_attempt, per_page: 100});
+                if (!Array.isArray(jobs) || jobs.some(job => !job || typeof job.name !== "string" || !job.name.trim())) return null;
+                const metadataName = "PR Metadata Edit (Validation Gate)";
+                const metadataExpression = "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'";
+                const normalizedName = name => {
+                  if (typeof name !== "string") return "";
+                  const trimmed = name.trim();
+                  const wrapped = trimmed.match(/^\$\{\{([\s\S]*)\}\}$/);
+                  return (wrapped ? wrapped[1].trim() : trimmed).replace(/\s+/g, " ");
+                };
+                const metadata = jobs.filter(job => job.name === metadataName ||
+                  normalizedName(job.name) === metadataExpression);
+                const checkPrefix = `https://api.github.com/repos/${repository}/check-runs/`;
+                const nativeJob = job => job && positive(job.id) && job.run_id === ci.id &&
+                  job.run_attempt === ci.run_attempt && job.head_sha === head &&
+                  [ciWorkflow.name, ciTitle].includes(job.workflow_name) && job.status === "completed" &&
+                  typeof job.check_run_url === "string" && job.check_run_url.startsWith(checkPrefix) &&
+                  /^[1-9][0-9]*$/.test(job.check_run_url.slice(checkPrefix.length));
+                const gates = jobs.filter(job => job.name === "Validation Gate");
+                if (metadata.length) {
+                  // Only one positively skipped native metadata job can be ignored.
+                  // Unknown/mixed identities must never reveal an older CI result.
+                  if (metadata.length !== 1 || jobs.length !== 1 || gates.length || !nativeJob(metadata[0]) ||
+                      metadata[0].conclusion !== "skipped") return null;
+                  const {data: latestMetadata} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
+                  if (!matchesCi(latestMetadata) || latestMetadata.conclusion !== ci.conclusion ||
+                      ciNative.conclusion !== ci.conclusion) return null;
+                  ci = null;
+                  continue;
+                }
+                const gate = gates.length === 1 ? gates[0] : null;
+                const preservation = gate?.steps?.filter(step => step.name === "Preserve successful required gate on metadata-only edit") || [];
+                const enforcement = gate?.steps?.filter(step => step.name === "Enforce validation success") || [];
+                // Only an exact native cancelled attempt with a uniquely identified,
+                // explicitly never-started enforcement step may reveal older success.
+                if (ci.conclusion === "cancelled" && ciNative.conclusion === "cancelled" &&
+                    nativeJob(gate) && gate.conclusion === "cancelled" &&
+                    preservation.length === 1 && preservation[0].status === "completed" &&
+                    preservation[0].conclusion === "skipped" &&
+                    enforcement.length === 1 && enforcement[0].status === "completed" &&
+                    enforcement[0].conclusion === "skipped" && enforcement[0].started_at === null) {
+                  // The aggregator can be cancelled before enforcement even after a
+                  // substantive upstream job failed. Only a coherent, terminal native
+                  // inventory without failures or unexplained work may reveal older proof.
+                  const seenJobIds = new Set();
+                  const seenChecks = new Set();
+                  for (const job of jobs) {
+                    if (!nativeJob(job) || seenJobIds.has(job.id) || seenChecks.has(job.check_run_url) ||
+                        !["success", "skipped", "cancelled"].includes(job.conclusion) || !Array.isArray(job.steps)) return null;
+                    seenJobIds.add(job.id);
+                    seenChecks.add(job.check_run_url);
+                    for (const step of job.steps) {
+                      if (!step || typeof step.name !== "string" || !step.name.trim() || step.status !== "completed" ||
+                          !["success", "skipped", "cancelled"].includes(step.conclusion) ||
+                          (step.conclusion === "cancelled" && step.started_at !== null)) return null;
+                    }
+                  }
+                  const {data: latestCancelled} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
+                  if (!matchesCi(latestCancelled) || latestCancelled.conclusion !== "cancelled") return null;
+                  skippedPreEnforcementCancellation = true;
+                  ci = null;
+                  continue;
+                }
+                if (ci.conclusion === "cancelled" || ciNative.conclusion === "cancelled") return null;
+                if (!gate || !positive(gate.id) || gate.run_id !== ci.id || gate.run_attempt !== ci.run_attempt ||
+                    gate.head_sha !== head || ![ciWorkflow.name, ciTitle].includes(gate.workflow_name) || gate.status !== "completed" ||
+                    typeof gate.check_run_url !== "string" || !gate.check_run_url.startsWith(checkPrefix) ||
+                    !/^[1-9][0-9]*$/.test(gate.check_run_url.slice(checkPrefix.length)) ||
+                    preservation.length !== 1 || preservation[0].status !== "completed" || preservation[0].conclusion !== "skipped" ||
+                    enforcement.length !== 1 || enforcement[0].status !== "completed" ||
+                    !["success", "failure"].includes(enforcement[0].conclusion)) {
+                  // Skip only proven metadata preservation, never malformed or unfinished evidence.
+                  if (gate && positive(gate.id) && gate.run_id === ci.id && gate.run_attempt === ci.run_attempt &&
+                      gate.head_sha === head && [ciWorkflow.name, ciTitle].includes(gate.workflow_name) &&
+                      gate.status === "completed" && typeof gate.check_run_url === "string" &&
+                      gate.check_run_url.startsWith(checkPrefix) && /^[1-9][0-9]*$/.test(gate.check_run_url.slice(checkPrefix.length)) &&
+                      preservation.length === 1 && preservation[0].status === "completed" && preservation[0].conclusion === "success" &&
+                      enforcement.length === 1 && enforcement[0].status === "completed" && enforcement[0].conclusion === "skipped") {
+                    const {data: latestMetadata} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
+                    if (!matchesCi(latestMetadata)) return null;
+                    ci = null;
+                    continue;
+                  }
+                  return null;
+                }
+                if (skippedPreEnforcementCancellation &&
+                    (ci.conclusion !== "success" || ciNative.conclusion !== "success" ||
+                     gate.conclusion !== "success" || enforcement[0].conclusion !== "success")) return null;
+                break;
+              }
+              return ci;
+            };
+            ci = await selectCi();
+            if (!ci) return;
+            const newerRefresh = async (createdSince = event.created_at) => {
+              const runs = await inventory("runtime-images.yml", {event: "repository_dispatch", created: `${createdSince}..*`});
+              const exact = runs.filter(run => run.display_title === event.display_title && run.id > event.id);
+              for (const run of exact) {
+                if (!trusted(run) || run.event !== "repository_dispatch" ||
+                    run.head_branch !== context.payload.repository.default_branch || !sha(run.head_sha)) {
+                  throw new Error("Exact refresh has conflicting native provenance");
+                }
+              }
+              // Completed refresh also owns this recovery; never retry a refresh from its completion callback.
+              return exact.length > 0;
+            };
+            if (typeof event.created_at !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(event.created_at) ||
+                !Number.isFinite(Date.parse(event.created_at))) throw new Error("Invalid original run creation timestamp");
+            if (await newerRefresh()) return;
+            // Re-list the complete exact-tuple CI inventory before the POST: a newer
+            // pending/substantive attempt may have appeared since the first selection.
+            const selectedCi = ci;
+            const currentCi = await selectCi();
+            if (!currentCi || currentCi.id !== selectedCi.id || currentCi.run_attempt !== selectedCi.run_attempt) return;
+            const {data: finalCi} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
+            if (!matchesCi(finalCi) || finalCi.conclusion !== ci.conclusion || !await sourceCurrent() || await originalSuperseded() || await currentTuple() !== baseRef) return;
+            const dispatchStarted = new Date(Date.now() - 1000).toISOString();
+            let responseUnknown = false;
+            try {
+              await github.rest.repos.createDispatchEvent({...context.repo, event_type: "pr-runtime-base-refresh", client_payload: {
+                pr_number: number, base_ref: baseRef, base_sha: base, head_sha: head, merge_sha: merge,
+              }});
+            } catch (error) {
+              // A documented repository-dispatch 404/422 or authentication 401 is not a lost response.
+              if ([401, 404, 422].includes(error?.status) && error.response?.status === error.status &&
+                  !error.response.headers?.["retry-after"] && error.response.headers?.["x-ratelimit-remaining"] !== "0") throw error;
+              responseUnknown = true;
+              core.setFailed(`Runtime refresh POST response is unknown; no retry issued: ${error.message || error}`);
+            }
+            // Keep the shared lock during observation even when the one POST response was lost.
+            const deadline = Date.now() + 120000;
+            while (!await newerRefresh(dispatchStarted)) {
+              if (Date.now() >= deadline) {
+                throw new Error(responseUnknown
+                  ? "Refresh dispatch attempted but visibility is unknown; no retry issued"
+                  : "Refresh dispatch accepted but visibility is unknown; no retry issued");
+              }
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            core.info(`Reconciled failed original runtime for PR #${number}; exact refresh is visible.`);
+
   source:
     name: Resolve Exact Runtime Publication Source
     if: ${{ (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-image-publication' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}

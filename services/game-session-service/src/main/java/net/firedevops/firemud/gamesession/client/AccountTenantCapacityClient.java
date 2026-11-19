@@ -7,6 +7,8 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -60,25 +62,29 @@ public final class AccountTenantCapacityClient
    * The caller must obtain its typed context from current owned player state, not text/metadata.
    * Retries retain this exact request. The Account call consumes the remaining absolute admission
    * budget, capped at five seconds and the incoming deadline. A timeout or an inexact response
-   * leaves the commitment indeterminate. Retry with the original identity.
+   * leaves the commitment indeterminate. Collect read-only evidence for the original attempt first;
+   * only replay this mutation with the exact original request when reconciliation permits it.
    */
   public Result commit(Request request, long absoluteDeadlineMillis) {
     long maximumMillis =
         TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
     Deadline maximum = Deadline.after(maximumMillis, TimeUnit.MILLISECONDS);
     requireNoAmbientSql("Capacity commitment requires no ambient SQL");
-    long startedMillis = clock.millis();
+    // Anchor conversion near the wall-clock sample, not at invocation entry. A pause
+    // during sampling can only shorten the bound; it must never extend the caller budget.
+    Deadline sampledAt = Deadline.after(0, TimeUnit.NANOSECONDS);
+    Instant sampledInstant = clock.instant();
     request.requireStructurallyValid();
     if (request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
         || !namespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Exact Game Session context required");
-    long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, startedMillis);
-    Deadline absoluteDeadline =
-        maximum.offset(
-            Math.max(0L, Math.min(maximumMillis, remainingMillis)) - maximumMillis,
-            TimeUnit.MILLISECONDS);
-    Deadline incoming = Context.current().getDeadline();
-    Deadline deadline = incoming == null ? absoluteDeadline : absoluteDeadline.minimum(incoming);
+    Deadline deadline =
+        selectDeadline(
+            maximum,
+            sampledAt,
+            Context.current().getDeadline(),
+            absoluteDeadlineMillis,
+            sampledInstant);
     var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
     CommitTenantCapacityAdmissionResponse response;
     try {
@@ -107,6 +113,27 @@ public final class AccountTenantCapacityClient
           .withDescription("Account capacity commitment response was inexact")
           .asRuntimeException();
     }
+  }
+
+  /** Converts paired clock samples without resetting the invocation or incoming cap. */
+  static Deadline selectDeadline(
+      Deadline maximum,
+      Deadline sampledAt,
+      Deadline incoming,
+      long absoluteDeadlineMillis,
+      Instant sampledInstant) {
+    Duration maximumBudget =
+        Duration.ofSeconds(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
+    Duration remaining =
+        Duration.between(sampledInstant, Instant.ofEpochMilli(absoluteDeadlineMillis));
+    // Cap before converting to nanos: extreme epoch-millisecond deadlines may exceed long nanos.
+    long remainingNanos =
+        remaining.isNegative()
+            ? 0
+            : (remaining.compareTo(maximumBudget) > 0 ? maximumBudget : remaining).toNanos();
+    Deadline absoluteDeadline = sampledAt.offset(remainingNanos, TimeUnit.NANOSECONDS);
+    Deadline selected = maximum.minimum(absoluteDeadline);
+    return incoming == null ? selected : selected.minimum(incoming);
   }
 
   /** Exact Account domain refusal without a capacity commitment. */
@@ -140,7 +167,8 @@ public final class AccountTenantCapacityClient
 
   @Override
   protected String configuredTarget(ServiceEndpointsProperties endpoints) {
-    return endpoints.getAccountService();
+    String target = endpoints.getAccountService();
+    return target == null || target.isBlank() ? null : target;
   }
 
   @Override
