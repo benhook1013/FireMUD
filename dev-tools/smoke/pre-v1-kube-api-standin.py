@@ -11,6 +11,7 @@ import argparse
 import hmac
 import json
 import os
+import shutil
 import ssl
 import tempfile
 import threading
@@ -204,15 +205,38 @@ class State:
         self.data = {}
 
     def project(self):
-        """Mirror ConfigMap data into a mounted directory, as kubelet does for a volume."""
+        """Mirror ConfigMap data into a mounted directory with kubelet's AtomicWriter layout.
+
+        Each publication lands in a fresh root-owned ``..<version>`` directory; ``..data`` is
+        swapped to it atomically and every key is a ``key -> ..data/key`` symlink.
+        """
         if not self.projection_dir:
             return
+        root = self.projection_dir
+        version = tempfile.mkdtemp(prefix="..%d_" % self.resource_version, dir=root)
+        os.chmod(version, 0o755)
         for key, value in self.data.items():
-            fd, tmp = tempfile.mkstemp(dir=self.projection_dir)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            path = os.path.join(version, key)
+            with open(path, "w", encoding="utf-8") as handle:
                 handle.write(value)
-            os.chmod(tmp, 0o444)
-            os.replace(tmp, os.path.join(self.projection_dir, key))
+            os.chmod(path, 0o444)
+        data_tmp = os.path.join(root, "..data_tmp")
+        if os.path.lexists(data_tmp):
+            os.unlink(data_tmp)
+        os.symlink(os.path.basename(version), data_tmp)
+        previous = os.readlink(os.path.join(root, "..data")) if os.path.islink(
+            os.path.join(root, "..data")) else None
+        os.replace(data_tmp, os.path.join(root, "..data"))
+        for key in self.data:
+            link = os.path.join(root, key)
+            if not os.path.islink(link):
+                os.symlink(os.path.join("..data", key), link)
+        for entry in os.listdir(root):
+            link = os.path.join(root, entry)
+            if os.path.islink(link) and not entry.startswith("..") and entry not in self.data:
+                os.unlink(link)
+        if previous:
+            shutil.rmtree(os.path.join(root, previous), ignore_errors=True)
 
     def config_map(self):
         return {

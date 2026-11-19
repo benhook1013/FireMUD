@@ -130,6 +130,9 @@ services:
       FIREMUD_SERVICES_ACCOUNT_SERVICE: account-service:6565
       FIREMUD_GAME_SESSION_ACCOUNT_PUBLIC_JWKS_MAXIMUM_CACHE_AGE_MILLIS: "60000"
       FIREMUD_CANONICAL_GAMEPLAY_ROSTER_OWNER_READ_ENABLED: "true"
+    volumes:
+      # Same root-owned AtomicWriter projection Account publishes through the Kubernetes stand-in.
+      - pre-v1-jwks-projection:/var/run/secrets/firemud/jwks:ro
     networks:
       default:
         ipv4_address: 172.30.0.20
