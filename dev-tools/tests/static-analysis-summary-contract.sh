@@ -15,8 +15,8 @@ if ! awk '
 fi
 
 grep -Fq 'github.paginate(github.rest.actions.listWorkflowRuns' "$workflow"
-grep -Fq 'workflowRunFor("codeql.yml")' "$workflow"
-grep -Fq 'workflowRunFor("license-scan.yml")' "$workflow"
+grep -Fq 'workflowRunFor("codeql.yml", "CodeQL Gate", checkRuns)' "$workflow"
+grep -Fq 'workflowRunFor("license-scan.yml", "License Gate", checkRuns)' "$workflow"
 grep -Fq 'head_sha: headSha,' "$workflow"
 grep -Fq 'return "skipped";' "$workflow"
 grep -Fq 'run_attempt' "$workflow"
@@ -141,6 +141,18 @@ const github = {
             conclusion: "failure",
           },
           {
+            // A later metadata-only edit run: its gate is skipped under a
+            // non-required name and must not mask the substantive failure.
+            id: 270,
+            event: "pull_request",
+            head_sha: headSha,
+            display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+            created_at: "2026-09-20T12:00:00Z",
+            run_attempt: 1,
+            status: "completed",
+            conclusion: "success",
+          },
+          {
             id: 250,
             event: "pull_request",
             head_sha: headSha,
@@ -185,6 +197,16 @@ const github = {
           created_at: "2026-09-19T00:01:00Z",
           completed_at: "2026-09-19T00:02:00Z",
           details_url: "https://github.example/actions/runs/100/job/1001",
+        },
+        {
+          id: 2701,
+          // Native skipped-job name: GitHub leaves the expression unevaluated.
+          name: "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (CodeQL Gate)' || 'CodeQL Gate'",
+          status: "completed",
+          conclusion: "skipped",
+          created_at: "2026-09-20T12:00:01Z",
+          completed_at: "2026-09-20T12:00:01Z",
+          details_url: "https://github.example/actions/runs/270/job/2701",
         },
         {
           id: 2001,

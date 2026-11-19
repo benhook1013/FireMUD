@@ -140,8 +140,26 @@ jobs:
               );
             };
 
-            const workflowRunFor = async (workflowId) => {
+            const checkRunWorkflowId = (checkRun) => {
+              const match = String(checkRun?.details_url || "").match(/\/actions\/runs\/(\d+)(?:\/|$)/);
+              return match?.[1] || null;
+            };
+
+            // Metadata-only edits skip their gate under a non-required name; the
+            // earlier substantive run for the same title remains the result.
+            // GitHub leaves a skipped job's name expression unevaluated, so match
+            // the metadata label inside it.
+            const workflowRunFor = async (workflowId, gateName, checkRuns) => {
               const workflowName = workflowId === "codeql.yml" ? "CodeQL Analysis" : "License Gate";
+              const metadataRunIds = new Set((Array.isArray(checkRuns) ? checkRuns : [])
+                .filter((checkRun) => {
+                  if (checkRun?.status !== "completed" || checkRun?.conclusion !== "skipped") return false;
+                  const name = String(checkRun.name || "");
+                  const metadataName = `PR Metadata Edit (${gateName})`;
+                  return name === metadataName || name.includes(`'${metadataName}'`);
+                })
+                .map(checkRunWorkflowId)
+                .filter(Boolean));
               const expectedTitle = `${workflowName} pr-${issueNumber} base-${baseSha} head-${headSha}`;
               const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
                 ...context.repo,
@@ -151,13 +169,9 @@ jobs:
                 per_page: 100,
               });
               return selectLatestWorkflowRun(
-                workflowRuns.filter((workflowRun) => workflowRun?.display_title === expectedTitle)
+                workflowRuns.filter((workflowRun) =>
+                  workflowRun?.display_title === expectedTitle && !metadataRunIds.has(String(workflowRun.id)))
               );
-            };
-
-            const checkRunWorkflowId = (checkRun) => {
-              const match = String(checkRun?.details_url || "").match(/\/actions\/runs\/(\d+)(?:\/|$)/);
-              return match?.[1] || null;
             };
 
             const compareCheckRuns = (left, right) => {
@@ -232,13 +246,14 @@ jobs:
                 return [label, normalizeStatus(selectedCheckRun, checkName, workflowRun)];
               });
 
+            const checkRuns = await loadChecks();
             const workflowRuns = {
-              codeql: await workflowRunFor("codeql.yml"),
-              license: await workflowRunFor("license-scan.yml"),
+              codeql: await workflowRunFor("codeql.yml", "CodeQL Gate", checkRuns),
+              license: await workflowRunFor("license-scan.yml", "License Gate", checkRuns),
             };
             // Each serialized producer completion publishes one bounded snapshot.
             // A running counterpart stays pending until its completion callback refreshes this comment.
-            const checks = resolveStatuses(await loadChecks(), workflowRuns);
+            const checks = resolveStatuses(checkRuns, workflowRuns);
 
             const gateResults = checks.slice(0, gateChecks.length);
             const detailResults = checks.slice(gateChecks.length);
