@@ -39,6 +39,7 @@ This decision covers data only. Security, protocol and in-flight runtime correct
 
 - Identifier and schema migrations before v1 are direct replacements followed by a reset.
 - Preview and dev-demo deploys always start from an empty, reseeded database.
+- A reset also discards completed external-action receipts, so any external provider used before v1 must be reset with the environment or reject replays.
 - Legacy and retained-row machinery is deleted rather than maintained.
 
 ## Alternatives Considered
