@@ -272,7 +272,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                   WHERE operation_id = ? AND effect_id = ? AND state IN ('pending', 'retryable')
                   """,
                   attemptId,
-                  toOffsetDateTime(now),
+                  // PostgreSQL stores microseconds; truncate explicitly rather than rounding
+                  // the dispatch floor upward beyond an observation of this same instant.
+                  toOffsetDateTime(now.truncatedTo(java.time.temporal.ChronoUnit.MICROS)),
                   toOffsetDateTime(now),
                   operationId,
                   effectId);
@@ -380,13 +382,21 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                 && readbackDigest.equals(storedDigest)) {
               return operation;
             }
-            throw conflict("effect readback changed after definitive no effect");
+            if (readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
+                || ((storedDigest != null
+                        || (stored != null && stored.get("readback_payload", JSONB.class) != null))
+                    && !hasValidatedUnknownReadback(stored, storedDigest, current))) {
+              throw conflict("effect readback changed after definitive no effect");
+            }
+            // A definitive apply rejection may precede its first durable closure receipt.
+            // Keep normal attempt and observation fences before retaining that receipt.
           }
           if (readback.observedAt().isAfter(now)) {
             throw conflict("effect readback observation is in the future");
           }
           if (current.state() != EffectOutboxState.DISPATCHED
-              && current.state() != EffectOutboxState.AMBIGUOUS) {
+              && current.state() != EffectOutboxState.AMBIGUOUS
+              && current.state() != EffectOutboxState.RETRYABLE) {
             throw conflict("effect is not awaiting readback reconciliation");
           }
           Record timestamps =
@@ -662,6 +672,22 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || !tuple.evidenceDigest().equals(tupleCodec.digest(operation.evidence()))) {
       throw conflict("public transition tuple does not match the operation-owned tuple");
     }
+  }
+
+  private boolean hasValidatedUnknownReadback(
+      Record stored, String storedDigest, OutboxEntry current) {
+    JSONB payload = stored == null ? null : stored.get("readback_payload", JSONB.class);
+    if (payload == null || storedDigest == null) {
+      return false;
+    }
+    EffectReadback previous = tupleCodec.readEffectReadback(payload.data());
+    if (!storedDigest.equals(tupleCodec.digest(previous))
+        || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+      return false;
+    }
+    requireReadbackMatches(
+        previous, current, current.effect().operationId(), current.effect().effectId());
+    return true;
   }
 
   private boolean sameAcknowledgedOutcome(

@@ -495,6 +495,225 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(replacement);
   }
 
+  @Test
+  void firstDurableClosureAfterDefinitiveRejectionIsRetainedAndFenced() {
+    Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(60);
+    OutboxEntry dispatched = authorizedDispatch(base);
+    UUID operationId = dispatched.effect().operationId();
+    UUID effectId = dispatched.effect().effectId();
+    UUID attemptId = dispatched.lastAttemptId();
+    journal.recordRetryableEffect(
+        operationId, effectId, attemptId, "OWNER_REJECTED", base.plusSeconds(5));
+    String before = storedOutbox(operationId, effectId);
+    EffectReadback stale =
+        readbackFor(
+            dispatched,
+            attemptId,
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "closure",
+            base.plusSeconds(3));
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    operationId, effectId, attemptId, stale, base.plusSeconds(6)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    EffectReadback future =
+        readbackFor(
+            dispatched,
+            attemptId,
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "closure",
+            base.plusSeconds(7));
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    operationId, effectId, attemptId, future, base.plusSeconds(6)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+    EffectReadback closure =
+        readbackFor(
+            dispatched,
+            attemptId,
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "closure",
+            base.plusSeconds(6));
+    journal.recordEffectReadback(operationId, effectId, attemptId, closure, base.plusSeconds(6));
+    String retained = storedOutbox(operationId, effectId);
+    assertThat(retained).contains(tupleCodec.digest(closure));
+    journal.recordEffectReadback(operationId, effectId, attemptId, closure, base.plusSeconds(7));
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    operationId, effectId, attemptId, future, base.plusSeconds(8)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    UUID nextAttempt = UUID.randomUUID();
+    journal.claimEffect(operationId, effectId, nextAttempt, base.plusSeconds(8));
+    String replaced = storedOutbox(operationId, effectId);
+    assertThatThrownBy(
+            () ->
+                journal.recordEffectReadback(
+                    operationId, effectId, attemptId, closure, base.plusSeconds(9)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(replaced);
+  }
+
+  @Test
+  void unknownReadbackBeforeDefinitiveRejectionAllowsOnlyValidatedSameAttemptClosure() {
+    for (String variant : List.of("valid", "corrupt-digest", "other-attempt", "missing-digest")) {
+      clearJournal();
+      Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(60);
+      OutboxEntry dispatched = authorizedDispatch(base);
+      UUID operationId = dispatched.effect().operationId();
+      UUID effectId = dispatched.effect().effectId();
+      UUID attemptId = dispatched.lastAttemptId();
+      EffectReadback unknown =
+          readbackFor(
+              dispatched,
+              attemptId,
+              EffectReadbackState.UNKNOWN_OR_PARTIAL,
+              "unknown",
+              base.plusSeconds(5));
+      journal.recordEffectReadback(operationId, effectId, attemptId, unknown, base.plusSeconds(5));
+      journal.recordRetryableEffect(
+          operationId, effectId, attemptId, "OWNER_REJECTED", base.plusSeconds(6));
+      if (variant.equals("missing-digest")) {
+        String retained = storedOutbox(operationId, effectId);
+        assertThatThrownBy(
+                () ->
+                    dsl.execute(
+                        "UPDATE recovery_control.initial_gameplay_release_outbox SET readback_digest=NULL WHERE effect_id=?",
+                        effectId))
+            .isInstanceOf(org.jooq.exception.IntegrityConstraintViolationException.class);
+        assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+        continue;
+      }
+      if (!variant.equals("valid")) {
+        EffectReadback stored =
+            variant.equals("other-attempt")
+                ? readbackFor(
+                    dispatched,
+                    UUID.randomUUID(),
+                    EffectReadbackState.UNKNOWN_OR_PARTIAL,
+                    "unknown",
+                    base.plusSeconds(5))
+                : unknown;
+        dsl.execute(
+            "UPDATE recovery_control.initial_gameplay_release_outbox SET readback_payload=CAST(? AS jsonb), readback_digest=? WHERE effect_id=?",
+            tupleCodec.toJson(stored),
+            variant.equals("missing-digest")
+                ? null
+                : variant.equals("corrupt-digest") ? "a".repeat(64) : tupleCodec.digest(stored),
+            effectId);
+      }
+      String before = storedOutbox(operationId, effectId);
+      EffectReadback stale =
+          readbackFor(
+              dispatched,
+              attemptId,
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "closure",
+              base.plusSeconds(3));
+      assertThatThrownBy(
+              () ->
+                  journal.recordEffectReadback(
+                      operationId, effectId, attemptId, stale, base.plusSeconds(7)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class);
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+      EffectReadback closure =
+          readbackFor(
+              dispatched,
+              attemptId,
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "closure",
+              base.plusSeconds(7));
+      if (variant.equals("valid")) {
+        journal.recordEffectReadback(
+            operationId, effectId, attemptId, closure, base.plusSeconds(7));
+        String retained = storedOutbox(operationId, effectId);
+        assertThat(retained).contains(tupleCodec.digest(closure));
+        assertThatThrownBy(
+                () ->
+                    journal.recordEffectReadback(
+                        operationId, effectId, attemptId, unknown, base.plusSeconds(8)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class);
+        assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+      } else {
+        assertThatThrownBy(
+                () ->
+                    journal.recordEffectReadback(
+                        operationId, effectId, attemptId, closure, base.plusSeconds(7)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class);
+        assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+      }
+    }
+  }
+
+  @Test
+  void dispatchFloorUsesStoredMicrosecondsWithoutRoundingFutureOrLosingReceiptPrecision() {
+    for (int nanos : new int[] {499, 999, 999_999_999}) {
+      clearJournal();
+      Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(60).plusNanos(nanos);
+      OutboxEntry dispatched = authorizedDispatch(base);
+      UUID operationId = dispatched.effect().operationId();
+      UUID effectId = dispatched.effect().effectId();
+      Instant dispatchInstant = base.plusSeconds(4);
+      Instant floor = dispatchInstant.truncatedTo(ChronoUnit.MICROS);
+      assertThat(
+              java.util.Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT last_dispatched_at FROM recovery_control.initial_gameplay_release_outbox WHERE effect_id = ?",
+                          effectId))
+                  .get("last_dispatched_at", java.time.OffsetDateTime.class)
+                  .toInstant())
+          .isEqualTo(floor);
+      String before = storedOutbox(operationId, effectId);
+      EffectReadback stale =
+          readbackFor(
+              dispatched,
+              dispatched.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "before-dispatch-floor",
+              floor.minusNanos(1));
+      assertThatThrownBy(
+              () ->
+                  journal.recordEffectReadback(
+                      operationId,
+                      effectId,
+                      dispatched.lastAttemptId(),
+                      stale,
+                      base.plusSeconds(5)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class);
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+      EffectReadback closure =
+          readbackFor(
+              dispatched,
+              dispatched.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "same-instant",
+              dispatchInstant);
+      journal.recordEffectReadback(
+          operationId, effectId, dispatched.lastAttemptId(), closure, base.plusSeconds(5));
+      assertThat(storedOutbox(operationId, effectId)).contains(tupleCodec.digest(closure));
+    }
+  }
+
+  private static OutboxEntry authorizedDispatch(Instant base) {
+    Scope scope = scope();
+    journal.create(scope, UUID.randomUUID());
+    InitialGameplayReleaseEvidence proof = evidence(scope);
+    Operation ready =
+        journal.bindVerifiedEvidence(
+            scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), base.plusSeconds(1));
+    Operation awaiting =
+        journal.transition(
+            transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), base.plusSeconds(2));
+    journal.transition(transitionTuple(awaiting, TransitionVerb.RESUME), base.plusSeconds(3));
+    OutboxEntry pending = journal.findNextEffect(scope.operationId()).orElseThrow();
+    return journal.claimEffect(
+        scope.operationId(), pending.effect().effectId(), UUID.randomUUID(), base.plusSeconds(4));
+  }
+
   private static String storedOutbox(UUID operationId, UUID effectId) {
     return java.util.Objects.requireNonNull(
             dsl.fetchOne(
