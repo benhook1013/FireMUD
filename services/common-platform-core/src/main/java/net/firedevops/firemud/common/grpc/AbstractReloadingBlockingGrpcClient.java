@@ -139,7 +139,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   }
 
   /** Takes the last published stub without waiting for a TLS reload. */
-  protected final TStub requirePublishedInitializedStub(String unavailableMessage) {
+  private TStub requirePublishedInitializedStub(String unavailableMessage) {
     TStub current = stub;
     if (closed || !explicitlyInitialized || current == null) {
       throw new IllegalStateException(unavailableMessage);
@@ -168,9 +168,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
         selected.activeCalls--;
         shutdown = selected.retired && selected.activeCalls == 0;
       }
-      if (shutdown) {
-        selected.channel.shutdown();
-      }
+      if (shutdown) shutdownRetired(selected);
     }
   }
 
@@ -292,7 +290,16 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
         return;
       }
     }
-    previous.channel.shutdown();
+    shutdownRetired(previous);
+  }
+
+  private void shutdownRetired(ChannelGeneration retired) {
+    try {
+      retired.channel.shutdown();
+    } catch (RuntimeException shutdownFailure) {
+      // Cleanup cannot invalidate a published replacement or replace an RPC outcome.
+      logger.warn("Failed to shut down retired gRPC channel", shutdownFailure);
+    }
   }
 
   private static final class ChannelGeneration {

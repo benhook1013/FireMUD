@@ -6,10 +6,11 @@ Use the workflow that matches the current contribution, validation, review, or m
 
 ## Development Process And Repository Stewardship
 
-- [pr-lifecycle.md](./pr-lifecycle.md) – PR status, CodeRabbit, CI, Renovate, merging, and branch/worktree cleanup.
+- [pr-lifecycle.md](./pr-lifecycle.md) – PR status, finding triage, CodeRabbit, CI, Renovate, merging, and branch/worktree cleanup.
 - [repository-health-check.md](./repository-health-check.md) – Human-requested bounded check of observations, unattended automation, hosted environments, aged Renovate work, and recurring operational friction.
 - [validation-and-runtime-proof.md](./validation-and-runtime-proof.md) – Formatting, scoped checks, documentation hygiene, and canonical runtime/smoke proof selection.
-- [ai-delegation-and-review.md](./ai-delegation-and-review.md) – Subagent selection, delegation boundaries, and independent review.
+- [ai-delegation-and-review.md](./ai-delegation-and-review.md) – Delegation boundaries, the Overseer arrangement, and independent review.
+- [model-routing.md](./model-routing.md) – Model selection by task role across Codex and Claude, by `provider_mode`, with quota hand-off.
 
 ## Testing And Playtesting
 

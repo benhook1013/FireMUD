@@ -34,6 +34,8 @@ import net.firedevops.firemud.gamedesign.v1.PingRequest;
 import net.firedevops.firemud.gamedesign.v1.PingResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.health.contributor.Health;
 
 class AbstractReloadingBlockingGrpcClientTest {
@@ -120,8 +122,10 @@ class AbstractReloadingBlockingGrpcClientTest {
     verify(replacement).shutdown();
   }
 
-  @Test
-  void selectedChannelSurvivesReplacementUntilTheBlockingCallReturns() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void selectedChannelSurvivesReplacementOrCloseUntilTheBlockingCallReturns(boolean close)
+      throws Exception {
     var calls = new AtomicInteger();
     var expectedResponse = PingResponse.getDefaultInstance();
     var server =
@@ -137,53 +141,168 @@ class AbstractReloadingBlockingGrpcClientTest {
                 })
             .build()
             .start();
-    var previous =
-        NettyChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext().build();
-    var replacement =
-        NettyChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext().build();
+    try {
+      var previous =
+          NettyChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext().build();
+      try {
+        var replacement =
+            NettyChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext().build();
+        var grpc = new CommonGrpcClientProperties();
+        grpc.setPlaintext(true);
+        var factory = mock(GrpcChannelFactory.class);
+        when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+            .thenReturn(previous, replacement);
+        var selected = new CountDownLatch(1);
+        var startCall = new CountDownLatch(1);
+        try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
+            var executor = Executors.newSingleThreadExecutor()) {
+          client.initExplicit();
+          var result =
+              executor.submit(
+                  () ->
+                      client.withPublishedInitializedStub(
+                          "test client has no stub",
+                          stub -> {
+                            assertThat(stub.getChannel()).isSameAs(previous);
+                            selected.countDown();
+                            try {
+                              assertThat(startCall.await(5, TimeUnit.SECONDS)).isTrue();
+                            } catch (InterruptedException interrupted) {
+                              Thread.currentThread().interrupt();
+                              throw new AssertionError(interrupted);
+                            }
+                            return stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                                .ping(PingRequest.getDefaultInstance());
+                          }));
+          try {
+            assertThat(selected.await(5, TimeUnit.SECONDS)).isTrue();
+            if (close) {
+              client.close();
+              assertThatThrownBy(client::requirePublishedExplicitStub)
+                  .isInstanceOf(IllegalStateException.class);
+            } else {
+              client.reloadChannel();
+              assertThat(client.requirePublishedExplicitStub().getChannel()).isSameAs(replacement);
+            }
+            assertThat(previous.isShutdown()).isFalse();
+            assertThat(calls).hasValue(0);
+          } finally {
+            startCall.countDown();
+          }
+          assertThat(result.get(5, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
+          assertThat(calls).hasValue(1);
+          assertThat(previous.isShutdown()).isTrue();
+        } finally {
+          replacement.shutdownNow();
+        }
+      } finally {
+        previous.shutdownNow();
+      }
+    } finally {
+      server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+    }
+  }
+
+  @Test
+  void idleRetirementFailureDoesNotInvalidatePublishedReplacement() throws Exception {
     var grpc = new CommonGrpcClientProperties();
     grpc.setPlaintext(true);
+    var previous = mock(ManagedChannel.class);
+    var replacement = mock(ManagedChannel.class);
     var factory = mock(GrpcChannelFactory.class);
     when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
         .thenReturn(previous, replacement);
-    var selected = new CountDownLatch(1);
-    var startCall = new CountDownLatch(1);
-    try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
-        var executor = Executors.newSingleThreadExecutor()) {
+    when(previous.shutdown()).thenThrow(new IllegalStateException("shutdown failure"));
+    try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory)) {
       client.initExplicit();
-      var result =
-          executor.submit(
-              () ->
-                  client.withPublishedInitializedStub(
-                      "test client has no stub",
-                      stub -> {
-                        assertThat(stub.getChannel()).isSameAs(previous);
-                        selected.countDown();
-                        try {
-                          assertThat(startCall.await(5, TimeUnit.SECONDS)).isTrue();
-                        } catch (InterruptedException interrupted) {
-                          Thread.currentThread().interrupt();
-                          throw new AssertionError(interrupted);
-                        }
-                        return stub.withDeadlineAfter(5, TimeUnit.SECONDS)
-                            .ping(PingRequest.getDefaultInstance());
-                      }));
-      try {
-        assertThat(selected.await(5, TimeUnit.SECONDS)).isTrue();
-        client.reloadChannel();
-        assertThat(client.requirePublishedExplicitStub().getChannel()).isSameAs(replacement);
-        assertThat(previous.isShutdown()).isFalse();
-        assertThat(calls).hasValue(0);
-      } finally {
-        startCall.countDown();
+      client.reloadChannel();
+      assertThat(client.requirePublishedExplicitStub().getChannel()).isSameAs(replacement);
+      verify(previous).shutdown();
+    }
+  }
+
+  @Test
+  void retiredChannelShutdownFailureDoesNotReplaceCallOutcome() throws Exception {
+    var grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    for (boolean failCall : new boolean[] {false, true}) {
+      var previous = mock(ManagedChannel.class);
+      var replacement = mock(ManagedChannel.class);
+      var factory = mock(GrpcChannelFactory.class);
+      when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+          .thenReturn(previous, replacement);
+      when(previous.shutdown()).thenThrow(new IllegalStateException("shutdown failure"));
+      var originalFailure = new IllegalArgumentException("original call failure");
+      try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory)) {
+        client.initExplicit();
+        java.util.function.Supplier<String> invoke =
+            () ->
+                client.withPublishedInitializedStub(
+                    "missing",
+                    stub -> {
+                      try {
+                        client.reloadChannel();
+                      } catch (SSLException failure) {
+                        throw new AssertionError(failure);
+                      }
+                      if (failCall) throw originalFailure;
+                      return "response";
+                    });
+        if (failCall) {
+          assertThatThrownBy(invoke::get).isSameAs(originalFailure);
+        } else {
+          assertThat(invoke.get()).isEqualTo("response");
+        }
+        verify(previous).shutdown();
       }
-      assertThat(result.get(5, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
-      assertThat(calls).hasValue(1);
-      assertThat(previous.isShutdown()).isTrue();
+    }
+  }
+
+  @Test
+  void callSelectionDoesNotWaitForReplacementChannelConstruction() throws Exception {
+    var grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    var previous = mock(ManagedChannel.class);
+    var replacement = mock(ManagedChannel.class);
+    var factory = mock(GrpcChannelFactory.class);
+    var building = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
+        .thenReturn(previous)
+        .thenAnswer(
+            invocation -> {
+              building.countDown();
+              assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+              return replacement;
+            });
+    var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
+    var executor = Executors.newFixedThreadPool(2, Thread.ofPlatform().daemon().factory());
+    try {
+      client.initExplicit();
+      var reload =
+          executor.submit(
+              () -> {
+                client.reloadChannel();
+                return null;
+              });
+      try {
+        assertThat(building.await(5, TimeUnit.SECONDS)).isTrue();
+        var call =
+            executor.submit(
+                () -> client.withPublishedInitializedStub("missing", stub -> stub.getChannel()));
+        assertThat(call.get(1, TimeUnit.SECONDS)).isSameAs(previous);
+        assertThat(release.getCount()).isEqualTo(1);
+      } finally {
+        release.countDown();
+      }
+      reload.get(5, TimeUnit.SECONDS);
     } finally {
-      previous.shutdownNow();
-      replacement.shutdownNow();
-      server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+      release.countDown();
+      executor.shutdownNow();
+      boolean terminated = executor.awaitTermination(5, TimeUnit.SECONDS);
+      // A regression may deadlock on non-interruptible monitors. Do not block cleanup on them.
+      if (terminated) client.close();
+      assertThat(terminated).isTrue();
     }
   }
 
@@ -363,7 +482,8 @@ class AbstractReloadingBlockingGrpcClientTest {
     }
 
     private GameDesignServiceGrpc.GameDesignServiceBlockingStub requirePublishedExplicitStub() {
-      return requirePublishedInitializedStub("test client is not initialized and available");
+      return withPublishedInitializedStub(
+          "test client is not initialized and available", selected -> selected);
     }
 
     private GameDesignServiceGrpc.GameDesignServiceBlockingStub currentStub() {
