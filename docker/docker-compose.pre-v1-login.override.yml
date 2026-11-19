@@ -15,10 +15,14 @@ volumes:
   pre-v1-jwks-projection:
 
 services:
+  # WAITAOF waits for the next fsync; everysec adds up to 1s per LOGIN write and overruns the
+  # Game Session 3s Account LOGIN budget, so local Coordination fsyncs every write.
   redis-coord:
     command:
       - redis-server
       - /usr/local/etc/redis/redis.conf
+      - --appendfsync
+      - always
       - --user
       - account_coord_app
       - "on"
@@ -38,7 +42,7 @@ services:
   redis-coord-replica:
     image: redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
     command: ["redis-server", "--replicaof", "redis-coord", "6379", "--appendonly", "yes",
-              "--appendfsync", "everysec", "--save", ""]
+              "--appendfsync", "always", "--save", ""]
     depends_on:
       redis-coord:
         condition: service_healthy
