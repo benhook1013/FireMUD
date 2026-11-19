@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOCKED_GRADLE="$ROOT_DIR/dev-tools/validation/run-locked-gradle.sh"
+RECOVERY_GRADLE="$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -13,12 +14,25 @@ account_aggregate_graph="$TMP_DIR/account-aggregate-graph"
 game_session_aggregate_graph="$TMP_DIR/game-session-aggregate-graph"
 world_aggregate_graph="$TMP_DIR/world-aggregate-graph"
 
-bash "$LOCKED_GRADLE" :common-saga:test -PfullCheck --dry-run --no-configuration-cache >"$unit_graph"
-bash "$LOCKED_GRADLE" :common-saga:check -PfullCheck --dry-run --no-configuration-cache >"$check_graph"
-bash "$LOCKED_GRADLE" :common-saga:jacocoTestReport -PfullCheck --dry-run --no-configuration-cache >"$report_graph"
-bash "$LOCKED_GRADLE" :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$account_aggregate_graph"
-bash "$LOCKED_GRADLE" :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$game_session_aggregate_graph"
-bash "$LOCKED_GRADLE" :world-management-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=world-management-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$world_aggregate_graph"
+run_task_graph() {
+  local graph="$1"
+  local status
+  shift
+  if bash "$RECOVERY_GRADLE" --runner "$LOCKED_GRADLE" -- "$@" >"$graph"; then
+    return 0
+  else
+    status=$?
+    cat "$graph" >&2
+    return "$status"
+  fi
+}
+
+run_task_graph "$unit_graph" :common-saga:test -PfullCheck --dry-run --no-configuration-cache
+run_task_graph "$check_graph" :common-saga:check -PfullCheck --dry-run --no-configuration-cache
+run_task_graph "$report_graph" :common-saga:jacocoTestReport -PfullCheck --dry-run --no-configuration-cache
+run_task_graph "$account_aggregate_graph" :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail
+run_task_graph "$game_session_aggregate_graph" :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail
+run_task_graph "$world_aggregate_graph" :world-management-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=world-management-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail
 
 if grep -Eq '^:common-saga:(integrationTest|crossServiceTest|jacocoTestReport)([[:space:]]|$)' "$unit_graph"; then
   echo "Focused :common-saga:test unexpectedly scheduled categorized tests or the combined report." >&2

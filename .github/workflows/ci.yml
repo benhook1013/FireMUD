@@ -470,6 +470,17 @@ jobs:
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         uses: ./.github/actions/setup-helm
 
+      - name: Set up Java for Gradle task-graph contracts
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle for task-graph contracts
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
+
       - name: 🧪 Validate dev tool contracts
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         run: |
