@@ -334,6 +334,7 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   let now = 1000;
   const start = now;
   const failures = [];
+  const cancelledReads = new Set();
   const listRuns = async () => {}, listJobs = async () => {};
   const cancelledSource = runId => ({id: runId, workflow_id: 7, run_attempt: 1, event: "pull_request",
     status: "completed", conclusion: "cancelled", path: ".github/workflows/runtime-images.yml",
@@ -355,13 +356,15 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
       getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
       getWorkflowRun: async ({run_id}) => ({data: {id: run_id,
         run_attempt: selectionCase === "cancelled-changed-attempt" ? 2 : 1,
-        status: "completed", conclusion: "cancelled"}}) },
+        status: "completed", conclusion: cancelledReads.has(run_id) ? "cancelled" : "success"}}) },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
     assert.equal(input.attempt_number, 1);
+    cancelledReads.add(input.run_id);
     return {data: cancelledSource(input.run_id)};
   }, paginate: async (method, input) => {
-    if (method === listJobs) {
+    if (!cancelledReads.has(input.run_id)) {
+      assert.equal(input.attempt_number, 1);
       return [{ id: input.run_id + 100, run_id: input.run_id, name: "PR Full-Stack Smoke", status: "completed", conclusion: "success",
         steps: [{ name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success" }] }];
     }
@@ -503,7 +506,7 @@ const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), defa
 const repository = "example/firemud";
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
 async function scenario(kind, event = "pull_request") {
-  let now = 1000, snapshots = 0, reads = 0;
+  let now = 1000, snapshots = 0, reads = 0, currentRunReads = 0;
   const failures = [], refs = [];
   const context = {repo: {owner: "example", repo: "firemud"}, sha: merge, payload: {
     repository: {default_branch: "develop"},
@@ -523,6 +526,10 @@ async function scenario(kind, event = "pull_request") {
   if (kind === "marker-success") job.steps[0].conclusion = "success";
   if (kind.startsWith("legacy")) job.name = "PR Full-Stack Smoke";
   if (kind === "not-required") job.name = "PR Full-Stack Smoke (runtime-required=false)";
+  if (kind === "duplicate-nonterminal-step") job.steps.push({name: "Run credential-free full-stack smoke", status: "in_progress", conclusion: null});
+  if (["duplicate-terminal-skipped", "duplicate-terminal-failure"].includes(kind)) job.steps.push({name: "Run credential-free full-stack smoke", status: "completed", conclusion: kind.endsWith("failure") ? "failure" : "skipped"});
+  if (kind === "pending-native-refresh-failed") source.conclusion = "failure";
+  if (kind === "pending-native-refresh-skipped") job.steps.push({name: "Run credential-free full-stack smoke", status: "completed", conclusion: "skipped"});
   if (kind === "step-skipped") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "skipped"}];
   if (kind === "legacy-positive") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}];
   const sourceMutations = {
@@ -552,7 +559,11 @@ async function scenario(kind, event = "pull_request") {
     actions: {
       listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
-      getWorkflowRun: async () => ({data: {...source, run_attempt: kind === "newer-attempt" ? 2 : 1}}),
+      getWorkflowRun: async () => {
+        currentRunReads += 1;
+        const superseded = kind === "newer-attempt" || (kind === "rerun-after-proof" && currentRunReads > 1);
+        return {data: {...source, run_attempt: superseded ? 2 : 1, status: superseded ? "in_progress" : "completed"}};
+      },
     },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
@@ -567,14 +578,18 @@ async function scenario(kind, event = "pull_request") {
       "wrong-job-head": {head_sha: defaultSha}, "wrong-check-url": {check_run_url: "https://example.com/check"},
       "failed-job": {conclusion: "failure"}, "pending-job": {status: "in_progress", conclusion: null},
     };
-    return kind === "duplicate-attempt-jobs" ? [job, {...job, id: 101}] : [{...job, ...(mutations[kind] || {})}];
+    snapshots += 1;
+    return ["duplicate-jobs", "duplicate-attempt-jobs"].includes(kind) ? [job, {...job, id: 101}] : [{...job, ...(mutations[kind] || {})}];
   }};
   github.paginate.iterator = async function* (method, input) {
     assert.equal(method, listRuns);
     if (event === "repository_dispatch" && input.event === "pull_request") {
-      yield {data: [{...source, event: "pull_request", head_sha: head, conclusion: "cancelled"}]}; return;
+      yield {data: [{...source, id: kind.startsWith("pending-native") ? 43 : source.id, event: "pull_request", head_sha: head,
+        status: kind.startsWith("pending-native") ? "queued" : "completed",
+        conclusion: kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
     }
-    yield {data: [source]};
+    yield {data: kind.startsWith("duplicate-") && !["duplicate-jobs", "duplicate-attempt-jobs"].includes(kind)
+      ? [{...source, id: 43, created_at: "2026-09-01T00:00:01Z", status: "in_progress", conclusion: null}, source] : [source]};
   };
   const clock = {now: () => now, parse: Date.parse};
   await execute(github, context, {info: () => {}, warning: () => {}, setFailed: message => failures.push(message)},
@@ -588,6 +603,16 @@ async function scenario(kind, event = "pull_request") {
     assert.deepEqual(success.refs, [event === "pull_request" ? merge : defaultSha], "immutable definition must come from actual source event revision");
   }
   assert.deepEqual((await scenario("legacy-positive")).failures, []);
+  assert.deepEqual((await scenario("pending-native-refresh", "repository_dispatch")).failures, [], "trusted successful refresh releases queued native wait");
+  for (const kind of ["pending-native-refresh-skipped", "pending-native-refresh-failed"]) {
+    assert.equal((await scenario(kind, "repository_dispatch")).failures.length, 1, `${kind} cannot release queued native wait`);
+  }
+  for (const kind of ["duplicate-missing-step", "duplicate-nonterminal-step"]) {
+    assert.deepEqual((await scenario(kind)).failures, [], `${kind} preserves canonical fallback`);
+  }
+  for (const kind of ["duplicate-terminal-skipped", "duplicate-terminal-failure", "rerun-after-proof"]) {
+    assert.equal((await scenario(kind)).failures.length, 1, `${kind} cannot supply successful proof`);
+  }
   for (const kind of ["marker-missing", "marker-success", "legacy-missing", "not-required", "step-skipped", "wrong-repository", "wrong-workflow",
     "wrong-path", "wrong-event", "wrong-head", "wrong-head-repository", "wrong-title", "wrong-source-attempt",
     "changed-definition", "unavailable-definition", "wrong-job", "wrong-job-run", "wrong-job-attempt", "wrong-job-head",

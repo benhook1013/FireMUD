@@ -2446,7 +2446,7 @@ require_contains "$smoke_path" 'matching.conclusion === "cancelled"'
 require_contains "$smoke_path" 'waiting for an exact repository_dispatch replacement'
 require_contains "$smoke_path" 'const cancelledReplacementTimeoutMs = 5 * 60 * 1000;'
 require_contains "$smoke_path" 'Cancelled runtime-images run ${cancelledRunId} has no exact repository_dispatch replacement '
-require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
+require_contains "$smoke_path" 'attempt_number: matching.run_attempt,'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'step.name === "Run credential-free full-stack smoke"'
 require_contains "$smoke_path" 'fullSmokeJob?.status === "completed"'
@@ -2478,7 +2478,9 @@ require_contains "$smoke_path" 'Stopping obsolete completed smoke gate for'
 require_contains "$smoke_path" 'Stopping obsolete stale-snapshot smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
-  'github.rest.actions.listJobsForWorkflowRun,' \
+  '"runtime-images job lookup",' \
+  '"GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",' \
+  'attempt_number: matching.run_attempt,' \
   'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
 require_branch_return "$smoke_path" 'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
 require_ordered_sequence \
@@ -2801,7 +2803,7 @@ node - "$smoke_gate_script" <<'NODE_DUPLICATE_SMOKE'
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
-const start = script.indexOf("async function findMatchingRuntimeImagesRun(");
+const start = script.indexOf("async function verifyCompletedCanonicalRuntime(");
 const end = script.indexOf("async function resolveCurrentIdentity(", start);
 assert.ok(start >= 0 && end > start);
 const source = script.slice(start, end);
@@ -3013,9 +3015,11 @@ function runtimeTitle(base, head, merge) {
   return `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
 }
 
+const knownRuns = new Map();
 function runtimeRun(id, title) {
   return {
     id,
+    run_attempt: 1,
     event: "pull_request",
     head_sha: headSha,
     display_title: title,
@@ -3092,10 +3096,20 @@ const github = {
         };
       },
     },
-    actions: { listWorkflowRuns, listJobsForWorkflowRun },
+    actions: { listWorkflowRuns, listJobsForWorkflowRun,
+      getWorkflowRun: async ({run_id}) => {
+        const source = availableRuns.find(run => run.id === run_id) ?? knownRuns.get(run_id);
+        if (!source) throw new Error(`unbound native run lookup ${run_id}`);
+        return {data: source};
+      },
+    },
   },
   paginate: async (method, input) => {
-    if (method === listJobsForWorkflowRun) {
+    if (method === "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs") {
+      if (input.attempt_number !== 1) throw new Error("jobs must bind to selected native attempt");
+      const source = availableRuns.find(run => run.id === input.run_id) ?? knownRuns.get(input.run_id);
+      if (!source) throw new Error(`unbound attempt jobs lookup ${input.run_id}`);
+      if (source.conclusion === "cancelled") return []; // No complete cancellation inventory is supplied by this fixture.
       jobQueries.push(input);
       return [{
         name: "PR Full-Stack Smoke",
@@ -3121,6 +3135,7 @@ github.paginate.iterator = (method, input) => {
     onRepositoryDispatchQuery?.(repositoryDispatchQueryCount);
   }
   return (async function* workflowRunPages() {
+    for (const source of availableRuns) knownRuns.set(source.id, {...source});
     yield { data: availableRuns };
   })();
 };
@@ -3159,7 +3174,9 @@ async function checkPartialPaginationRetry() {
     workflowRunQueries.push(input);
     return (async function* partialPages() {
       attempts++;
-      yield { data: [attempts === 1 ? stale : fresh] };
+      const source = attempts === 1 ? stale : fresh;
+      knownRuns.set(source.id, {...source});
+      yield { data: [source] };
       if (attempts === 1) throw { status: 503, message: "controlled pagination interruption" };
     })();
   };
