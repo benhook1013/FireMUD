@@ -91,14 +91,13 @@ class RemoteFollowupControllerTest {
   void listRemoteFollowupsReturnsCanonicalRows() throws Exception {
     when(remoteFollowupService.listRemoteFollowups(
             org.mockito.ArgumentMatchers.eq(2L),
-            org.mockito.ArgumentMatchers.argThat(
-                request ->
-                    "SCHEDULED".equals(request.getStatus())
-                        && "enqueue_automation_command".equals(request.getPayloadKind())
-                        && "ops".equals(request.getWorldSlug())
-                        && "preview".equals(request.getRealmSlug())
-                        && Long.valueOf(29L).equals(request.getPointerVersion())
-                        && Integer.valueOf(10).equals(request.getLimit()))))
+            org.mockito.ArgumentMatchers.argThat(request ->
+                "SCHEDULED".equals(request.getStatus())
+                    && "enqueue_automation_command".equals(request.getPayloadKind())
+                    && "ops".equals(request.getWorldSlug())
+                    && "preview".equals(request.getRealmSlug())
+                    && Long.valueOf(29L).equals(request.getPointerVersion())
+                    && Integer.valueOf(10).equals(request.getLimit()))))
         .thenReturn(List.of(remoteFollowupDto()));
     SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));

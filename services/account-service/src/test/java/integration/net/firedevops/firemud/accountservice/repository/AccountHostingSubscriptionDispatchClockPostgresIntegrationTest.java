@@ -88,31 +88,29 @@ class AccountHostingSubscriptionDispatchClockPostgresIntegrationTest {
     // nor the caller's earlier recorded_at is a valid substitute for the trigger's late clock read.
     Instant sampled = databaseNow(f);
     assertThat(sampled).isBefore(claim.expiresAt());
-    assertThatThrownBy(
-            () ->
-                f.transaction()
-                    .executeWithoutResult(
-                        s -> {
-                          assertThat(databaseNow(f)).isBefore(claim.expiresAt());
-                          f.dsl()
-                              .execute(
-                                  "SELECT pg_sleep_until(?::timestamptz)",
-                                  claim.expiresAt().plusMillis(5).atOffset(ZoneOffset.UTC));
-                          assertThat(databaseNow(f)).isAfterOrEqualTo(claim.expiresAt());
-                          f.dsl()
-                              .execute(
-                                  "INSERT INTO subscription_provider_dispatch_claim "
-                                      + "(creation_request_id, subscription_id, provider_operation_id, dispatch_id, "
-                                      + "classification, first_attempt_id, first_claimed_row_version, recorded_at) "
-                                      + "VALUES (?, ?, ?, ?, 'FIRST_DISPATCH', ?, ?, ?::timestamptz)",
-                                  f.creation().requestId(),
-                                  f.creation().subscriptionId(),
-                                  f.creation().subscriptionProvisioningRequestId(),
-                                  UUID.randomUUID(),
-                                  claim.attemptId(),
-                                  claim.subscriptionRowVersion(),
-                                  sampled.atOffset(ZoneOffset.UTC));
-                        }))
+    assertThatThrownBy(() ->
+            f.transaction()
+                .executeWithoutResult(s -> {
+                  assertThat(databaseNow(f)).isBefore(claim.expiresAt());
+                  f.dsl()
+                      .execute(
+                          "SELECT pg_sleep_until(?::timestamptz)",
+                          claim.expiresAt().plusMillis(5).atOffset(ZoneOffset.UTC));
+                  assertThat(databaseNow(f)).isAfterOrEqualTo(claim.expiresAt());
+                  f.dsl()
+                      .execute(
+                          "INSERT INTO subscription_provider_dispatch_claim "
+                              + "(creation_request_id, subscription_id, provider_operation_id, dispatch_id, "
+                              + "classification, first_attempt_id, first_claimed_row_version, recorded_at) "
+                              + "VALUES (?, ?, ?, ?, 'FIRST_DISPATCH', ?, ?, ?::timestamptz)",
+                          f.creation().requestId(),
+                          f.creation().subscriptionId(),
+                          f.creation().subscriptionProvisioningRequestId(),
+                          UUID.randomUUID(),
+                          claim.attemptId(),
+                          claim.subscriptionRowVersion(),
+                          sampled.atOffset(ZoneOffset.UTC));
+                }))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Provider dispatch lacks exact live original provisioning fence")
         .satisfies(

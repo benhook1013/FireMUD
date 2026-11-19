@@ -90,22 +90,20 @@ class WorldPrivateFreshOperationPostgresIntegrationTest {
           f.dsl
               .fetchSingle("SELECT original_operation_bytes FROM world_private_fresh_operation")
               .get(0, byte[].class);
-      assertThatThrownBy(
-              () ->
-                  f.dsl.fetchValue(
-                      "SELECT world_private_fresh_intent(?,?,?)",
-                      changedJson,
-                      hash(changedJson.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                      originalOperation))
+      assertThatThrownBy(() ->
+              f.dsl.fetchValue(
+                  "SELECT world_private_fresh_intent(?,?,?)",
+                  changedJson,
+                  hash(changedJson.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                  originalOperation))
           .hasMessageContaining("different exact original inputs");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.fetchValue(
-                      "SELECT world_private_fresh_intent(?,?,?)",
-                      prepared.inputJson(),
-                      prepared.inputDigest(),
-                      "substituted original operation"
-                          .getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+      assertThatThrownBy(() ->
+              f.dsl.fetchValue(
+                  "SELECT world_private_fresh_intent(?,?,?)",
+                  prepared.inputJson(),
+                  prepared.inputDigest(),
+                  "substituted original operation"
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8)))
           .hasMessageContaining("different exact original inputs");
       assertThat(f.rows()).isEqualTo(originalRows);
       assertThat(f.owner().read(prepared.operationId())).contains(terminal);
@@ -149,10 +147,9 @@ class WorldPrivateFreshOperationPostgresIntegrationTest {
           .isEqualTo(5);
       assertThatThrownBy(() -> owner.abort(prepared))
           .hasMessageContaining("different terminal outcome");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=2,row_version=1"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=2,row_version=1"))
           .isInstanceOf(RuntimeException.class);
       assertThatThrownBy(() -> f.dsl.execute("UPDATE room_instance SET name='foreign'"))
           .hasMessageContaining("no exact transaction execution manifest");
@@ -338,19 +335,17 @@ class WorldPrivateFreshOperationPostgresIntegrationTest {
       input.put("zoneCount", 1);
       input.put("roomCount", 1);
       input.put("exitCount", 0);
-      assertThatThrownBy(
-              () ->
-                  f.dsl.fetchValue(
-                      "SELECT world_private_fresh_assert_inputs(?::JSONB)",
-                      JSON.writeValueAsString(input)))
+      assertThatThrownBy(() ->
+              f.dsl.fetchValue(
+                  "SELECT world_private_fresh_assert_inputs(?::JSONB)",
+                  JSON.writeValueAsString(input)))
           .hasMessageContaining("nonpublic generation-one FRESH target required");
       input.put("forkExpiresAt", Instant.now().plusSeconds(600).toString());
       input.put("publicProduction", true);
-      assertThatThrownBy(
-              () ->
-                  f.dsl.fetchValue(
-                      "SELECT world_private_fresh_assert_inputs(?::JSONB)",
-                      JSON.writeValueAsString(input)))
+      assertThatThrownBy(() ->
+              f.dsl.fetchValue(
+                  "SELECT world_private_fresh_assert_inputs(?::JSONB)",
+                  JSON.writeValueAsString(input)))
           .hasMessageContaining("nonpublic generation-one FRESH target required");
       assertThat(f.count("world_instance")).isZero();
     }

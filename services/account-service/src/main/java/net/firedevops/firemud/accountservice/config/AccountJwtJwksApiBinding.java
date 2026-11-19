@@ -342,12 +342,11 @@ public final class AccountJwtJwksApiBinding {
             client.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
         try (java.io.InputStream body = response.body()) {
           ExecutorService bodyReader =
-              Executors.newSingleThreadExecutor(
-                  task -> {
-                    Thread thread = new Thread(task, "account-jwks-api-response-reader");
-                    thread.setDaemon(true);
-                    return thread;
-                  });
+              Executors.newSingleThreadExecutor(task -> {
+                Thread thread = new Thread(task, "account-jwks-api-response-reader");
+                thread.setDaemon(true);
+                return thread;
+              });
           Future<byte[]> bodyFuture =
               bodyReader.submit(() -> readBounded(body, MAX_RESPONSE_BYTES));
           try {

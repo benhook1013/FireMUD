@@ -33,17 +33,15 @@ public class DefaultEffectEvaluationService implements EffectEvaluationService {
 
     List<GrantedActorState> grantedStates =
         modifiers.stream()
-            .filter(
-                modifier ->
-                    modifier.operation() == EffectOperation.GRANT_FLAG
-                        || modifier.operation() == EffectOperation.GRANT_CONDITION)
-            .map(
-                modifier ->
-                    new GrantedActorState(
-                        modifier.targetKey(),
-                        modifier.operation(),
-                        modifier.scope(),
-                        modifier.source()))
+            .filter(modifier ->
+                modifier.operation() == EffectOperation.GRANT_FLAG
+                    || modifier.operation() == EffectOperation.GRANT_CONDITION)
+            .map(modifier ->
+                new GrantedActorState(
+                    modifier.targetKey(),
+                    modifier.operation(),
+                    modifier.scope(),
+                    modifier.source()))
             .toList();
     return new EffectEvaluationResult(
         resources.values().stream().map(MutableResource::toEvaluated).toList(), grantedStates);

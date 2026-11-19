@@ -106,39 +106,34 @@ class FreshTenantIdentityEnrollmentServiceTest {
         new java.util.concurrent.atomic.AtomicBoolean();
     when(client.resolveCreation(REQUEST_ID, REQUEST_DIGEST)).thenReturn(evidence);
     when(associations.importVerified(evidence))
-        .thenAnswer(
-            invocation -> {
-              assertThat(transactionActive.get()).isTrue();
-              return evidence;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(transactionActive.get()).isTrue();
+          return evidence;
+        });
     when(associations.read(evidence.canonicalTenantId()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(transactionActive.get()).isTrue();
-              return java.util.Optional.of(evidence);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(transactionActive.get()).isTrue();
+          return java.util.Optional.of(evidence);
+        });
     when(generations.initializeTenantIfAbsent(evidence.canonicalTenantId()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(transactionActive.get()).isTrue();
-              return new ScopeState(
-                  AuthorityScope.tenant(evidence.canonicalTenantId()), 1L, 1L, null);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(transactionActive.get()).isTrue();
+          return new ScopeState(AuthorityScope.tenant(evidence.canonicalTenantId()), 1L, 1L, null);
+        });
     when(transaction.execute(
             ArgumentMatchers
                 .<TransactionCallback<
                         net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence>>
                     any()))
-        .thenAnswer(
-            invocation -> {
-              transactionActive.set(true);
-              try {
-                return ((TransactionCallback<?>) invocation.getArgument(0))
-                    .doInTransaction(mock(TransactionStatus.class));
-              } finally {
-                transactionActive.set(false);
-              }
-            });
+        .thenAnswer(invocation -> {
+          transactionActive.set(true);
+          try {
+            return ((TransactionCallback<?>) invocation.getArgument(0))
+                .doInTransaction(mock(TransactionStatus.class));
+          } finally {
+            transactionActive.set(false);
+          }
+        });
 
     FreshTenantIdentityEnrollmentService service =
         new FreshTenantIdentityEnrollmentService(client, associations, generations, transaction);

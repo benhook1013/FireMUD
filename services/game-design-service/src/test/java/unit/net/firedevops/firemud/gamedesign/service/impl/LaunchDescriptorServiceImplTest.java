@@ -278,21 +278,20 @@ class LaunchDescriptorServiceImplTest {
     if (retainControlPlaneDigestSchema) {
       participants =
           participants.stream()
-              .map(
-                  participant ->
-                      "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
-                          ? new net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto(
-                              participant.participantKey(),
-                              participant.scopeValue(),
-                              participant.baseVersionId(),
-                              participant.appliedCommitId(),
-                              participant.contentDigest(),
-                              net.firedevops.firemud.common.gamedesign
-                                  .AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION,
-                              participant.abilitySchemaDigest(),
-                              participant.errorCode(),
-                              participant.errorMessage())
-                          : participant)
+              .map(participant ->
+                  "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
+                      ? new net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto(
+                          participant.participantKey(),
+                          participant.scopeValue(),
+                          participant.baseVersionId(),
+                          participant.appliedCommitId(),
+                          participant.contentDigest(),
+                          net.firedevops.firemud.common.gamedesign
+                              .AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION,
+                          participant.abilitySchemaDigest(),
+                          participant.errorCode(),
+                          participant.errorMessage())
+                      : participant)
               .toList();
     }
     return new PublishedReleaseBundleDto(
@@ -341,12 +340,11 @@ class LaunchDescriptorServiceImplTest {
     stubSuccessfulLaunch(request, 7L, 11L);
     AtomicReference<LaunchDescriptor> inserted = new AtomicReference<>();
     when(launchDescriptorRepository.insertImmutable(any(LaunchDescriptor.class)))
-        .thenAnswer(
-            invocation -> {
-              LaunchDescriptor descriptor = invocation.getArgument(0);
-              inserted.set(descriptor);
-              return descriptor;
-            });
+        .thenAnswer(invocation -> {
+          LaunchDescriptor descriptor = invocation.getArgument(0);
+          inserted.set(descriptor);
+          return descriptor;
+        });
 
     var resolved = service.resolveLaunchDescriptor(request);
 
@@ -418,12 +416,11 @@ class LaunchDescriptorServiceImplTest {
     stubSuccessfulLaunch(request, 7L, 11L);
     AtomicReference<LaunchDescriptor> inserted = new AtomicReference<>();
     when(launchDescriptorRepository.insertImmutable(any(LaunchDescriptor.class)))
-        .thenAnswer(
-            invocation -> {
-              LaunchDescriptor descriptor = invocation.getArgument(0);
-              inserted.set(descriptor);
-              return descriptor;
-            });
+        .thenAnswer(invocation -> {
+          LaunchDescriptor descriptor = invocation.getArgument(0);
+          inserted.set(descriptor);
+          return descriptor;
+        });
 
     var resolved = service.resolveLaunchDescriptor(request);
 
@@ -459,12 +456,11 @@ class LaunchDescriptorServiceImplTest {
     when(launchDescriptorRepository.findByPrivateRequest(PRIVATE_SOURCE_TENANT_KEY, "cp-retry"))
         .thenReturn(Optional.empty());
     when(launchDescriptorRepository.insertImmutable(any(LaunchDescriptor.class)))
-        .thenAnswer(
-            invocation -> {
-              LaunchDescriptor descriptor = invocation.getArgument(0);
-              stored.set(descriptor);
-              return descriptor;
-            });
+        .thenAnswer(invocation -> {
+          LaunchDescriptor descriptor = invocation.getArgument(0);
+          stored.set(descriptor);
+          return descriptor;
+        });
 
     var first = service.resolveLaunchDescriptor(request);
     when(template.getDefaultVersionId()).thenReturn(8L);
@@ -899,12 +895,11 @@ class LaunchDescriptorServiceImplTest {
             PRIVATE_SOURCE_TENANT_KEY, request.controlPlaneRequestId()))
         .thenReturn(Optional.empty());
     when(launchDescriptorRepository.insertImmutable(any(LaunchDescriptor.class)))
-        .thenAnswer(
-            invocation -> {
-              LaunchDescriptor descriptor = invocation.getArgument(0);
-              stored.set(descriptor);
-              return descriptor;
-            });
+        .thenAnswer(invocation -> {
+          LaunchDescriptor descriptor = invocation.getArgument(0);
+          stored.set(descriptor);
+          return descriptor;
+        });
 
     IllegalArgumentException first =
         assertThrows(

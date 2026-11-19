@@ -66,10 +66,9 @@ class GameplayAdmissionPointerSnapshotsTest {
             22L, 41L, null, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", null, 17L,
             null);
 
-    assertThatThrownBy(
-            () ->
-                GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
-                    partialRouting, "Game Logic request"))
+    assertThatThrownBy(() ->
+            GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
+                partialRouting, "Game Logic request"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Incomplete admitted routing bundle on session context for Game Logic request");
   }
@@ -80,10 +79,9 @@ class GameplayAdmissionPointerSnapshotsTest {
         new SessionContext(
             22L, 41L, null, null, 123L, null, 1L, "R-1021", null, null, 1L, null, null, 0L, null);
 
-    assertThatThrownBy(
-            () ->
-                GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
-                    missingRouting, "Entity Management request"))
+    assertThatThrownBy(() ->
+            GameplayAdmissionPointerSnapshots.requireAdmittedRoutingBundle(
+                missingRouting, "Entity Management request"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage(
             "Missing admitted routing bundle on session context for Entity Management request");

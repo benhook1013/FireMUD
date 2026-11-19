@@ -176,28 +176,26 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       for (Owner owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
         UUID requestId = UUID.randomUUID();
         var scope =
-            asGameDesign(
-                () ->
-                    reservationService.reserveSourceRead(
-                        issued.compact(), requestId, owner, selected, issued.environment()));
+            asGameDesign(() ->
+                reservationService.reserveSourceRead(
+                    issued.compact(), requestId, owner, selected, issued.environment()));
         var content = content(scope, "stipulated-original");
         var authorization =
-            asGameDesign(
-                () ->
-                    issued
-                        .actors()
-                        .withCurrent(
-                            issued.compact(),
-                            f.tenant,
-                            issued.environment(),
-                            current ->
-                                repository.finalizeSourceRead(
-                                    scope,
-                                    content,
-                                    current,
-                                    () ->
-                                        f.fences.requireSelectedOwnerIntakeAdmission(
-                                            current.source().sources(), selected))));
+            asGameDesign(() ->
+                issued
+                    .actors()
+                    .withCurrent(
+                        issued.compact(),
+                        f.tenant,
+                        issued.environment(),
+                        current ->
+                            repository.finalizeSourceRead(
+                                scope,
+                                content,
+                                current,
+                                () ->
+                                    f.fences.requireSelectedOwnerIntakeAdmission(
+                                        current.source().sources(), selected))));
 
         assertThat(authorization.owner()).isEqualTo(owner);
         assertThat(authorization.content().canonicalBytes()).isEqualTo(content.canonicalBytes());
@@ -214,29 +212,27 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
         assertThat(readback.canonicalBytes()).isEqualTo(authorization.canonicalBytes());
         assertThat(readback.digest()).isEqualTo(authorization.digest());
         var exactRetry =
-            asGameDesign(
-                () ->
-                    issued
-                        .actors()
-                        .withCurrent(
-                            issued.compact(),
-                            f.tenant,
-                            issued.environment(),
-                            current ->
-                                repository.finalizeSourceRead(
-                                    scope,
-                                    content,
-                                    current,
-                                    () -> {
-                                      throw new AssertionError(
-                                          "Exact finalization retry must not re-admit");
-                                    })));
+            asGameDesign(() ->
+                issued
+                    .actors()
+                    .withCurrent(
+                        issued.compact(),
+                        f.tenant,
+                        issued.environment(),
+                        current ->
+                            repository.finalizeSourceRead(
+                                scope,
+                                content,
+                                current,
+                                () -> {
+                                  throw new AssertionError(
+                                      "Exact finalization retry must not re-admit");
+                                })));
         assertThat(exactRetry.canonicalBytes()).isEqualTo(authorization.canonicalBytes());
-        f.tx(
-            () -> {
-              repository.readFinalAuthorization(authorization);
-              return null;
-            });
+        f.tx(() -> {
+          repository.readFinalAuthorization(authorization);
+          return null;
+        });
         assertThatThrownBy(() -> f.tx(() -> repository.sourceReadCurrentness(scope)))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("preliminary source read");
@@ -245,19 +241,17 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
             .hasMessageContaining("cannot be preliminarily aborted");
 
         var changedContent = content(scope, "stipulated-changed");
-        assertThatThrownBy(
-                () ->
-                    asGameDesign(
-                        () ->
-                            issued
-                                .actors()
-                                .withCurrent(
-                                    issued.compact(),
-                                    f.tenant,
-                                    issued.environment(),
-                                    current ->
-                                        repository.finalizeSourceRead(
-                                            scope, changedContent, current, () -> {}))))
+        assertThatThrownBy(() ->
+                asGameDesign(() ->
+                    issued
+                        .actors()
+                        .withCurrent(
+                            issued.compact(),
+                            f.tenant,
+                            issued.environment(),
+                            current ->
+                                repository.finalizeSourceRead(
+                                    scope, changedContent, current, () -> {}))))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("conflicts with original selected content");
 
@@ -267,14 +261,13 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
 
       UUID abortedRequest = UUID.randomUUID();
       var abortedScope =
-          asGameDesign(
-              () ->
-                  reservationService.reserveSourceRead(
-                      issued.compact(),
-                      abortedRequest,
-                      Owner.ENTITY_MANAGEMENT,
-                      selected,
-                      issued.environment()));
+          asGameDesign(() ->
+              reservationService.reserveSourceRead(
+                  issued.compact(),
+                  abortedRequest,
+                  Owner.ENTITY_MANAGEMENT,
+                  selected,
+                  issued.environment()));
       assertThat(f.tx(() -> repository.abortSourceRead(abortedScope).state()))
           .isEqualTo(State.ABORTED);
       assertThat(
@@ -285,19 +278,17 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
                   .get(0, Boolean.class))
           .isFalse();
       var abortedContent = content(abortedScope, "stipulated-aborted");
-      assertThatThrownBy(
-              () ->
-                  asGameDesign(
-                      () ->
-                          issued
-                              .actors()
-                              .withCurrent(
-                                  issued.compact(),
-                                  f.tenant,
-                                  issued.environment(),
-                                  current ->
-                                      repository.finalizeSourceRead(
-                                          abortedScope, abortedContent, current, () -> {}))))
+      assertThatThrownBy(() ->
+              asGameDesign(() ->
+                  issued
+                      .actors()
+                      .withCurrent(
+                          issued.compact(),
+                          f.tenant,
+                          issued.environment(),
+                          current ->
+                              repository.finalizeSourceRead(
+                                  abortedScope, abortedContent, current, () -> {}))))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("scope aborted");
       assertThat(
@@ -339,23 +330,21 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
           new AccountSelectedOwnerIntakeSourceReservationService(
               issued.actors(), f.fences, repository, f.manager, "test");
       var preliminary =
-          asGameDesign(
-              () ->
-                  reservations.reserveSourceRead(
-                      issued.compact(),
-                      UUID.randomUUID(),
-                      Owner.AUTOMATION_SCRIPTING,
-                      selected,
-                      issued.environment()));
+          asGameDesign(() ->
+              reservations.reserveSourceRead(
+                  issued.compact(),
+                  UUID.randomUUID(),
+                  Owner.AUTOMATION_SCRIPTING,
+                  selected,
+                  issued.environment()));
       var finalizingScope =
-          asGameDesign(
-              () ->
-                  reservations.reserveSourceRead(
-                      issued.compact(),
-                      UUID.randomUUID(),
-                      Owner.ENTITY_MANAGEMENT,
-                      selected,
-                      issued.environment()));
+          asGameDesign(() ->
+              reservations.reserveSourceRead(
+                  issued.compact(),
+                  UUID.randomUUID(),
+                  Owner.ENTITY_MANAGEMENT,
+                  selected,
+                  issued.environment()));
       var alreadyFinalized =
           finalizeEntityBinding(issued, reservations, repository, selected, "recovery-committed");
       UUID issuanceOperationId =
@@ -380,45 +369,40 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       ExecutorService executor = Executors.newFixedThreadPool(2);
       try {
         var finalizing =
-            executor.submit(
-                () ->
-                    asGameDesign(
-                        () ->
-                            issued
-                                .actors()
-                                .withCurrent(
-                                    issued.compact(),
-                                    f.tenant,
-                                    issued.environment(),
-                                    current -> {
-                                      var binding =
-                                          repository.finalizeSourceRead(
-                                              finalizingScope,
-                                              finalizationContent,
-                                              current,
-                                              () ->
-                                                  f.fences.requireSelectedOwnerIntakeAdmission(
-                                                      current.source().sources(), selected));
-                                      finalizationBackendPid.set(
-                                          f.dsl
-                                              .fetchSingle("SELECT pg_backend_pid()")
-                                              .get(0, Integer.class));
-                                      authorizationInserted.countDown();
-                                      awaitFinalizationCommit(allowFinalizationCommit);
-                                      return binding;
-                                    })));
+            executor.submit(() ->
+                asGameDesign(() ->
+                    issued
+                        .actors()
+                        .withCurrent(
+                            issued.compact(),
+                            f.tenant,
+                            issued.environment(),
+                            current -> {
+                              var binding =
+                                  repository.finalizeSourceRead(
+                                      finalizingScope,
+                                      finalizationContent,
+                                      current,
+                                      () ->
+                                          f.fences.requireSelectedOwnerIntakeAdmission(
+                                              current.source().sources(), selected));
+                              finalizationBackendPid.set(
+                                  f.dsl
+                                      .fetchSingle("SELECT pg_backend_pid()")
+                                      .get(0, Integer.class));
+                              authorizationInserted.countDown();
+                              awaitFinalizationCommit(allowFinalizationCommit);
+                              return binding;
+                            })));
         assertThat(authorizationInserted.await(10, TimeUnit.SECONDS)).isTrue();
         assertThat(issuerExpiryReached(f.dsl, issuanceOperationId)).isFalse();
 
         awaitIssuerExpiry(f.dsl, issuanceOperationId);
         var recovering =
-            executor.submit(
-                () -> {
-                  recoveryStarted.countDown();
-                  return reservations
-                      .recoverExpiredPreliminarySourceReads(128, null)
-                      .abortedCount();
-                });
+            executor.submit(() -> {
+              recoveryStarted.countDown();
+              return reservations.recoverExpiredPreliminarySourceReads(128, null).abortedCount();
+            });
         assertThat(recoveryStarted.await(10, TimeUnit.SECONDS)).isTrue();
         awaitRecoverySourceLockWait(f.dsl, finalizationBackendPid.get());
         assertThat(recovering.isDone()).isFalse();
@@ -523,23 +507,21 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
           new AccountSelectedOwnerIntakeSourceReservationService(
               issued.actors(), f.fences, repository, f.manager, "test");
       var firstScope =
-          asGameDesign(
-              () ->
-                  reservations.reserveSourceRead(
-                      issued.compact(),
-                      UUID.randomUUID(),
-                      Owner.ENTITY_MANAGEMENT,
-                      selected,
-                      issued.environment()));
+          asGameDesign(() ->
+              reservations.reserveSourceRead(
+                  issued.compact(),
+                  UUID.randomUUID(),
+                  Owner.ENTITY_MANAGEMENT,
+                  selected,
+                  issued.environment()));
       var secondScope =
-          asGameDesign(
-              () ->
-                  reservations.reserveSourceRead(
-                      issued.compact(),
-                      UUID.randomUUID(),
-                      Owner.AUTOMATION_SCRIPTING,
-                      selected,
-                      issued.environment()));
+          asGameDesign(() ->
+              reservations.reserveSourceRead(
+                  issued.compact(),
+                  UUID.randomUUID(),
+                  Owner.AUTOMATION_SCRIPTING,
+                  selected,
+                  issued.environment()));
       UUID issuanceOperationId =
           f.dsl
               .fetchSingle(
@@ -605,14 +587,13 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
           new AccountSelectedOwnerIntakeSourceReservationService(
               issued.actors(), f.fences, repository, f.manager, "test");
       var preliminary =
-          asGameDesign(
-              () ->
-                  reservations.reserveSourceRead(
-                      issued.compact(),
-                      UUID.randomUUID(),
-                      Owner.AUTOMATION_SCRIPTING,
-                      selected,
-                      issued.environment()));
+          asGameDesign(() ->
+              reservations.reserveSourceRead(
+                  issued.compact(),
+                  UUID.randomUUID(),
+                  Owner.AUTOMATION_SCRIPTING,
+                  selected,
+                  issued.environment()));
       var finalized =
           finalizeEntityBinding(issued, reservations, repository, selected, issuerStatus);
       var finalizedScope = finalized.content().scope();
@@ -629,11 +610,10 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       var issuanceRepository = new AccountControlUiIssuanceRepository(f.dsl);
       if ("REVOKING".equals(issuerStatus)) {
         var original =
-            f.tx(
-                () ->
-                    issuanceRepository.findToken(
-                        AccountControlUiIssuanceRepository.hash(
-                            issued.compact().getBytes(StandardCharsets.US_ASCII))));
+            f.tx(() ->
+                issuanceRepository.findToken(
+                    AccountControlUiIssuanceRepository.hash(
+                        issued.compact().getBytes(StandardCharsets.US_ASCII))));
         assertThat(original).isNotNull();
         var revoking = f.tx(() -> issuanceRepository.beginRecoveryFailure(original));
         assertThat(revoking.status).isEqualTo("REVOKING");
@@ -732,32 +712,30 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       for (int index = 0; index < 2; index++) {
         UUID requestId = UUID.randomUUID();
         var scope =
-            asGameDesign(
-                () ->
-                    reservationService.reserveSourceRead(
-                        issued.compact(),
-                        requestId,
-                        Owner.AUTOMATION_SCRIPTING,
-                        selected,
-                        issued.environment()));
+            asGameDesign(() ->
+                reservationService.reserveSourceRead(
+                    issued.compact(),
+                    requestId,
+                    Owner.AUTOMATION_SCRIPTING,
+                    selected,
+                    issued.environment()));
         var content = content(scope, "automation-settlement-" + index);
         var binding =
-            asGameDesign(
-                () ->
-                    issued
-                        .actors()
-                        .withCurrent(
-                            issued.compact(),
-                            f.tenant,
-                            issued.environment(),
-                            current ->
-                                repository.finalizeSourceRead(
-                                    scope,
-                                    content,
-                                    current,
-                                    () ->
-                                        f.fences.requireSelectedOwnerIntakeAdmission(
-                                            current.source().sources(), selected))));
+            asGameDesign(() ->
+                issued
+                    .actors()
+                    .withCurrent(
+                        issued.compact(),
+                        f.tenant,
+                        issued.environment(),
+                        current ->
+                            repository.finalizeSourceRead(
+                                scope,
+                                content,
+                                current,
+                                () ->
+                                    f.fences.requireSelectedOwnerIntakeAdmission(
+                                        current.source().sources(), selected))));
         bindings.add(binding);
         terminals.add(terminalEvidence(binding, 9001L + index, 9002L + index));
       }
@@ -798,18 +776,15 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
 
       var exactReadback = f.tx(() -> repository.findSettlement(firstBinding).orElseThrow());
       assertThat(exactReadback.canonicalBytes()).isEqualTo(committed.canonicalBytes());
-      f.tx(
-          () -> {
-            repository.readFinalAuthorization(firstBinding);
-            return null;
-          });
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        repository.readHeldFinalAuthorization(firstBinding);
-                        return null;
-                      }))
+      f.tx(() -> {
+        repository.readFinalAuthorization(firstBinding);
+        return null;
+      });
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                repository.readHeldFinalAuthorization(firstBinding);
+                return null;
+              }))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("no longer held");
 
@@ -853,13 +828,12 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       assertThatThrownBy(() -> f.tx(() -> repository.settleCommittedEmpty(changedBindingEvidence)))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("Original finalized owner authorization absent or changed");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE account_selected_owner_intake_settlements "
-                          + "SET receipt_digest = ? WHERE operation_id = ?",
-                      DraftAuthorizationFenceBinding.digest(new byte[] {1}),
-                      firstBinding.operationId()))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE account_selected_owner_intake_settlements "
+                      + "SET receipt_digest = ? WHERE operation_id = ?",
+                  DraftAuthorizationFenceBinding.digest(new byte[] {1}),
+                  firstBinding.operationId()))
           .isInstanceOf(RuntimeException.class);
       assertThat(
               f.dsl
@@ -895,27 +869,23 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       ExecutorService executor = Executors.newFixedThreadPool(2);
       try {
         var settling =
-            executor.submit(
-                () ->
-                    f.transactions.execute(
-                        ignored -> {
-                          var result = repository.settleCommittedEmpty(terminals.getLast());
-                          settlementInserted.countDown();
-                          awaitLatch(allowSettlementCommit);
-                          return result;
-                        }));
+            executor.submit(() ->
+                f.transactions.execute(ignored -> {
+                  var result = repository.settleCommittedEmpty(terminals.getLast());
+                  settlementInserted.countDown();
+                  awaitLatch(allowSettlementCommit);
+                  return result;
+                }));
         assertThat(settlementInserted.await(10, TimeUnit.SECONDS)).isTrue();
 
         var waitingWriter =
-            executor.submit(
-                () ->
-                    f.transactions.execute(
-                        ignored -> {
-                          writerBackendPid.set(
-                              f.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-                          writerStarted.countDown();
-                          return f.fences.requestSourceChange(writerWhileOtherOperationHeld);
-                        }));
+            executor.submit(() ->
+                f.transactions.execute(ignored -> {
+                  writerBackendPid.set(
+                      f.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                  writerStarted.countDown();
+                  return f.fences.requestSourceChange(writerWhileOtherOperationHeld);
+                }));
         assertThat(writerStarted.await(10, TimeUnit.SECONDS)).isTrue();
         assertThat(writerBackendPid.get()).isPositive();
         awaitSourceLockWait(f.dsl, writerBackendPid.get());
@@ -984,32 +954,30 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       for (int index = 0; index < 2; index++) {
         UUID requestId = UUID.randomUUID();
         var scope =
-            asGameDesign(
-                () ->
-                    reservationService.reserveSourceRead(
-                        issued.compact(),
-                        requestId,
-                        Owner.ENTITY_MANAGEMENT,
-                        selected,
-                        issued.environment()));
+            asGameDesign(() ->
+                reservationService.reserveSourceRead(
+                    issued.compact(),
+                    requestId,
+                    Owner.ENTITY_MANAGEMENT,
+                    selected,
+                    issued.environment()));
         var content = content(scope, "automation-settlement-" + index);
         var binding =
-            asGameDesign(
-                () ->
-                    issued
-                        .actors()
-                        .withCurrent(
-                            issued.compact(),
-                            f.tenant,
-                            issued.environment(),
-                            current ->
-                                repository.finalizeSourceRead(
-                                    scope,
-                                    content,
-                                    current,
-                                    () ->
-                                        f.fences.requireSelectedOwnerIntakeAdmission(
-                                            current.source().sources(), selected))));
+            asGameDesign(() ->
+                issued
+                    .actors()
+                    .withCurrent(
+                        issued.compact(),
+                        f.tenant,
+                        issued.environment(),
+                        current ->
+                            repository.finalizeSourceRead(
+                                scope,
+                                content,
+                                current,
+                                () ->
+                                    f.fences.requireSelectedOwnerIntakeAdmission(
+                                        current.source().sources(), selected))));
         bindings.add(binding);
         terminals.add(entityTerminalEvidence(binding, 9001L + index, 9002L + index));
       }
@@ -1050,18 +1018,15 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
 
       var exactReadback = f.tx(() -> repository.findSettlement(firstBinding).orElseThrow());
       assertThat(exactReadback.canonicalBytes()).isEqualTo(committed.canonicalBytes());
-      f.tx(
-          () -> {
-            repository.readFinalAuthorization(firstBinding);
-            return null;
-          });
-      assertThatThrownBy(
-              () ->
-                  f.tx(
-                      () -> {
-                        repository.readHeldFinalAuthorization(firstBinding);
-                        return null;
-                      }))
+      f.tx(() -> {
+        repository.readFinalAuthorization(firstBinding);
+        return null;
+      });
+      assertThatThrownBy(() ->
+              f.tx(() -> {
+                repository.readHeldFinalAuthorization(firstBinding);
+                return null;
+              }))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("no longer held");
 
@@ -1105,13 +1070,12 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
               () -> f.tx(() -> repository.settleEntityCommittedEmpty(changedBindingEvidence)))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("Original finalized owner authorization absent or changed");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE account_selected_owner_intake_settlements "
-                          + "SET receipt_digest = ? WHERE operation_id = ?",
-                      DraftAuthorizationFenceBinding.digest(new byte[] {1}),
-                      firstBinding.operationId()))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE account_selected_owner_intake_settlements "
+                      + "SET receipt_digest = ? WHERE operation_id = ?",
+                  DraftAuthorizationFenceBinding.digest(new byte[] {1}),
+                  firstBinding.operationId()))
           .isInstanceOf(RuntimeException.class);
       assertThat(
               f.dsl
@@ -1147,27 +1111,23 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       ExecutorService executor = Executors.newFixedThreadPool(2);
       try {
         var settling =
-            executor.submit(
-                () ->
-                    f.transactions.execute(
-                        ignored -> {
-                          var result = repository.settleEntityCommittedEmpty(terminals.getLast());
-                          settlementInserted.countDown();
-                          awaitLatch(allowSettlementCommit);
-                          return result;
-                        }));
+            executor.submit(() ->
+                f.transactions.execute(ignored -> {
+                  var result = repository.settleEntityCommittedEmpty(terminals.getLast());
+                  settlementInserted.countDown();
+                  awaitLatch(allowSettlementCommit);
+                  return result;
+                }));
         assertThat(settlementInserted.await(10, TimeUnit.SECONDS)).isTrue();
 
         var waitingWriter =
-            executor.submit(
-                () ->
-                    f.transactions.execute(
-                        ignored -> {
-                          writerBackendPid.set(
-                              f.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-                          writerStarted.countDown();
-                          return f.fences.requestSourceChange(writerWhileOtherOperationHeld);
-                        }));
+            executor.submit(() ->
+                f.transactions.execute(ignored -> {
+                  writerBackendPid.set(
+                      f.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                  writerStarted.countDown();
+                  return f.fences.requestSourceChange(writerWhileOtherOperationHeld);
+                }));
         assertThat(writerStarted.await(10, TimeUnit.SECONDS)).isTrue();
         assertThat(writerBackendPid.get()).isPositive();
         awaitSourceLockWait(f.dsl, writerBackendPid.get());
@@ -1236,14 +1196,13 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
           new AccountSelectedOwnerIntakeSourceReservationService(
               issued.actors(), f.fences, repository, f.manager, "test");
       var scope =
-          asGameDesign(
-              () ->
-                  reservations.reserveSourceRead(
-                      issued.compact(),
-                      UUID.randomUUID(),
-                      Owner.ENTITY_MANAGEMENT,
-                      selected,
-                      issued.environment()));
+          asGameDesign(() ->
+              reservations.reserveSourceRead(
+                  issued.compact(),
+                  UUID.randomUUID(),
+                  Owner.ENTITY_MANAGEMENT,
+                  selected,
+                  issued.environment()));
       seedRetainedCombinedParentRows(f.dsl);
       var retainedRows = retainedCombinedParentRows(f.dsl);
       assertThat(retainedRows.values()).allSatisfy(rows -> assertThat(rows).isNotEmpty());
@@ -1380,11 +1339,10 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       assertThatThrownBy(() -> f.tx(() -> repository.abortSourceRead(entity.content().scope())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("cannot be preliminarily aborted");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "DELETE FROM account_selected_owner_intake_settlements WHERE operation_id = ?",
-                      automation.operationId()))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "DELETE FROM account_selected_owner_intake_settlements WHERE operation_id = ?",
+                  automation.operationId()))
           .isInstanceOf(RuntimeException.class);
       assertThat(f.tx(() -> repository.findSettlement(automation).orElseThrow()).canonicalBytes())
           .isEqualTo(original.canonicalBytes());
@@ -1599,14 +1557,13 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       var scopes = new ArrayList<SelectedOwnerIntakeSourceReadScope>();
       for (int index = 0; index < 3; index++) {
         scopes.add(
-            asGameDesign(
-                () ->
-                    reservationService.reserveSourceRead(
-                        issued.compact(),
-                        UUID.randomUUID(),
-                        Owner.ENTITY_MANAGEMENT,
-                        selected,
-                        issued.environment())));
+            asGameDesign(() ->
+                reservationService.reserveSourceRead(
+                    issued.compact(),
+                    UUID.randomUUID(),
+                    Owner.ENTITY_MANAGEMENT,
+                    selected,
+                    issued.environment())));
       }
 
       var original = scopes.get(0);
@@ -1674,34 +1631,31 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       byte[] bindingBytes,
       String expectedDiagnostic) {
     var f = issued.sources();
-    assertThatThrownBy(
-            () ->
-                asGameDesign(
-                    () ->
-                        issued
-                            .actors()
-                            .withCurrent(
-                                issued.compact(),
-                                f.tenant,
-                                issued.environment(),
-                                current -> {
-                                  insertRawAuthorization(
-                                      f.dsl, reservationScope, contentBytes, bindingBytes, current);
-                                  return null;
-                                })))
+    assertThatThrownBy(() ->
+            asGameDesign(() ->
+                issued
+                    .actors()
+                    .withCurrent(
+                        issued.compact(),
+                        f.tenant,
+                        issued.environment(),
+                        current -> {
+                          insertRawAuthorization(
+                              f.dsl, reservationScope, contentBytes, bindingBytes, current);
+                          return null;
+                        })))
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            failure -> {
-              Throwable root = failure;
-              while (root.getCause() != null) root = root.getCause();
-              assertThat(root)
-                  .isInstanceOfSatisfying(
-                      java.sql.SQLException.class,
-                      sql -> {
-                        assertThat(sql.getSQLState()).isEqualTo("23514");
-                        assertThat(sql.getMessage()).contains(expectedDiagnostic);
-                      });
-            });
+        .satisfies(failure -> {
+          Throwable root = failure;
+          while (root.getCause() != null) root = root.getCause();
+          assertThat(root)
+              .isInstanceOfSatisfying(
+                  java.sql.SQLException.class,
+                  sql -> {
+                    assertThat(sql.getSQLState()).isEqualTo("23514");
+                    assertThat(sql.getMessage()).contains(expectedDiagnostic);
+                  });
+        });
     assertThat(
             f.dsl.fetchOne(
                 "SELECT operation_id FROM account_selected_owner_intake_authorizations "
@@ -1825,23 +1779,22 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
                 captured.sources())
             .withRequiredOwners();
     issued.actors().claimOriginalDraft(issued.compact(), original, issued.environment());
-    f.tx(
-        () -> {
-          for (var owner : original.requiredOwners()) {
-            f.fences.recordOwnerReadback(
-                original,
-                new DraftAuthorizationFenceBinding.OwnerReadback(
-                    owner,
-                    DraftAuthorizationFenceBinding.Outcome.COMMITTED,
-                    original.operationId(),
-                    original.commitId(),
-                    original.fenceId(),
-                    original.inputDigest(),
-                    original.canonicalBytes(),
-                    new byte[] {1}));
-          }
-          return null;
-        });
+    f.tx(() -> {
+      for (var owner : original.requiredOwners()) {
+        f.fences.recordOwnerReadback(
+            original,
+            new DraftAuthorizationFenceBinding.OwnerReadback(
+                owner,
+                DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+                original.operationId(),
+                original.commitId(),
+                original.fenceId(),
+                original.inputDigest(),
+                original.canonicalBytes(),
+                new byte[] {1}));
+      }
+      return null;
+    });
   }
 
   private static SelectedOwnerIntakeSourceContent content(
@@ -1933,10 +1886,9 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
                     "0")));
     TemplateConfigOwnerSourceInventoryDeclaration declaration =
         TemplateConfigSourceValues.mutations(authored).stream()
-            .filter(
-                mutation ->
-                    mutation.operation()
-                        == TemplateConfigSourceValues.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+            .filter(mutation ->
+                mutation.operation()
+                    == TemplateConfigSourceValues.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
             .map(TemplateConfigSourceValues.Mutation::ownerInventoryDeclaration)
             .findFirst()
             .orElseThrow();
@@ -1952,31 +1904,29 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       String marker) {
     var f = issued.sources();
     var scope =
-        asGameDesign(
-            () ->
-                reservationService.reserveSourceRead(
-                    issued.compact(),
-                    UUID.randomUUID(),
-                    Owner.AUTOMATION_SCRIPTING,
-                    selected,
-                    issued.environment()));
+        asGameDesign(() ->
+            reservationService.reserveSourceRead(
+                issued.compact(),
+                UUID.randomUUID(),
+                Owner.AUTOMATION_SCRIPTING,
+                selected,
+                issued.environment()));
     var selectedContent = content(scope, marker);
-    return asGameDesign(
-        () ->
-            issued
-                .actors()
-                .withCurrent(
-                    issued.compact(),
-                    f.tenant,
-                    issued.environment(),
-                    current ->
-                        repository.finalizeSourceRead(
-                            scope,
-                            selectedContent,
-                            current,
-                            () ->
-                                f.fences.requireSelectedOwnerIntakeAdmission(
-                                    current.source().sources(), selected))));
+    return asGameDesign(() ->
+        issued
+            .actors()
+            .withCurrent(
+                issued.compact(),
+                f.tenant,
+                issued.environment(),
+                current ->
+                    repository.finalizeSourceRead(
+                        scope,
+                        selectedContent,
+                        current,
+                        () ->
+                            f.fences.requireSelectedOwnerIntakeAdmission(
+                                current.source().sources(), selected))));
   }
 
   private static SelectedOwnerIntakeAuthorizationBinding finalizeEntityBinding(
@@ -1987,31 +1937,29 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       String marker) {
     var f = issued.sources();
     var scope =
-        asGameDesign(
-            () ->
-                reservationService.reserveSourceRead(
-                    issued.compact(),
-                    UUID.randomUUID(),
-                    Owner.ENTITY_MANAGEMENT,
-                    selected,
-                    issued.environment()));
+        asGameDesign(() ->
+            reservationService.reserveSourceRead(
+                issued.compact(),
+                UUID.randomUUID(),
+                Owner.ENTITY_MANAGEMENT,
+                selected,
+                issued.environment()));
     var selectedContent = content(scope, marker);
-    return asGameDesign(
-        () ->
-            issued
-                .actors()
-                .withCurrent(
-                    issued.compact(),
-                    f.tenant,
-                    issued.environment(),
-                    current ->
-                        repository.finalizeSourceRead(
-                            scope,
-                            selectedContent,
-                            current,
-                            () ->
-                                f.fences.requireSelectedOwnerIntakeAdmission(
-                                    current.source().sources(), selected))));
+    return asGameDesign(() ->
+        issued
+            .actors()
+            .withCurrent(
+                issued.compact(),
+                f.tenant,
+                issued.environment(),
+                current ->
+                    repository.finalizeSourceRead(
+                        scope,
+                        selectedContent,
+                        current,
+                        () ->
+                            f.fences.requireSelectedOwnerIntakeAdmission(
+                                current.source().sources(), selected))));
   }
 
   private static void assertRejectedSettlementByPostgres(
@@ -2021,26 +1969,23 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       byte[] changedOwnerReceiptBytes,
       String expectedDiagnostic) {
     var f = issued.sources();
-    assertThatThrownBy(
-            () ->
-                f.tx(
-                    () -> {
-                      insertRawSettlement(f.dsl, binding, validEvidence, changedOwnerReceiptBytes);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            f.tx(() -> {
+              insertRawSettlement(f.dsl, binding, validEvidence, changedOwnerReceiptBytes);
+              return null;
+            }))
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            failure -> {
-              Throwable root = failure;
-              while (root.getCause() != null) root = root.getCause();
-              assertThat(root)
-                  .isInstanceOfSatisfying(
-                      java.sql.SQLException.class,
-                      sql -> {
-                        assertThat(sql.getSQLState()).isEqualTo("23514");
-                        assertThat(sql.getMessage()).contains(expectedDiagnostic);
-                      });
-            });
+        .satisfies(failure -> {
+          Throwable root = failure;
+          while (root.getCause() != null) root = root.getCause();
+          assertThat(root)
+              .isInstanceOfSatisfying(
+                  java.sql.SQLException.class,
+                  sql -> {
+                    assertThat(sql.getSQLState()).isEqualTo("23514");
+                    assertThat(sql.getMessage()).contains(expectedDiagnostic);
+                  });
+        });
     assertThat(
             f.dsl.fetchOne(
                 "SELECT operation_id FROM account_selected_owner_intake_settlements "
@@ -2116,26 +2061,23 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       byte[] changedOwnerReceiptBytes,
       String expectedDiagnostic) {
     var f = issued.sources();
-    assertThatThrownBy(
-            () ->
-                f.tx(
-                    () -> {
-                      insertRawSettlement(f.dsl, binding, validEvidence, changedOwnerReceiptBytes);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            f.tx(() -> {
+              insertRawSettlement(f.dsl, binding, validEvidence, changedOwnerReceiptBytes);
+              return null;
+            }))
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            failure -> {
-              Throwable root = failure;
-              while (root.getCause() != null) root = root.getCause();
-              assertThat(root)
-                  .isInstanceOfSatisfying(
-                      java.sql.SQLException.class,
-                      sql -> {
-                        assertThat(sql.getSQLState()).isEqualTo("23514");
-                        assertThat(sql.getMessage()).contains(expectedDiagnostic);
-                      });
-            });
+        .satisfies(failure -> {
+          Throwable root = failure;
+          while (root.getCause() != null) root = root.getCause();
+          assertThat(root)
+              .isInstanceOfSatisfying(
+                  java.sql.SQLException.class,
+                  sql -> {
+                    assertThat(sql.getSQLState()).isEqualTo("23514");
+                    assertThat(sql.getMessage()).contains(expectedDiagnostic);
+                  });
+        });
     assertThat(
             f.dsl.fetchOne(
                 "SELECT operation_id FROM account_selected_owner_intake_settlements "
@@ -2291,19 +2233,18 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
             binding, new SelectedOwnerWorldInventoryReadEvidence(request, inventory));
     var states =
         ENTITY_FAMILIES.stream()
-            .map(
-                family ->
-                    new FamilyCensus(
-                        family,
-                        FamilyState.EMPTY,
-                        ENTITY_V1_FAMILIES.contains(family)
-                            ? FamilyEvidenceKind.V1_SOURCE_CENSUS
-                            : FamilyEvidenceKind.EMPTY_ONLY_OWNER_PROVIDER,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0))
+            .map(family ->
+                new FamilyCensus(
+                    family,
+                    FamilyState.EMPTY,
+                    ENTITY_V1_FAMILIES.contains(family)
+                        ? FamilyEvidenceKind.V1_SOURCE_CENSUS
+                        : FamilyEvidenceKind.EMPTY_ONLY_OWNER_PROVIDER,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0))
             .toList();
     var receipt =
         EntityEmptySelectedSourceIntakeReceipt.create(
@@ -2487,15 +2428,14 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
             0,
             0,
             selected.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-                .map(
-                    unit ->
-                        new AppliedEpoch(
-                            unit.aggregateType(),
-                            unit.aggregateId(),
-                            unit.scopeType(),
-                            unit.scopeId(),
-                            unit.expectedEpoch(),
-                            new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                .map(unit ->
+                    new AppliedEpoch(
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch(),
+                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
                 .toList(),
             closure);
     var ownerScope =

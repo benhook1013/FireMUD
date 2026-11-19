@@ -67,12 +67,11 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       var existing = source();
       var historical =
           Objects.requireNonNull(
-              transaction.execute(
-                  status -> {
-                    repository.importVerified(existing);
-                    return claimBootstrap(
-                        operations, new AccountRepository(dsl).save(creator()), existing);
-                  }));
+              transaction.execute(status -> {
+                repository.importVerified(existing);
+                return claimBootstrap(
+                    operations, new AccountRepository(dsl).save(creator()), existing);
+              }));
       assertThat(historical.status()).isEqualTo("IN_PROGRESS");
       Flyway.configure()
           .dataSource(data)
@@ -93,14 +92,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .isNull();
       var completed =
           Objects.requireNonNull(
-              transaction.execute(
-                  status -> {
-                    var operation = operations.findForUpdate(historical.requestId()).orElseThrow();
-                    assertThat(operation.status()).isEqualTo("IN_PROGRESS");
-                    assertThat(operation.creationOperationId()).isEqualTo(existing.operationId());
-                    assertThat(operation.requestPayload()).isEqualTo(historical.requestPayload());
-                    return operations.complete(operation.requestId(), completion(operation));
-                  }));
+              transaction.execute(status -> {
+                var operation = operations.findForUpdate(historical.requestId()).orElseThrow();
+                assertThat(operation.status()).isEqualTo("IN_PROGRESS");
+                assertThat(operation.creationOperationId()).isEqualTo(existing.operationId());
+                assertThat(operation.requestPayload()).isEqualTo(historical.requestPayload());
+                return operations.complete(operation.requestId(), completion(operation));
+              }));
       assertThat(completed.status()).isEqualTo("COMMITTED");
       assertThat(completed.tenantUuid()).isEqualTo(existing.canonicalTenantId());
       assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isZero();

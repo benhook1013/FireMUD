@@ -125,16 +125,15 @@ class RuntimeTenantIdentityEvidenceTest {
       long sourceGameRowId,
       String sourceGameTenantKey,
       String provenanceKind) {
-    assertThatThrownBy(
-            () ->
-                new RuntimeTenantIdentityEvidence(
-                    schemaVersion,
-                    targetNamespace,
-                    requestId,
-                    canonicalTenantId,
-                    sourceGameRowId,
-                    sourceGameTenantKey,
-                    provenanceKind))
+    assertThatThrownBy(() ->
+            new RuntimeTenantIdentityEvidence(
+                schemaVersion,
+                targetNamespace,
+                requestId,
+                canonicalTenantId,
+                sourceGameRowId,
+                sourceGameTenantKey,
+                provenanceKind))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

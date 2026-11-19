@@ -234,18 +234,17 @@ public final class StartSessionPreAuthorizationReservationService {
     Optional<StartSessionPreAuthorizationReservationRepository.RecoveryClaimResult> acquired =
         repository.acquireRecoveryClaim(
             tuple, recoveryOwnerId, epochMillis(now), epochMillis(now.plus(CLAIM_TTL)));
-    return acquired.map(
-        result ->
-            new RecoveryAcquisition(
-                result.snapshot(),
-                new ClaimHandle(
-                    tuple,
-                    tuple.mutationDigest(),
-                    result.reservationOwnerId(),
-                    recoveryOwnerId,
-                    result.snapshot().reservationClaimFence(),
-                    result.snapshot().claimFence(),
-                    result.snapshot().claimPurpose())));
+    return acquired.map(result ->
+        new RecoveryAcquisition(
+            result.snapshot(),
+            new ClaimHandle(
+                tuple,
+                tuple.mutationDigest(),
+                result.reservationOwnerId(),
+                recoveryOwnerId,
+                result.snapshot().reservationClaimFence(),
+                result.snapshot().claimFence(),
+                result.snapshot().claimPurpose())));
   }
 
   /**

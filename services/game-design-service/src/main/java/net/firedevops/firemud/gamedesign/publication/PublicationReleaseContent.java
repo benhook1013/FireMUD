@@ -41,18 +41,17 @@ final class PublicationReleaseContent {
             row.get("required_manifest_asset_keys_json", String.class),
             new TypeReference<List<String>>() {}),
         participants.stream()
-            .map(
-                p ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
-                        p.participantKey(),
-                        p.scopeValue(),
-                        p.baseVersionId(),
-                        p.appliedCommitId(),
-                        p.contentDigest(),
-                        p.digestSchemaVersion(),
-                        p.abilitySchemaDigest(),
-                        p.errorCode(),
-                        p.errorMessage()))
+            .map(p ->
+                new GameDesignPublicationTerminalEvidence.Participant(
+                    p.participantKey(),
+                    p.scopeValue(),
+                    p.baseVersionId(),
+                    p.appliedCommitId(),
+                    p.contentDigest(),
+                    p.digestSchemaVersion(),
+                    p.abilitySchemaDigest(),
+                    p.errorCode(),
+                    p.errorMessage()))
             .toList(),
         mapper.readValue(
             row.get("command_definitions_json", String.class),

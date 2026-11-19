@@ -72,33 +72,28 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       try (Fixture f = fixture(null, history)) {
         var evidence = f.owner().read(request());
         assertThat(evidence.catalog().families())
-            .anySatisfy(
-                family -> {
-                  assertThat(family.familyId()).isEqualTo(history);
-                  assertThat(family.freshDisposition())
-                      .isEqualTo(FreshDisposition.MIGRATION_HISTORY_ONLY);
-                });
+            .anySatisfy(family -> {
+              assertThat(family.familyId()).isEqualTo(history);
+              assertThat(family.freshDisposition())
+                  .isEqualTo(FreshDisposition.MIGRATION_HISTORY_ONLY);
+            });
         assertThat(evidence.catalog().schemaFacts())
-            .anySatisfy(
-                fact -> {
-                  assertThat(fact.kind()).isEqualTo(FactKind.TABLE);
-                  assertThat(fact.identity()).isEqualTo(history);
-                })
-            .anySatisfy(
-                fact -> {
-                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
-                  assertThat(fact.identity()).isEqualTo("catalog-installation:1004");
-                })
-            .anySatisfy(
-                fact -> {
-                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
-                  assertThat(fact.identity()).isEqualTo("catalog-installation:1005");
-                })
-            .anySatisfy(
-                fact -> {
-                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
-                  assertThat(fact.identity()).isEqualTo("catalog-installation:1006");
-                });
+            .anySatisfy(fact -> {
+              assertThat(fact.kind()).isEqualTo(FactKind.TABLE);
+              assertThat(fact.identity()).isEqualTo(history);
+            })
+            .anySatisfy(fact -> {
+              assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+              assertThat(fact.identity()).isEqualTo("catalog-installation:1004");
+            })
+            .anySatisfy(fact -> {
+              assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+              assertThat(fact.identity()).isEqualTo("catalog-installation:1005");
+            })
+            .anySatisfy(fact -> {
+              assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+              assertThat(fact.identity()).isEqualTo("catalog-installation:1006");
+            });
         assertThat(f.owner().readExact(evidence.request())).isEqualTo(evidence);
         assertThat(
                 f.dsl
@@ -137,36 +132,31 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
           .isEqualTo(
               catalog.schemaFacts().stream().filter(fact -> fact.kind() == FactKind.TABLE).count());
       assertThat(catalog.families())
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("account_friend_links");
-                assertThat(family.freshDisposition())
-                    .isEqualTo(FreshDisposition.ACCOUNT_PAIR_SCOPE_DRIFT);
-              })
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("guild_storage_items");
-                assertThat(family.freshDisposition())
-                    .isEqualTo(FreshDisposition.ENTITY_VALUE_OWNERSHIP_DRIFT_BLOCKING);
-                assertThat(family.targetOwner())
-                    .isEqualTo(SocialRuntimeFamilyCatalog.TargetOwner.ENTITY_MANAGEMENT_SERVICE);
-              })
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("saga_instance");
-                assertThat(family.freshDisposition())
-                    .isEqualTo(FreshDisposition.SAGA_ADOPTER_UNRESOLVED);
-              })
-          .anySatisfy(
-              family -> {
-                assertThat(family.familyId()).isEqualTo("chat_messages.effect_id");
-                assertThat(family.role()).isEqualTo(SocialRuntimeFamilyCatalog.Role.EFFECT_REPLAY);
-              });
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("account_friend_links");
+            assertThat(family.freshDisposition())
+                .isEqualTo(FreshDisposition.ACCOUNT_PAIR_SCOPE_DRIFT);
+          })
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("guild_storage_items");
+            assertThat(family.freshDisposition())
+                .isEqualTo(FreshDisposition.ENTITY_VALUE_OWNERSHIP_DRIFT_BLOCKING);
+            assertThat(family.targetOwner())
+                .isEqualTo(SocialRuntimeFamilyCatalog.TargetOwner.ENTITY_MANAGEMENT_SERVICE);
+          })
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("saga_instance");
+            assertThat(family.freshDisposition())
+                .isEqualTo(FreshDisposition.SAGA_ADOPTER_UNRESOLVED);
+          })
+          .anySatisfy(family -> {
+            assertThat(family.familyId()).isEqualTo("chat_messages.effect_id");
+            assertThat(family.role()).isEqualTo(SocialRuntimeFamilyCatalog.Role.EFFECT_REPLAY);
+          });
       assertThat(catalog.families())
-          .noneMatch(
-              family ->
-                  family.familyId().equals("guild_storage_items.item_name")
-                      || family.familyId().equals("guild_storage_items.quantity"));
+          .noneMatch(family ->
+              family.familyId().equals("guild_storage_items.item_name")
+                  || family.familyId().equals("guild_storage_items.quantity"));
       assertThat(catalog.unimplementedContracts())
           .containsExactly(
               SocialRuntimeFamilyCatalog.ContractGap.CHAT_RESTRICTION_AND_REVISION,
@@ -276,10 +266,9 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       var catalog = f.owner().read(request()).catalog();
       assertThat(catalog.catalogEpoch()).isEqualTo(3);
       assertThat(catalog.families())
-          .anySatisfy(
-              family ->
-                  assertThat(family.freshDisposition())
-                      .isEqualTo(FreshDisposition.ENTITY_VALUE_OWNERSHIP_DRIFT_BLOCKING));
+          .anySatisfy(family ->
+              assertThat(family.freshDisposition())
+                  .isEqualTo(FreshDisposition.ENTITY_VALUE_OWNERSHIP_DRIFT_BLOCKING));
       assertThat(f.retainedRows()).isEqualTo(rowsBefore);
       assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(3);
       assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
@@ -410,22 +399,21 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       f.dsl.execute("UPDATE " + f.history + " SET success=false WHERE version='1004'");
       assertThatThrownBy(() -> f.owner().read(request()))
           .hasMessageContaining("No durable Social catalog epoch");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO social_runtime_family_catalog_snapshot"
-                          + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
-                          + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
-                          + " VALUES (?,?,?,?,?,?,?,?,?)",
-                      proposalRequest.readRequestId(),
-                      proposalRequest.targetNamespace(),
-                      requestBytes,
-                      SocialRuntimeFamilyCatalog.sha256(requestBytes),
-                      proposal.snapshotId(),
-                      proposal.catalog().catalogEpoch(),
-                      proposal.catalog().digest(),
-                      evidenceBytes,
-                      proposal.digest()))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO social_runtime_family_catalog_snapshot"
+                      + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
+                      + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
+                      + " VALUES (?,?,?,?,?,?,?,?,?)",
+                  proposalRequest.readRequestId(),
+                  proposalRequest.targetNamespace(),
+                  requestBytes,
+                  SocialRuntimeFamilyCatalog.sha256(requestBytes),
+                  proposal.snapshotId(),
+                  proposal.catalog().catalogEpoch(),
+                  proposal.catalog().digest(),
+                  evidenceBytes,
+                  proposal.digest()))
           .hasMessageContaining("Social schema/classification changed");
       assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
     }
@@ -448,17 +436,15 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThatThrownBy(
               () -> f.dsl.execute("UPDATE social_runtime_family_catalog_epoch SET catalog_epoch=2"))
           .hasMessageContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE social_runtime_family_classification SET fresh_disposition='CATALOG_ONLY'"
-                          + " WHERE family_id='account_friend_links'"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE social_runtime_family_classification SET fresh_disposition='CATALOG_ONLY'"
+                      + " WHERE family_id='account_friend_links'"))
           .hasMessageContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO social_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 4,catalog_bytes,catalog_digest FROM social_runtime_family_catalog_epoch WHERE catalog_epoch=3"))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO social_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
+                      + " SELECT 4,catalog_bytes,catalog_digest FROM social_runtime_family_catalog_epoch WHERE catalog_epoch=3"))
           .hasMessageContaining("exact classified installed schema");
       assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(3);
     }
@@ -478,10 +464,9 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       try {
         Context.current()
             .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-            .run(
-                () ->
-                    service.readSocialRuntimeFamilyCatalog(
-                        SocialRuntimeFamilyCatalogCodec.toRequest(read), collector));
+            .run(() ->
+                service.readSocialRuntimeFamilyCatalog(
+                    SocialRuntimeFamilyCatalogCodec.toRequest(read), collector));
       } finally {
         SessionContext.clear();
       }
@@ -511,21 +496,20 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
         var original = f.owner().read(read);
         assertThat(original.catalog().catalogEpoch()).isEqualTo(3);
         assertThat(original.catalog().schemaFacts())
-            .anySatisfy(
-                fact -> {
-                  assertThat(fact.kind()).isEqualTo(FactKind.VIEW);
-                  assertThat(fact.identity()).isEqualTo("catalog_security_probe");
-                  assertThat(fact.definitionDigest())
-                      .isEqualTo(
-                          f.dsl
-                              .fetchSingle(
-                                  "SELECT 'sha256:'||encode(sha256(convert_to("
-                                      + "jsonb_build_array(pg_get_viewdef(c.oid,true),c.reloptions)::text,'UTF8')),'hex')"
-                                      + " FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace"
-                                      + " WHERE n.nspname=? AND c.relname='catalog_security_probe'",
-                                  f.schema)
-                              .get(0, String.class));
-                });
+            .anySatisfy(fact -> {
+              assertThat(fact.kind()).isEqualTo(FactKind.VIEW);
+              assertThat(fact.identity()).isEqualTo("catalog_security_probe");
+              assertThat(fact.definitionDigest())
+                  .isEqualTo(
+                      f.dsl
+                          .fetchSingle(
+                              "SELECT 'sha256:'||encode(sha256(convert_to("
+                                  + "jsonb_build_array(pg_get_viewdef(c.oid,true),c.reloptions)::text,'UTF8')),'hex')"
+                                  + " FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace"
+                                  + " WHERE n.nspname=? AND c.relname='catalog_security_probe'",
+                              f.schema)
+                          .get(0, String.class));
+            });
         assertThat(f.owner().read(read)).isEqualTo(original);
         assertThat(f.owner().readExact(read)).isEqualTo(original);
         String definition =
@@ -603,15 +587,14 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
                 ? "V1004__social_owner_runtime_family_catalog.sql"
                 : "V1005__social_catalog_view_options.sql";
         assertThat(current.catalog().schemaFacts())
-            .anySatisfy(
-                fact -> {
-                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
-                  assertThat(fact.identity()).isEqualTo("catalog-installation:" + version);
-                  assertThat(fact.definitionDigest())
-                      .isEqualTo(
-                          SocialRuntimeFamilyCatalog.sha256(
-                              script.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-                });
+            .anySatisfy(fact -> {
+              assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+              assertThat(fact.identity()).isEqualTo("catalog-installation:" + version);
+              assertThat(fact.definitionDigest())
+                  .isEqualTo(
+                      SocialRuntimeFamilyCatalog.sha256(
+                          script.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            });
       }
       flyway(f.source, f.schema, f.history, "1005").validate();
     }
@@ -693,10 +676,8 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
         String insertedNamespace = namespace;
         String retained = f.catalogRows("social_runtime_family_catalog_snapshot");
         // Each forged frame gets its own correct digest; a hash-only constraint cannot reject it.
-        assertThatThrownBy(
-                () ->
-                    f.insertSnapshot(
-                        proposal, insertedNamespace, insertedRequest, insertedEvidence))
+        assertThatThrownBy(() ->
+                f.insertSnapshot(proposal, insertedNamespace, insertedRequest, insertedEvidence))
             .as(vector)
             .hasMessageContaining("complete exact request and evidence");
         assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(retained);
@@ -758,11 +739,10 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
                   .toList())
           .contains(
               "catalog-installation:1004", "catalog-installation:1005", "catalog-installation:1006")
-          .noneMatch(
-              identity ->
-                  identity.contains(":1004:")
-                      || identity.contains(":1005:")
-                      || identity.contains(":1006:"));
+          .noneMatch(identity ->
+              identity.contains(":1004:")
+                  || identity.contains(":1005:")
+                  || identity.contains(":1006:"));
       for (var marker :
           Map.of(
                   "1004", "V1004__social_owner_runtime_family_catalog.sql",
@@ -770,15 +750,14 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
                   "1006", "V1006__social_catalog_snapshot_exact_frames.sql")
               .entrySet()) {
         assertThat(current.catalog().schemaFacts())
-            .anySatisfy(
-                fact -> {
-                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
-                  assertThat(fact.identity()).isEqualTo("catalog-installation:" + marker.getKey());
-                  assertThat(fact.definitionDigest())
-                      .isEqualTo(
-                          SocialRuntimeFamilyCatalog.sha256(
-                              marker.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-                });
+            .anySatisfy(fact -> {
+              assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+              assertThat(fact.identity()).isEqualTo("catalog-installation:" + marker.getKey());
+              assertThat(fact.definitionDigest())
+                  .isEqualTo(
+                      SocialRuntimeFamilyCatalog.sha256(
+                          marker.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            });
       }
       flyway(f.source, f.schema, f.history, null).validate();
     }

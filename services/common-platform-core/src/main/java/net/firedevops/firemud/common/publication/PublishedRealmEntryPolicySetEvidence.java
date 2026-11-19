@@ -390,18 +390,17 @@ public record PublishedRealmEntryPolicySetEvidence(
             .toList();
     List<Map<String, Object>> orderedEvidence =
         orderedPolicies.stream()
-            .map(
-                policy -> {
-                  Map<String, Object> row = new LinkedHashMap<>();
-                  row.put("policyId", policy.policyId().toString());
-                  row.put("sourceCommitId", policy.sourceCommitId().toString());
-                  row.put("sourceRevisionId", policy.sourceRevisionId().toString());
-                  row.put("logicalRevisionId", policy.logicalRevisionId());
-                  row.put("worldSlug", policy.policy().worldSlug());
-                  row.put("realmSlug", policy.policy().realmSlug());
-                  row.put("policyDigest", policy.policyDigest());
-                  return row;
-                })
+            .map(policy -> {
+              Map<String, Object> row = new LinkedHashMap<>();
+              row.put("policyId", policy.policyId().toString());
+              row.put("sourceCommitId", policy.sourceCommitId().toString());
+              row.put("sourceRevisionId", policy.sourceRevisionId().toString());
+              row.put("logicalRevisionId", policy.logicalRevisionId());
+              row.put("worldSlug", policy.policy().worldSlug());
+              row.put("realmSlug", policy.policy().realmSlug());
+              row.put("policyDigest", policy.policyDigest());
+              return row;
+            })
             .toList();
     Map<String, Object> preimage = new LinkedHashMap<>();
     preimage.put("schema", SET_DIGEST_SCHEMA);
@@ -626,22 +625,21 @@ public record PublishedRealmEntryPolicySetEvidence(
     root.put(
         "policies",
         policies.stream()
-            .map(
-                evidence -> {
-                  Map<String, Object> row = new LinkedHashMap<>();
-                  row.put("policyId", evidence.policyId().toString());
-                  row.put("sourceCommitId", evidence.sourceCommitId().toString());
-                  row.put("sourceRevisionId", evidence.sourceRevisionId().toString());
-                  row.put("logicalRevisionId", evidence.logicalRevisionId());
-                  try {
-                    row.put("policy", JSON.readTree(evidence.policy().canonicalJson()));
-                  } catch (RuntimeException impossible) {
-                    throw new IllegalStateException(
-                        "Canonical realm policy became invalid", impossible);
-                  }
-                  row.put("policyDigest", evidence.policyDigest());
-                  return row;
-                })
+            .map(evidence -> {
+              Map<String, Object> row = new LinkedHashMap<>();
+              row.put("policyId", evidence.policyId().toString());
+              row.put("sourceCommitId", evidence.sourceCommitId().toString());
+              row.put("sourceRevisionId", evidence.sourceRevisionId().toString());
+              row.put("logicalRevisionId", evidence.logicalRevisionId());
+              try {
+                row.put("policy", JSON.readTree(evidence.policy().canonicalJson()));
+              } catch (RuntimeException impossible) {
+                throw new IllegalStateException(
+                    "Canonical realm policy became invalid", impossible);
+              }
+              row.put("policyDigest", evidence.policyDigest());
+              return row;
+            })
             .toList());
     return root;
   }

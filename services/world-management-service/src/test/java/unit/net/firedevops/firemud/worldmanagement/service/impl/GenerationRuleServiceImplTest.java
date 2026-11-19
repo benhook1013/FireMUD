@@ -84,9 +84,8 @@ class GenerationRuleServiceImplTest {
     order
         .verify(repository)
         .save(
-            argThat(
-                entity ->
-                    entity.getVersion() == 3 && Long.valueOf(7L).equals(entity.getVersionId())));
+            argThat(entity ->
+                entity.getVersion() == 3 && Long.valueOf(7L).equals(entity.getVersionId())));
   }
 
   @Test

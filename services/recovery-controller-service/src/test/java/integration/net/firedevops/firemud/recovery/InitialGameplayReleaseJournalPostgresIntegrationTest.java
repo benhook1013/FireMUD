@@ -159,14 +159,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             "gamesession-preparation-readback-1",
             base.plusSeconds(6));
     UUID prepareEffectId = prepare.effect().effectId();
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    scope.operationId(),
-                    prepareEffectId,
-                    prepareAttempt,
-                    prepareReadback,
-                    base.plusSeconds(5)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                scope.operationId(),
+                prepareEffectId,
+                prepareAttempt,
+                prepareReadback,
+                base.plusSeconds(5)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("observation is in the future");
     assertThat(journal.find(scope.operationId())).contains(authorized);
@@ -186,14 +185,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
             "wrong-attempt",
             base.plusSeconds(6));
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    scope.operationId(),
-                    prepareEffectId,
-                    prepareAttempt,
-                    otherAttempt,
-                    base.plusSeconds(7)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                scope.operationId(),
+                prepareEffectId,
+                prepareAttempt,
+                otherAttempt,
+                base.plusSeconds(7)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     journal.recordAmbiguousEffect(
         scope.operationId(),
@@ -210,14 +208,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             prepareReadback.observedAt());
     assertThat(releasing.phase()).isEqualTo(Phase.RELEASING);
     String retainedPrepare = storedOutbox(scope.operationId(), prepareEffectId);
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    scope.operationId(),
-                    prepareEffectId,
-                    prepareAttempt,
-                    prepareReadback,
-                    base.plusSeconds(5)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                scope.operationId(),
+                prepareEffectId,
+                prepareAttempt,
+                prepareReadback,
+                base.plusSeconds(5)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("effect readback observation is in the future");
     assertThat(storedOutbox(scope.operationId(), prepareEffectId)).isEqualTo(retainedPrepare);
@@ -249,14 +246,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.PREPARED_FENCED,
             prepareReadback.readbackIdentity(),
             base.plusSeconds(8));
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    scope.operationId(),
-                    preparedEffectId,
-                    prepareAttempt,
-                    laterObservation,
-                    base.plusSeconds(7)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                scope.operationId(),
+                preparedEffectId,
+                prepareAttempt,
+                laterObservation,
+                base.plusSeconds(7)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(scope.operationId(), preparedEffectId))
         .isEqualTo(retainedAcknowledgement);
@@ -275,25 +271,23 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.PREPARED_FENCED,
             "different-durable-receipt",
             base.plusSeconds(8));
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    scope.operationId(),
-                    preparedEffectId,
-                    prepareAttempt,
-                    changedReceipt,
-                    base.plusSeconds(9)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                scope.operationId(),
+                preparedEffectId,
+                prepareAttempt,
+                changedReceipt,
+                base.plusSeconds(9)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(scope.operationId(), preparedEffectId))
         .isEqualTo(retainedAcknowledgement);
-    assertThatThrownBy(
-            () ->
-                journal.recordAmbiguousEffect(
-                    scope.operationId(),
-                    preparedEffectId,
-                    UUID.randomUUID(),
-                    "WRONG_ATTEMPT",
-                    base.plusSeconds(8)))
+    assertThatThrownBy(() ->
+            journal.recordAmbiguousEffect(
+                scope.operationId(),
+                preparedEffectId,
+                UUID.randomUUID(),
+                "WRONG_ATTEMPT",
+                base.plusSeconds(8)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(journal.findEffect(scope.operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
         .get()
@@ -438,10 +432,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         List.of(EffectReadbackState.UNKNOWN_OR_PARTIAL, EffectReadbackState.PREPARED_FENCED)) {
       EffectReadback delayed =
           readbackFor(dispatched, attemptId, delayedState, "delayed", base.plusSeconds(5));
-      assertThatThrownBy(
-              () ->
-                  journal.recordEffectReadback(
-                      operationId, effectId, attemptId, delayed, base.plusSeconds(7)))
+      assertThatThrownBy(() ->
+              journal.recordEffectReadback(
+                  operationId, effectId, attemptId, delayed, base.plusSeconds(7)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("predates the retained same-attempt observation");
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
@@ -515,14 +508,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                     base.plusSeconds(7))
                 .state())
         .isEqualTo(EffectOutboxState.RETRYABLE);
-    assertThatThrownBy(
-            () ->
-                journal.recordAmbiguousEffect(
-                    scope.operationId(),
-                    effectId,
-                    UUID.randomUUID(),
-                    "WRONG_ATTEMPT",
-                    base.plusSeconds(7)))
+    assertThatThrownBy(() ->
+            journal.recordAmbiguousEffect(
+                scope.operationId(),
+                effectId,
+                UUID.randomUUID(),
+                "WRONG_ATTEMPT",
+                base.plusSeconds(7)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     EffectReadback observedAgain =
         readbackFor(
@@ -543,14 +535,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               EffectReadbackState.PROVEN_NO_EFFECT,
               "durable-closure",
               invalid);
-      assertThatThrownBy(
-              () ->
-                  journal.recordEffectReadback(
-                      scope.operationId(),
-                      effectId,
-                      firstAttempt,
-                      invalidObservation,
-                      base.plusSeconds(7)))
+      assertThatThrownBy(() ->
+              journal.recordEffectReadback(
+                  scope.operationId(),
+                  effectId,
+                  firstAttempt,
+                  invalidObservation,
+                  base.plusSeconds(7)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class);
     }
     EffectReadback differentClosure =
@@ -560,21 +551,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.PROVEN_NO_EFFECT,
             "different-closure",
             base.plusSeconds(6));
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    scope.operationId(),
-                    effectId,
-                    firstAttempt,
-                    differentClosure,
-                    base.plusSeconds(7)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                scope.operationId(), effectId, firstAttempt, differentClosure, base.plusSeconds(7)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(retained);
 
-    assertThatThrownBy(
-            () ->
-                journal.claimEffect(
-                    scope.operationId(), effectId, firstAttempt, base.plusSeconds(8)))
+    assertThatThrownBy(() ->
+            journal.claimEffect(scope.operationId(), effectId, firstAttempt, base.plusSeconds(8)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("a retry must use a new effect attempt identity");
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(retained);
@@ -589,10 +573,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(replacement)
         .contains(
             "\"readback_identity\":null", "\"readback_payload\":null", "\"readback_digest\":null");
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    scope.operationId(), effectId, firstAttempt, terminal, base.plusSeconds(9)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                scope.operationId(), effectId, firstAttempt, terminal, base.plusSeconds(9)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(replacement);
   }
@@ -614,10 +597,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.PROVEN_NO_EFFECT,
             "closure",
             base.plusSeconds(3));
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    operationId, effectId, attemptId, stale, base.plusSeconds(6)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                operationId, effectId, attemptId, stale, base.plusSeconds(6)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     EffectReadback future =
         readbackFor(
@@ -626,10 +608,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.PROVEN_NO_EFFECT,
             "closure",
             base.plusSeconds(7));
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    operationId, effectId, attemptId, future, base.plusSeconds(6)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                operationId, effectId, attemptId, future, base.plusSeconds(6)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
     EffectReadback closure =
@@ -653,10 +634,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID nextAttempt = UUID.randomUUID();
     journal.claimEffect(operationId, effectId, nextAttempt, base.plusSeconds(8));
     String replaced = storedOutbox(operationId, effectId);
-    assertThatThrownBy(
-            () ->
-                journal.recordEffectReadback(
-                    operationId, effectId, attemptId, closure, base.plusSeconds(9)))
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(
+                operationId, effectId, attemptId, closure, base.plusSeconds(9)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(replaced);
   }
@@ -682,11 +662,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           operationId, effectId, attemptId, "OWNER_REJECTED", base.plusSeconds(6));
       if (variant.equals("missing-digest")) {
         String retained = storedOutbox(operationId, effectId);
-        assertThatThrownBy(
-                () ->
-                    dsl.execute(
-                        "UPDATE recovery_control.initial_gameplay_release_outbox SET readback_digest=NULL WHERE effect_id=?",
-                        effectId))
+        assertThatThrownBy(() ->
+                dsl.execute(
+                    "UPDATE recovery_control.initial_gameplay_release_outbox SET readback_digest=NULL WHERE effect_id=?",
+                    effectId))
             .isInstanceOf(org.jooq.exception.IntegrityConstraintViolationException.class);
         assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
         continue;
@@ -717,10 +696,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               EffectReadbackState.PROVEN_NO_EFFECT,
               "closure",
               base.plusSeconds(3));
-      assertThatThrownBy(
-              () ->
-                  journal.recordEffectReadback(
-                      operationId, effectId, attemptId, stale, base.plusSeconds(7)))
+      assertThatThrownBy(() ->
+              journal.recordEffectReadback(
+                  operationId, effectId, attemptId, stale, base.plusSeconds(7)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class);
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
       EffectReadback closure =
@@ -735,17 +713,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             operationId, effectId, attemptId, closure, base.plusSeconds(7));
         String retained = storedOutbox(operationId, effectId);
         assertThat(retained).contains(tupleCodec.digest(closure));
-        assertThatThrownBy(
-                () ->
-                    journal.recordEffectReadback(
-                        operationId, effectId, attemptId, unknown, base.plusSeconds(8)))
+        assertThatThrownBy(() ->
+                journal.recordEffectReadback(
+                    operationId, effectId, attemptId, unknown, base.plusSeconds(8)))
             .isInstanceOf(InitialGameplayReleaseConflictException.class);
         assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
       } else {
-        assertThatThrownBy(
-                () ->
-                    journal.recordEffectReadback(
-                        operationId, effectId, attemptId, closure, base.plusSeconds(7)))
+        assertThatThrownBy(() ->
+                journal.recordEffectReadback(
+                    operationId, effectId, attemptId, closure, base.plusSeconds(7)))
             .isInstanceOf(InitialGameplayReleaseConflictException.class);
         assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
       }
@@ -778,14 +754,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               EffectReadbackState.PROVEN_NO_EFFECT,
               "before-dispatch-floor",
               floor.minusNanos(1));
-      assertThatThrownBy(
-              () ->
-                  journal.recordEffectReadback(
-                      operationId,
-                      effectId,
-                      dispatched.lastAttemptId(),
-                      stale,
-                      base.plusSeconds(5)))
+      assertThatThrownBy(() ->
+              journal.recordEffectReadback(
+                  operationId, effectId, dispatched.lastAttemptId(), stale, base.plusSeconds(5)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class);
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
       EffectReadback closure =
@@ -879,9 +850,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             () -> journal.findEffect(operationId, EffectKind.PREPARE_PLAYABLE_STATE_FENCED))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(error);
-    assertThatThrownBy(
-            () ->
-                journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(5)))
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(5)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(error);
   }
@@ -917,22 +887,19 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           readbackFor(dispatched, attemptId, state, "terminal", base.plusSeconds(3));
       EffectReadback future =
           readbackFor(dispatched, attemptId, state, "terminal", base.plusSeconds(8));
-      assertThatThrownBy(
-              () ->
-                  journal.recordEffectReadback(
-                      operationId, effectId, attemptId, stale, base.plusSeconds(7)))
+      assertThatThrownBy(() ->
+              journal.recordEffectReadback(
+                  operationId, effectId, attemptId, stale, base.plusSeconds(7)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("effect readback is stale");
-      assertThatThrownBy(
-              () ->
-                  journal.recordEffectReadback(
-                      operationId, effectId, attemptId, future, base.plusSeconds(7)))
+      assertThatThrownBy(() ->
+              journal.recordEffectReadback(
+                  operationId, effectId, attemptId, future, base.plusSeconds(7)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("effect readback observation is in the future");
-      assertThatThrownBy(
-              () ->
-                  journal.recordEffectReadback(
-                      operationId, effectId, attemptId, valid, base.plusSeconds(4)))
+      assertThatThrownBy(() ->
+              journal.recordEffectReadback(
+                  operationId, effectId, attemptId, valid, base.plusSeconds(4)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("effect readback observation is in the future");
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
@@ -947,10 +914,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   effectId))
           .isEqualTo(1);
       String corrupt = storedOutbox(operationId, effectId);
-      assertThatThrownBy(
-              () ->
-                  journal.recordEffectReadback(
-                      operationId, effectId, attemptId, valid, base.plusSeconds(8)))
+      assertThatThrownBy(() ->
+              journal.recordEffectReadback(
+                  operationId, effectId, attemptId, valid, base.plusSeconds(8)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("retained effect readback does not match exact replay");
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(corrupt);

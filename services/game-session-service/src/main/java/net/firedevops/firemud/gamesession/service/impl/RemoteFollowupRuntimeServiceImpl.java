@@ -275,10 +275,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       RemoteCommandCoordinator coordinator =
           remoteCommandCoordinatorRepository
               .findByTenantIdAndFollowupId(tenantId, followupId)
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "cannot persist scope-invalid remote result without its coordinator"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "cannot persist scope-invalid remote result without its coordinator"));
       if (!hasCompleteRuntimeScope(coordinator)) {
         throw new IllegalStateException(
             "cannot persist scope-invalid remote result with incomplete coordinator scope");
@@ -514,10 +513,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     return gameplayCommandRepository
         .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
             tenantId, targetGameInstanceId, targetRegionId, targetRegionEpoch, followupId)
-        .filter(
-            candidate ->
-                matchesTargetScope(
-                    candidate, tenantId, targetGameInstanceId, targetRegionId, targetRegionEpoch))
+        .filter(candidate ->
+            matchesTargetScope(
+                candidate, tenantId, targetGameInstanceId, targetRegionId, targetRegionEpoch))
         .orElse(null);
   }
 
@@ -1675,14 +1673,13 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
                 coordinator.getTenantId(),
                 coordinator.getOriginGameInstanceId(),
                 coordinator.getCommandId())
-            .filter(
-                candidate ->
-                    matchesScope(
-                        candidate,
-                        coordinator.getTenantId(),
-                        coordinator.getOriginGameInstanceId(),
-                        coordinator.getOriginRegionId(),
-                        coordinator.getOriginRegionEpoch()))
+            .filter(candidate ->
+                matchesScope(
+                    candidate,
+                    coordinator.getTenantId(),
+                    coordinator.getOriginGameInstanceId(),
+                    coordinator.getOriginRegionId(),
+                    coordinator.getOriginRegionEpoch()))
             .orElse(null);
     GameplayCommand targetCommand =
         linkedTargetCommand(

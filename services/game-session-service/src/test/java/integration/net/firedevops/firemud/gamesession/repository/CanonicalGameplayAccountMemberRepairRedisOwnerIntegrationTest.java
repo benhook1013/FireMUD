@@ -268,40 +268,35 @@ class CanonicalGameplayAccountMemberRepairRedisOwnerIntegrationTest {
 
       try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
         Future<Integer> runtimeMutation =
-            executor.submit(
-                () ->
-                    testSchema
-                        .dsl()
-                        .transactionResult(
-                            configuration -> {
-                              DSLContext transaction = DSL.using(configuration);
-                              var runtime =
-                                  transaction.fetchOne(
-                                      "SELECT id FROM game_instances"
-                                          + " WHERE tenant_id = ? AND id = ? FOR UPDATE",
-                                      target.gameSessionTenantId(),
-                                      target.gameInstanceId());
-                              if (runtime == null) {
-                                throw new IllegalStateException("Expected current runtime row");
-                              }
-                              runtimeRowLocked.countDown();
-                              awaitLatch(allowRuntimeMutation);
-                              return transaction.execute(
-                                  "UPDATE game_instances SET status = 'STOPPED',"
-                                      + " row_version = row_version + 1"
-                                      + " WHERE tenant_id = ? AND id = ?",
-                                  target.gameSessionTenantId(),
-                                  target.gameInstanceId());
-                            }));
+            executor.submit(() ->
+                testSchema
+                    .dsl()
+                    .transactionResult(configuration -> {
+                      DSLContext transaction = DSL.using(configuration);
+                      var runtime =
+                          transaction.fetchOne(
+                              "SELECT id FROM game_instances"
+                                  + " WHERE tenant_id = ? AND id = ? FOR UPDATE",
+                              target.gameSessionTenantId(),
+                              target.gameInstanceId());
+                      if (runtime == null) {
+                        throw new IllegalStateException("Expected current runtime row");
+                      }
+                      runtimeRowLocked.countDown();
+                      awaitLatch(allowRuntimeMutation);
+                      return transaction.execute(
+                          "UPDATE game_instances SET status = 'STOPPED',"
+                              + " row_version = row_version + 1"
+                              + " WHERE tenant_id = ? AND id = ?",
+                          target.gameSessionTenantId(),
+                          target.gameInstanceId());
+                    }));
 
         try {
           assertThat(runtimeRowLocked.await(5, TimeUnit.SECONDS)).isTrue();
           Future<CanonicalGameplayAccountMemberAcknowledgement> acknowledgement =
-              executor.submit(
-                  () ->
-                      fixture
-                          .repository()
-                          .acknowledgeAccountMemberRepair(operation, actualReadback));
+              executor.submit(() ->
+                  fixture.repository().acknowledgeAccountMemberRepair(operation, actualReadback));
           awaitRuntimeRowLockWait(testSchema.dsl(), applicationName);
           allowRuntimeMutation.countDown();
 

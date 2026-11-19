@@ -66,11 +66,9 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(gameplayCommandRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     lenient()
         .when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(anyLong(), anyLong()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(
-                    sourceGameInstance(
-                        (Long) invocation.getArgument(1), 100L, 3L, "pin-request-1")));
+        .thenAnswer(invocation ->
+            Optional.of(
+                sourceGameInstance((Long) invocation.getArgument(1), 100L, 3L, "pin-request-1")));
     meterRegistry = new SimpleMeterRegistry();
     service =
         new RemoteFollowupRuntimeServiceImpl(
@@ -113,49 +111,47 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals("PENDING", command.getGameplayResult());
     verify(coordinatorRepository)
         .save(
-            argThat(
-                coordinator ->
-                    "SHARED".equals(coordinator.getPlayableStateScope())
-                        && "dispatch-1".equals(coordinator.getAutomationDispatchId())
-                        && "work-1".equals(coordinator.getAutomationWorkItemId())
-                        && "script-1".equals(coordinator.getScriptId())
-                        && "patch-1".equals(coordinator.getScriptPatchVersion())
-                        && Long.valueOf(100L).equals(coordinator.getScriptPatchBaseVersionId())
-                        && "plugin-1".equals(coordinator.getPluginId())
-                        && "plugin-v1".equals(coordinator.getPluginVersionId())
-                        && "demo".equals(coordinator.getWorldSlug())
-                        && "production".equals(coordinator.getRealmSlug())
-                        && Long.valueOf(17L).equals(coordinator.getPointerVersion())));
+            argThat(coordinator ->
+                "SHARED".equals(coordinator.getPlayableStateScope())
+                    && "dispatch-1".equals(coordinator.getAutomationDispatchId())
+                    && "work-1".equals(coordinator.getAutomationWorkItemId())
+                    && "script-1".equals(coordinator.getScriptId())
+                    && "patch-1".equals(coordinator.getScriptPatchVersion())
+                    && Long.valueOf(100L).equals(coordinator.getScriptPatchBaseVersionId())
+                    && "plugin-1".equals(coordinator.getPluginId())
+                    && "plugin-v1".equals(coordinator.getPluginVersionId())
+                    && "demo".equals(coordinator.getWorldSlug())
+                    && "production".equals(coordinator.getRealmSlug())
+                    && Long.valueOf(17L).equals(coordinator.getPointerVersion())));
     verify(followupRepository)
         .save(
-            argThat(
-                followup ->
-                    "SHARED".equals(followup.getPlayableStateScope())
-                        && "cmd-1".equals(followup.getCommandId())
-                        && "entity:entity-9".equals(followup.getClaimTargetAggregate())
-                        && "enqueue_automation_command".equals(followup.getPayloadKind())
-                        && "LOOK".equals(followup.getRequestedCommand())
-                        && followup.isRequiresSoloTick()
-                        && "REMOTE_FOLLOWUP".equals(followup.getOriginSourceKind())
-                        && "TARGET_REGION_EXECUTED".equals(followup.getOriginSourceState())
-                        && Long.valueOf(44L).equals(followup.getOriginSourceOrdinal())
-                        && Long.valueOf(22L).equals(followup.getOriginSourceDueTickId())
-                        && Long.valueOf(1700L).equals(followup.getOriginSourceDueAtMs())
-                        && "REMOTE_FOLLOWUP".equals(followup.getQueueSourceKind())
-                        && "TARGET_REGION_SCHEDULED".equals(followup.getQueueSourceState())
-                        && followup.getQueueSourceOrdinal() == null
-                        && Long.valueOf(22L).equals(followup.getQueueSourceDueTickId())
-                        && followup.getQueueSourceDueAtMs() == null
-                        && "dispatch-1".equals(followup.getAutomationDispatchId())
-                        && "work-1".equals(followup.getAutomationWorkItemId())
-                        && "script-1".equals(followup.getScriptId())
-                        && "patch-1".equals(followup.getScriptPatchVersion())
-                        && Long.valueOf(100L).equals(followup.getScriptPatchBaseVersionId())
-                        && "plugin-1".equals(followup.getPluginId())
-                        && "plugin-v1".equals(followup.getPluginVersionId())
-                        && "demo".equals(followup.getWorldSlug())
-                        && "production".equals(followup.getRealmSlug())
-                        && Long.valueOf(17L).equals(followup.getPointerVersion())));
+            argThat(followup ->
+                "SHARED".equals(followup.getPlayableStateScope())
+                    && "cmd-1".equals(followup.getCommandId())
+                    && "entity:entity-9".equals(followup.getClaimTargetAggregate())
+                    && "enqueue_automation_command".equals(followup.getPayloadKind())
+                    && "LOOK".equals(followup.getRequestedCommand())
+                    && followup.isRequiresSoloTick()
+                    && "REMOTE_FOLLOWUP".equals(followup.getOriginSourceKind())
+                    && "TARGET_REGION_EXECUTED".equals(followup.getOriginSourceState())
+                    && Long.valueOf(44L).equals(followup.getOriginSourceOrdinal())
+                    && Long.valueOf(22L).equals(followup.getOriginSourceDueTickId())
+                    && Long.valueOf(1700L).equals(followup.getOriginSourceDueAtMs())
+                    && "REMOTE_FOLLOWUP".equals(followup.getQueueSourceKind())
+                    && "TARGET_REGION_SCHEDULED".equals(followup.getQueueSourceState())
+                    && followup.getQueueSourceOrdinal() == null
+                    && Long.valueOf(22L).equals(followup.getQueueSourceDueTickId())
+                    && followup.getQueueSourceDueAtMs() == null
+                    && "dispatch-1".equals(followup.getAutomationDispatchId())
+                    && "work-1".equals(followup.getAutomationWorkItemId())
+                    && "script-1".equals(followup.getScriptId())
+                    && "patch-1".equals(followup.getScriptPatchVersion())
+                    && Long.valueOf(100L).equals(followup.getScriptPatchBaseVersionId())
+                    && "plugin-1".equals(followup.getPluginId())
+                    && "plugin-v1".equals(followup.getPluginVersionId())
+                    && "demo".equals(followup.getWorldSlug())
+                    && "production".equals(followup.getRealmSlug())
+                    && Long.valueOf(17L).equals(followup.getPointerVersion())));
     verify(valueOperations)
         .set("remote:{tenant:1:instance:8}:entity-9", "1", java.time.Duration.ofMillis(60_000L));
   }
@@ -356,42 +352,40 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.followupCreated());
     verify(coordinatorRepository)
         .save(
-            argThat(
-                coordinator ->
-                    "SHARED".equals(coordinator.getPlayableStateScope())
-                        && "dispatch-1".equals(coordinator.getAutomationDispatchId())
-                        && "work-1".equals(coordinator.getAutomationWorkItemId())
-                        && "script-1".equals(coordinator.getScriptId())
-                        && "patch-1".equals(coordinator.getScriptPatchVersion())
-                        && "plugin-1".equals(coordinator.getPluginId())
-                        && "plugin-v1".equals(coordinator.getPluginVersionId())
-                        && "demo".equals(coordinator.getWorldSlug())
-                        && "production".equals(coordinator.getRealmSlug())
-                        && Long.valueOf(17L).equals(coordinator.getPointerVersion())));
+            argThat(coordinator ->
+                "SHARED".equals(coordinator.getPlayableStateScope())
+                    && "dispatch-1".equals(coordinator.getAutomationDispatchId())
+                    && "work-1".equals(coordinator.getAutomationWorkItemId())
+                    && "script-1".equals(coordinator.getScriptId())
+                    && "patch-1".equals(coordinator.getScriptPatchVersion())
+                    && "plugin-1".equals(coordinator.getPluginId())
+                    && "plugin-v1".equals(coordinator.getPluginVersionId())
+                    && "demo".equals(coordinator.getWorldSlug())
+                    && "production".equals(coordinator.getRealmSlug())
+                    && Long.valueOf(17L).equals(coordinator.getPointerVersion())));
     verify(followupRepository)
         .save(
-            argThat(
-                followup ->
-                    "SHARED".equals(followup.getPlayableStateScope())
-                        && "cmd-1".equals(followup.getCommandId())
-                        && "entity:entity-9".equals(followup.getClaimTargetAggregate())
-                        && "enqueue_automation_command".equals(followup.getPayloadKind())
-                        && "LOOK".equals(followup.getRequestedCommand())
-                        && followup.isRequiresSoloTick()
-                        && "REMOTE_FOLLOWUP".equals(followup.getQueueSourceKind())
-                        && "TARGET_REGION_SCHEDULED".equals(followup.getQueueSourceState())
-                        && followup.getQueueSourceOrdinal() == null
-                        && Long.valueOf(22L).equals(followup.getQueueSourceDueTickId())
-                        && followup.getQueueSourceDueAtMs() == null
-                        && "dispatch-1".equals(followup.getAutomationDispatchId())
-                        && "work-1".equals(followup.getAutomationWorkItemId())
-                        && "script-1".equals(followup.getScriptId())
-                        && "patch-1".equals(followup.getScriptPatchVersion())
-                        && "plugin-1".equals(followup.getPluginId())
-                        && "plugin-v1".equals(followup.getPluginVersionId())
-                        && "demo".equals(followup.getWorldSlug())
-                        && "production".equals(followup.getRealmSlug())
-                        && Long.valueOf(17L).equals(followup.getPointerVersion())));
+            argThat(followup ->
+                "SHARED".equals(followup.getPlayableStateScope())
+                    && "cmd-1".equals(followup.getCommandId())
+                    && "entity:entity-9".equals(followup.getClaimTargetAggregate())
+                    && "enqueue_automation_command".equals(followup.getPayloadKind())
+                    && "LOOK".equals(followup.getRequestedCommand())
+                    && followup.isRequiresSoloTick()
+                    && "REMOTE_FOLLOWUP".equals(followup.getQueueSourceKind())
+                    && "TARGET_REGION_SCHEDULED".equals(followup.getQueueSourceState())
+                    && followup.getQueueSourceOrdinal() == null
+                    && Long.valueOf(22L).equals(followup.getQueueSourceDueTickId())
+                    && followup.getQueueSourceDueAtMs() == null
+                    && "dispatch-1".equals(followup.getAutomationDispatchId())
+                    && "work-1".equals(followup.getAutomationWorkItemId())
+                    && "script-1".equals(followup.getScriptId())
+                    && "patch-1".equals(followup.getScriptPatchVersion())
+                    && "plugin-1".equals(followup.getPluginId())
+                    && "plugin-v1".equals(followup.getPluginVersionId())
+                    && "demo".equals(followup.getWorldSlug())
+                    && "production".equals(followup.getRealmSlug())
+                    && Long.valueOf(17L).equals(followup.getPointerVersion())));
   }
 
   @Test
@@ -556,20 +550,18 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.followupCreated());
     verify(coordinatorRepository)
         .save(
-            argThat(
-                coordinator ->
-                    coordinator.getPlayableStateScope() == null
-                        && coordinator.getWorldSlug() == null
-                        && coordinator.getRealmSlug() == null
-                        && coordinator.getPointerVersion() == null));
+            argThat(coordinator ->
+                coordinator.getPlayableStateScope() == null
+                    && coordinator.getWorldSlug() == null
+                    && coordinator.getRealmSlug() == null
+                    && coordinator.getPointerVersion() == null));
     verify(followupRepository)
         .save(
-            argThat(
-                followup ->
-                    followup.getPlayableStateScope() == null
-                        && followup.getWorldSlug() == null
-                        && followup.getRealmSlug() == null
-                        && followup.getPointerVersion() == null));
+            argThat(followup ->
+                followup.getPlayableStateScope() == null
+                    && followup.getWorldSlug() == null
+                    && followup.getRealmSlug() == null
+                    && followup.getPointerVersion() == null));
   }
 
   @Test
@@ -629,20 +621,18 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.followupCreated());
     verify(coordinatorRepository)
         .save(
-            argThat(
-                coordinator ->
-                    coordinator.getPlayableStateScope() == null
-                        && coordinator.getWorldSlug() == null
-                        && coordinator.getRealmSlug() == null
-                        && coordinator.getPointerVersion() == null));
+            argThat(coordinator ->
+                coordinator.getPlayableStateScope() == null
+                    && coordinator.getWorldSlug() == null
+                    && coordinator.getRealmSlug() == null
+                    && coordinator.getPointerVersion() == null));
     verify(followupRepository)
         .save(
-            argThat(
-                followup ->
-                    followup.getPlayableStateScope() == null
-                        && followup.getWorldSlug() == null
-                        && followup.getRealmSlug() == null
-                        && followup.getPointerVersion() == null));
+            argThat(followup ->
+                followup.getPlayableStateScope() == null
+                    && followup.getWorldSlug() == null
+                    && followup.getRealmSlug() == null
+                    && followup.getPointerVersion() == null));
   }
 
   @Test
@@ -656,19 +646,17 @@ class RemoteFollowupRuntimeServiceImplTest {
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenAnswer(invocation -> Optional.ofNullable(storedFollowup.get()));
     when(coordinatorRepository.save(any()))
-        .thenAnswer(
-            invocation -> {
-              RemoteCommandCoordinator coordinator = invocation.getArgument(0);
-              storedCoordinator.set(coordinator);
-              return coordinator;
-            });
+        .thenAnswer(invocation -> {
+          RemoteCommandCoordinator coordinator = invocation.getArgument(0);
+          storedCoordinator.set(coordinator);
+          return coordinator;
+        });
     when(followupRepository.save(any()))
-        .thenAnswer(
-            invocation -> {
-              RemoteFollowup followup = invocation.getArgument(0);
-              storedFollowup.set(followup);
-              return followup;
-            });
+        .thenAnswer(invocation -> {
+          RemoteFollowup followup = invocation.getArgument(0);
+          storedFollowup.set(followup);
+          return followup;
+        });
     when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "cmd-1"))
         .thenReturn(Optional.empty());
 
@@ -1333,24 +1321,22 @@ class RemoteFollowupRuntimeServiceImplTest {
         .findByTenantIdAndOriginGameInstanceIdAndCommandId(1L, 8L, "cmd-1");
     verify(coordinatorRepository)
         .save(
-            argThat(
-                coordinator ->
-                    Long.valueOf(1L).equals(coordinator.getTenantId())
-                        && Long.valueOf(8L).equals(coordinator.getOriginGameInstanceId())
-                        && "cmd-1".equals(coordinator.getCommandId())
-                        && "followup-origin-8".equals(coordinator.getFollowupId())));
+            argThat(coordinator ->
+                Long.valueOf(1L).equals(coordinator.getTenantId())
+                    && Long.valueOf(8L).equals(coordinator.getOriginGameInstanceId())
+                    && "cmd-1".equals(coordinator.getCommandId())
+                    && "followup-origin-8".equals(coordinator.getFollowupId())));
     verify(followupRepository)
         .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
             1L, 8L, "region-b", 8L, "effect-origin-8");
     verify(followupRepository)
         .save(
-            argThat(
-                followup ->
-                    Long.valueOf(1L).equals(followup.getTenantId())
-                        && Long.valueOf(8L).equals(followup.getOriginGameInstanceId())
-                        && "cmd-1".equals(followup.getCommandId())
-                        && "followup-origin-8".equals(followup.getFollowupId())
-                        && "effect-origin-8".equals(followup.getEffectKey())));
+            argThat(followup ->
+                Long.valueOf(1L).equals(followup.getTenantId())
+                    && Long.valueOf(8L).equals(followup.getOriginGameInstanceId())
+                    && "cmd-1".equals(followup.getCommandId())
+                    && "followup-origin-8".equals(followup.getFollowupId())
+                    && "effect-origin-8".equals(followup.getEffectKey())));
     verify(coordinatorRepository, never()).save(argThat(saved -> saved == existing));
     verify(followupRepository, never()).save(argThat(saved -> saved == existingFollowup));
     assertEquals(1L, existing.getTenantId());
@@ -1606,12 +1592,11 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.followupCreated());
     verify(followupRepository)
         .save(
-            argThat(
-                followup ->
-                    followup.getPayloadJson() == null
-                        && "enqueue_automation_command".equals(followup.getPayloadKind())
-                        && "LOOK".equals(followup.getRequestedCommand())
-                        && followup.isRequiresSoloTick()));
+            argThat(followup ->
+                followup.getPayloadJson() == null
+                    && "enqueue_automation_command".equals(followup.getPayloadKind())
+                    && "LOOK".equals(followup.getRequestedCommand())
+                    && followup.isRequiresSoloTick()));
   }
 
   @Test
@@ -1632,18 +1617,17 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertTrue(outcome.followupCreated());
     verify(followupRepository)
         .save(
-            argThat(
-                followup ->
-                    "trigger_script_event".equals(followup.getPayloadKind())
-                        && followup.getRequestedCommand() == null
-                        && "321".equals(followup.getTargetEntityId())
-                        && "onEnterRegion".equals(followup.getEventType())
-                        && "v1".equals(followup.getEventSchemaVersion())
-                        && "remote-enter-1".equals(followup.getScriptEventId())
-                        && "game-session:onEnterRegion:9:8:remote-enter-1"
-                            .equals(followup.getReadSnapshotToken())
-                        && "{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}"
-                            .equals(followup.getEventPayloadJson())));
+            argThat(followup ->
+                "trigger_script_event".equals(followup.getPayloadKind())
+                    && followup.getRequestedCommand() == null
+                    && "321".equals(followup.getTargetEntityId())
+                    && "onEnterRegion".equals(followup.getEventType())
+                    && "v1".equals(followup.getEventSchemaVersion())
+                    && "remote-enter-1".equals(followup.getScriptEventId())
+                    && "game-session:onEnterRegion:9:8:remote-enter-1"
+                        .equals(followup.getReadSnapshotToken())
+                    && "{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}"
+                        .equals(followup.getEventPayloadJson())));
   }
 
   @Test
@@ -2047,25 +2031,24 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertFalse(outcome.reconciledLateResult());
     verify(resultRepository)
         .save(
-            argThat(
-                result ->
-                    Long.valueOf(7L).equals(result.getOriginGameInstanceId())
-                        && Long.valueOf(8L).equals(result.getTargetGameInstanceId())
-                        && "SHARED".equals(result.getPlayableStateScope())
-                        && "cmd-1".equals(result.getCommandId())
-                        && "auto-1".equals(result.getResultCommandId())
-                        && "RATE_LIMIT".equals(result.getResultErrorCode())
-                        && "Target region rejected the command".equals(result.getResultMessage())
-                        && "dispatch-1".equals(result.getAutomationDispatchId())
-                        && "work-1".equals(result.getAutomationWorkItemId())
-                        && "script-1".equals(result.getScriptId())
-                        && "patch-1".equals(result.getScriptPatchVersion())
-                        && Long.valueOf(100L).equals(result.getScriptPatchBaseVersionId())
-                        && "plugin-1".equals(result.getPluginId())
-                        && "plugin-v1".equals(result.getPluginVersionId())
-                        && "demo".equals(result.getWorldSlug())
-                        && "production".equals(result.getRealmSlug())
-                        && Long.valueOf(17L).equals(result.getPointerVersion())));
+            argThat(result ->
+                Long.valueOf(7L).equals(result.getOriginGameInstanceId())
+                    && Long.valueOf(8L).equals(result.getTargetGameInstanceId())
+                    && "SHARED".equals(result.getPlayableStateScope())
+                    && "cmd-1".equals(result.getCommandId())
+                    && "auto-1".equals(result.getResultCommandId())
+                    && "RATE_LIMIT".equals(result.getResultErrorCode())
+                    && "Target region rejected the command".equals(result.getResultMessage())
+                    && "dispatch-1".equals(result.getAutomationDispatchId())
+                    && "work-1".equals(result.getAutomationWorkItemId())
+                    && "script-1".equals(result.getScriptId())
+                    && "patch-1".equals(result.getScriptPatchVersion())
+                    && Long.valueOf(100L).equals(result.getScriptPatchBaseVersionId())
+                    && "plugin-1".equals(result.getPluginId())
+                    && "plugin-v1".equals(result.getPluginVersionId())
+                    && "demo".equals(result.getWorldSlug())
+                    && "production".equals(result.getRealmSlug())
+                    && Long.valueOf(17L).equals(result.getPointerVersion())));
     verify(coordinatorRepository, never()).save(any());
   }
 
@@ -2125,12 +2108,11 @@ class RemoteFollowupRuntimeServiceImplTest {
 
     verify(resultRepository)
         .save(
-            argThat(
-                result ->
-                    result.getPlayableStateScope() == null
-                        && result.getWorldSlug() == null
-                        && result.getRealmSlug() == null
-                        && result.getPointerVersion() == null));
+            argThat(result ->
+                result.getPlayableStateScope() == null
+                    && result.getWorldSlug() == null
+                    && result.getRealmSlug() == null
+                    && result.getPointerVersion() == null));
   }
 
   @Test
@@ -2204,12 +2186,11 @@ class RemoteFollowupRuntimeServiceImplTest {
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, outcome.coordinatorState());
     verify(resultRepository)
         .save(
-            argThat(
-                result ->
-                    result.getResultPayloadJson() == null
-                        && "auto-1".equals(result.getResultCommandId())
-                        && "RATE_LIMIT".equals(result.getResultErrorCode())
-                        && "Target region rejected the command".equals(result.getResultMessage())));
+            argThat(result ->
+                result.getResultPayloadJson() == null
+                    && "auto-1".equals(result.getResultCommandId())
+                    && "RATE_LIMIT".equals(result.getResultErrorCode())
+                    && "Target region rejected the command".equals(result.getResultMessage())));
   }
 
   @Test
@@ -3003,26 +2984,25 @@ class RemoteFollowupRuntimeServiceImplTest {
 
     verify(resultRepository)
         .save(
-            argThat(
-                result ->
-                    "remote-result:followup-1".equals(result.getResultId())
-                        && "coord-1".equals(result.getCoordinatorId())
-                        && "followup-1".equals(result.getFollowupId())
-                        && Long.valueOf(7L).equals(result.getOriginGameInstanceId())
-                        && "region-a".equals(result.getOriginRegionId())
-                        && Long.valueOf(4L).equals(result.getOriginRegionEpoch())
-                        && Long.valueOf(8L).equals(result.getTargetGameInstanceId())
-                        && "region-b".equals(result.getTargetRegionId())
-                        && Long.valueOf(8L).equals(result.getTargetRegionEpoch())
-                        && "ABANDONED".equals(result.getOutcome())
-                        && "{}".equals(result.getResultPayloadJson())
-                        && "REMOTE_FOLLOWUP_SCOPE_INVALID".equals(result.getResultErrorCode())
-                        && "Remote followup execution scope does not match its coordinator"
-                            .equals(result.getResultMessage())
-                        && "SHARED".equals(result.getPlayableStateScope())
-                        && "demo".equals(result.getWorldSlug())
-                        && "production".equals(result.getRealmSlug())
-                        && Long.valueOf(17L).equals(result.getPointerVersion())));
+            argThat(result ->
+                "remote-result:followup-1".equals(result.getResultId())
+                    && "coord-1".equals(result.getCoordinatorId())
+                    && "followup-1".equals(result.getFollowupId())
+                    && Long.valueOf(7L).equals(result.getOriginGameInstanceId())
+                    && "region-a".equals(result.getOriginRegionId())
+                    && Long.valueOf(4L).equals(result.getOriginRegionEpoch())
+                    && Long.valueOf(8L).equals(result.getTargetGameInstanceId())
+                    && "region-b".equals(result.getTargetRegionId())
+                    && Long.valueOf(8L).equals(result.getTargetRegionEpoch())
+                    && "ABANDONED".equals(result.getOutcome())
+                    && "{}".equals(result.getResultPayloadJson())
+                    && "REMOTE_FOLLOWUP_SCOPE_INVALID".equals(result.getResultErrorCode())
+                    && "Remote followup execution scope does not match its coordinator"
+                        .equals(result.getResultMessage())
+                    && "SHARED".equals(result.getPlayableStateScope())
+                    && "demo".equals(result.getWorldSlug())
+                    && "production".equals(result.getRealmSlug())
+                    && Long.valueOf(17L).equals(result.getPointerVersion())));
     verify(coordinatorRepository, never()).save(any());
     assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, followup.getStatus());
     assertEquals(null, followup.getClaimedTickBatchId());

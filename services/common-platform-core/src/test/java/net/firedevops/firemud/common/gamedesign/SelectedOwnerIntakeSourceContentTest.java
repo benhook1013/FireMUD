@@ -295,10 +295,9 @@ class SelectedOwnerIntakeSourceContentTest {
     assertInvalid(oversizedFrame, scope, null);
 
     byte[] oversizedEnvelope = new byte[SelectedOwnerIntakeSourceContent.MAX_BYTES + 1];
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeSourceContent.fromStored(
-                    oversizedEnvelope, scope, "sha256:" + "0".repeat(64)))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeSourceContent.fromStored(
+                oversizedEnvelope, scope, "sha256:" + "0".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

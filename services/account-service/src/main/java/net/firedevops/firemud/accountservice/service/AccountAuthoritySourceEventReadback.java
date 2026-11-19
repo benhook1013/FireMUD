@@ -138,10 +138,9 @@ public final class AccountAuthoritySourceEventReadback {
       PasswordResetReceipt receipt =
           passwordResetRepository
               .findByRequestId(verified.requestId())
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Latest Account password-reset event has no immutable operation receipt"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Latest Account password-reset event has no immutable operation receipt"));
       requirePasswordResetReceipt(account, receipt, latestEvent, verified, current);
     } else if (verified.securityState().isPresent()) {
       requireSecurityStateReceipt(account, latestEvent, verified, current, true);
@@ -152,10 +151,9 @@ public final class AccountAuthoritySourceEventReadback {
       LogoutAllReceipt receipt =
           logoutAllRepository
               .findByRequestId(requestId)
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Latest Account logout-all event has no immutable operation receipt"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Latest Account logout-all event has no immutable operation receipt"));
       requireLogoutAllReceipt(account, receipt, latestEvent, verified, current);
     }
     return new LatestSourceSnapshot(latestEvent.outboxSequence(), Optional.of(latestEvent));
@@ -202,10 +200,9 @@ public final class AccountAuthoritySourceEventReadback {
       PasswordResetReceipt receipt =
           passwordResetRepository
               .findByRequestId(verified.requestId())
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Selected Account password-reset event has no immutable operation receipt"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Selected Account password-reset event has no immutable operation receipt"));
       requirePasswordResetReceiptBinding(account, receipt, event, verified, current);
       return retainedEvidence(
           event, verified, receipt.issuanceFence(), receipt.issuanceFenceSourceVersion());
@@ -215,17 +212,15 @@ public final class AccountAuthoritySourceEventReadback {
       var operation =
           securityStateRepository
               .findCommittedByRequestIdShared(UUID.fromString(verified.requestId()))
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Selected Account security-state event has no immutable operation receipt"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Selected Account security-state event has no immutable operation receipt"));
       var receipt =
           operation
               .receipt()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Selected Account security-state operation is not COMMITTED"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Selected Account security-state operation is not COMMITTED"));
       requireSecurityStateReceipt(account, event, verified, current, false);
       return retainedEvidence(
           event,
@@ -237,17 +232,15 @@ public final class AccountAuthoritySourceEventReadback {
       var operation =
           securityStateRepository
               .findRestrictionByRequestIdShared(UUID.fromString(verified.requestId()))
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Selected Account restriction event has no immutable operation receipt"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Selected Account restriction event has no immutable operation receipt"));
       var receipt =
           operation
               .receipt()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Selected Account restriction operation is not COMMITTED"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Selected Account restriction operation is not COMMITTED"));
       requireRestrictionReceipt(account, event, verified, current, false);
       return retainedEvidence(
           event,
@@ -259,10 +252,9 @@ public final class AccountAuthoritySourceEventReadback {
     LogoutAllReceipt receipt =
         logoutAllRepository
             .findByRequestId(requestId)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Selected Account logout-all event has no immutable operation receipt"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Selected Account logout-all event has no immutable operation receipt"));
     requireLogoutAllReceipt(account, receipt, event, verified, current);
     return retainedEvidence(
         event, verified, receipt.issuanceFence(), receipt.issuanceFenceSourceVersion());
@@ -296,16 +288,14 @@ public final class AccountAuthoritySourceEventReadback {
     var operation =
         securityStateRepository
             .findCommittedByRequestIdShared(UUID.fromString(verified.requestId()))
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Account security-state event has no immutable operation receipt"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Account security-state event has no immutable operation receipt"));
     var receipt =
         operation
             .receipt()
-            .orElseThrow(
-                () ->
-                    new IllegalStateException("Account security-state operation is not COMMITTED"));
+            .orElseThrow(() ->
+                new IllegalStateException("Account security-state operation is not COMMITTED"));
     if (!operation.request().accountUuid().equals(account.getAccountUuid())
         || operation.capture().accountId() != account.getId()
         || operation.capture().provenance() != account.getAccountUuidProvenance()
@@ -331,10 +321,9 @@ public final class AccountAuthoritySourceEventReadback {
     var operation =
         securityStateRepository
             .findRestrictionByRequestIdShared(UUID.fromString(verified.requestId()))
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Account restriction event has no immutable operation receipt"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Account restriction event has no immutable operation receipt"));
     var receipt =
         operation
             .receipt()

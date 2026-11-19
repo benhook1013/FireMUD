@@ -34,12 +34,11 @@ class HelpTextCommandDispatchHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "HELP".equals(gameplayCommand.getCommandName())
-                        && "HELP who".equals(gameplayCommand.getCommandText())
-                        && gameplayCommand.getCommandId() != null
-                        && gameplayCommand.getCommandId().startsWith("help-")));
+            Mockito.argThat(gameplayCommand ->
+                "HELP".equals(gameplayCommand.getCommandName())
+                    && "HELP who".equals(gameplayCommand.getCommandText())
+                    && gameplayCommand.getCommandId() != null
+                    && gameplayCommand.getCommandId().startsWith("help-")));
   }
 
   @Test

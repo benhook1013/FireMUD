@@ -162,11 +162,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
 
     assertThat(accountStub().capturedAuthenticateRequests())
-        .anyMatch(
-            request ->
-                request.getEmail().equals(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL)
-                    && request.getPassword().equals(GameplayTelnetScenarios.DEMO_PASSWORD)
-                    && request.getDescriptorForType().findFieldByName("tenant_id") == null);
+        .anyMatch(request ->
+            request.getEmail().equals(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL)
+                && request.getPassword().equals(GameplayTelnetScenarios.DEMO_PASSWORD)
+                && request.getDescriptorForType().findFieldByName("tenant_id") == null);
   }
 
   @Test
@@ -252,16 +251,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(
               sessionContextService.findByGameplayName(
                   TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Emberline"))
-          .hasValueSatisfying(
-              context ->
-                  assertThat(context.roomInstanceId())
-                      .isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID));
+          .hasValueSatisfying(context ->
+              assertThat(context.roomInstanceId()).isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID));
       assertThat(
               sessionContextService.findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora"))
-          .hasValueSatisfying(
-              context ->
-                  assertThat(context.roomInstanceId())
-                      .isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID));
+          .hasValueSatisfying(context ->
+              assertThat(context.roomInstanceId()).isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID));
     }
   }
 

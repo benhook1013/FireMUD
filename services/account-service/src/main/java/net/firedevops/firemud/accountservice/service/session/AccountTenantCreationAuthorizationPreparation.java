@@ -68,49 +68,45 @@ final class AccountTenantCreationAuthorizationPreparation {
 
     AccountTenantCreationSourceOrderBinding stored =
         Objects.requireNonNull(
-            transactions.execute(
-                status -> {
-                  Original current = read(creationOperationId);
-                  same(first, current);
-                  AccountControlUiActorService.requireAcceptedSignerKey(current.issuance, accepted);
-                  var sources =
-                      capture.captureLocked(
-                          current.intent, current.admitted, environment, reauthentication);
-                  if (!Arrays.equals(sources.originalClaims(), current.issuance.claims)
-                      || !Arrays.equals(
-                          sources.originalSignerReceipt(), current.issuance.signerReceipt)
-                      || !current.issuance.operationId.equals(sources.issuanceOperationId())
-                      || !current.issuance.jti.equals(sources.tokenJti())
-                      || !current.issuance.tokenHash.equals(sources.tokenHash())) {
-                    throw denied();
-                  }
-                  var result =
-                      orders.acquireLocked(current.intent, current.admitted, sources.sources());
-                  requirePending(creationOperationId);
-                  return result;
-                }));
-
-    return Objects.requireNonNull(
-        transactions.execute(
-            status -> {
-              Original committed = read(creationOperationId);
-              same(first, committed);
-              var readback =
-                  orders
-                      .readOriginal(creationOperationId)
-                      .orElseThrow(AccountTenantCreationAuthorizationPreparation::denied);
-              if (!Arrays.equals(stored.canonicalBytes(), readback.canonicalBytes())
-                  || !stored.authorizationDigest().equals(readback.authorizationDigest())
-                  || !Arrays.equals(committed.intent.requestPayload(), readback.intentPayload())
-                  || !committed.intent.requestDigest().equals(readback.intentDigest())
-                  || !Arrays.equals(
-                      committed.admitted.receiptPayload(), readback.admissionPayload())
-                  || !committed.admitted.receiptDigest().equals(readback.admissionDigest())) {
+            transactions.execute(status -> {
+              Original current = read(creationOperationId);
+              same(first, current);
+              AccountControlUiActorService.requireAcceptedSignerKey(current.issuance, accepted);
+              var sources =
+                  capture.captureLocked(
+                      current.intent, current.admitted, environment, reauthentication);
+              if (!Arrays.equals(sources.originalClaims(), current.issuance.claims)
+                  || !Arrays.equals(sources.originalSignerReceipt(), current.issuance.signerReceipt)
+                  || !current.issuance.operationId.equals(sources.issuanceOperationId())
+                  || !current.issuance.jti.equals(sources.tokenJti())
+                  || !current.issuance.tokenHash.equals(sources.tokenHash())) {
                 throw denied();
               }
+              var result =
+                  orders.acquireLocked(current.intent, current.admitted, sources.sources());
               requirePending(creationOperationId);
-              return new Prepared(readback);
+              return result;
             }));
+
+    return Objects.requireNonNull(
+        transactions.execute(status -> {
+          Original committed = read(creationOperationId);
+          same(first, committed);
+          var readback =
+              orders
+                  .readOriginal(creationOperationId)
+                  .orElseThrow(AccountTenantCreationAuthorizationPreparation::denied);
+          if (!Arrays.equals(stored.canonicalBytes(), readback.canonicalBytes())
+              || !stored.authorizationDigest().equals(readback.authorizationDigest())
+              || !Arrays.equals(committed.intent.requestPayload(), readback.intentPayload())
+              || !committed.intent.requestDigest().equals(readback.intentDigest())
+              || !Arrays.equals(committed.admitted.receiptPayload(), readback.admissionPayload())
+              || !committed.admitted.receiptDigest().equals(readback.admissionDigest())) {
+            throw denied();
+          }
+          requirePending(creationOperationId);
+          return new Prepared(readback);
+        }));
   }
 
   private Original read(UUID operationId) {
@@ -156,14 +152,13 @@ final class AccountTenantCreationAuthorizationPreparation {
   private void requireOwnerTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw denied();
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw denied();
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw denied();
+      }
+    });
   }
 
   private static void same(Original expected, Original actual) {

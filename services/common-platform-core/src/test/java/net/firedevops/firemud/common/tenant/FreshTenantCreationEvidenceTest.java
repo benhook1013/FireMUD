@@ -196,19 +196,18 @@ class FreshTenantCreationEvidenceTest {
       String sourceGameTenantKey,
       String provenanceKind,
       String evidenceDigest) {
-    assertThatThrownBy(
-            () ->
-                evidence(
-                    schemaVersion,
-                    namespace,
-                    creationRequestId,
-                    operationId,
-                    requestDigest,
-                    canonicalTenantId,
-                    sourceGameRowId,
-                    sourceGameTenantKey,
-                    provenanceKind,
-                    evidenceDigest))
+    assertThatThrownBy(() ->
+            evidence(
+                schemaVersion,
+                namespace,
+                creationRequestId,
+                operationId,
+                requestDigest,
+                canonicalTenantId,
+                sourceGameRowId,
+                sourceGameTenantKey,
+                provenanceKind,
+                evidenceDigest))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

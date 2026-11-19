@@ -76,11 +76,9 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
   @Test
   void missingPeerAndWrongWorkloadAreRejectedBeforeParsingOrStorage() {
     var missingPeer = new RecordingObserver();
-    Context.ROOT.run(
-        () ->
-            service.getCanonicalGameInstanceLaunchAssociation(
-                GetCanonicalGameInstanceLaunchAssociationRequest.getDefaultInstance(),
-                missingPeer));
+    Context.ROOT.run(() ->
+        service.getCanonicalGameInstanceLaunchAssociation(
+            GetCanonicalGameInstanceLaunchAssociationRequest.getDefaultInstance(), missingPeer));
     assertDenied(missingPeer, Status.Code.UNAUTHENTICATED);
 
     assertDenied(
@@ -466,19 +464,17 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
             null);
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        "902",
-                        false,
-                        null,
-                        "publish-commit-902",
-                        "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? digest('d') : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    "902",
+                    false,
+                    null,
+                    "publish-commit-902",
+                    "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(owner),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? digest('d') : null))
             .toList();
     var attestation =
         AuthoredWorldReleaseAttestationEvidence.create(

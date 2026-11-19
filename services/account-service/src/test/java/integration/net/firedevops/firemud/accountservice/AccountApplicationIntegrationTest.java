@@ -240,16 +240,15 @@ class AccountApplicationIntegrationTest {
       var before = emailVerificationState(fixture);
       if (equality) {
         new TransactionTemplate(transactionManager)
-            .executeWithoutResult(
-                status -> {
-                  accountRepository.findByIdForUpdate(fixture.accountId()).orElseThrow();
-                  var token =
-                      emailVerificationTokenRepository.findByToken(fixture.token()).orElseThrow();
-                  assertThat(
-                          emailVerificationTokenRepository.consumeIfUnexpired(
-                              token, token.getExpiresAt()))
-                      .isFalse();
-                });
+            .executeWithoutResult(status -> {
+              accountRepository.findByIdForUpdate(fixture.accountId()).orElseThrow();
+              var token =
+                  emailVerificationTokenRepository.findByToken(fixture.token()).orElseThrow();
+              assertThat(
+                      emailVerificationTokenRepository.consumeIfUnexpired(
+                          token, token.getExpiresAt()))
+                  .isFalse();
+            });
       } else {
         assertThatThrownBy(() -> verifyEmail(fixture.token()))
             .isInstanceOf(IllegalArgumentException.class)
@@ -310,13 +309,11 @@ class AccountApplicationIntegrationTest {
     var fixture = emailVerificationFixture();
     var before = emailVerificationState(fixture);
     var transaction = new TransactionTemplate(transactionManager);
-    assertThatThrownBy(
-            () ->
-                transaction.executeWithoutResult(
-                    status -> {
-                      verifyEmail(fixture.token());
-                      throw new IllegalStateException("failure after verification source update");
-                    }))
+    assertThatThrownBy(() ->
+            transaction.executeWithoutResult(status -> {
+              verifyEmail(fixture.token());
+              throw new IllegalStateException("failure after verification source update");
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("failure after verification source update");
     assertThat(emailVerificationState(fixture)).isEqualTo(before);
@@ -356,23 +353,20 @@ class AccountApplicationIntegrationTest {
                 var original = invocation.callRealMethod();
                 if (changed.compareAndSet(false, true)) {
                   executor
-                      .submit(
-                          () ->
-                              new TransactionTemplate(transactionManager)
-                                  .executeWithoutResult(
-                                      status -> {
-                                        var current =
-                                            accountRepository
-                                                .findByIdForUpdate(fixture.accountId())
-                                                .orElseThrow();
-                                        current.setUsername("current-" + fixture.accountId());
-                                        current.setEmail(
-                                            "current-" + fixture.accountId() + "@example.com");
-                                        current.setPasswordHash("current-password-hash");
-                                        current.setRole("player");
-                                        current.setLoginAuthModes("EMAIL_OTP");
-                                        accountRepository.save(current);
-                                      }))
+                      .submit(() ->
+                          new TransactionTemplate(transactionManager)
+                              .executeWithoutResult(status -> {
+                                var current =
+                                    accountRepository
+                                        .findByIdForUpdate(fixture.accountId())
+                                        .orElseThrow();
+                                current.setUsername("current-" + fixture.accountId());
+                                current.setEmail("current-" + fixture.accountId() + "@example.com");
+                                current.setPasswordHash("current-password-hash");
+                                current.setRole("player");
+                                current.setLoginAuthModes("EMAIL_OTP");
+                                accountRepository.save(current);
+                              }))
                       .get(30, TimeUnit.SECONDS);
                 }
                 return original;
@@ -469,23 +463,21 @@ class AccountApplicationIntegrationTest {
       assertThat(claims.get("gameInstanceId"))
           .isEqualTo(f.target.canonicalGameInstanceId().toString());
       var retained =
-          f.in(
-              () ->
-                  f.scopes
-                      .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(token))
-                      .orElseThrow());
+          f.in(() ->
+              f.scopes
+                  .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(token))
+                  .orElseThrow());
       assertThat(retained.privateAccountId()).isEqualTo(f.account.getId());
       assertThat(retained.scopeDigestVersion()).isEqualTo(2);
       assertThat(retained.tenantUuid()).isEqualTo(f.tenantId);
       assertThat(f.in(() -> f.scopes.find(token))).isEmpty();
     }
     for (String token : List.of(browser, direct)) {
-      assertThatThrownBy(
-              () ->
-                  f.service.issueConnectToken(
-                      f.bootstrap,
-                      new net.firedevops.firemud.accountservice.dto.ConnectTokenRequest(
-                          token, "held-issuer")))
+      assertThatThrownBy(() ->
+              f.service.issueConnectToken(
+                  f.bootstrap,
+                  new net.firedevops.firemud.accountservice.dto.ConnectTokenRequest(
+                      token, "held-issuer")))
           .isInstanceOf(AuthenticationException.class)
           .extracting(value -> ((AuthenticationException) value).getCode())
           .isEqualTo("AUTH_UNAVAILABLE");
@@ -747,11 +739,10 @@ class AccountApplicationIntegrationTest {
     if (duringProvider) {
       f.paid
           .transport()
-          .duringRead(
-              () -> {
-                intent.set(f.operation(request).intentDigest());
-                f.clock.offset = Duration.ofMinutes(3);
-              });
+          .duringRead(() -> {
+            intent.set(f.operation(request).intentDigest());
+            f.clock.offset = Duration.ofMinutes(3);
+          });
     } else {
       org.mockito.Mockito.doAnswer(
               invocation -> {
@@ -975,10 +966,9 @@ class AccountApplicationIntegrationTest {
     org.mockito.Mockito.when(f.sessions.isAccountSessionActive(owner.getId(), bootstrap))
         .thenReturn(true);
     String request = UUID.randomUUID().toString();
-    assertThatThrownBy(
-            () ->
-                f.service.joinPublicProduction(
-                    bootstrap, new JoinPublicProductionRequest(token, request)))
+    assertThatThrownBy(() ->
+            f.service.joinPublicProduction(
+                bootstrap, new JoinPublicProductionRequest(token, request)))
         .isInstanceOf(AuthenticationException.class)
         .extracting(value -> ((AuthenticationException) value).getCode())
         .isEqualTo("CONNECT_SCOPE_INVALID");
@@ -1001,22 +991,21 @@ class AccountApplicationIntegrationTest {
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(f.account.getAccountUuid()),
                 org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(
-                      org.springframework.transaction.support.TransactionSynchronizationManager
-                          .isActualTransactionActive())
-                  .isFalse();
-              assertThat(
-                      org.springframework.transaction.support.TransactionSynchronizationManager
-                          .isSynchronizationActive())
-                  .isFalse();
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(zed, "Zed", 37),
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(ada, "Ada", 12));
-            });
+        .thenAnswer(invocation -> {
+          assertThat(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isActualTransactionActive())
+              .isFalse();
+          assertThat(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isSynchronizationActive())
+              .isFalse();
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(zed, "Zed", 37),
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(ada, "Ada", 12));
+        });
     var before = f.state(join);
     int providerReads = paid ? f.paid.transport().reads() : 0;
     var actors = f.characters(token);
@@ -1026,11 +1015,10 @@ class AccountApplicationIntegrationTest {
         .containsExactly(ada.toString(), zed.toString());
     assertThat(actors).extracting(value -> value.level()).containsExactly(12, 37);
     assertThat(actors)
-        .allSatisfy(
-            actor -> {
-              assertThat(actor.stateScope()).isEqualTo("SHARED");
-              assertThat(actor.characterCreationPolicy()).isEqualTo("PRESEEDED_ONLY");
-            });
+        .allSatisfy(actor -> {
+          assertThat(actor.stateScope()).isEqualTo("SHARED");
+          assertThat(actor.characterCreationPolicy()).isEqualTo("PRESEEDED_ONLY");
+        });
     var selected =
         org.mockito.ArgumentCaptor.forClass(
             CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
@@ -1157,10 +1145,9 @@ class AccountApplicationIntegrationTest {
                 UUID.randomUUID().toString()));
     org.mockito.Mockito.when(f.sessions.isAccountSessionActive(owner.getId(), bootstrap))
         .thenReturn(true);
-    assertThatThrownBy(
-            () ->
-                f.service.listBootstrapCharacters(
-                    bootstrap, f.target.worldSlug(), f.target.realmSlug(), token))
+    assertThatThrownBy(() ->
+            f.service.listBootstrapCharacters(
+                bootstrap, f.target.worldSlug(), f.target.realmSlug(), token))
         .isInstanceOf(AuthenticationException.class)
         .extracting(value -> ((AuthenticationException) value).getCode())
         .isEqualTo("CONNECT_SCOPE_INVALID");
@@ -1218,17 +1205,16 @@ class AccountApplicationIntegrationTest {
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(f.account.getAccountUuid()),
                 org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(
-                      org.springframework.transaction.support.TransactionSynchronizationManager
-                          .isActualTransactionActive())
-                  .isFalse();
-              f.seedControlledInactiveSnapshot();
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(UUID.randomUUID(), "Withheld", 19));
-            });
+        .thenAnswer(invocation -> {
+          assertThat(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isActualTransactionActive())
+              .isFalse();
+          f.seedControlledInactiveSnapshot();
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(UUID.randomUUID(), "Withheld", 19));
+        });
     assertThatThrownBy(() -> f.characters(token))
         .isInstanceOf(AuthenticationException.class)
         .extracting(value -> ((AuthenticationException) value).getCode())
@@ -1271,21 +1257,20 @@ class AccountApplicationIntegrationTest {
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(f.account.getAccountUuid()),
                 org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(
-                      org.springframework.transaction.support.TransactionSynchronizationManager
-                          .isActualTransactionActive())
-                  .isFalse();
-              org.mockito.Mockito.doThrow(
-                      new org.springframework.dao.DataAccessResourceFailureException(
-                          "controlled late demo currentness outage"))
-                  .when(f.demos)
-                  .revalidate(org.mockito.ArgumentMatchers.any());
-              return List.of(
-                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                      .Actor(UUID.randomUUID(), "Withheld", 31));
-            });
+        .thenAnswer(invocation -> {
+          assertThat(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isActualTransactionActive())
+              .isFalse();
+          org.mockito.Mockito.doThrow(
+                  new org.springframework.dao.DataAccessResourceFailureException(
+                      "controlled late demo currentness outage"))
+              .when(f.demos)
+              .revalidate(org.mockito.ArgumentMatchers.any());
+          return List.of(
+              new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                  .Actor(UUID.randomUUID(), "Withheld", 31));
+        });
     assertThatThrownBy(() -> f.characters(token))
         .isInstanceOf(AuthenticationException.class)
         .extracting(value -> ((AuthenticationException) value).getCode())
@@ -1480,12 +1465,11 @@ class AccountApplicationIntegrationTest {
                     key,
                     "NEW_GAME_ROW"));
         clock = new FixtureClock(Clock.systemUTC());
-        in(
-            () -> {
-              tenants.importVerified(source);
-              generations.initializeTenantIfAbsent(tenantId);
-              return null;
-            });
+        in(() -> {
+          tenants.importVerified(source);
+          generations.initializeTenantIfAbsent(tenantId);
+          return null;
+        });
         policy(true, true);
       }
       String suffix = UUID.randomUUID().toString();
@@ -1498,14 +1482,13 @@ class AccountApplicationIntegrationTest {
       } else {
         account = accounts.findByAccountUuid(existingAccount.getAccountUuid()).orElseThrow();
       }
-      in(
-          () -> {
-            evidence.initializeIssuerIfAbsent("firemud-account-service");
-            generations.initialize(
-                AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                    account.getAccountUuid(), tenantId));
-            return null;
-          });
+      in(() -> {
+        evidence.initializeIssuerIfAbsent("firemud-account-service");
+        generations.initialize(
+            AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                account.getAccountUuid(), tenantId));
+        return null;
+      });
       if (paid != null) {
         // The SQL lifecycle owner evaluates at microsecond precision; its SDK input must use the
         // same controlled instant rather than appear nanoseconds later than the evaluation.
@@ -1519,89 +1502,82 @@ class AccountApplicationIntegrationTest {
       org.mockito.Mockito.when(
               targets.listVisiblePublicProductionAdmissionTargets(
                   org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(
-                        org.springframework.transaction.support.TransactionSynchronizationManager
-                            .isActualTransactionActive())
-                    .isFalse();
-                var request =
-                    new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
-                        invocation.getArgument(0, UUID.class), namespace);
-                return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                    request,
-                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
-                        request, List.of(target)));
-              });
+          .thenAnswer(invocation -> {
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive())
+                .isFalse();
+            var request =
+                new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+                    invocation.getArgument(0, UUID.class), namespace);
+            return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                request,
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                    request, List.of(target)));
+          });
       org.mockito.Mockito.when(
               targets.resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(
-                        org.springframework.transaction.support.TransactionSynchronizationManager
-                            .isActualTransactionActive())
-                    .isFalse();
-                var selector =
-                    invocation.getArgument(
-                        0,
-                        CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector
-                            .class);
-                return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
-                    selector,
-                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
-                        selector, target));
-              });
+          .thenAnswer(invocation -> {
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive())
+                .isFalse();
+            var selector =
+                invocation.getArgument(
+                    0,
+                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector.class);
+            return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+                selector,
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+                    selector, target));
+          });
       // The transport boundary is controlled. Actual Account owners must still request this strict
       // published-source/World ACTIVE result; the resolver response alone cannot authorize JOIN.
       org.mockito.Mockito.when(
               targets.readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(
-                        org.springframework.transaction.support.TransactionSynchronizationManager
-                            .isActualTransactionActive())
-                    .isFalse();
-                var strict =
-                    invocation.getArgument(
-                        0,
-                        net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
-                            .Request.class);
-                var published =
-                    org.mockito.Mockito.mock(
-                        CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
-                            .class);
-                org.mockito.Mockito.when(published.selector()).thenReturn(strict);
-                org.mockito.Mockito.when(published.currentTarget()).thenReturn(target);
-                var sourceEvidence =
-                    org.mockito.Mockito.mock(
-                        net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
-                            .class);
-                org.mockito.Mockito.when(sourceEvidence.request()).thenReturn(strict);
-                org.mockito.Mockito.when(sourceEvidence.admissionPointerSnapshotDigest())
-                    .thenReturn(target.admissionPointerSnapshotDigest());
-                // Controlled remote policy capture; the Account integration test does not qualify
-                // its decoder.
-                var policies =
-                    org.mockito.Mockito.mock(
-                        net.firedevops.firemud.common.publication
-                            .PublishedRealmEntryPolicySetEvidence.class);
-                org.mockito.Mockito.when(policies.canonicalBytes())
-                    .thenReturn(
-                        ("controlled-policy-set-" + tenantId).getBytes(StandardCharsets.UTF_8));
-                org.mockito.Mockito.when(sourceEvidence.publishedPolicySetEvidence())
-                    .thenReturn(policies);
-                var world =
-                    org.mockito.Mockito.mock(
-                        net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
-                            .class);
-                org.mockito.Mockito.when(world.lifecycleStatus()).thenReturn("ACTIVE");
-                org.mockito.Mockito.when(world.lifecycleEpoch())
-                    .thenReturn(target.activeWorldEpoch());
-                org.mockito.Mockito.when(world.rowVersion()).thenReturn(1L);
-                org.mockito.Mockito.when(published.sourceEvidence()).thenReturn(sourceEvidence);
-                org.mockito.Mockito.when(published.worldLifecycleEvidence()).thenReturn(world);
-                return published;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive())
+                .isFalse();
+            var strict =
+                invocation.getArgument(
+                    0,
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                        .Request.class);
+            var published =
+                org.mockito.Mockito.mock(
+                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
+            org.mockito.Mockito.when(published.selector()).thenReturn(strict);
+            org.mockito.Mockito.when(published.currentTarget()).thenReturn(target);
+            var sourceEvidence =
+                org.mockito.Mockito.mock(
+                    net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                        .class);
+            org.mockito.Mockito.when(sourceEvidence.request()).thenReturn(strict);
+            org.mockito.Mockito.when(sourceEvidence.admissionPointerSnapshotDigest())
+                .thenReturn(target.admissionPointerSnapshotDigest());
+            // Controlled remote policy capture; the Account integration test does not qualify
+            // its decoder.
+            var policies =
+                org.mockito.Mockito.mock(
+                    net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence
+                        .class);
+            org.mockito.Mockito.when(policies.canonicalBytes())
+                .thenReturn(("controlled-policy-set-" + tenantId).getBytes(StandardCharsets.UTF_8));
+            org.mockito.Mockito.when(sourceEvidence.publishedPolicySetEvidence())
+                .thenReturn(policies);
+            var world =
+                org.mockito.Mockito.mock(
+                    net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
+                        .class);
+            org.mockito.Mockito.when(world.lifecycleStatus()).thenReturn("ACTIVE");
+            org.mockito.Mockito.when(world.lifecycleEpoch()).thenReturn(target.activeWorldEpoch());
+            org.mockito.Mockito.when(world.rowVersion()).thenReturn(1L);
+            org.mockito.Mockito.when(published.sourceEvidence()).thenReturn(sourceEvidence);
+            org.mockito.Mockito.when(published.worldLifecycleEvidence()).thenReturn(world);
+            return published;
+          });
       var properties = new AccountTokenProperties();
       properties.setConnectScopeExpirationMs(120000L);
       bootstrap =
@@ -1690,18 +1666,17 @@ class AccountApplicationIntegrationTest {
                   org.mockito.ArgumentMatchers.any(),
                   org.mockito.ArgumentMatchers.eq(account.getAccountUuid()),
                   org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(
-                        org.springframework.transaction.support.TransactionSynchronizationManager
-                            .isActualTransactionActive())
-                    .isFalse();
-                assertThat(
-                        org.springframework.transaction.support.TransactionSynchronizationManager
-                            .isSynchronizationActive())
-                    .isFalse();
-                return List.of();
-              });
+          .thenAnswer(invocation -> {
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive())
+                .isFalse();
+            assertThat(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isSynchronizationActive())
+                .isFalse();
+            return List.of();
+          });
       service.setCanonicalScopeConsumers(
           new AccountCanonicalConnectScopeReader(jwt, scopes, transactionManager, clock),
           targets,
@@ -1715,35 +1690,33 @@ class AccountApplicationIntegrationTest {
     }
 
     private void policy(boolean join, boolean gameplay) {
-      in(
-          () -> {
-            DemoTenantEntitlementSnapshot previous;
-            try {
-              previous = demos.readCurrent(tenantId);
-            } catch (
-                net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException
-                    missing) {
-              if (missing.code()
-                  != net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException
-                      .Code.ENTITLEMENT_UNAVAILABLE) throw missing;
-              previous = null;
-            }
-            return demos.provision(
-                new DemoTenantEntitlementRequest(
-                    UUID.randomUUID(),
-                    tenantId,
-                    source.creationRequestId(),
-                    source.requestDigest(),
-                    previous == null ? null : previous.entitlementVersion(),
-                    previous == null ? null : previous.tenantAuthorityGeneration(),
-                    previous == null ? null : previous.tenantAuthoritySourceVersion(),
-                    gameplay,
-                    join,
-                    gameplay,
-                    gameplay,
-                    new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L)),
-                source);
-          });
+      in(() -> {
+        DemoTenantEntitlementSnapshot previous;
+        try {
+          previous = demos.readCurrent(tenantId);
+        } catch (
+            net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException missing) {
+          if (missing.code()
+              != net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException.Code
+                  .ENTITLEMENT_UNAVAILABLE) throw missing;
+          previous = null;
+        }
+        return demos.provision(
+            new DemoTenantEntitlementRequest(
+                UUID.randomUUID(),
+                tenantId,
+                source.creationRequestId(),
+                source.requestDigest(),
+                previous == null ? null : previous.entitlementVersion(),
+                previous == null ? null : previous.tenantAuthorityGeneration(),
+                previous == null ? null : previous.tenantAuthoritySourceVersion(),
+                gameplay,
+                join,
+                gameplay,
+                gameplay,
+                new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L)),
+            source);
+      });
     }
 
     private Target target() {
@@ -1835,30 +1808,28 @@ class AccountApplicationIntegrationTest {
     private String directScope() throws Exception {
       String request = UUID.randomUUID().toString();
       return peer()
-          .call(
-              () ->
-                  service
-                      .issueDirectTextConnectScope(
-                          directCaller(request),
-                          new DirectTextJoinTarget(
-                              tenantId,
-                              target.realmId(),
-                              target.worldSlug(),
-                              target.realmSlug(),
-                              target.playableStateNamespaceId(),
-                              target.playableStateScope(),
-                              target.canonicalGameInstanceId(),
-                              target.catalogRevision(),
-                              target.pointerVersion()))
-                      .connectScopeId());
+          .call(() ->
+              service
+                  .issueDirectTextConnectScope(
+                      directCaller(request),
+                      new DirectTextJoinTarget(
+                          tenantId,
+                          target.realmId(),
+                          target.worldSlug(),
+                          target.realmSlug(),
+                          target.playableStateNamespaceId(),
+                          target.playableStateScope(),
+                          target.canonicalGameInstanceId(),
+                          target.catalogRevision(),
+                          target.pointerVersion()))
+                  .connectScopeId());
     }
 
     private JoinPublicProductionResult directJoin(String token, String request) throws Exception {
       return peer()
-          .call(
-              () ->
-                  service.joinPublicProductionFromGameSession(
-                      directCaller(request), new JoinPublicProductionRequest(token, request)));
+          .call(() ->
+              service.joinPublicProductionFromGameSession(
+                  directCaller(request), new JoinPublicProductionRequest(token, request)));
     }
 
     private io.grpc.Context peer() {
@@ -1894,155 +1865,147 @@ class AccountApplicationIntegrationTest {
           org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
       history.setIsolationLevel(
           org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
-      history.execute(
-          status -> {
-            operations.lockAccount(account.getId());
-            var member =
-                members
-                    .findFreshMembershipForUpdate(account.getAccountUuid(), tenantId)
-                    .orElseThrow();
-            var generation =
-                generations.read(
-                    AccountAuthorityGenerationRepository.AuthorityScope.membership(
-                        account.getAccountUuid(), tenantId));
-            var beforeSource =
-                evidence.readCurrentIssuerAccountSources(
-                    "firemud-account-service", account.getAccountUuid());
+      history.execute(status -> {
+        operations.lockAccount(account.getId());
+        var member =
+            members.findFreshMembershipForUpdate(account.getAccountUuid(), tenantId).orElseThrow();
+        var generation =
+            generations.read(
+                AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                    account.getAccountUuid(), tenantId));
+        var beforeSource =
+            evidence.readCurrentIssuerAccountSources(
+                "firemud-account-service", account.getAccountUuid());
 
-            // Closed receipt/source-change mechanics supply the one shared Account fence advance.
-            // This remains controlled historical input, not a registered security or leave
-            // producer.
-            var currentSource = advanceControlledClosedAccountSource(beforeSource);
-            if (currentSource.account().generation() != beforeSource.account().generation() + 1L
-                || currentSource.account().sourceVersion()
-                    != beforeSource.account().sourceVersion() + 1L
-                || currentSource.account().checkpoint().sequence()
-                    != beforeSource.account().checkpoint().sequence() + 1L
-                || currentSource.issuanceFence().value() != generation.issuanceFence().value() + 1L
-                || currentSource.issuanceFence().sourceVersion()
-                    != generation.issuanceFence().sourceVersion() + 1L) {
-              throw new IllegalStateException(
-                  "Controlled Account source/fence did not advance once");
-            }
-            int advanced =
-                dsl.execute(
-                    "UPDATE account_authority_generations SET generation = generation + 1, "
-                        + "source_version = source_version + 1, updated_at = CURRENT_TIMESTAMP "
-                        + "WHERE scope_kind = 'MEMBERSHIP' AND issuer_id IS NULL "
-                        + "AND account_uuid = ? AND tenant_uuid = ? AND generation = ? AND source_version = ?",
-                    account.getAccountUuid(),
-                    tenantId,
-                    generation.generation(),
-                    generation.sourceVersion());
-            if (advanced != 1) {
-              throw new IllegalStateException(
-                  "Controlled membership authority CAS did not advance once");
-            }
-            var authority =
-                generations.readCompositeSnapshot(
-                    "firemud-account-service",
-                    account.getAccountUuid(),
-                    List.of(tenantId),
-                    List.of(tenantId));
-            var next = authority.memberships().getFirst();
-            if (next.generation() != generation.generation() + 1L
-                || next.sourceVersion() != generation.sourceVersion() + 1L
-                || !next.issuanceFence().equals(currentSource.issuanceFence())
-                || !authority.issuanceFence().equals(currentSource.issuanceFence())) {
-              throw new IllegalStateException(
-                  "Controlled membership differs from the actual Account fence");
-            }
-            var tenantSource = sources.readCurrentSourceSelection(tenantId).checkpoint();
-            var prior = pairs.readForUpdate(account.getAccountUuid(), tenantId).orElseThrow();
-            var previous = outbox.findEvent(stream(), prior.eventSequence()).orElseThrow();
-            Map<String, Object> event =
-                JsonMapper.builder()
-                    .build()
-                    .readValue(new String(previous.payload(), StandardCharsets.UTF_8), Map.class);
-            event.remove("eventDigest");
-            String leave = "controlled-inactive-" + UUID.randomUUID();
-            event.put("eventId", UUID.randomUUID().toString());
-            event.put("requestId", leave);
-            event.put("outboxSequence", "2");
-            event.put("membershipLifecycleState", lifecycle);
-            event.put("roles", roleSet);
-            event.put("membershipVersion", Map.of(tenantId.toString(), "3"));
-            event.put("membershipAuthorityGeneration", Long.toString(next.generation()));
-            Map<String, Object> tuple = new java.util.LinkedHashMap<>();
-            tuple.put("issuerAuthGeneration", Long.toString(authority.issuer().generation()));
-            tuple.put(
-                "accountAuthorityGeneration", Long.toString(authority.account().generation()));
-            tuple.put(
-                "tenantAuthorityGeneration",
-                Map.of(
-                    tenantId.toString(),
-                    Long.toString(authority.tenants().getFirst().generation())));
-            tuple.put(
-                "membershipAuthorityGeneration",
-                Map.of(tenantId.toString(), Long.toString(next.generation())));
-            tuple.put("privateRealmGrantVersions", List.of());
-            currentSource
-                .account()
-                .accountSecurityCutoff()
-                .ifPresent(
-                    cutoff ->
-                        tuple.put(
-                            "accountSecurityCutoff",
-                            Map.of(
-                                "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
-                                "outboxStreamKey", cutoff.outboxStreamKey(),
-                                "outboxSequence", cutoff.outboxSequence())));
-            tuple.put(
-                "tenantBillingCutoff",
-                Map.of(
-                    tenantId.toString(),
-                    Map.of(
-                        "tenantAuthorityGeneration",
-                            Long.toString(tenantSource.tenantAuthorityGeneration()),
-                        "tenantBillingSequence",
-                            Long.toString(tenantSource.tenantBillingSequence()),
-                        "outboxStreamKey", tenantSource.outboxStreamKey(),
-                        "outboxSequence", Long.toString(tenantSource.outboxSequence()))));
-            event.put("authorityTuple", tuple);
-            event.put("issuanceFence", Long.toString(authority.issuanceFence().value()));
-            event.put("gameplayAdmissionAllowed", gameplay);
-            event.put("callerBoundAuthorityInvalidated", true);
-            var sealed = MembershipAuthorityEventV1Codec.seal(event);
-            var appended =
-                outbox.append(
-                    stream(),
-                    leave,
-                    sequence -> {
-                      if (sequence != 2L)
-                        throw new IllegalStateException("Controlled prior event sequence changed");
-                      return new AccountAuthorityOutboxRepository.EventEvidence(
-                          sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
-                    });
+        // Closed receipt/source-change mechanics supply the one shared Account fence advance.
+        // This remains controlled historical input, not a registered security or leave
+        // producer.
+        var currentSource = advanceControlledClosedAccountSource(beforeSource);
+        if (currentSource.account().generation() != beforeSource.account().generation() + 1L
+            || currentSource.account().sourceVersion()
+                != beforeSource.account().sourceVersion() + 1L
+            || currentSource.account().checkpoint().sequence()
+                != beforeSource.account().checkpoint().sequence() + 1L
+            || currentSource.issuanceFence().value() != generation.issuanceFence().value() + 1L
+            || currentSource.issuanceFence().sourceVersion()
+                != generation.issuanceFence().sourceVersion() + 1L) {
+          throw new IllegalStateException("Controlled Account source/fence did not advance once");
+        }
+        int advanced =
             dsl.execute(
-                "UPDATE account_tenant_membership SET lifecycle_state = ?, gameplay_admission_allowed = ?, membership_version = 3, membership_authority_generation = 2 WHERE id = ?",
-                lifecycle,
-                gameplay,
-                member.getId());
-            var inactive =
-                members
-                    .findCanonicalMembershipForUpdate(account.getAccountUuid(), tenantId)
-                    .orElseThrow();
-            var provenance =
-                new AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance(
-                    null,
-                    AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN,
-                    source.operationId(),
-                    source.evidenceDigest());
-            roles.replaceCanonical(
-                inactive, account.getAccountUuid(), tenantId, provenance, 3L, roleSet);
-            dsl.execute(
-                "UPDATE account_membership_pair_authority SET membership_version = 3, membership_authority_generation = 2, last_event_sequence = 2, last_event_id = ?, last_event_digest = ?, last_transition_invalidated = TRUE WHERE account_uuid = ? AND tenant_uuid = ?",
-                appended.eventId(),
-                appended.eventDigest(),
+                "UPDATE account_authority_generations SET generation = generation + 1, "
+                    + "source_version = source_version + 1, updated_at = CURRENT_TIMESTAMP "
+                    + "WHERE scope_kind = 'MEMBERSHIP' AND issuer_id IS NULL "
+                    + "AND account_uuid = ? AND tenant_uuid = ? AND generation = ? AND source_version = ?",
                 account.getAccountUuid(),
-                tenantId);
-            return null;
-          });
+                tenantId,
+                generation.generation(),
+                generation.sourceVersion());
+        if (advanced != 1) {
+          throw new IllegalStateException(
+              "Controlled membership authority CAS did not advance once");
+        }
+        var authority =
+            generations.readCompositeSnapshot(
+                "firemud-account-service",
+                account.getAccountUuid(),
+                List.of(tenantId),
+                List.of(tenantId));
+        var next = authority.memberships().getFirst();
+        if (next.generation() != generation.generation() + 1L
+            || next.sourceVersion() != generation.sourceVersion() + 1L
+            || !next.issuanceFence().equals(currentSource.issuanceFence())
+            || !authority.issuanceFence().equals(currentSource.issuanceFence())) {
+          throw new IllegalStateException(
+              "Controlled membership differs from the actual Account fence");
+        }
+        var tenantSource = sources.readCurrentSourceSelection(tenantId).checkpoint();
+        var prior = pairs.readForUpdate(account.getAccountUuid(), tenantId).orElseThrow();
+        var previous = outbox.findEvent(stream(), prior.eventSequence()).orElseThrow();
+        Map<String, Object> event =
+            JsonMapper.builder()
+                .build()
+                .readValue(new String(previous.payload(), StandardCharsets.UTF_8), Map.class);
+        event.remove("eventDigest");
+        String leave = "controlled-inactive-" + UUID.randomUUID();
+        event.put("eventId", UUID.randomUUID().toString());
+        event.put("requestId", leave);
+        event.put("outboxSequence", "2");
+        event.put("membershipLifecycleState", lifecycle);
+        event.put("roles", roleSet);
+        event.put("membershipVersion", Map.of(tenantId.toString(), "3"));
+        event.put("membershipAuthorityGeneration", Long.toString(next.generation()));
+        Map<String, Object> tuple = new java.util.LinkedHashMap<>();
+        tuple.put("issuerAuthGeneration", Long.toString(authority.issuer().generation()));
+        tuple.put("accountAuthorityGeneration", Long.toString(authority.account().generation()));
+        tuple.put(
+            "tenantAuthorityGeneration",
+            Map.of(
+                tenantId.toString(), Long.toString(authority.tenants().getFirst().generation())));
+        tuple.put(
+            "membershipAuthorityGeneration",
+            Map.of(tenantId.toString(), Long.toString(next.generation())));
+        tuple.put("privateRealmGrantVersions", List.of());
+        currentSource
+            .account()
+            .accountSecurityCutoff()
+            .ifPresent(cutoff ->
+                tuple.put(
+                    "accountSecurityCutoff",
+                    Map.of(
+                        "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
+                        "outboxStreamKey", cutoff.outboxStreamKey(),
+                        "outboxSequence", cutoff.outboxSequence())));
+        tuple.put(
+            "tenantBillingCutoff",
+            Map.of(
+                tenantId.toString(),
+                Map.of(
+                    "tenantAuthorityGeneration",
+                        Long.toString(tenantSource.tenantAuthorityGeneration()),
+                    "tenantBillingSequence", Long.toString(tenantSource.tenantBillingSequence()),
+                    "outboxStreamKey", tenantSource.outboxStreamKey(),
+                    "outboxSequence", Long.toString(tenantSource.outboxSequence()))));
+        event.put("authorityTuple", tuple);
+        event.put("issuanceFence", Long.toString(authority.issuanceFence().value()));
+        event.put("gameplayAdmissionAllowed", gameplay);
+        event.put("callerBoundAuthorityInvalidated", true);
+        var sealed = MembershipAuthorityEventV1Codec.seal(event);
+        var appended =
+            outbox.append(
+                stream(),
+                leave,
+                sequence -> {
+                  if (sequence != 2L)
+                    throw new IllegalStateException("Controlled prior event sequence changed");
+                  return new AccountAuthorityOutboxRepository.EventEvidence(
+                      sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
+                });
+        dsl.execute(
+            "UPDATE account_tenant_membership SET lifecycle_state = ?, gameplay_admission_allowed = ?, membership_version = 3, membership_authority_generation = 2 WHERE id = ?",
+            lifecycle,
+            gameplay,
+            member.getId());
+        var inactive =
+            members
+                .findCanonicalMembershipForUpdate(account.getAccountUuid(), tenantId)
+                .orElseThrow();
+        var provenance =
+            new AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance(
+                null,
+                AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN,
+                source.operationId(),
+                source.evidenceDigest());
+        roles.replaceCanonical(
+            inactive, account.getAccountUuid(), tenantId, provenance, 3L, roleSet);
+        dsl.execute(
+            "UPDATE account_membership_pair_authority SET membership_version = 3, membership_authority_generation = 2, last_event_sequence = 2, last_event_id = ?, last_event_digest = ?, last_transition_invalidated = TRUE WHERE account_uuid = ? AND tenant_uuid = ?",
+            appended.eventId(),
+            appended.eventDigest(),
+            account.getAccountUuid(),
+            tenantId);
+        return null;
+      });
     }
 
     /**
@@ -2188,29 +2151,26 @@ class AccountApplicationIntegrationTest {
     }
 
     private List<String> currentRoles() {
-      return in(
-          () -> {
-            operations.lockAccount(account.getId());
-            var member =
-                members
-                    .findFreshMembershipForUpdate(account.getAccountUuid(), tenantId)
-                    .orElseThrow();
-            var provenance =
-                new AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance(
-                    null,
-                    AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN,
-                    source.operationId(),
-                    source.evidenceDigest());
-            return roles
-                .findForCanonicalUpdate(
-                    account.getAccountUuid(),
-                    tenantId,
-                    provenance,
-                    member.getId(),
-                    member.getMembershipVersion())
-                .orElseThrow()
-                .roles();
-          });
+      return in(() -> {
+        operations.lockAccount(account.getId());
+        var member =
+            members.findFreshMembershipForUpdate(account.getAccountUuid(), tenantId).orElseThrow();
+        var provenance =
+            new AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance(
+                null,
+                AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN,
+                source.operationId(),
+                source.evidenceDigest());
+        return roles
+            .findForCanonicalUpdate(
+                account.getAccountUuid(),
+                tenantId,
+                provenance,
+                member.getId(),
+                member.getMembershipVersion())
+            .orElseThrow()
+            .roles();
+      });
     }
 
     private long membershipCount() {
@@ -2476,16 +2436,15 @@ class AccountApplicationIntegrationTest {
     org.mockito.Mockito.when(
             emptyTargets.listVisiblePublicProductionAdmissionTargets(
                 org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
-                      invocation.getArgument(0, UUID.class), "test");
-              return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                  request,
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
-                      request, List.of()));
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+                  invocation.getArgument(0, UUID.class), "test");
+          return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+              request,
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                  request, List.of()));
+        });
     var unusedEntitlements = org.mockito.Mockito.mock(AccountPublicBootstrapEntitlementOwner.class);
     canonicalFacade.setPublicBootstrapWorldsOwner(
         new AccountPublicBootstrapWorldsOwner(
@@ -2519,14 +2478,12 @@ class AccountApplicationIntegrationTest {
     String otpBody =
         messages.getAllValues().stream()
             .filter(message -> "Your FireMUD login code".equals(message.getSubject()))
-            .filter(
-                message -> {
-                  String[] recipients = message.getTo();
-                  return recipients != null && java.util.Arrays.asList(recipients).contains(email);
-                })
-            .map(
-                message ->
-                    java.util.Objects.requireNonNull(message.getText(), "Expected OTP email body"))
+            .filter(message -> {
+              String[] recipients = message.getTo();
+              return recipients != null && java.util.Arrays.asList(recipients).contains(email);
+            })
+            .map(message ->
+                java.util.Objects.requireNonNull(message.getText(), "Expected OTP email body"))
             .findFirst()
             .orElseThrow();
     var matcher = java.util.regex.Pattern.compile("\\b(\\d{6})\\b").matcher(otpBody);
@@ -2570,14 +2527,12 @@ class AccountApplicationIntegrationTest {
     String loginOtpBody =
         loginMessages.getAllValues().stream()
             .filter(message -> "Your FireMUD login code".equals(message.getSubject()))
-            .filter(
-                message -> {
-                  String[] recipients = message.getTo();
-                  return recipients != null && java.util.Arrays.asList(recipients).contains(email);
-                })
-            .map(
-                message ->
-                    java.util.Objects.requireNonNull(message.getText(), "Expected login OTP body"))
+            .filter(message -> {
+              String[] recipients = message.getTo();
+              return recipients != null && java.util.Arrays.asList(recipients).contains(email);
+            })
+            .map(message ->
+                java.util.Objects.requireNonNull(message.getText(), "Expected login OTP body"))
             .reduce((earlier, latest) -> latest)
             .orElseThrow();
     var loginMatcher = java.util.regex.Pattern.compile("\\b(\\d{6})\\b").matcher(loginOtpBody);
@@ -2628,13 +2583,12 @@ class AccountApplicationIntegrationTest {
         .isEqualTo(provenance);
     // Controlled persisted role assignment, not a synthetic privileged JWT or scoped-role issuer.
     new org.springframework.transaction.support.TransactionTemplate(transactionManager)
-        .execute(
-            status -> {
-              var owner = accountRepository.findByIdForUpdate(numericAccountId).orElseThrow();
-              owner.setRole("moderator");
-              accountRepository.save(owner);
-              return null;
-            });
+        .execute(status -> {
+          var owner = accountRepository.findByIdForUpdate(numericAccountId).orElseThrow();
+          owner.setRole("moderator");
+          accountRepository.save(owner);
+          return null;
+        });
     HttpResponse<String> moderatorResponse =
         HTTP_CLIENT.send(authenticationRequest, HttpResponse.BodyHandlers.ofString());
     assertThat(moderatorResponse.statusCode()).isEqualTo(200);
@@ -2935,17 +2889,16 @@ class AccountApplicationIntegrationTest {
     var guild =
         org.mockito.Mockito.mock(net.firedevops.firemud.socialgroups.service.GuildService.class);
     org.mockito.Mockito.when(guild.createGuild(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              net.firedevops.firemud.socialgroups.dto.CreateGuildRequest request =
-                  invocation.getArgument(0);
-              return new net.firedevops.firemud.socialgroups.dto.GuildDto(
-                  91L,
-                  request.tenantId(),
-                  request.name(),
-                  request.ownerAccountId(),
-                  java.time.Instant.now());
-            });
+        .thenAnswer(invocation -> {
+          net.firedevops.firemud.socialgroups.dto.CreateGuildRequest request =
+              invocation.getArgument(0);
+          return new net.firedevops.firemud.socialgroups.dto.GuildDto(
+              91L,
+              request.tenantId(),
+              request.name(),
+              request.ownerAccountId(),
+              java.time.Instant.now());
+        });
     assertThat(jwtUtil.parseToken(token).getPayload().get("globalRoles"))
         .isEqualTo(java.util.List.of());
     var same = invokeSocialCreateGuild(token, accountUuid, guild);
@@ -2972,17 +2925,16 @@ class AccountApplicationIntegrationTest {
     var guild =
         org.mockito.Mockito.mock(net.firedevops.firemud.socialgroups.service.GuildService.class);
     org.mockito.Mockito.when(guild.createGuild(org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation -> {
-              net.firedevops.firemud.socialgroups.dto.CreateGuildRequest request =
-                  invocation.getArgument(0);
-              return new net.firedevops.firemud.socialgroups.dto.GuildDto(
-                  92L,
-                  request.tenantId(),
-                  request.name(),
-                  request.ownerAccountId(),
-                  java.time.Instant.now());
-            });
+        .thenAnswer(invocation -> {
+          net.firedevops.firemud.socialgroups.dto.CreateGuildRequest request =
+              invocation.getArgument(0);
+          return new net.firedevops.firemud.socialgroups.dto.GuildDto(
+              92L,
+              request.tenantId(),
+              request.name(),
+              request.ownerAccountId(),
+              java.time.Instant.now());
+        });
     assertThat(jwtUtil.parseToken(token).getPayload().get("globalRoles"))
         .isEqualTo(java.util.List.of("moderator"));
     assertThat(invokeSocialCreateGuild(token, other, guild).hasError()).isFalse();

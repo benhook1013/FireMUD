@@ -92,21 +92,20 @@ class GameplayCommandRepositoryIntegrationTest {
     String originalGuardState = humanRuntimeCompletionTruncateGuardState();
     assertThat(originalGuardState).isIn("O", "A");
 
-    transactionTemplate.executeWithoutResult(
-        status -> {
-          dsl.execute(
-              "ALTER TABLE "
-                  + HUMAN_RUNTIME_COMPLETION_TABLE
-                  + " DISABLE TRIGGER "
-                  + HUMAN_RUNTIME_COMPLETION_TRUNCATE_GUARD);
-          assertThat(humanRuntimeCompletionTruncateGuardState()).isEqualTo("D");
-          dsl.execute(
-              "TRUNCATE TABLE gameplay_command, gameplay_admission_pointer, tick_batch, tick_effect, "
-                  + HUMAN_RUNTIME_COMPLETION_TABLE
-                  + " RESTART IDENTITY CASCADE");
-          restoreHumanRuntimeCompletionTruncateGuard(originalGuardState);
-          assertThat(humanRuntimeCompletionTruncateGuardState()).isEqualTo(originalGuardState);
-        });
+    transactionTemplate.executeWithoutResult(status -> {
+      dsl.execute(
+          "ALTER TABLE "
+              + HUMAN_RUNTIME_COMPLETION_TABLE
+              + " DISABLE TRIGGER "
+              + HUMAN_RUNTIME_COMPLETION_TRUNCATE_GUARD);
+      assertThat(humanRuntimeCompletionTruncateGuardState()).isEqualTo("D");
+      dsl.execute(
+          "TRUNCATE TABLE gameplay_command, gameplay_admission_pointer, tick_batch, tick_effect, "
+              + HUMAN_RUNTIME_COMPLETION_TABLE
+              + " RESTART IDENTITY CASCADE");
+      restoreHumanRuntimeCompletionTruncateGuard(originalGuardState);
+      assertThat(humanRuntimeCompletionTruncateGuardState()).isEqualTo(originalGuardState);
+    });
 
     assertThat(humanRuntimeCompletionTruncateGuardState()).isEqualTo(originalGuardState);
   }
@@ -665,13 +664,11 @@ class GameplayCommandRepositoryIntegrationTest {
     command.setAccountId(345L);
     command.setAccountUuid(accountUuid);
 
-    assertThatThrownBy(
-            () ->
-                transactionTemplate.executeWithoutResult(
-                    status -> {
-                      repository.save(command);
-                      throw new IllegalStateException("force transaction rollback");
-                    }))
+    assertThatThrownBy(() ->
+            transactionTemplate.executeWithoutResult(status -> {
+              repository.save(command);
+              throw new IllegalStateException("force transaction rollback");
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("force transaction rollback");
 
@@ -794,32 +791,27 @@ class GameplayCommandRepositoryIntegrationTest {
 
     boolean matchingScope =
         Boolean.TRUE.equals(
-            transactionTemplate.execute(
-                status ->
-                    repository.lockAcceptedCommandForStaging(
-                        1L, 7L, "cmd-staging-scope", "say hello", false)));
+            transactionTemplate.execute(status ->
+                repository.lockAcceptedCommandForStaging(
+                    1L, 7L, "cmd-staging-scope", "say hello", false)));
     boolean foreignTenant =
         Boolean.TRUE.equals(
-            transactionTemplate.execute(
-                status ->
-                    repository.lockAcceptedCommandForStaging(
-                        2L, 7L, "cmd-staging-scope", "say hello", false)));
+            transactionTemplate.execute(status ->
+                repository.lockAcceptedCommandForStaging(
+                    2L, 7L, "cmd-staging-scope", "say hello", false)));
     boolean foreignInstance =
         Boolean.TRUE.equals(
-            transactionTemplate.execute(
-                status ->
-                    repository.lockAcceptedCommandForStaging(
-                        1L, 8L, "cmd-staging-scope", "say hello", false)));
+            transactionTemplate.execute(status ->
+                repository.lockAcceptedCommandForStaging(
+                    1L, 8L, "cmd-staging-scope", "say hello", false)));
 
     assertThat(matchingScope).isTrue();
     assertThat(foreignTenant).isFalse();
     assertThat(foreignInstance).isFalse();
-    assertThatThrownBy(
-            () ->
-                transactionTemplate.execute(
-                    status ->
-                        repository.lockAcceptedCommandForStaging(
-                            1L, 7L, "cmd-staging-scope", "say goodbye", false)))
+    assertThatThrownBy(() ->
+            transactionTemplate.execute(status ->
+                repository.lockAcceptedCommandForStaging(
+                    1L, 7L, "cmd-staging-scope", "say goodbye", false)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "Gameplay command identity was reused with conflicting target or queue payload: "
@@ -835,17 +827,15 @@ class GameplayCommandRepositoryIntegrationTest {
 
     try {
       Future<GameplayCommandRepository.IdempotentInsertResult> firstResult =
-          executor.submit(
-              () -> {
-                start.await();
-                return repository.insertIfAbsentByIdempotencyIdentity(first);
-              });
+          executor.submit(() -> {
+            start.await();
+            return repository.insertIfAbsentByIdempotencyIdentity(first);
+          });
       Future<GameplayCommandRepository.IdempotentInsertResult> secondResult =
-          executor.submit(
-              () -> {
-                start.await();
-                return repository.insertIfAbsentByIdempotencyIdentity(second);
-              });
+          executor.submit(() -> {
+            start.await();
+            return repository.insertIfAbsentByIdempotencyIdentity(second);
+          });
       start.countDown();
 
       GameplayCommandRepository.IdempotentInsertResult firstInsert = firstResult.get();
@@ -902,25 +892,23 @@ class GameplayCommandRepositoryIntegrationTest {
       assertThat(pointerLockInterlock.pointerLockAcquired.await(10, TimeUnit.SECONDS)).isTrue();
 
       Future<Integer> pointerMutation =
-          executor.submit(
-              () -> {
-                try {
-                  transactionTemplate.execute(
-                      status -> {
-                        dsl.execute("SET LOCAL lock_timeout = '100ms'");
-                        assertThat(dsl.fetchValue("SHOW lock_timeout")).isEqualTo("100ms");
-                        return updateAdmissionPointer();
-                      });
-                  pointerLockInterlock.pointerMutationBlocked.countDown();
-                  throw new AssertionError("The pointer mutation interleaved with admission");
-                } catch (RuntimeException failure) {
-                  pointerLockInterlock.pointerMutationBlocked.countDown();
-                  if (!"55P03".equals(sqlState(failure))) {
-                    throw failure;
-                  }
-                }
-                return transactionTemplate.execute(status -> updateAdmissionPointer());
+          executor.submit(() -> {
+            try {
+              transactionTemplate.execute(status -> {
+                dsl.execute("SET LOCAL lock_timeout = '100ms'");
+                assertThat(dsl.fetchValue("SHOW lock_timeout")).isEqualTo("100ms");
+                return updateAdmissionPointer();
               });
+              pointerLockInterlock.pointerMutationBlocked.countDown();
+              throw new AssertionError("The pointer mutation interleaved with admission");
+            } catch (RuntimeException failure) {
+              pointerLockInterlock.pointerMutationBlocked.countDown();
+              if (!"55P03".equals(sqlState(failure))) {
+                throw failure;
+              }
+            }
+            return transactionTemplate.execute(status -> updateAdmissionPointer());
+          });
       assertThat(pointerLockInterlock.mutationStatementStarted.await(10, TimeUnit.SECONDS))
           .isTrue();
 

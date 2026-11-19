@@ -48,13 +48,12 @@ class GameDesignPublicationOperationServiceTest {
     assertThat(definition.getValue().getIsolationLevel())
         .isEqualTo(TransactionDefinition.ISOLATION_REPEATABLE_READ);
     assertThat(definition.getValue().isReadOnly()).isTrue();
-    assertThatThrownBy(
-            () ->
-                service.readExact(
-                    "changed",
-                    operation.workflowId(),
-                    operation.versionId(),
-                    operation.selectionDigest()))
+    assertThatThrownBy(() ->
+            service.readExact(
+                "changed",
+                operation.workflowId(),
+                operation.versionId(),
+                operation.selectionDigest()))
         .hasMessage("PUBLICATION_OPERATION_IDENTITY_CONFLICT");
   }
 

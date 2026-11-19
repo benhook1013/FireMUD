@@ -101,22 +101,20 @@ class AccountSecurityStateMutationRequestTest {
       assertThatThrownBy(() -> request(REQUEST, ACCOUNT, changed, 1L, 1L, KINDS, state(true)))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                request(
-                    REQUEST,
-                    ACCOUNT,
-                    "{}".getBytes(StandardCharsets.UTF_8),
-                    1L,
-                    1L,
-                    KINDS,
-                    state(true)))
+    assertThatThrownBy(() ->
+            request(
+                REQUEST,
+                ACCOUNT,
+                "{}".getBytes(StandardCharsets.UTF_8),
+                1L,
+                1L,
+                KINDS,
+                state(true)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> request(REQUEST, ACCOUNT, original, 0L, 1L, KINDS, state(true)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                request(REQUEST, ACCOUNT, original, 1L, 1L, List.of("PASSWORD_RESET"), state(true)))
+    assertThatThrownBy(() ->
+            request(REQUEST, ACCOUNT, original, 1L, 1L, List.of("PASSWORD_RESET"), state(true)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -130,16 +128,15 @@ class AccountSecurityStateMutationRequestTest {
     assertThat(request.callerProofBinding()[0]).isEqualTo((byte) '{');
     assertThatThrownBy(() -> request.mutationKinds().clear())
         .isInstanceOf(UnsupportedOperationException.class);
-    assertThatThrownBy(
-            () ->
-                request(
-                    REQUEST,
-                    ACCOUNT,
-                    request.callerProofBinding(),
-                    1L,
-                    1L,
-                    KINDS,
-                    new AccountState(true, List.of("PASSWORD"), List.of("admin"), "ACTIVE")))
+    assertThatThrownBy(() ->
+            request(
+                REQUEST,
+                ACCOUNT,
+                request.callerProofBinding(),
+                1L,
+                1L,
+                KINDS,
+                new AccountState(true, List.of("PASSWORD"), List.of("admin"), "ACTIVE")))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(
             AccountSecurityStateMutationRequest.parseCanonicalState(

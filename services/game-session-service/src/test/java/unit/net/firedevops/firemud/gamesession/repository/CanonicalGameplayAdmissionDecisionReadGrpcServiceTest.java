@@ -639,10 +639,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
               redis, catalog, fixture.repository(), tags, qualification);
       try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
         codec
-            .when(
-                () ->
-                    AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
-                        fixture.request()))
+            .when(() ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                    fixture.request()))
             .thenReturn(fixture.selector());
         new CanonicalGameplayAdmissionDecisionReadGrpcService(
                 fixture.repository(), fixture.guard(), "test", owner)
@@ -659,10 +658,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
     var fixture = validNegativeReadFixture();
     try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
-                      fixture.request()))
+          .when(() ->
+              AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                  fixture.request()))
           .thenReturn(fixture.selector());
       new CanonicalGameplayAdmissionDecisionReadGrpcService(
               fixture.repository(), fixture.guard(), "test")
@@ -686,10 +684,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
             redis, catalog, fixture.repository(), tags, qualification);
     try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
-                      fixture.request()))
+          .when(() ->
+              AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                  fixture.request()))
           .thenReturn(fixture.selector());
       new CanonicalGameplayAdmissionDecisionReadGrpcService(
               fixture.repository(), fixture.guard(), "test", owner)
@@ -752,15 +749,13 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
       continueNegativeRead(fixture);
       try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
         codec
-            .when(
-                () ->
-                    AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
-                        fixture.request()))
+            .when(() ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                    fixture.request()))
             .thenReturn(fixture.selector());
         codec
-            .when(
-                () ->
-                    AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(any(), any()))
+            .when(() ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(any(), any()))
             .thenThrow(failure);
         receiveNegative(fixture);
       }
@@ -785,10 +780,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
         .withCurrentClosedCandidate(eq(fixture.selector().transitionId()), any());
     try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
-                      fixture.request()))
+          .when(() ->
+              AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                  fixture.request()))
           .thenReturn(fixture.selector());
       codec
           .when(
@@ -798,10 +792,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
       var evidence =
           ArgumentCaptor.forClass(
               AccountGameplayAdmissionNeverAdmittedGrpcCodec.NegativeDecisionEvidence.class);
-      codec.verify(
-          () ->
-              AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(
-                  eq(fixture.selector()), evidence.capture()));
+      codec.verify(() ->
+          AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(
+              eq(fixture.selector()), evidence.capture()));
       assertThat(evidence.getValue().transitionId()).isEqualTo(fixture.selector().transitionId());
       assertThat(evidence.getValue().abandonmentId()).isEqualTo(fixture.selector().abandonmentId());
       assertThat(evidence.getValue().originalLeaseEvidence())
@@ -829,10 +822,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
     var response = GetOriginalNewNeverAdmittedDecisionResponse.getDefaultInstance();
     try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
-                      fixture.request()))
+          .when(() ->
+              AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                  fixture.request()))
           .thenReturn(fixture.selector());
       codec
           .when(
@@ -856,15 +848,13 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
       else doThrow(failure).when(fixture.observer()).onNext(response);
       try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
         codec
-            .when(
-                () ->
-                    AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
-                        fixture.request()))
+            .when(() ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                    fixture.request()))
             .thenReturn(fixture.selector());
         codec
-            .when(
-                () ->
-                    AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(any(), any()))
+            .when(() ->
+                AccountGameplayAdmissionNeverAdmittedGrpcCodec.toDecisionResponse(any(), any()))
             .thenReturn(response);
         if (completionFailure) assertThatThrownBy(() -> receiveNegative(fixture)).isSameAs(failure);
         else receiveNegative(fixture);
@@ -1070,10 +1060,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
               () -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(fixture.request()))
           .thenReturn(fixture.selector());
       codec
-          .when(
-              () ->
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toResponse(
-                      any(), any(), any(), any(), any(), any(), any(), any()))
+          .when(() ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toResponse(
+                  any(), any(), any(), any(), any(), any(), any(), any()))
           .thenThrow(new IllegalStateException("private response codec details"));
       new CanonicalGameplayAdmissionDecisionReadGrpcService(
               fixture.repository(), fixture.guard(), "test")
@@ -1139,10 +1128,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
             .when(() -> CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(request))
             .thenReturn(selector);
         codec
-            .when(
-                () ->
-                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toResponse(
-                        any(), any(), any(), any(), any(), any(), any(), any()))
+            .when(() ->
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toResponse(
+                    any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(response);
         Runnable receive =
             () ->
@@ -1277,10 +1265,9 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
   private static void parseAndReceiveNegative(NegativeReadFixture fixture) {
     try (var codec = mockStatic(AccountGameplayAdmissionNeverAdmittedGrpcCodec.class)) {
       codec
-          .when(
-              () ->
-                  AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
-                      fixture.request()))
+          .when(() ->
+              AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(
+                  fixture.request()))
           .thenReturn(fixture.selector());
       receiveNegative(fixture);
     }

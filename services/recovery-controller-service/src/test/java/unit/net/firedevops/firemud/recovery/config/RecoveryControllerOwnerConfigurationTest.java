@@ -48,55 +48,52 @@ class RecoveryControllerOwnerConfigurationTest {
   @Test
   void defaultsRemainDeniedAndJournalBacked() {
     defaults()
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(InitialGameplayReleaseEvidenceProvider.class);
-              assertThat(context.getBean(InitialGameplayReleaseEvidenceProvider.class))
-                  .isInstanceOf(DeniedInitialGameplayReleaseEvidenceProvider.class);
-              assertThat(context.getBean(InitialGameplayReleaseEffectPort.class))
-                  .isInstanceOf(DeniedInitialGameplayReleaseEffectPort.class);
-              assertThat(context.getBean(InitialGameplayReleaseJournal.class))
-                  .isInstanceOf(JooqInitialGameplayReleaseJournal.class);
-              assertThat(context).hasSingleBean(InitialGameplayReleaseController.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).hasSingleBean(InitialGameplayReleaseEvidenceProvider.class);
+          assertThat(context.getBean(InitialGameplayReleaseEvidenceProvider.class))
+              .isInstanceOf(DeniedInitialGameplayReleaseEvidenceProvider.class);
+          assertThat(context.getBean(InitialGameplayReleaseEffectPort.class))
+              .isInstanceOf(DeniedInitialGameplayReleaseEffectPort.class);
+          assertThat(context.getBean(InitialGameplayReleaseJournal.class))
+              .isInstanceOf(JooqInitialGameplayReleaseJournal.class);
+          assertThat(context).hasSingleBean(InitialGameplayReleaseController.class);
+        });
   }
 
   @Test
   void replacementAutoConfigurationPrecedesEveryFallback() {
     defaults()
         .withConfiguration(AutoConfigurations.of(Replacements.class))
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(InitialGameplayReleaseEvidenceProvider.class);
-              assertThat(context).hasSingleBean(InitialGameplayReleaseEffectPort.class);
-              assertThat(context).hasSingleBean(InitialGameplayReleaseJournal.class);
-              assertThat(context).hasSingleBean(InitialGameplayReleaseController.class);
-              assertThat(context).doesNotHaveBean("deniedInitialGameplayReleaseEvidenceProvider");
-              assertThat(context).doesNotHaveBean("deniedInitialGameplayReleaseEffectPort");
-              assertThat(context.getBean(InitialGameplayReleaseJournal.class))
-                  .isSameAs(context.getBean("replacementJournal"));
-              assertThat(context.getBean(InitialGameplayReleaseController.class))
-                  .isSameAs(context.getBean("replacementController"));
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).hasSingleBean(InitialGameplayReleaseEvidenceProvider.class);
+          assertThat(context).hasSingleBean(InitialGameplayReleaseEffectPort.class);
+          assertThat(context).hasSingleBean(InitialGameplayReleaseJournal.class);
+          assertThat(context).hasSingleBean(InitialGameplayReleaseController.class);
+          assertThat(context).doesNotHaveBean("deniedInitialGameplayReleaseEvidenceProvider");
+          assertThat(context).doesNotHaveBean("deniedInitialGameplayReleaseEffectPort");
+          assertThat(context.getBean(InitialGameplayReleaseJournal.class))
+              .isSameAs(context.getBean("replacementJournal"));
+          assertThat(context.getBean(InitialGameplayReleaseController.class))
+              .isSameAs(context.getBean("replacementController"));
+        });
   }
 
   @Test
   void dedicatedDatasourceOwnsFlywayAndJooq() {
     new ApplicationContextRunner()
-        .withInitializer(
-            context -> {
-              try {
-                for (var source :
-                    new YamlPropertySourceLoader()
-                        .load("recovery-service", new ClassPathResource("application.yml"))) {
-                  context.getEnvironment().getPropertySources().addLast(source);
-                }
-              } catch (IOException exception) {
-                throw new IllegalStateException(exception);
-              }
-            })
+        .withInitializer(context -> {
+          try {
+            for (var source :
+                new YamlPropertySourceLoader()
+                    .load("recovery-service", new ClassPathResource("application.yml"))) {
+              context.getEnvironment().getPropertySources().addLast(source);
+            }
+          } catch (IOException exception) {
+            throw new IllegalStateException(exception);
+          }
+        })
         .withUserConfiguration(DatabaseWiring.class)
         .withPropertyValues(
             "FIREMUD_RECOVERY_CONTROL_DB_HOST=recovery-control.invalid",
@@ -106,26 +103,25 @@ class RecoveryControllerOwnerConfigurationTest {
             "spring.jooq.sql-dialect=POSTGRES")
         // Wiring proof must not depend on a running PostgreSQL or apply migrations.
         .withBean(FlywayMigrationStrategy.class, () -> flyway -> {})
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).doesNotHaveBean(DatabaseAutoConfiguration.class);
-              assertThat(context).hasSingleBean(DataSource.class);
-              HikariDataSource datasource = context.getBean(HikariDataSource.class);
-              assertThat(datasource.getJdbcUrl())
-                  .isEqualTo(
-                      "jdbc:postgresql://recovery-control.invalid:5544/firemud_recovery_control");
-              Flyway flyway = context.getBean(Flyway.class);
-              assertThat(flyway.getConfiguration().getDataSource()).isSameAs(datasource);
-              assertThat(flyway.getConfiguration().getLocations())
-                  .extracting(location -> location.getDescriptor())
-                  .containsExactly("classpath:db/recovery-control-migration");
-              var provider =
-                  (DataSourceConnectionProvider)
-                      context.getBean(DSLContext.class).configuration().connectionProvider();
-              var proxy = (TransactionAwareDataSourceProxy) provider.dataSource();
-              assertThat(proxy.getTargetDataSource()).isSameAs(datasource);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).doesNotHaveBean(DatabaseAutoConfiguration.class);
+          assertThat(context).hasSingleBean(DataSource.class);
+          HikariDataSource datasource = context.getBean(HikariDataSource.class);
+          assertThat(datasource.getJdbcUrl())
+              .isEqualTo(
+                  "jdbc:postgresql://recovery-control.invalid:5544/firemud_recovery_control");
+          Flyway flyway = context.getBean(Flyway.class);
+          assertThat(flyway.getConfiguration().getDataSource()).isSameAs(datasource);
+          assertThat(flyway.getConfiguration().getLocations())
+              .extracting(location -> location.getDescriptor())
+              .containsExactly("classpath:db/recovery-control-migration");
+          var provider =
+              (DataSourceConnectionProvider)
+                  context.getBean(DSLContext.class).configuration().connectionProvider();
+          var proxy = (TransactionAwareDataSourceProxy) provider.dataSource();
+          assertThat(proxy.getTargetDataSource()).isSameAs(datasource);
+        });
   }
 
   @TestConfiguration(proxyBeanMethods = false)

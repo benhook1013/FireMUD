@@ -186,11 +186,9 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
           .containsExactly(originalBytes);
 
       // A caller-selected actor absent from the actual frozen menu cannot become a receipt.
-      assertThatThrownBy(
-              () ->
-                  owners.roster.readSelectedPlayerCreatedCharacter(
-                      replay,
-                      context.toBuilder().setCharacterId(UUID.randomUUID().toString()).build()))
+      assertThatThrownBy(() ->
+              owners.roster.readSelectedPlayerCreatedCharacter(
+                  replay, context.toBuilder().setCharacterId(UUID.randomUUID().toString()).build()))
           .isInstanceOf(IllegalArgumentException.class);
       assertThat(owners.gs.referenceOwner().read(menu.originalSelection()).toByteArray())
           .containsExactly(originalBytes);
@@ -299,16 +297,15 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
       assertThat(owners.gs.referenceOwner().retireTarget(originalRequest)).isFalse();
       Awaitility.await()
           .atMost(Duration.ofSeconds(30))
-          .untilAsserted(
-              () ->
-                  assertThat(
-                          owners
-                              .gsDsl
-                              .fetchSingle(
-                                  "SELECT s.terminal_at + f.minimum_retention_millis * interval '1 millisecond' <= clock_timestamp() FROM game_session_canonical_roster_selection s JOIN game_session_canonical_roster_target_fences f USING (target_fence_uuid) WHERE s.operation_uuid = ?",
-                                  UUID.fromString(originalRequest.getOperationUuid()))
-                              .get(0, Boolean.class))
-                      .isTrue());
+          .untilAsserted(() ->
+              assertThat(
+                      owners
+                          .gsDsl
+                          .fetchSingle(
+                              "SELECT s.terminal_at + f.minimum_retention_millis * interval '1 millisecond' <= clock_timestamp() FROM game_session_canonical_roster_selection s JOIN game_session_canonical_roster_target_fences f USING (target_fence_uuid) WHERE s.operation_uuid = ?",
+                              UUID.fromString(originalRequest.getOperationUuid()))
+                          .get(0, Boolean.class))
+                  .isTrue());
       // Only the later successor reader is controlled. The original/fence/transfer SQL is real.
       assertThat(owners.retireWithControlledSuccessor(originalRequest)).isTrue();
       var retired = owners.gs.referenceOwner().read(originalRequest);
@@ -394,19 +391,16 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
       if (!maximum) {
         for (var deniedClient :
             List.of(owners.wrongRoleOriginalClient, owners.wrongNamespaceOriginalClient)) {
-          assertThatThrownBy(
-                  () ->
-                      deniedClient.acknowledgeCanonicalGameplayRosterRetirement(
-                          acknowledgementRequest))
+          assertThatThrownBy(() ->
+                  deniedClient.acknowledgeCanonicalGameplayRosterRetirement(acknowledgementRequest))
               .isInstanceOfSatisfying(
                   StatusRuntimeException.class,
                   failure ->
                       assertThat(failure.getStatus().getCode())
                           .isEqualTo(Status.Code.PERMISSION_DENIED));
-          assertThatThrownBy(
-                  () ->
-                      deniedClient.confirmCanonicalGameplayRosterRetirementAcknowledgement(
-                          confirmationRequest))
+          assertThatThrownBy(() ->
+                  deniedClient.confirmCanonicalGameplayRosterRetirementAcknowledgement(
+                      confirmationRequest))
               .isInstanceOfSatisfying(
                   StatusRuntimeException.class,
                   failure ->
@@ -437,12 +431,11 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
           .isEqualTo(
               CanonicalGameplayRosterRetirementEvidence.confirmationResponse(confirmationRequest));
       Boolean recordedConfirmation =
-          entityTransactions.execute(
-              ignored ->
-                  owners
-                      .entity
-                      .retentionRepository()
-                      .recordRetirementConfirmation(transfer, confirmation));
+          entityTransactions.execute(ignored ->
+              owners
+                  .entity
+                  .retentionRepository()
+                  .recordRetirementConfirmation(transfer, confirmation));
       assertThat(recordedConfirmation).isTrue();
       assertThat(
               owners
@@ -743,16 +736,15 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
     private void requireDeadline(String method, long seconds) {
       assertThat(rpcObservations.stream().filter(call -> call.method().equals(method)).toList())
           .isNotEmpty()
-          .allSatisfy(
-              call -> {
-                assertThat(call.remainingMillis()).isPositive();
-                assertThat(call.remainingMillis())
-                    .isLessThanOrEqualTo(TimeUnit.SECONDS.toMillis(seconds));
-                if (seconds == 20) {
-                  // The outer call reaches Entity with room for both nested owner RPCs.
-                  assertThat(call.remainingMillis()).isGreaterThan(10_000L);
-                }
-              });
+          .allSatisfy(call -> {
+            assertThat(call.remainingMillis()).isPositive();
+            assertThat(call.remainingMillis())
+                .isLessThanOrEqualTo(TimeUnit.SECONDS.toMillis(seconds));
+            if (seconds == 20) {
+              // The outer call reaches Entity with room for both nested owner RPCs.
+              assertThat(call.remainingMillis()).isGreaterThan(10_000L);
+            }
+          });
     }
 
     private PlayerExecutionContext context(UUID account) {

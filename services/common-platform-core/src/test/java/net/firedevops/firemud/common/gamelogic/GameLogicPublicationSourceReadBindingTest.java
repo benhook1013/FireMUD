@@ -102,23 +102,18 @@ class GameLogicPublicationSourceReadBindingTest {
   @Test
   void rejectsMismatchedTenantVersionAndScriptPatchScope() {
     var authorization = authorization(OPERATION, FENCE, COMMIT, TENANT, 41);
-    assertThatThrownBy(
-            () ->
-                new GameLogicPublicationSourceReadBinding(
-                    publicationRequest("88888888-8888-4888-8888-888888888888", "41"),
-                    authorization))
+    assertThatThrownBy(() ->
+            new GameLogicPublicationSourceReadBinding(
+                publicationRequest("88888888-8888-4888-8888-888888888888", "41"), authorization))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GameLogicPublicationSourceReadBinding(
-                    publicationRequest(TENANT.toString(), "42"), authorization))
+    assertThatThrownBy(() ->
+            new GameLogicPublicationSourceReadBinding(
+                publicationRequest(TENANT.toString(), "42"), authorization))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GameLogicPublicationSourceReadBinding(
-                    PublicationDigestRequestBinding.patch(
-                        TENANT.toString(), "41", "patch-1", "pub-1"),
-                    authorization))
+    assertThatThrownBy(() ->
+            new GameLogicPublicationSourceReadBinding(
+                PublicationDigestRequestBinding.patch(TENANT.toString(), "41", "patch-1", "pub-1"),
+                authorization))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -160,59 +155,51 @@ class GameLogicPublicationSourceReadBindingTest {
                 publicationRequest, authorization(OPERATION, FENCE, COMMIT, TENANT, 41))
             .canonicalBytes();
 
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadBinding.fromStored(
-                    publicationRequest, concat(bytes("0"), valid)))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadBinding.fromStored(
+                publicationRequest, concat(bytes("0"), valid)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadBinding.fromStored(
-                    publicationRequest, concat(bytes("+"), valid)))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadBinding.fromStored(
+                publicationRequest, concat(bytes("+"), valid)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadBinding.fromStored(
-                    publicationRequest, java.util.Arrays.copyOf(valid, valid.length - 1)))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadBinding.fromStored(
+                publicationRequest, java.util.Arrays.copyOf(valid, valid.length - 1)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadBinding.fromStored(
-                    publicationRequest,
-                    concat(
-                        asciiFrame(GameLogicPublicationSourceReadBinding.SCHEMA),
-                        asciiFrame(publicationRequest.canonicalPreimage()))))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadBinding.fromStored(
+                publicationRequest,
+                concat(
+                    asciiFrame(GameLogicPublicationSourceReadBinding.SCHEMA),
+                    asciiFrame(publicationRequest.canonicalPreimage()))))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadBinding.fromStored(
-                    publicationRequest, concat(valid, asciiFrame(bytes("extra")))))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadBinding.fromStored(
+                publicationRequest, concat(valid, asciiFrame(bytes("extra")))))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadBinding.fromStored(
-                    publicationRequest,
-                    concat(
-                        asciiFrame(GameLogicPublicationSourceReadBinding.SCHEMA),
-                        asciiFrame(publicationRequest.canonicalPreimage()),
-                        bytes("4194305:"))))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadBinding.fromStored(
+                publicationRequest,
+                concat(
+                    asciiFrame(GameLogicPublicationSourceReadBinding.SCHEMA),
+                    asciiFrame(publicationRequest.canonicalPreimage()),
+                    bytes("4194305:"))))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadBinding.fromStored(
-                    publicationRequest,
-                    new byte[GameLogicPublicationSourceReadBinding.MAX_TOTAL_BYTES + 1]))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadBinding.fromStored(
+                publicationRequest,
+                new byte[GameLogicPublicationSourceReadBinding.MAX_TOTAL_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
 
     for (UUID identity : List.of(OPERATION, FENCE, COMMIT)) {
-      assertThatThrownBy(
-              () ->
-                  GameLogicPublicationSourceReadBinding.fromStored(
-                      publicationRequest,
-                      replaceFirst(
-                          valid,
-                          bytes(identity.toString()),
-                          bytes("x" + identity.toString().substring(1)))))
+      assertThatThrownBy(() ->
+              GameLogicPublicationSourceReadBinding.fromStored(
+                  publicationRequest,
+                  replaceFirst(
+                      valid,
+                      bytes(identity.toString()),
+                      bytes("x" + identity.toString().substring(1)))))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

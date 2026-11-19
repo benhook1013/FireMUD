@@ -26,10 +26,8 @@ class GameSessionAccountDelegationJwtProfileValidatorTest {
     claims.put("tenantId", ACCOUNT);
     claims.put("authorityTuple", tuple);
     claims.put("membershipVersion", Map.of(ACCOUNT, "3"));
-    assertThatCode(
-            () ->
-                GameSessionAccountDelegationJwtProfileValidator.validatePublicTenantBoundClaims(
-                    claims))
+    assertThatCode(() ->
+            GameSessionAccountDelegationJwtProfileValidator.validatePublicTenantBoundClaims(claims))
         .doesNotThrowAnyException();
     assertThatThrownBy(
             () -> GameSessionAccountDelegationJwtProfileValidator.validateInitialClaims(claims))

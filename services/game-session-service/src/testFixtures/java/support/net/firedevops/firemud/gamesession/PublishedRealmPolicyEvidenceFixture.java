@@ -116,15 +116,14 @@ public final class PublishedRealmPolicyEvidenceFixture {
     var committed = committedFreshGraphReadback(terminalReadRequest);
     List<OwnedAffectedTuple> tuples =
         draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList();
     var worldRequest =
         new Request(
@@ -171,36 +170,29 @@ public final class PublishedRealmPolicyEvidenceFixture {
     }
     List<PublishedRealmEntryPolicyEvidence> policies =
         specs.stream()
-            .map(
-                spec -> {
-                  RealmEntryPolicy policy = policy(spec);
-                  UUID policyId =
-                      stableUuid("policy/" + canonicalVersionId + "/" + spec.realmSlug());
-                  UUID revisionId =
-                      stableUuid("revision/" + canonicalVersionId + "/" + spec.realmSlug());
-                  String logicalRevisionId =
-                      "realm-policy/" + spec.worldSlug() + "/" + spec.realmSlug();
-                  String policyDigest =
-                      PublishedRealmEntryPolicySetEvidence.policyDigest(
-                          policyId,
-                          target,
-                          versionNumber,
-                          release.publishedReleaseBundleRef(),
-                          release.contentDigest(),
-                          workflow,
-                          DIGEST,
-                          draft.commitId(),
-                          revisionId,
-                          logicalRevisionId,
-                          policy);
-                  return new PublishedRealmEntryPolicyEvidence(
+            .map(spec -> {
+              RealmEntryPolicy policy = policy(spec);
+              UUID policyId = stableUuid("policy/" + canonicalVersionId + "/" + spec.realmSlug());
+              UUID revisionId =
+                  stableUuid("revision/" + canonicalVersionId + "/" + spec.realmSlug());
+              String logicalRevisionId =
+                  "realm-policy/" + spec.worldSlug() + "/" + spec.realmSlug();
+              String policyDigest =
+                  PublishedRealmEntryPolicySetEvidence.policyDigest(
                       policyId,
+                      target,
+                      versionNumber,
+                      release.publishedReleaseBundleRef(),
+                      release.contentDigest(),
+                      workflow,
+                      DIGEST,
                       draft.commitId(),
                       revisionId,
                       logicalRevisionId,
-                      policy,
-                      policyDigest);
-                })
+                      policy);
+              return new PublishedRealmEntryPolicyEvidence(
+                  policyId, draft.commitId(), revisionId, logicalRevisionId, policy, policyDigest);
+            })
             .toList();
     byte[] capture = capture(operation, draft, "43", specs, policies);
     String setDigest =
@@ -559,16 +551,14 @@ public final class PublishedRealmPolicyEvidenceFixture {
       result.put(
           "appliedEpochs",
           draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-              .map(
-                  unit ->
-                      Map.of(
-                          "aggregateType", unit.aggregateType(),
-                          "aggregateId", unit.aggregateId(),
-                          "scopeType", unit.scopeType(),
-                          "scopeId", unit.scopeId(),
-                          "expectedEpoch", unit.expectedEpoch(),
-                          "resultingEpoch",
-                              Long.toString(Long.parseLong(unit.expectedEpoch()) + 1)))
+              .map(unit ->
+                  Map.of(
+                      "aggregateType", unit.aggregateType(),
+                      "aggregateId", unit.aggregateId(),
+                      "scopeType", unit.scopeType(),
+                      "scopeId", unit.scopeId(),
+                      "expectedEpoch", unit.expectedEpoch(),
+                      "resultingEpoch", Long.toString(Long.parseLong(unit.expectedEpoch()) + 1)))
               .toList());
       byte[] resultBytes = canonical(JSON.valueToTree(result));
       return new DraftAuthorizationFenceBinding.OwnerReadback(
@@ -629,20 +619,18 @@ public final class PublishedRealmPolicyEvidenceFixture {
     try {
       List<Map<String, Object>> entries =
           java.util.stream.IntStream.range(0, specs.size())
-              .mapToObj(
-                  index -> {
-                    Map<String, Object> source = new LinkedHashMap<>();
-                    source.put("commitId", policies.get(index).sourceCommitId().toString());
-                    source.put("revisionId", policies.get(index).sourceRevisionId().toString());
-                    source.put("logicalRevisionId", policies.get(index).logicalRevisionId());
-                    try {
-                      source.put(
-                          "policy", JSON.readTree(policies.get(index).policy().canonicalJson()));
-                    } catch (Exception impossible) {
-                      throw new IllegalStateException(impossible);
-                    }
-                    return source;
-                  })
+              .mapToObj(index -> {
+                Map<String, Object> source = new LinkedHashMap<>();
+                source.put("commitId", policies.get(index).sourceCommitId().toString());
+                source.put("revisionId", policies.get(index).sourceRevisionId().toString());
+                source.put("logicalRevisionId", policies.get(index).logicalRevisionId());
+                try {
+                  source.put("policy", JSON.readTree(policies.get(index).policy().canonicalJson()));
+                } catch (Exception impossible) {
+                  throw new IllegalStateException(impossible);
+                }
+                return source;
+              })
               .toList();
       var snapshot = new LinkedHashMap<String, Object>();
       snapshot.put("schema", PublishedRealmEntryPolicySetEvidence.SNAPSHOT_SCHEMA);
@@ -669,25 +657,19 @@ public final class PublishedRealmPolicyEvidenceFixture {
     var request = operation.world().request();
     List<Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new Participant(
-                        owner,
-                        Long.toString(
-                            operation
-                                .account()
-                                .input()
-                                .selection()
-                                .target()
-                                .gameDesignVersionRowId()),
-                        null,
-                        request.appliedCommitId(),
-                        owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        owner.equals("GAME_LOGIC") ? DIGEST : null,
-                        null,
-                        null))
+            .map(owner ->
+                new Participant(
+                    owner,
+                    Long.toString(
+                        operation.account().input().selection().target().gameDesignVersionRowId()),
+                    null,
+                    request.appliedCommitId(),
+                    owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    owner.equals("GAME_LOGIC") ? DIGEST : null,
+                    null,
+                    null))
             .toList();
     return new ReleaseContent(
         request.canonicalTenantId(),

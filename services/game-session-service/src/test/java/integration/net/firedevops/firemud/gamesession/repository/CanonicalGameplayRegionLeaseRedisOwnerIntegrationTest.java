@@ -143,10 +143,8 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       assertThat(redis.admin().hdel(metaKey, ascii("current_tick_id"))).isEqualTo(1L);
       long ttlBeforeRejectedRenewal = redis.admin().pttl(leaseKey);
 
-      assertThatThrownBy(
-              () ->
-                  owner.acquire(
-                      source, 7L, Duration.ofMinutes(2), identity("after-missing-tick-id")))
+      assertThatThrownBy(() ->
+              owner.acquire(source, 7L, Duration.ofMinutes(2), identity("after-missing-tick-id")))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Canonical Game Session region lease is unavailable")
           .satisfies(failure -> assertThat(failure.getCause()).isNull());

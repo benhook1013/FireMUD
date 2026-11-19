@@ -403,10 +403,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private Genesis genesis() {
-      return serializable.execute(
-          status ->
-              new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
-                  .readByLease(UUID.fromString((String) lease.carrier().get("leaseId"))));
+      return serializable.execute(status ->
+          new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
+              .readByLease(UUID.fromString((String) lease.carrier().get("leaseId"))));
     }
 
     private String durableImage() {

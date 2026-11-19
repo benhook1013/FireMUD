@@ -205,14 +205,13 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
                     sourceFixture.committedCandidate.authoritySnapshot().issuanceFence());
             UUID revocationRequestId = UUID.randomUUID();
             var revocation =
-                serializable.execute(
-                    status ->
-                        new AccountGameplayTokenIdentityFenceRepository(dsl)
-                            .beginRevocationIntent(
-                                loginIdentity,
-                                revocationRequestId,
-                                AccountGameplayTokenIdentityFenceRepository.revocationDigest(
-                                    loginIdentity, revocationRequestId)));
+                serializable.execute(status ->
+                    new AccountGameplayTokenIdentityFenceRepository(dsl)
+                        .beginRevocationIntent(
+                            loginIdentity,
+                            revocationRequestId,
+                            AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                                loginIdentity, revocationRequestId)));
             assertThat(revocation).isNotNull();
             assertThat(revocation.tokenIdentityFence()).isEqualTo(2L);
             callerRevocations.incrementAndGet();
@@ -364,11 +363,10 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
       }
       installOwnedConfirmationUpdateFailure(dsl);
       try {
-        assertThatThrownBy(
-                () ->
-                    Context.current()
-                        .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-                        .call(() -> owner.confirmOriginalFinalAdmission(loginJwt, originalLease)))
+        assertThatThrownBy(() ->
+                Context.current()
+                    .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                    .call(() -> owner.confirmOriginalFinalAdmission(loginJwt, originalLease)))
             .isInstanceOf(RuntimeException.class)
             .hasMessageContaining("controlled owned original-new confirmation SQL fault");
       } finally {
@@ -543,63 +541,60 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
       throw new IllegalStateException("Current-source fixture tenant is absent");
 
     AccountGameplayAdmissionLeaseEvidence evidence =
-        serializable.execute(
-            status -> {
-              var current =
-                  AccountGameplayAdmissionCurrentSources.bind(dsl, NAMESPACE)
-                      .readCurrentPublicProductionNew(
-                          tenantId,
-                          sourceFixture.committedCandidate.identity().tokenJti(),
-                          sourceFixture.committedCandidate);
-              UUID requestId = UUID.randomUUID();
-              UUID leaseId = UUID.randomUUID();
-              var leaseRepository = new AccountGameplayAdmissionLeaseRepository(dsl);
-              var allocation = leaseRepository.allocate(accountId, requestId, leaseId);
-              long evaluatedAt =
-                  dsl.fetchSingle(
-                          "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
-                      .get(0, Long.class);
-              long maxLeaseExpiry =
-                  Math.addExact(
-                      evaluatedAt, AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS);
-              long initialTokenExpiry =
-                  Math.multiplyExact(
-                      sourceFixture.committedCandidate.identity().expiresAtEpochSecond(), 1_000L);
-              Map<String, Object> carrier = new LinkedHashMap<>();
-              carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
-              carrier.put("schemaVersion", "1");
-              carrier.put("mode", "PUBLIC_PRODUCTION");
-              carrier.put("targetNamespace", NAMESPACE);
-              carrier.put("callerWorkload", GAME_SESSION_WORKLOAD);
-              carrier.put("requestId", allocation.requestId().toString());
-              carrier.put("leaseId", allocation.leaseId().toString());
-              carrier.put("leaseFence", Long.toString(allocation.leaseFence()));
-              carrier.put("leaseKind", "NEW_BINDING");
-              carrier.put(
-                  "bindingScope",
-                  Map.ofEntries(
-                      Map.entry("accountId", accountId.toString()),
-                      Map.entry("tenantId", tenantId.toString()),
-                      Map.entry("realmId", UUID.randomUUID().toString()),
-                      Map.entry("worldSlug", "world"),
-                      Map.entry("realmSlug", "realm"),
-                      Map.entry("playableStateNamespaceId", UUID.randomUUID().toString()),
-                      Map.entry("playableStateScope", "SHARED"),
-                      Map.entry("gameInstanceId", UUID.randomUUID().toString()),
-                      Map.entry("characterId", UUID.randomUUID().toString()),
-                      Map.entry("sessionId", UUID.randomUUID().toString()),
-                      Map.entry("bindingGeneration", "1"),
-                      Map.entry("catalogRevision", "1"),
-                      Map.entry("pointerVersion", "1"),
-                      Map.entry("regionId", UUID.randomUUID().toString()),
-                      Map.entry("regionEpoch", "1")));
-              carrier.putAll(current.leaseSourceFields());
-              carrier.put("evaluatedAt", Long.toString(evaluatedAt));
-              carrier.put("expiresAt", Long.toString(Math.min(maxLeaseExpiry, initialTokenExpiry)));
-              var originalLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
-              leaseRepository.beginPending(originalLease);
-              return originalLease;
-            });
+        serializable.execute(status -> {
+          var current =
+              AccountGameplayAdmissionCurrentSources.bind(dsl, NAMESPACE)
+                  .readCurrentPublicProductionNew(
+                      tenantId,
+                      sourceFixture.committedCandidate.identity().tokenJti(),
+                      sourceFixture.committedCandidate);
+          UUID requestId = UUID.randomUUID();
+          UUID leaseId = UUID.randomUUID();
+          var leaseRepository = new AccountGameplayAdmissionLeaseRepository(dsl);
+          var allocation = leaseRepository.allocate(accountId, requestId, leaseId);
+          long evaluatedAt =
+              dsl.fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+                  .get(0, Long.class);
+          long maxLeaseExpiry =
+              Math.addExact(evaluatedAt, AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS);
+          long initialTokenExpiry =
+              Math.multiplyExact(
+                  sourceFixture.committedCandidate.identity().expiresAtEpochSecond(), 1_000L);
+          Map<String, Object> carrier = new LinkedHashMap<>();
+          carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+          carrier.put("schemaVersion", "1");
+          carrier.put("mode", "PUBLIC_PRODUCTION");
+          carrier.put("targetNamespace", NAMESPACE);
+          carrier.put("callerWorkload", GAME_SESSION_WORKLOAD);
+          carrier.put("requestId", allocation.requestId().toString());
+          carrier.put("leaseId", allocation.leaseId().toString());
+          carrier.put("leaseFence", Long.toString(allocation.leaseFence()));
+          carrier.put("leaseKind", "NEW_BINDING");
+          carrier.put(
+              "bindingScope",
+              Map.ofEntries(
+                  Map.entry("accountId", accountId.toString()),
+                  Map.entry("tenantId", tenantId.toString()),
+                  Map.entry("realmId", UUID.randomUUID().toString()),
+                  Map.entry("worldSlug", "world"),
+                  Map.entry("realmSlug", "realm"),
+                  Map.entry("playableStateNamespaceId", UUID.randomUUID().toString()),
+                  Map.entry("playableStateScope", "SHARED"),
+                  Map.entry("gameInstanceId", UUID.randomUUID().toString()),
+                  Map.entry("characterId", UUID.randomUUID().toString()),
+                  Map.entry("sessionId", UUID.randomUUID().toString()),
+                  Map.entry("bindingGeneration", "1"),
+                  Map.entry("catalogRevision", "1"),
+                  Map.entry("pointerVersion", "1"),
+                  Map.entry("regionId", UUID.randomUUID().toString()),
+                  Map.entry("regionEpoch", "1")));
+          carrier.putAll(current.leaseSourceFields());
+          carrier.put("evaluatedAt", Long.toString(evaluatedAt));
+          carrier.put("expiresAt", Long.toString(Math.min(maxLeaseExpiry, initialTokenExpiry)));
+          var originalLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+          leaseRepository.beginPending(originalLease);
+          return originalLease;
+        });
 
     UUID decisionId = UUID.randomUUID();
     var acknowledgement =
@@ -618,10 +613,9 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
       DSLContext dsl,
       TransactionTemplate transaction,
       AccountGameplayAdmissionLeaseEvidence originalLease) {
-    return transaction.execute(
-        status ->
-            new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
-                .readByLease(UUID.fromString((String) originalLease.carrier().get("leaseId"))));
+    return transaction.execute(status ->
+        new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
+            .readByLease(UUID.fromString((String) originalLease.carrier().get("leaseId"))));
   }
 
   private static AccountOriginalNewBoundGameplayCredentialOwner.OriginalAdmissionConfirmation

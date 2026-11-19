@@ -79,14 +79,13 @@ class AccountSelectedOwnerIntakeSourceReadServiceTest {
     var definition = ArgumentCaptor.forClass(TransactionDefinition.class);
     verify(transactions, times(2)).getTransaction(definition.capture());
     assertThat(definition.getAllValues())
-        .allSatisfy(
-            value -> {
-              assertThat(value.getPropagationBehavior())
-                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-              assertThat(value.getIsolationLevel())
-                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-              assertThat(value.isReadOnly()).isFalse();
-            });
+        .allSatisfy(value -> {
+          assertThat(value.getPropagationBehavior())
+              .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+          assertThat(value.getIsolationLevel())
+              .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+          assertThat(value.isReadOnly()).isFalse();
+        });
   }
 
   @Test

@@ -144,12 +144,11 @@ class AccountJwtSignerMaterializerTlsInterceptorTest {
           }
         };
     when(next.startCall(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(AccountJwtSignerMaterializerTlsInterceptor.authenticatedBinding())
-                  .isEqualTo(binding);
-              return listener;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(AccountJwtSignerMaterializerTlsInterceptor.authenticatedBinding())
+              .isEqualTo(binding);
+          return listener;
+        });
 
     ServerCall.Listener<String> intercepted = interceptor.interceptCall(call, new Metadata(), next);
     assertThat(intercepted).isNotSameAs(listener);

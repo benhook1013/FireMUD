@@ -130,12 +130,11 @@ class RealmPolicyPublicationPostgresIntegrationTest {
       assertThat(retainedHeader.get(fixtureField)).as(fixtureField).isNull();
     }
     var retry =
-        fixture.tx(
-            () ->
-                fixture
-                    .publicationWrites()
-                    .retainSealedPublished(operation.workflowId())
-                    .orElseThrow());
+        fixture.tx(() ->
+            fixture
+                .publicationWrites()
+                .retainSealedPublished(operation.workflowId())
+                .orElseThrow());
     assertPublishedSetUnchanged(original, retry);
     assertThat(retainedPolicyOwnerRows(fixture)).isEqualTo(originalRows);
   }
@@ -172,14 +171,12 @@ class RealmPolicyPublicationPostgresIntegrationTest {
             .get("evidence", String.class);
     assertThat(originalReleaseEvidence).isEqualTo(originalWholeReleaseRow);
 
-    fixture.tx(
-        () -> {
-          fixture
-              .dsl()
-              .execute(
-                  "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT");
-          return null;
-        });
+    fixture.tx(() -> {
+      fixture
+          .dsl()
+          .execute("ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT");
+      return null;
+    });
     String expandedWholeReleaseRow =
         java.util.Objects.requireNonNull(
                 fixture
@@ -210,12 +207,11 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     assertRejectedHeaderClonesPreserveOriginal(fixture, original);
 
     var exactRetry =
-        fixture.tx(
-            () ->
-                fixture
-                    .publicationWrites()
-                    .retainSealedPublished(operation.workflowId())
-                    .orElseThrow());
+        fixture.tx(() ->
+            fixture
+                .publicationWrites()
+                .retainSealedPublished(operation.workflowId())
+                .orElseThrow());
     assertThat(exactRetry.policies().getFirst().policyId())
         .isEqualTo(original.policies().getFirst().policyId());
     assertThat(exactRetry.policySetDigest()).isEqualTo(original.policySetDigest());
@@ -238,41 +234,36 @@ class RealmPolicyPublicationPostgresIntegrationTest {
                 .policyId())
         .isEqualTo(original.policies().getFirst().policyId());
     var retryAfterActivation =
-        fixture.tx(
-            () ->
-                fixture
-                    .publicationWrites()
-                    .retainSealedPublished(operation.workflowId())
-                    .orElseThrow());
+        fixture.tx(() ->
+            fixture
+                .publicationWrites()
+                .retainSealedPublished(operation.workflowId())
+                .orElseThrow());
     assertThat(retryAfterActivation.policies().getFirst().policyId())
         .isEqualTo(original.policies().getFirst().policyId());
     assertThat(retryAfterActivation.policySetDigest()).isEqualTo(original.policySetDigest());
     assertThat(retryAfterActivation.terminalEvidenceBytes())
         .containsExactly(original.terminalEvidenceBytes());
 
-    assertThatThrownBy(
-            () ->
-                fixture.tx(
-                    () ->
-                        fixture
-                            .dsl()
-                            .execute(
-                                "UPDATE game_design_published_realm_policy_set "
-                                    + "SET policy_set_digest = ? WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
-                                "sha256:" + "f".repeat(64),
-                                fixture.target().canonicalTenantId(),
-                                fixture.target().canonicalVersionId())))
+    assertThatThrownBy(() ->
+            fixture.tx(() ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "UPDATE game_design_published_realm_policy_set "
+                            + "SET policy_set_digest = ? WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                        "sha256:" + "f".repeat(64),
+                        fixture.target().canonicalTenantId(),
+                        fixture.target().canonicalVersionId())))
         .isInstanceOf(RuntimeException.class);
 
     Fixture fresh = fixture(true);
-    fresh.tx(
-        () -> {
-          fresh
-              .dsl()
-              .execute(
-                  "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT");
-          return null;
-        });
+    fresh.tx(() -> {
+      fresh
+          .dsl()
+          .execute("ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT");
+      return null;
+    });
     GameDesignPublicationOperation freshOperation = fresh.prepare(true);
     fresh.writePublish(freshOperation, false);
     var freshRead = fresh.publicationReads().readPublishedSet(fresh.target()).orElseThrow();
@@ -290,12 +281,11 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     byte[] freshReceipt = freshOwnerRead.receiptBytes();
     assertThat(freshReceipt).isNotNull();
     var freshRetry =
-        fresh.tx(
-            () ->
-                fresh
-                    .publicationWrites()
-                    .retainSealedPublished(freshOperation.workflowId())
-                    .orElseThrow());
+        fresh.tx(() ->
+            fresh
+                .publicationWrites()
+                .retainSealedPublished(freshOperation.workflowId())
+                .orElseThrow());
     assertThat(freshRetry.policies().getFirst().policyId())
         .isEqualTo(freshRead.policies().getFirst().policyId());
     assertThat(freshRetry.operationBytes()).containsExactly(freshRead.operationBytes());
@@ -320,13 +310,12 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     // A second stipulated ISOLATED owner baseline replaces the main policy. The genuine
     // publication selection then inherits it through the ordinary frozen-source path.
     var replacementBinding =
-        fixture.tx(
-            () ->
-                baseline(
-                    fixture.target(),
-                    fixture.dsl(),
-                    new GameDesignSourceRepository(fixture.dsl()),
-                    "Replacement World"));
+        fixture.tx(() ->
+            baseline(
+                fixture.target(),
+                fixture.dsl(),
+                new GameDesignSourceRepository(fixture.dsl()),
+                "Replacement World"));
     GameDesignPublicationOperation operation = fixture.prepare(true);
     var selected = fixture.policySource().readCapture(operation).orElseThrow().snapshot();
     var replacement = selected.policies().getFirst();
@@ -363,12 +352,11 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     assertThat(published.policies()).hasSize(1);
     assertThat(published.policies().getFirst().source()).isEqualTo(replacement);
     var retry =
-        fixture.tx(
-            () ->
-                fixture
-                    .publicationWrites()
-                    .retainSealedPublished(operation.workflowId())
-                    .orElseThrow());
+        fixture.tx(() ->
+            fixture
+                .publicationWrites()
+                .retainSealedPublished(operation.workflowId())
+                .orElseThrow());
     assertPublishedSetUnchanged(published, retry);
     assertPublishedSetUnchanged(
         published, fixture.publicationReads().readPublishedSet(fixture.target()).orElseThrow());
@@ -399,37 +387,34 @@ class RealmPolicyPublicationPostgresIntegrationTest {
             release.publishWorkflowId(),
             release.manifestHash(),
             source);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .transaction(
-                        nested ->
-                            DSL.using(nested)
-                                .execute(
-                                    "INSERT INTO game_design_published_realm_policy "
-                                        + "(canonical_tenant_id, canonical_version_id, ordinal, realm_policy_id, "
-                                        + "source_commit_id, source_revision_id, logical_revision_id, world_slug, realm_slug, "
-                                        + "policy_json, policy_digest, visible, public_production) "
-                                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                    fixture.target().canonicalTenantId(),
-                                    fixture.target().canonicalVersionId(),
-                                    ordinal,
-                                    policyId,
-                                    source.commitId(),
-                                    source.revisionId(),
-                                    source.logicalRevisionId(),
-                                    policy.worldSlug(),
-                                    policy.realmSlug(),
-                                    policy.canonicalJson(),
-                                    digest,
-                                    policy.visible(),
-                                    policy.publicProduction())))
-        .satisfies(
-            failure ->
-                assertThat(rootCause(failure).getMessage())
-                    .contains(
-                        "published realm policy row differs from exact captured source revision"));
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .transaction(nested ->
+                    DSL.using(nested)
+                        .execute(
+                            "INSERT INTO game_design_published_realm_policy "
+                                + "(canonical_tenant_id, canonical_version_id, ordinal, realm_policy_id, "
+                                + "source_commit_id, source_revision_id, logical_revision_id, world_slug, realm_slug, "
+                                + "policy_json, policy_digest, visible, public_production) "
+                                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            fixture.target().canonicalTenantId(),
+                            fixture.target().canonicalVersionId(),
+                            ordinal,
+                            policyId,
+                            source.commitId(),
+                            source.revisionId(),
+                            source.logicalRevisionId(),
+                            policy.worldSlug(),
+                            policy.realmSlug(),
+                            policy.canonicalJson(),
+                            digest,
+                            policy.visible(),
+                            policy.publicProduction())))
+        .satisfies(failure ->
+            assertThat(rootCause(failure).getMessage())
+                .contains(
+                    "published realm policy row differs from exact captured source revision"));
     assertThat(fixture.dsl().fetchCount(DSL.table("game_design_published_realm_policy"))).isZero();
   }
 
@@ -502,26 +487,24 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     var games = new GameRepository(dsl);
     var versions = new VersionRepository(dsl);
     Game game =
-        write.execute(
-            status -> {
-              var requested = new Game();
-              requested.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
-              requested.setName("ISOLATED realm policy publication");
-              return games.save(requested);
-            });
+        write.execute(status -> {
+          var requested = new Game();
+          requested.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
+          requested.setName("ISOLATED realm policy publication");
+          return games.save(requested);
+        });
     Version version =
-        write.execute(
-            status -> {
-              var requested = new Version();
-              requested.setTenantId(game.getTenantId());
-              requested.setVersionNumber(1);
-              Version created = versions.save(requested);
-              sources
-                  .readGenesis(target(created))
-                  .orElseThrow(
-                      () -> new IllegalStateException("fresh Version lacks actual source genesis"));
-              return created;
-            });
+        write.execute(status -> {
+          var requested = new Version();
+          requested.setTenantId(game.getTenantId());
+          requested.setVersionNumber(1);
+          Version created = versions.save(requested);
+          sources
+              .readGenesis(target(created))
+              .orElseThrow(
+                  () -> new IllegalStateException("fresh Version lacks actual source genesis"));
+          return created;
+        });
     TargetProof target = target(version);
     var baseline =
         isolatedPolicyBaseline
@@ -748,18 +731,16 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         .isEqualTo(original.policyCount());
 
     String sql = headerCloneInsertSql(replacementColumn, replacementExpression);
-    assertThatThrownBy(
-            () ->
-                fixture.tx(
-                    () -> {
-                      fixture
-                          .dsl()
-                          .execute(
-                              sql,
-                              fixture.target().canonicalTenantId(),
-                              fixture.target().canonicalVersionId());
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            fixture.tx(() -> {
+              fixture
+                  .dsl()
+                  .execute(
+                      sql,
+                      fixture.target().canonicalTenantId(),
+                      fixture.target().canonicalVersionId());
+              return null;
+            }))
         .satisfies(
             failure -> assertThat(rootCause(failure).getMessage()).contains(expectedGuardMessage));
 
@@ -781,12 +762,11 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     String columnList = String.join(", ", PUBLISHED_SET_COLUMNS);
     String selectList =
         PUBLISHED_SET_COLUMNS.stream()
-            .map(
-                column -> {
-                  if ("sealed".equals(column)) return "FALSE";
-                  if (column.equals(replacementColumn)) return replacementExpression;
-                  return "existing." + column;
-                })
+            .map(column -> {
+              if ("sealed".equals(column)) return "FALSE";
+              if (column.equals(replacementColumn)) return replacementExpression;
+              return "existing." + column;
+            })
             .collect(java.util.stream.Collectors.joining(", "));
     return "INSERT INTO game_design_published_realm_policy_set ("
         + columnList
@@ -896,63 +876,52 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     }
 
     GameDesignPublicationOperation prepare(boolean capturePolicySource) throws Exception {
-      return tx(
-          () -> {
-            try {
-              var sources = new GameDesignSourceRepository(dsl);
-              String sourceBaseReference = currentSourceHead(target, dsl, sources).baseReference();
-              var operation =
-                  IsolatedPublicationOwnerSetup.retainSourceBacked(
-                      dsl,
-                      target,
-                      1,
-                      "ISOLATED remote owner transaction proof",
-                      sourceBaseReference);
-              if (capturePolicySource) {
-                sources.freeze(operation);
-              }
-              return operation;
-            } catch (Exception failure) {
-              throw new IllegalStateException(failure);
-            }
-          });
+      return tx(() -> {
+        try {
+          var sources = new GameDesignSourceRepository(dsl);
+          String sourceBaseReference = currentSourceHead(target, dsl, sources).baseReference();
+          var operation =
+              IsolatedPublicationOwnerSetup.retainSourceBacked(
+                  dsl, target, 1, "ISOLATED remote owner transaction proof", sourceBaseReference);
+          if (capturePolicySource) {
+            sources.freeze(operation);
+          }
+          return operation;
+        } catch (Exception failure) {
+          throw new IllegalStateException(failure);
+        }
+      });
     }
 
     /** Retains command, policy, and asset captures as the predecessor operation did. */
     GameDesignPublicationOperation preparePreGameplayCaptures() throws Exception {
-      return tx(
-          () -> {
-            try {
-              var sources = new GameDesignSourceRepository(dsl);
-              String sourceBaseReference = currentSourceHead(target, dsl, sources).baseReference();
-              var operation =
-                  IsolatedPublicationOwnerSetup.retainSourceBacked(
-                      dsl,
-                      target,
-                      1,
-                      "ISOLATED remote owner transaction proof",
-                      sourceBaseReference);
-              new CommandSourceRepository(dsl).freeze(operation);
-              policySource.freeze(operation);
-              new AssetSourceRepository(dsl).freeze(operation);
-              return operation;
-            } catch (Exception failure) {
-              throw new IllegalStateException(failure);
-            }
-          });
+      return tx(() -> {
+        try {
+          var sources = new GameDesignSourceRepository(dsl);
+          String sourceBaseReference = currentSourceHead(target, dsl, sources).baseReference();
+          var operation =
+              IsolatedPublicationOwnerSetup.retainSourceBacked(
+                  dsl, target, 1, "ISOLATED remote owner transaction proof", sourceBaseReference);
+          new CommandSourceRepository(dsl).freeze(operation);
+          policySource.freeze(operation);
+          new AssetSourceRepository(dsl).freeze(operation);
+          return operation;
+        } catch (Exception failure) {
+          throw new IllegalStateException(failure);
+        }
+      });
     }
 
     void writePublish(GameDesignPublicationOperation operation, boolean rollBack) throws Exception {
-      write.executeWithoutResult(
-          status -> {
-            try {
-              IsolatedPublicationOwnerSetup.commitStorage(
-                  dsl, versions, operation, () -> saveBundle(operation));
-              if (rollBack) status.setRollbackOnly();
-            } catch (Exception failure) {
-              throw new IllegalStateException(failure);
-            }
-          });
+      write.executeWithoutResult(status -> {
+        try {
+          IsolatedPublicationOwnerSetup.commitStorage(
+              dsl, versions, operation, () -> saveBundle(operation));
+          if (rollBack) status.setRollbackOnly();
+        } catch (Exception failure) {
+          throw new IllegalStateException(failure);
+        }
+      });
     }
 
     PublishedReleaseBundle saveBundle(GameDesignPublicationOperation operation) {
@@ -964,18 +933,17 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     }
 
     void moveVersion(VersionLifecycleState next, long epoch) {
-      tx(
-          () -> {
-            var version =
-                versions
-                    .findByTenantIdAndIdForUpdate(
-                        target.gameDesignVersionTenantKey(), target.gameDesignVersionRowId())
-                    .orElseThrow();
-            version.setVersionState(next);
-            version.setVersionStateEpoch(epoch);
-            versions.save(version);
-            return null;
-          });
+      tx(() -> {
+        var version =
+            versions
+                .findByTenantIdAndIdForUpdate(
+                    target.gameDesignVersionTenantKey(), target.gameDesignVersionRowId())
+                .orElseThrow();
+        version.setVersionState(next);
+        version.setVersionStateEpoch(epoch);
+        versions.save(version);
+        return null;
+      });
     }
   }
 }

@@ -63,11 +63,10 @@ class DirectTextWorldSelectionServiceTest {
     var first = target("");
     var reads = new AtomicInteger();
     var catalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () -> {
-              reads.incrementAndGet();
-              return List.of(world(first));
-            });
+        GameplayWorldCatalog.forWorldSupplier(() -> {
+          reads.incrementAndGet();
+          return List.of(world(first));
+        });
     var source = service(catalog, List.of(first));
     var menu = source.browse().orElseThrow();
     byte[] original = source.encodeSnapshot(menu).orElseThrow();
@@ -274,31 +273,28 @@ class DirectTextWorldSelectionServiceTest {
     var first = target("");
     AtomicReference<Runnable> readEffect = new AtomicReference<>(() -> {});
     var catalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () -> {
-              readEffect.get().run();
-              return List.of(world(first));
-            });
+        GameplayWorldCatalog.forWorldSupplier(() -> {
+          readEffect.get().run();
+          return List.of(world(first));
+        });
     var source = service(catalog, List.of(first));
     byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
     var replacement = service(catalog, List.of(first));
     when(reader.readVisiblePublicProductionTargets())
-        .thenAnswer(
-            invocation -> {
-              clock.now = NOW.plusSeconds(300);
-              return List.of(first);
-            });
+        .thenAnswer(invocation -> {
+          clock.now = NOW.plusSeconds(300);
+          return List.of(first);
+        });
     assertThat(replacement.restoreSnapshot(stored)).isEmpty();
 
     clock.now = NOW;
     when(reader.readVisiblePublicProductionTargets()).thenReturn(List.of(first));
     AtomicInteger reads = new AtomicInteger();
-    readEffect.set(
-        () -> {
-          if (reads.incrementAndGet() == 2) {
-            clock.now = NOW.plusSeconds(300);
-          }
-        });
+    readEffect.set(() -> {
+      if (reads.incrementAndGet() == 2) {
+        clock.now = NOW.plusSeconds(300);
+      }
+    });
     assertThat(replacement.restoreSnapshot(stored)).isEmpty();
   }
 
@@ -323,10 +319,9 @@ class DirectTextWorldSelectionServiceTest {
     var catalogUnavailable =
         new GameplayWorldCatalog.AuthorityPointerUnavailableException("unavailable");
     var unreachableCatalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () -> {
-              throw catalogUnavailable;
-            });
+        GameplayWorldCatalog.forWorldSupplier(() -> {
+          throw catalogUnavailable;
+        });
     var catalogReplacement = new DirectTextWorldSelectionService(unreachableCatalog, reader, clock);
     assertThatThrownBy(() -> catalogReplacement.restoreSnapshot(stored))
         .isSameAs(catalogUnavailable);
@@ -347,11 +342,10 @@ class DirectTextWorldSelectionServiceTest {
     var source = service(catalog, List.of(first));
     byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
     when(reader.readVisiblePublicProductionTargets())
-        .thenAnswer(
-            invocation -> {
-              worlds.set(List.of());
-              return List.of(first);
-            });
+        .thenAnswer(invocation -> {
+          worlds.set(List.of());
+          return List.of(first);
+        });
     assertThat(source.restoreSnapshot(stored)).isEmpty();
     worlds.set(List.of(world(first)));
     when(reader.readVisiblePublicProductionTargets()).thenReturn(List.of(first, first));
@@ -427,11 +421,10 @@ class DirectTextWorldSelectionServiceTest {
     var first = target("");
     AtomicInteger catalogReads = new AtomicInteger();
     var catalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () -> {
-              catalogReads.incrementAndGet();
-              return List.of(world(first));
-            });
+        GameplayWorldCatalog.forWorldSupplier(() -> {
+          catalogReads.incrementAndGet();
+          return List.of(world(first));
+        });
     var service = service(catalog, List.of(first));
     var menu = service.browse().orElseThrow();
     clearInvocations(reader);
@@ -516,11 +509,10 @@ class DirectTextWorldSelectionServiceTest {
     AtomicReference<List<WorldView>> worlds = new AtomicReference<>(List.of(world(first)));
     var catalog = GameplayWorldCatalog.forWorldSupplier(worlds::get);
     when(reader.readVisiblePublicProductionTargets())
-        .thenAnswer(
-            invocation -> {
-              worlds.set(List.of());
-              return List.of(first);
-            });
+        .thenAnswer(invocation -> {
+          worlds.set(List.of());
+          return List.of(first);
+        });
 
     assertThat(new DirectTextWorldSelectionService(catalog, reader, clock).browse()).isEmpty();
   }
@@ -550,11 +542,10 @@ class DirectTextWorldSelectionServiceTest {
     AtomicInteger catalogReads = new AtomicInteger();
     var service =
         service(
-            GameplayWorldCatalog.forWorldSupplier(
-                () -> {
-                  catalogReads.incrementAndGet();
-                  return List.of(world(first));
-                }),
+            GameplayWorldCatalog.forWorldSupplier(() -> {
+              catalogReads.incrementAndGet();
+              return List.of(world(first));
+            }),
             List.of(first));
     var menu = service.browse().orElseThrow();
     clock.now = NOW.plusSeconds(300).minusNanos(1);
@@ -597,19 +588,17 @@ class DirectTextWorldSelectionServiceTest {
     AtomicReference<Runnable> onCatalogRead = new AtomicReference<>(() -> {});
     var service =
         service(
-            GameplayWorldCatalog.forWorldSupplier(
-                () -> {
-                  onCatalogRead.get().run();
-                  return List.of(world(first));
-                }),
+            GameplayWorldCatalog.forWorldSupplier(() -> {
+              onCatalogRead.get().run();
+              return List.of(world(first));
+            }),
             List.of(first));
     var menu = service.browse().orElseThrow();
     when(reader.readCurrentTarget(first))
-        .thenAnswer(
-            invocation -> {
-              clock.now = NOW.plusSeconds(300);
-              return first;
-            });
+        .thenAnswer(invocation -> {
+          clock.now = NOW.plusSeconds(300);
+          return first;
+        });
     assertThat(service.resolve(menu, "1")).isEmpty();
 
     when(reader.readCurrentTarget(first)).thenReturn(first);
@@ -623,11 +612,10 @@ class DirectTextWorldSelectionServiceTest {
     var first = target("");
     var service = service(List.of(world(first)), List.of(first));
     when(reader.readVisiblePublicProductionTargets())
-        .thenAnswer(
-            invocation -> {
-              clock.now = NOW.plusSeconds(300);
-              return List.of(first);
-            });
+        .thenAnswer(invocation -> {
+          clock.now = NOW.plusSeconds(300);
+          return List.of(first);
+        });
     assertThat(service.browse()).isEmpty();
   }
 
@@ -760,18 +748,16 @@ class DirectTextWorldSelectionServiceTest {
     AtomicReference<Runnable> readEffect = new AtomicReference<>(() -> {});
     var service =
         service(
-            GameplayWorldCatalog.forWorldSupplier(
-                () -> {
-                  readEffect.get().run();
-                  return List.of(world(first));
-                }),
+            GameplayWorldCatalog.forWorldSupplier(() -> {
+              readEffect.get().run();
+              return List.of(world(first));
+            }),
             List.of(first));
     var menu = service.browse().orElseThrow();
     var unavailable = new GameplayWorldCatalog.AuthorityPointerUnavailableException("unavailable");
-    readEffect.set(
-        () -> {
-          throw unavailable;
-        });
+    readEffect.set(() -> {
+      throw unavailable;
+    });
     assertThatThrownBy(service::browse).isSameAs(unavailable);
     assertThatThrownBy(() -> service.resolve(menu, "1")).isSameAs(unavailable);
   }

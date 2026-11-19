@@ -218,18 +218,17 @@ class HostedIdentityReconcilerSafetyTest {
         new java.util.LinkedHashMap<>();
     when(fixture.projections.acknowledge(
             any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any()))
-        .thenAnswer(
-            invocation -> {
-              String role = invocation.getArgument(2, String.class);
-              String revision = invocation.getArgument(3, String.class);
-              SecretProjectionService.ProjectionResult result =
-                  HostedIdentityContract.grpcPublicationRole("game-logic-service").equals(role)
-                      ? SecretProjectionService.ProjectionResult.awaiting(
-                          "awaiting-acceptance", revision)
-                      : SecretProjectionService.ProjectionResult.synced(revision);
-              acknowledgedProjections.put(role, result);
-              return result;
-            });
+        .thenAnswer(invocation -> {
+          String role = invocation.getArgument(2, String.class);
+          String revision = invocation.getArgument(3, String.class);
+          SecretProjectionService.ProjectionResult result =
+              HostedIdentityContract.grpcPublicationRole("game-logic-service").equals(role)
+                  ? SecretProjectionService.ProjectionResult.awaiting(
+                      "awaiting-acceptance", revision)
+                  : SecretProjectionService.ProjectionResult.synced(revision);
+          acknowledgedProjections.put(role, result);
+          return result;
+        });
 
     UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
 
@@ -253,11 +252,10 @@ class HostedIdentityReconcilerSafetyTest {
             .state());
     assertTrue(
         acknowledgedProjections.entrySet().stream()
-            .filter(
-                entry ->
-                    !entry
-                        .getKey()
-                        .equals(HostedIdentityContract.grpcPublicationRole("game-logic-service")))
+            .filter(entry ->
+                !entry
+                    .getKey()
+                    .equals(HostedIdentityContract.grpcPublicationRole("game-logic-service")))
             .allMatch(entry -> entry.getValue().isSynced()));
     verify(fixture.rollout)
         .sync(
@@ -731,12 +729,11 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             anyString(),
             any()))
-        .thenAnswer(
-            invocation -> {
-              Runnable guard = invocation.getArgument(8);
-              guard.run();
-              throw new AssertionError("runtime-profile guard unexpectedly passed");
-            });
+        .thenAnswer(invocation -> {
+          Runnable guard = invocation.getArgument(8);
+          guard.run();
+          throw new AssertionError("runtime-profile guard unexpectedly passed");
+        });
 
     UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
 
@@ -882,12 +879,11 @@ class HostedIdentityReconcilerSafetyTest {
         .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
     when(fixture.projections.acknowledge(
             any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any()))
-        .thenAnswer(
-            invocation -> {
-              Runnable guard = invocation.getArgument(7);
-              guard.run();
-              throw new AssertionError("runtime-profile guard unexpectedly passed");
-            });
+        .thenAnswer(invocation -> {
+          Runnable guard = invocation.getArgument(7);
+          guard.run();
+          throw new AssertionError("runtime-profile guard unexpectedly passed");
+        });
 
     UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
 
@@ -2629,13 +2625,12 @@ class HostedIdentityReconcilerSafetyTest {
       when(batch.grpcGatewayClient())
           .thenReturn(material(plan, HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE, "e"));
       when(batch.grpcPublication(anyString()))
-          .thenAnswer(
-              invocation -> {
-                String workload = invocation.getArgument(0, String.class);
-                String fingerprintDigit = grpcPublicationFixtureFingerprintDigit(workload);
-                return material(
-                    plan, HostedIdentityContract.grpcPublicationRole(workload), fingerprintDigit);
-              });
+          .thenAnswer(invocation -> {
+            String workload = invocation.getArgument(0, String.class);
+            String fingerprintDigit = grpcPublicationFixtureFingerprintDigit(workload);
+            return material(
+                plan, HostedIdentityContract.grpcPublicationRole(workload), fingerprintDigit);
+          });
       when(projections.project(
               org.mockito.ArgumentMatchers.eq(client),
               org.mockito.ArgumentMatchers.eq(plan),
@@ -2646,10 +2641,9 @@ class HostedIdentityReconcilerSafetyTest {
               anyString(),
               anyString(),
               any()))
-          .thenAnswer(
-              invocation ->
-                  SecretProjectionService.ProjectionResult.synced(
-                      "revision-" + invocation.getArgument(2, String.class)));
+          .thenAnswer(invocation ->
+              SecretProjectionService.ProjectionResult.synced(
+                  "revision-" + invocation.getArgument(2, String.class)));
 
       reconciler =
           new HostedIdentityReconciler(

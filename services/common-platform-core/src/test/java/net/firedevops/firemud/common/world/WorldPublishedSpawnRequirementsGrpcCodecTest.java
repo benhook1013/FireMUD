@@ -70,10 +70,8 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
             response, WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES + 1);
     assertThat(overLimit.getSerializedSize())
         .isEqualTo(WorldPublishedSpawnRequirementsGrpcCodec.MAX_RESPONSE_WIRE_BYTES + 1);
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(), overLimit))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(expected.request(), overLimit))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("maximum wire size");
   }
@@ -84,55 +82,48 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
     var response =
         WorldPublishedSpawnRequirementsGrpcCodec.toResponse(expected.request(), expected);
 
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(),
-                    response.toBuilder()
-                        .setRequest(
-                            response.getRequest().toBuilder().setReadRequestId(OTHER_ID.toString()))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(),
+                response.toBuilder()
+                    .setRequest(
+                        response.getRequest().toBuilder().setReadRequestId(OTHER_ID.toString()))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(),
-                    response.toBuilder().setGraphDigest("sha256:" + "f".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(),
+                response.toBuilder().setGraphDigest("sha256:" + "f".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("graph digest");
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(),
-                    response.toBuilder()
-                        .setRequest(
-                            response.getRequest().toBuilder()
-                                .setExpectedReleaseAttestationDigest("sha256:" + "f".repeat(64)))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(),
+                response.toBuilder()
+                    .setRequest(
+                        response.getRequest().toBuilder()
+                            .setExpectedReleaseAttestationDigest("sha256:" + "f".repeat(64)))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed the exact source-read request");
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(),
-                    response.toBuilder()
-                        .setCompleteLaunchBinding(
-                            response.getCompleteLaunchBinding().toBuilder()
-                                .setReleaseAttestation(
-                                    response
-                                        .getCompleteLaunchBinding()
-                                        .getReleaseAttestation()
-                                        .toBuilder()
-                                        .setCanonicalTenantId(OTHER_ID.toString())))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(),
+                response.toBuilder()
+                    .setCompleteLaunchBinding(
+                        response.getCompleteLaunchBinding().toBuilder()
+                            .setReleaseAttestation(
+                                response
+                                    .getCompleteLaunchBinding()
+                                    .getReleaseAttestation()
+                                    .toBuilder()
+                                    .setCanonicalTenantId(OTHER_ID.toString())))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(),
-                    response.toBuilder()
-                        .setCaptureId("00000000-0000-0000-0000-000000000000")
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(),
+                response.toBuilder().setCaptureId("00000000-0000-0000-0000-000000000000").build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("captureId");
   }
@@ -142,75 +133,68 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
     var expected = evidence();
     var response =
         WorldPublishedSpawnRequirementsGrpcCodec.toResponse(expected.request(), expected);
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(), response.toBuilder().clearRequest().build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(), response.toBuilder().clearRequest().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(), response.toBuilder().clearCompleteLaunchBinding().build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(), response.toBuilder().clearCompleteLaunchBinding().build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     UnknownFieldSet unknown =
         UnknownFieldSet.newBuilder()
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(), response.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(), response.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(),
-                    response.toBuilder()
-                        .setRequest(response.getRequest().toBuilder().setUnknownFields(unknown))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(),
+                response.toBuilder()
+                    .setRequest(response.getRequest().toBuilder().setUnknownFields(unknown))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(),
-                    response.toBuilder()
-                        .setRequest(
-                            response.getRequest().toBuilder()
-                                .setLaunchBindingRequest(
-                                    response.getRequest().getLaunchBindingRequest().toBuilder()
-                                        .setUnknownFields(unknown)))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(),
+                response.toBuilder()
+                    .setRequest(
+                        response.getRequest().toBuilder()
+                            .setLaunchBindingRequest(
+                                response.getRequest().getLaunchBindingRequest().toBuilder()
+                                    .setUnknownFields(unknown)))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(),
-                    response.toBuilder()
-                        .setSpawnRequirements(
-                            0,
-                            response.getSpawnRequirements(0).toBuilder()
-                                .setRoomTemplate(
-                                    response.getSpawnRequirements(0).getRoomTemplate().toBuilder()
-                                        .setTenantId(OTHER_ID.toString())))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(),
+                response.toBuilder()
+                    .setSpawnRequirements(
+                        0,
+                        response.getSpawnRequirements(0).toBuilder()
+                            .setRoomTemplate(
+                                response.getSpawnRequirements(0).getRoomTemplate().toBuilder()
+                                    .setTenantId(OTHER_ID.toString())))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical tenant/version context");
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    expected.request(),
-                    response.toBuilder()
-                        .setSpawnRequirements(
-                            0,
-                            response.getSpawnRequirements(0).toBuilder()
-                                .setRoomTemplate(
-                                    response.getSpawnRequirements(0).getRoomTemplate().toBuilder()
-                                        .setUnknownFields(unknown)))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                expected.request(),
+                response.toBuilder()
+                    .setSpawnRequirements(
+                        0,
+                        response.getSpawnRequirements(0).toBuilder()
+                            .setRoomTemplate(
+                                response.getSpawnRequirements(0).getRoomTemplate().toBuilder()
+                                    .setUnknownFields(unknown)))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
   }
@@ -236,43 +220,39 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
             .setFamily(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE)
             .setCount(1)
             .build();
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedSpawnRequirementsEvidence(
-                    populated.request(),
-                    populated.launchBinding(),
-                    populated.captureId(),
-                    populated.graphDigest(),
-                    List.of(
-                        populated.familyCounts().get(0),
-                        populated.familyCounts().get(1),
-                        populated.familyCounts().get(2),
-                        populated.familyCounts().get(3),
-                        new WorldPublishedSpawnRequirementsEvidence.FamilyCount(
-                            badCount.getFamily(), badCount.getCount()),
-                        populated.familyCounts().get(5)),
-                    populated.spawnRequirements(),
-                    populated.generationRequirements()))
+    assertThatThrownBy(() ->
+            new WorldPublishedSpawnRequirementsEvidence(
+                populated.request(),
+                populated.launchBinding(),
+                populated.captureId(),
+                populated.graphDigest(),
+                List.of(
+                    populated.familyCounts().get(0),
+                    populated.familyCounts().get(1),
+                    populated.familyCounts().get(2),
+                    populated.familyCounts().get(3),
+                    new WorldPublishedSpawnRequirementsEvidence.FamilyCount(
+                        badCount.getFamily(), badCount.getCount()),
+                    populated.familyCounts().get(5)),
+                populated.spawnRequirements(),
+                populated.generationRequirements()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("count differs");
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    populated.request(),
-                    response.toBuilder()
-                        .setFamilyCounts(4, response.getFamilyCounts(4).toBuilder().setCount(1))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                populated.request(),
+                response.toBuilder()
+                    .setFamilyCounts(4, response.getFamilyCounts(4).toBuilder().setCount(1))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("count differs");
 
-    assertThatThrownBy(
-            () ->
-                WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
-                    empty.request(),
-                    emptyResponse.toBuilder()
-                        .setFamilyCounts(
-                            0, emptyResponse.getFamilyCounts(0).toBuilder().clearCount())
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedSpawnRequirementsGrpcCodec.fromResponse(
+                empty.request(),
+                emptyResponse.toBuilder()
+                    .setFamilyCounts(0, emptyResponse.getFamilyCounts(0).toBuilder().clearCount())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not explicitly present");
   }
@@ -457,19 +437,18 @@ class WorldPublishedSpawnRequirementsGrpcCodecTest {
             "remap-set");
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        selection.appliedCommitId(),
-                        "b".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    Long.toString(descriptor.versionId()),
+                    false,
+                    null,
+                    selection.appliedCommitId(),
+                    "b".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "c".repeat(64) : null))
             .toList();
     AuthoredWorldReleaseAttestationEvidence release =
         AuthoredWorldReleaseAttestationEvidence.create(

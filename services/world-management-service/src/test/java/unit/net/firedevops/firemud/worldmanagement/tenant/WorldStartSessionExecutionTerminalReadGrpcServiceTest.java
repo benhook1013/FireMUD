@@ -376,11 +376,10 @@ class WorldStartSessionExecutionTerminalReadGrpcServiceTest {
       var lookup =
           new ExecutionLookup(Optional.of(new ExecutionOperation(state, 73L, instanceId)), false);
       when(repository.readExactExecution(any(WorldCanonicalInstanceExecutionIdentity.class)))
-          .thenAnswer(
-              invocation -> {
-                order.add("owner-read");
-                return lookup;
-              });
+          .thenAnswer(invocation -> {
+            order.add("owner-read");
+            return lookup;
+          });
       // This explicitly synthetic verifier accepts the expired historical tuple so the test
       // proves recovery reads history without applying fresh-admission expiry.
       var grpc =

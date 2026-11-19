@@ -44,10 +44,9 @@ class AccountControlUiRegistryReaderTest {
 
     Map<String, Object> missingDeadline = new LinkedHashMap<>(record());
     missingDeadline.remove("registryCleanupDeadlineEpochMillis");
-    assertThatThrownBy(
-            () ->
-                AccountControlUiRegistryReader.parseActiveRecord(
-                    canonicalBytes(missingDeadline), TOKEN_HASH))
+    assertThatThrownBy(() ->
+            AccountControlUiRegistryReader.parseActiveRecord(
+                canonicalBytes(missingDeadline), TOKEN_HASH))
         .isInstanceOf(IllegalStateException.class);
 
     String canonical = new String(canonicalRecord(), StandardCharsets.UTF_8);
@@ -110,15 +109,13 @@ class AccountControlUiRegistryReaderTest {
     assertThatThrownBy(
             () -> AccountControlUiRegistryReader.checkedCleanupDeadlineMillis(1_800_000_000L, null))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                AccountControlUiRegistryReader.checkedCleanupDeadlineMillis(
-                    1_800_000_000L, 1_799_999_999_999L))
+    assertThatThrownBy(() ->
+            AccountControlUiRegistryReader.checkedCleanupDeadlineMillis(
+                1_800_000_000L, 1_799_999_999_999L))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                AccountControlUiRegistryReader.checkedCleanupDeadlineMillis(
-                    Long.MAX_VALUE, 9_007_199_254_740_991L))
+    assertThatThrownBy(() ->
+            AccountControlUiRegistryReader.checkedCleanupDeadlineMillis(
+                Long.MAX_VALUE, 9_007_199_254_740_991L))
         .isInstanceOf(IllegalStateException.class);
   }
 

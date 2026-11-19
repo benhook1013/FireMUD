@@ -228,13 +228,12 @@ class GameSessionStartSessionLaunchDescriptorContinuationServiceTest {
     StartSessionLaunchDescriptorGrpcCodec.Resolved resolved =
         mock(StartSessionLaunchDescriptorGrpcCodec.Resolved.class);
     when(fixture.descriptorReadClient.resolve(any(Request.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              assertThat(fixture.transactionManager.startedTransactions).isEqualTo(1);
-              return resolved;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          assertThat(fixture.transactionManager.startedTransactions).isEqualTo(1);
+          return resolved;
+        });
 
     ReadStartSessionTemplateAssociationResponse originalWire = response(1L);
     ReadStartSessionTemplateAssociationResponse changedWire = response(2L);
@@ -274,13 +273,12 @@ class GameSessionStartSessionLaunchDescriptorContinuationServiceTest {
         .thenReturn(Optional.of(original), Optional.of(original));
     ReadRedeemedOperationProjectionResponse projection = redeemedProjection("original");
     when(fixture.accountProjectionClient.read(fixture.tuple, ATTEMPT_ID, 8L))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              assertThat(fixture.transactionManager.startedTransactions).isEqualTo(1);
-              return projection;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          assertThat(fixture.transactionManager.startedTransactions).isEqualTo(1);
+          return projection;
+        });
     StartSessionLaunchDescriptorGrpcCodec.Resolved resolved =
         mock(StartSessionLaunchDescriptorGrpcCodec.Resolved.class);
     PinnedLaunchDescriptorSnapshot pinned =
@@ -292,13 +290,12 @@ class GameSessionStartSessionLaunchDescriptorContinuationServiceTest {
             RESPONSE_DIGEST,
             Instant.parse("2026-10-10T00:00:00Z"));
     when(fixture.descriptorReadClient.resolve(any(Request.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              assertThat(fixture.transactionManager.startedTransactions).isEqualTo(1);
-              return resolved;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          assertThat(fixture.transactionManager.startedTransactions).isEqualTo(1);
+          return resolved;
+        });
     when(fixture.descriptorRepository.pin(fixture.continuation, resolved)).thenReturn(pinned);
 
     ReadStartSessionTemplateAssociationResponse originalWire = response(1L);

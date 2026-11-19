@@ -117,26 +117,24 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
       savepoint.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
       savepoint.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
       XidObservation observation =
-          outer.execute(
-              status -> {
-                savepoint.executeWithoutResult(
-                    nested ->
-                        insertPreparation(probeSchema, fixture, 2, fixture.freshInstanceId()));
-                var row =
-                    dsl.fetchSingle(
-                        "SELECT preparation_inserted_full_xid::text, xmin::text, "
-                            + "pg_current_xact_id()::text, "
-                            + "(txid_current() % 4294967296)::text "
-                            + "FROM "
-                            + DSL.name(probeSchema, "world_canonical_instance_preparation")
-                            + " WHERE canonical_game_instance_id = ?",
-                        fixture.freshInstanceId());
-                return new XidObservation(
-                    row.get(0, String.class),
-                    row.get(1, String.class),
-                    row.get(2, String.class),
-                    row.get(3, String.class));
-              });
+          outer.execute(status -> {
+            savepoint.executeWithoutResult(
+                nested -> insertPreparation(probeSchema, fixture, 2, fixture.freshInstanceId()));
+            var row =
+                dsl.fetchSingle(
+                    "SELECT preparation_inserted_full_xid::text, xmin::text, "
+                        + "pg_current_xact_id()::text, "
+                        + "(txid_current() % 4294967296)::text "
+                        + "FROM "
+                        + DSL.name(probeSchema, "world_canonical_instance_preparation")
+                        + " WHERE canonical_game_instance_id = ?",
+                    fixture.freshInstanceId());
+            return new XidObservation(
+                row.get(0, String.class),
+                row.get(1, String.class),
+                row.get(2, String.class),
+                row.get(3, String.class));
+          });
 
       assertThat(observation).isNotNull();
       assertThat(observation.serverStamp())
@@ -458,10 +456,9 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
     retainedRequest.put("versionStateEpoch", 7L);
 
     Map<String, Object> freezeRequest = new LinkedHashMap<>();
-    selectedRequest.forEach(
-        (key, value) -> {
-          if (!key.equals("worldAffectedTuples")) freezeRequest.put(key, value);
-        });
+    selectedRequest.forEach((key, value) -> {
+      if (!key.equals("worldAffectedTuples")) freezeRequest.put(key, value);
+    });
     freezeRequest.remove("versionStateEpoch");
     freezeRequest.put("versionStateEpoch", 7L);
     freezeRequest.put("suppliedOwnedAffectedTuples", List.of());
@@ -543,13 +540,12 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
   private static void assertSqlState(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String state) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              Throwable cause = failure;
-              while (cause.getCause() != null) cause = cause.getCause();
-              assertThat(cause).isInstanceOf(PSQLException.class);
-              assertThat(((PSQLException) cause).getSQLState()).isEqualTo(state);
-            });
+        .satisfies(failure -> {
+          Throwable cause = failure;
+          while (cause.getCause() != null) cause = cause.getCause();
+          assertThat(cause).isInstanceOf(PSQLException.class);
+          assertThat(((PSQLException) cause).getSQLState()).isEqualTo(state);
+        });
   }
 
   private record XidObservation(

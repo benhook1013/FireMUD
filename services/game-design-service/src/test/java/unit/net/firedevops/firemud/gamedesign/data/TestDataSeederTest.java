@@ -150,12 +150,11 @@ class TestDataSeederTest {
     when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("1", 7L))
         .thenReturn(java.util.Optional.empty());
     when(publishedReleaseBundleRepository.save(any(PublishedReleaseBundle.class)))
-        .thenAnswer(
-            invocation -> {
-              PublishedReleaseBundle inserted = invocation.getArgument(0);
-              inserted.setPublishedAt(java.time.LocalDateTime.now());
-              return inserted;
-            });
+        .thenAnswer(invocation -> {
+          PublishedReleaseBundle inserted = invocation.getArgument(0);
+          inserted.setPublishedAt(java.time.LocalDateTime.now());
+          return inserted;
+        });
     when(versionAssetArtifactRepository.findByTenantIdAndVersionId("1", 7L))
         .thenReturn(java.util.Optional.empty());
     when(versionAssetArtifactRepository.save(any(VersionAssetArtifact.class)))
@@ -441,17 +440,16 @@ class TestDataSeederTest {
     CertificateFixture worldManagement =
         certificateFixture("world-management", List.of(List.of(6, WORLD_MANAGEMENT_URI_SAN)));
 
-    assertThatThrownBy(
-            () ->
-                ReflectionTestUtils.invokeMethod(
-                    seeder,
-                    "requireCertificatePins",
-                    gameSession.leaf(),
-                    worldManagement.leaf(),
-                    gameSession.ca(),
-                    gameSession.leafDigest(),
-                    "0".repeat(64),
-                    gameSession.caDigest()))
+    assertThatThrownBy(() ->
+            ReflectionTestUtils.invokeMethod(
+                seeder,
+                "requireCertificatePins",
+                gameSession.leaf(),
+                worldManagement.leaf(),
+                gameSession.ca(),
+                gameSession.leafDigest(),
+                "0".repeat(64),
+                gameSession.caDigest()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("certificates do not match capability pins");
   }

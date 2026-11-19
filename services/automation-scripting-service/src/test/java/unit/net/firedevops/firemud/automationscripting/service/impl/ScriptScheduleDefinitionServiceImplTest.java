@@ -35,10 +35,9 @@ class ScriptScheduleDefinitionServiceImplTest {
 
   @Test
   void refreshPatchSchedulesRejectsZeroTenantIdBeforeRepositoryReads() {
-    assertThatThrownBy(
-            () ->
-                service.refreshPatchSchedules(
-                    "0", "patch-1", List.of(new ScriptDefinition()), List.of("npc-guard")))
+    assertThatThrownBy(() ->
+            service.refreshPatchSchedules(
+                "0", "patch-1", List.of(new ScriptDefinition()), List.of("npc-guard")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("tenantId must be positive");
 
@@ -89,25 +88,23 @@ class ScriptScheduleDefinitionServiceImplTest {
     assertThat(saved)
         .filteredOn(schedule -> schedule.getScheduleDefinitionId().equals("guard.patrol.v1"))
         .singleElement()
-        .satisfies(
-            schedule -> {
-              assertThat(schedule.getScheduleKind()).isEqualTo("INTERVAL");
-              assertThat(schedule.getCadenceUnit()).isEqualTo("TICKS");
-              assertThat(schedule.getCadenceValue()).isEqualTo(30L);
-              assertThat(schedule.getPriorityTag()).isEqualTo("high");
-            });
+        .satisfies(schedule -> {
+          assertThat(schedule.getScheduleKind()).isEqualTo("INTERVAL");
+          assertThat(schedule.getCadenceUnit()).isEqualTo("TICKS");
+          assertThat(schedule.getCadenceValue()).isEqualTo(30L);
+          assertThat(schedule.getPriorityTag()).isEqualTo("high");
+        });
     assertThat(saved)
         .filteredOn(schedule -> schedule.getScheduleDefinitionId().equals("guard.alert.expire.v1"))
         .singleElement()
-        .satisfies(
-            schedule -> {
-              assertThat(schedule.getScheduleKind()).isEqualTo("TIMER");
-              assertThat(schedule.getCadenceUnit()).isEqualTo("TICKS");
-              assertThat(schedule.getCadenceValue()).isEqualTo(5L);
-              assertThat(schedule.getPriorityTag()).isEqualTo("normal");
-              assertThat(schedule.getPluginId()).isEmpty();
-              assertThat(schedule.getPluginVersionId()).isEmpty();
-            });
+        .satisfies(schedule -> {
+          assertThat(schedule.getScheduleKind()).isEqualTo("TIMER");
+          assertThat(schedule.getCadenceUnit()).isEqualTo("TICKS");
+          assertThat(schedule.getCadenceValue()).isEqualTo(5L);
+          assertThat(schedule.getPriorityTag()).isEqualTo("normal");
+          assertThat(schedule.getPluginId()).isEmpty();
+          assertThat(schedule.getPluginVersionId()).isEmpty();
+        });
   }
 
   @Test
@@ -192,15 +189,13 @@ class ScriptScheduleDefinitionServiceImplTest {
     List<ScriptScheduleDefinition> saved = captor.getValue();
     assertThat(saved)
         .singleElement()
-        .satisfies(
-            schedule -> {
-              assertThat(schedule.getPluginId()).isEqualTo("town-crier");
-              assertThat(schedule.getPluginVersionId()).isEqualTo("town-crier-v3");
-              assertThat(schedule.getScheduleMetadataJson())
-                  .contains("\"pluginId\":\"town-crier\"");
-              assertThat(schedule.getScheduleMetadataJson())
-                  .contains("\"pluginVersionId\":\"town-crier-v3\"");
-            });
+        .satisfies(schedule -> {
+          assertThat(schedule.getPluginId()).isEqualTo("town-crier");
+          assertThat(schedule.getPluginVersionId()).isEqualTo("town-crier-v3");
+          assertThat(schedule.getScheduleMetadataJson()).contains("\"pluginId\":\"town-crier\"");
+          assertThat(schedule.getScheduleMetadataJson())
+              .contains("\"pluginVersionId\":\"town-crier-v3\"");
+        });
   }
 
   @Test
@@ -233,10 +228,8 @@ class ScriptScheduleDefinitionServiceImplTest {
                 1L, "patch-1"))
         .thenReturn(List.of(existing));
 
-    assertThatThrownBy(
-            () ->
-                service.refreshPatchSchedules(
-                    "1", "patch-1", List.of(script), List.of("npc-guard")))
+    assertThatThrownBy(() ->
+            service.refreshPatchSchedules("1", "patch-1", List.of(script), List.of("npc-guard")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate_schedule_definition_id");
   }
@@ -290,10 +283,8 @@ class ScriptScheduleDefinitionServiceImplTest {
             + jsonValue
             + "}}}");
 
-    assertThatThrownBy(
-            () ->
-                service.refreshPatchSchedules(
-                    "1", "patch-1", List.of(script), List.of("npc-guard")))
+    assertThatThrownBy(() ->
+            service.refreshPatchSchedules("1", "patch-1", List.of(script), List.of("npc-guard")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("invalid_schedule_cadence");
     verify(repository, never()).saveAll(org.mockito.ArgumentMatchers.any());
@@ -328,10 +319,8 @@ class ScriptScheduleDefinitionServiceImplTest {
     script.setDefinition(
         "{\"eventHandlers\":{\"onTimerExpire\":{\"scheduleDefinitionId\":\"guard.alert.expire.v1\",\"delayTicks\":1.5,\"delayMs\":5000}}}");
 
-    assertThatThrownBy(
-            () ->
-                service.refreshPatchSchedules(
-                    "1", "patch-1", List.of(script), List.of("npc-guard")))
+    assertThatThrownBy(() ->
+            service.refreshPatchSchedules("1", "patch-1", List.of(script), List.of("npc-guard")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("invalid_schedule_cadence");
     verify(repository, never()).saveAll(org.mockito.ArgumentMatchers.any());
@@ -365,10 +354,8 @@ class ScriptScheduleDefinitionServiceImplTest {
             + fallback
             + "}}}");
 
-    assertThatThrownBy(
-            () ->
-                service.refreshPatchSchedules(
-                    "1", "patch-1", List.of(script), List.of("npc-guard")))
+    assertThatThrownBy(() ->
+            service.refreshPatchSchedules("1", "patch-1", List.of(script), List.of("npc-guard")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("invalid_schedule_cadence");
     verify(repository, never()).saveAll(org.mockito.ArgumentMatchers.any());
@@ -418,10 +405,9 @@ class ScriptScheduleDefinitionServiceImplTest {
             + ownerJson
             + ",\"eventHandlers\":{\"onInterval\":{\"scheduleDefinitionId\":\"pulse.v1\",\"intervalTicks\":1}}}");
 
-    assertThatThrownBy(
-            () ->
-                service.refreshPatchSchedules(
-                    "1", "patch-1", List.of(script), List.of(script.getName())))
+    assertThatThrownBy(() ->
+            service.refreshPatchSchedules(
+                "1", "patch-1", List.of(script), List.of(script.getName())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(expectedMessage);
     verify(repository, never()).saveAll(org.mockito.ArgumentMatchers.any());
@@ -465,10 +451,9 @@ class ScriptScheduleDefinitionServiceImplTest {
             + "\"onTimerExpire\":{\"scheduleDefinitionId\":\"expire.v1\",\"delayMs\":1,"
             + "\"pluginId\":\"other-plugin\",\"pluginVersionId\":\"v1\"}}}");
 
-    assertThatThrownBy(
-            () ->
-                service.refreshPatchSchedules(
-                    "1", "patch-1", List.of(script), List.of(script.getName())))
+    assertThatThrownBy(() ->
+            service.refreshPatchSchedules(
+                "1", "patch-1", List.of(script), List.of(script.getName())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("plugin_schedule_owner_contradictory");
     verify(repository, never()).saveAll(org.mockito.ArgumentMatchers.any());

@@ -69,10 +69,9 @@ class ModerationAccountUuidMigrationPostgresIntegrationTest {
             jdbc.queryForObject(
                 "SELECT action || ':' || reason FROM moderation_actions", String.class))
         .isEqualTo("chat_mute:abuse");
-    assertThatThrownBy(
-            () ->
-                jdbc.update(
-                    "INSERT INTO moderation_actions (tenant_id, account_id, action) VALUES (1, '00000000-0000-0000-0000-000000000000', 'ban')"))
+    assertThatThrownBy(() ->
+            jdbc.update(
+                "INSERT INTO moderation_actions (tenant_id, account_id, action) VALUES (1, '00000000-0000-0000-0000-000000000000', 'ban')"))
         .hasMessageContaining("moderation_actions_account_id_non_nil");
   }
 

@@ -248,18 +248,16 @@ public abstract class AccountJwtReadinessReceiverInvocationPort {
       if (expectedActiveGeneration.isPresent() != expectedActiveKid.isPresent()) {
         throw new IllegalArgumentException("Expected active signer fence is partial");
       }
-      this.expectedActiveGeneration.ifPresent(
-          value -> {
-            if (!value.matches("[1-9][0-9]{0,18}")) {
-              throw new IllegalArgumentException("Expected active generation is malformed");
-            }
-          });
-      this.expectedActiveKid.ifPresent(
-          value -> {
-            if (!value.matches("[A-Za-z0-9_-]{1,64}")) {
-              throw new IllegalArgumentException("Expected active key ID is malformed");
-            }
-          });
+      this.expectedActiveGeneration.ifPresent(value -> {
+        if (!value.matches("[1-9][0-9]{0,18}")) {
+          throw new IllegalArgumentException("Expected active generation is malformed");
+        }
+      });
+      this.expectedActiveKid.ifPresent(value -> {
+        if (!value.matches("[A-Za-z0-9_-]{1,64}")) {
+          throw new IllegalArgumentException("Expected active key ID is malformed");
+        }
+      });
       if (issuedAtEpochSecond <= 0L
           || expiresAtEpochSecond <= issuedAtEpochSecond
           || expiresAtEpochSecond > planExpiresAtEpochSecond) {

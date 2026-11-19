@@ -197,28 +197,25 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     when(connection.async()).thenReturn(commands);
     doReturn(future("gamesession_coord_app")).when(commands).aclWhoami();
     when(commands.scriptLoad(any(byte[].class)))
-        .thenAnswer(
-            invocation -> {
-              verify(repository, org.mockito.Mockito.never()).recordDispatchPossible(any(), any());
-              return future(
-                  java.util.HexFormat.of()
-                      .formatHex(
-                          java.security.MessageDigest.getInstance("SHA-1")
-                              .digest(invocation.getArgument(0, byte[].class))));
-            });
+        .thenAnswer(invocation -> {
+          verify(repository, org.mockito.Mockito.never()).recordDispatchPossible(any(), any());
+          return future(
+              java.util.HexFormat.of()
+                  .formatHex(
+                      java.security.MessageDigest.getInstance("SHA-1")
+                          .digest(invocation.getArgument(0, byte[].class))));
+        });
     when(commands.evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
-        .thenAnswer(
-            ignored -> {
-              verify(repository).recordDispatchPossible(requestId, before);
-              throw new IllegalStateException("controlled unknown EVAL outcome");
-            });
+        .thenAnswer(ignored -> {
+          verify(repository).recordDispatchPossible(requestId, before);
+          throw new IllegalStateException("controlled unknown EVAL outcome");
+        });
     AtomicInteger connectionAttempts = new AtomicInteger();
     when(redis.connect(any(ByteArrayCodec.class)))
-        .thenAnswer(
-            ignored -> {
-              if (connectionAttempts.getAndIncrement() == 0) return connection;
-              throw new IllegalStateException("controlled lost readback connection");
-            });
+        .thenAnswer(ignored -> {
+          if (connectionAttempts.getAndIncrement() == 0) return connection;
+          throw new IllegalStateException("controlled lost readback connection");
+        });
     RedisScriptCatalog catalog =
         RedisScriptCatalog.fromContributions(
             List.of(new CanonicalGameplayAccountInitialBarrierRedisScriptContribution()));
@@ -296,11 +293,10 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     Map<byte[], byte[]> raw = new HashMap<>();
     expected
         .fields()
-        .forEach(
-            (field, value) ->
-                raw.put(
-                    field.getBytes(StandardCharsets.US_ASCII),
-                    value.getBytes(StandardCharsets.US_ASCII)));
+        .forEach((field, value) ->
+            raw.put(
+                field.getBytes(StandardCharsets.US_ASCII),
+                value.getBytes(StandardCharsets.US_ASCII)));
     RedisClient redis = mock(RedisClient.class);
     StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
     RedisAsyncCommands<byte[], byte[]> commands = mock(RedisAsyncCommands.class);
@@ -393,11 +389,10 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     Map<byte[], byte[]> raw = new HashMap<>();
     expected
         .fields()
-        .forEach(
-            (field, value) ->
-                raw.put(
-                    field.getBytes(StandardCharsets.US_ASCII),
-                    value.getBytes(StandardCharsets.US_ASCII)));
+        .forEach((field, value) ->
+            raw.put(
+                field.getBytes(StandardCharsets.US_ASCII),
+                value.getBytes(StandardCharsets.US_ASCII)));
     RedisClient redis = mock(RedisClient.class);
     StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
     RedisAsyncCommands<byte[], byte[]> commands = mock(RedisAsyncCommands.class);
@@ -583,11 +578,10 @@ class CanonicalGameplayAccountInitialBarrierRedisOwnerTest {
     Map<byte[], byte[]> raw = new HashMap<>();
     expected
         .fields()
-        .forEach(
-            (field, value) ->
-                raw.put(
-                    field.getBytes(StandardCharsets.US_ASCII),
-                    value.getBytes(StandardCharsets.US_ASCII)));
+        .forEach((field, value) ->
+            raw.put(
+                field.getBytes(StandardCharsets.US_ASCII),
+                value.getBytes(StandardCharsets.US_ASCII)));
     RedisClient redis = mock(RedisClient.class);
     StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
     RedisAsyncCommands<byte[], byte[]> commands = mock(RedisAsyncCommands.class);

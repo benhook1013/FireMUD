@@ -57,17 +57,13 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
     return command
         .realmBrowsePayload()
         .flatMap(payload -> worldsHandler.browseRealms(payload.worldSelector()))
-        .map(
-            view ->
-                new TextCommandInterpretationResult(
-                    net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
-                    List.of(
-                        net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(view))))
-        .orElseGet(
-            () ->
-                errorResult(
-                    "INVALID_ARGUMENT",
-                    "REALMS requires a valid world selector. Use WORLDS first."));
+        .map(view ->
+            new TextCommandInterpretationResult(
+                net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
+                List.of(net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(view))))
+        .orElseGet(() ->
+            errorResult(
+                "INVALID_ARGUMENT", "REALMS requires a valid world selector. Use WORLDS first."));
   }
 
   private TextCommandInterpretationResult handleChars(TextCommandDispatchRequest request) {

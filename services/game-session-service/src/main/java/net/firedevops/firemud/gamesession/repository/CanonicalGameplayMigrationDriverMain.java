@@ -231,12 +231,11 @@ public final class CanonicalGameplayMigrationDriverMain {
 
   static void launch(String[] args, java.io.PrintStream protocolOutput, java.io.PrintStream error) {
     ScheduledExecutorService deadline =
-        Executors.newSingleThreadScheduledExecutor(
-            task -> {
-              Thread thread = new Thread(task, "gs-migration-driver-deadline");
-              thread.setDaemon(true);
-              return thread;
-            });
+        Executors.newSingleThreadScheduledExecutor(task -> {
+          Thread thread = new Thread(task, "gs-migration-driver-deadline");
+          thread.setDaemon(true);
+          return thread;
+        });
     deadline.schedule(
         () -> {
           error.println(
@@ -464,12 +463,11 @@ public final class CanonicalGameplayMigrationDriverMain {
       List<MigrationSourceIdentity> migrations) {
     if (migrations.size() != EXPECTED_MIGRATION_SCRIPTS.size()
         || migrations.stream()
-            .anyMatch(
-                migration ->
-                    !expectedMigrationScriptName(migration.script())
-                            .equals(EXPECTED_MIGRATION_SCRIPTS.get(migration.version()))
-                        || !"SQL".equals(migration.type())
-                        || migration.checksum() == null)) {
+            .anyMatch(migration ->
+                !expectedMigrationScriptName(migration.script())
+                        .equals(EXPECTED_MIGRATION_SCRIPTS.get(migration.version()))
+                    || !"SQL".equals(migration.type())
+                    || migration.checksum() == null)) {
       throw new IllegalStateException("packaged migration source inventory was incomplete");
     }
   }
@@ -974,20 +972,18 @@ public final class CanonicalGameplayMigrationDriverMain {
       }
       try {
         Map<String, Object> values =
-            redis.execute(
-                (RedisConnection connection) -> {
-                  requireStandaloneRedisTopology(connection.serverCommands().info("cluster"));
-                  Properties info = connection.serverCommands().info("server");
-                  String runId = info == null ? null : info.getProperty("run_id");
-                  Properties plainConfiguration = connection.serverCommands().getConfig("port");
-                  String plainPortText =
-                      plainConfiguration == null ? null : plainConfiguration.getProperty("port");
-                  Properties tlsConfiguration = connection.serverCommands().getConfig("tls-port");
-                  String tlsPortText =
-                      tlsConfiguration == null ? null : tlsConfiguration.getProperty("tls-port");
-                  return validatedRedisObservation(
-                      runId, plainPortText, tlsPortText, trustCaDigest);
-                });
+            redis.execute((RedisConnection connection) -> {
+              requireStandaloneRedisTopology(connection.serverCommands().info("cluster"));
+              Properties info = connection.serverCommands().info("server");
+              String runId = info == null ? null : info.getProperty("run_id");
+              Properties plainConfiguration = connection.serverCommands().getConfig("port");
+              String plainPortText =
+                  plainConfiguration == null ? null : plainConfiguration.getProperty("port");
+              Properties tlsConfiguration = connection.serverCommands().getConfig("tls-port");
+              String tlsPortText =
+                  tlsConfiguration == null ? null : tlsConfiguration.getProperty("tls-port");
+              return validatedRedisObservation(runId, plainPortText, tlsPortText, trustCaDigest);
+            });
         if (values == null) {
           throw new IllegalStateException("Redis live observation was unavailable");
         }

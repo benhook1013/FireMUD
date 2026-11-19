@@ -68,10 +68,9 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
         new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findEvents(
-                    "tenant-1", "game-1", "patch-1", 2L, null, "", null, null, Pageable.unpaged()))
+        .isThrownBy(() ->
+            repository.findEvents(
+                "tenant-1", "game-1", "patch-1", 2L, null, "", null, null, Pageable.unpaged()))
         .withMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
   }
@@ -82,18 +81,17 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
         new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findEvents(
-                    "tenant-1",
-                    "game-1",
-                    "patch-1",
-                    null,
-                    "pin-request-1",
-                    "",
-                    null,
-                    null,
-                    Pageable.unpaged()))
+        .isThrownBy(() ->
+            repository.findEvents(
+                "tenant-1",
+                "game-1",
+                "patch-1",
+                null,
+                "pin-request-1",
+                "",
+                null,
+                null,
+                Pageable.unpaged()))
         .withMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
   }
@@ -104,18 +102,17 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
         new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findEvents(
-                    "tenant-1",
-                    "game-1",
-                    "patch-1",
-                    0L,
-                    "pin-request-1",
-                    "",
-                    null,
-                    null,
-                    Pageable.unpaged()))
+        .isThrownBy(() ->
+            repository.findEvents(
+                "tenant-1",
+                "game-1",
+                "patch-1",
+                0L,
+                "pin-request-1",
+                "",
+                null,
+                null,
+                Pageable.unpaged()))
         .withMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
   }
@@ -151,10 +148,9 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
         new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findEvents(
-                    "tenant-1", "game-1", "patch-1", -1L, null, "", null, null, Pageable.unpaged()))
+        .isThrownBy(() ->
+            repository.findEvents(
+                "tenant-1", "game-1", "patch-1", -1L, null, "", null, null, Pageable.unpaged()))
         .withMessage("script_pin_epoch must be non-negative");
   }
 
@@ -249,17 +245,16 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
         .isInstanceOf(OptimisticLockingFailureException.class)
         .hasMessage("Stale write rejected for script_patch_instance_rollout_events id=9");
     assertThat(updateSql)
-        .hasValueSatisfying(
-            sql -> {
-              int whereStart = sql.indexOf(" where ");
-              assertThat(whereStart).isGreaterThanOrEqualTo(0);
-              assertThat(sql.substring(whereStart))
-                  .contains(
-                      "row_version",
-                      "script_patch_version",
-                      "script_pin_epoch",
-                      "last_observed_control_plane_request_id");
-            });
+        .hasValueSatisfying(sql -> {
+          int whereStart = sql.indexOf(" where ");
+          assertThat(whereStart).isGreaterThanOrEqualTo(0);
+          assertThat(sql.substring(whereStart))
+              .contains(
+                  "row_version",
+                  "script_patch_version",
+                  "script_pin_epoch",
+                  "last_observed_control_plane_request_id");
+        });
   }
 
   @Test

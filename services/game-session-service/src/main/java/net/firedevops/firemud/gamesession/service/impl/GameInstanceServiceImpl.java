@@ -925,10 +925,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     GameInstance instance =
         repository
             .findByTenantIdAndGameInstanceIdForUpdate(request.tenantId(), gameInstanceId)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: instance row is missing"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: instance row is missing"));
     requireSameRunOwnedInitialLaunch(instance, request, descriptor, requestDigest);
     Long recordedEpoch = instance.getRunOwnedStartPreparingEpoch();
     if (recordedEpoch != null) {
@@ -956,10 +955,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           GameInstance instance =
               repository
                   .findByTenantIdAndGameInstanceIdForUpdate(request.tenantId(), gameInstanceId)
-                  .orElseThrow(
-                      () ->
-                          new IllegalStateException(
-                              "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: instance row is missing"));
+                  .orElseThrow(() ->
+                      new IllegalStateException(
+                          "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: instance row is missing"));
           requireSameRunOwnedInitialLaunch(instance, request, descriptor, requestDigest);
           return instance;
         },
@@ -975,10 +973,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     GameInstance instance =
         repository
             .findByTenantIdAndGameInstanceIdForUpdate(request.tenantId(), gameInstanceId)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: instance row is missing"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: instance row is missing"));
     requireSameRunOwnedInitialLaunch(instance, request, descriptor, requestDigest);
     long expectedActiveEpoch = Math.addExact(requireRunOwnedPreparingEpoch(instance), 1L);
     if (activeEpoch != expectedActiveEpoch) {

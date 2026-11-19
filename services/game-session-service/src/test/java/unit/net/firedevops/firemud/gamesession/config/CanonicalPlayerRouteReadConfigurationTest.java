@@ -39,14 +39,13 @@ class CanonicalPlayerRouteReadConfigurationTest {
   void defaultConfigurationLeavesCanonicalRosterRouteSourceUnregistered() {
     new ApplicationContextRunner()
         .withUserConfiguration(CanonicalPlayerRouteReadConfiguration.class)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).doesNotHaveBean(GameDesignPublishedRealmPolicyClient.class);
-              assertThat(context).doesNotHaveBean(CanonicalPlayerRouteReadService.class);
-              assertThat(context).doesNotHaveBean(CanonicalPublishedPlayerRouteReadService.class);
-              assertThat(context).doesNotHaveBean(CanonicalGameplayRosterSelectionService.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).doesNotHaveBean(GameDesignPublishedRealmPolicyClient.class);
+          assertThat(context).doesNotHaveBean(CanonicalPlayerRouteReadService.class);
+          assertThat(context).doesNotHaveBean(CanonicalPublishedPlayerRouteReadService.class);
+          assertThat(context).doesNotHaveBean(CanonicalGameplayRosterSelectionService.class);
+        });
   }
 
   @Test
@@ -54,14 +53,13 @@ class CanonicalPlayerRouteReadConfigurationTest {
     new ApplicationContextRunner()
         .withUserConfiguration(CanonicalPlayerRouteReadConfiguration.class)
         .withPropertyValues("firemud.canonical-gameplay-roster-owner-read.enabled=false")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).doesNotHaveBean(GameDesignPublishedRealmPolicyClient.class);
-              assertThat(context).doesNotHaveBean(CanonicalPlayerRouteReadService.class);
-              assertThat(context).doesNotHaveBean(CanonicalPublishedPlayerRouteReadService.class);
-              assertThat(context).doesNotHaveBean(CanonicalGameplayRosterSelectionService.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).doesNotHaveBean(GameDesignPublishedRealmPolicyClient.class);
+          assertThat(context).doesNotHaveBean(CanonicalPlayerRouteReadService.class);
+          assertThat(context).doesNotHaveBean(CanonicalPublishedPlayerRouteReadService.class);
+          assertThat(context).doesNotHaveBean(CanonicalGameplayRosterSelectionService.class);
+        });
   }
 
   // Composition proof only: repositories and channels are controlled doubles with file-backed
@@ -104,65 +102,64 @@ class CanonicalPlayerRouteReadConfigurationTest {
         .withPropertyValues(
             "firemud.canonical-gameplay-roster-owner-read.enabled=true",
             "firemud.grpc.workload-namespace=games")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(GameDesignPublishedRealmPolicyClient.class);
-              assertThat(context).hasSingleBean(CanonicalPlayerRouteReadService.class);
-              assertThat(context).hasSingleBean(CanonicalPublishedPlayerRouteReadService.class);
-              assertThat(context).hasSingleBean(CanonicalGameplayRosterSelectionService.class);
-              assertThat(context).hasSingleBean(CanonicalGameplayRosterClient.class);
-              assertThat(context)
-                  .doesNotHaveBean(
-                      net.firedevops.firemud.gamesession.service
-                          .CanonicalGameplayRosterReferenceOwner.class);
-              var rosterClient = context.getBean(CanonicalGameplayRosterClient.class);
-              assertThat(Mockito.mockingDetails(rosterClient).isMock()).isFalse();
-              var published =
-                  support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture
-                      .canonicalPublishedRoute();
-              var route = published.route();
-              var player =
-                  net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
-                      .setAccountId("66666666-6666-4666-8666-666666666666")
-                      .setSessionId("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
-                      .setRequestId("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
-                      .setTenantId(route.canonicalTenantId().toString())
-                      .setRealmId(route.realmId().toString())
-                      .setPlayableStateNamespaceId(route.playableStateNamespaceId().toString())
-                      .setPlayableStateScope(route.playableStateScope())
-                      .setGameInstanceId(route.canonicalGameInstanceId().toString())
-                      .build();
-              assertThatThrownBy(() -> rosterClient.listPreseededRoster(published, player))
-                  .isInstanceOfSatisfying(
-                      io.grpc.StatusRuntimeException.class,
-                      failure ->
-                          assertThat(failure.getStatus().getCode())
-                              .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
-              verify(channel, never()).newCall(any(), any());
-              assertThat(
-                      Mockito.mockingDetails(
-                              context.getBean(GameDesignPublishedRealmPolicyClient.class))
-                          .isMock())
-                  .isFalse();
-              assertThat(
-                      Mockito.mockingDetails(context.getBean(CanonicalPlayerRouteReadService.class))
-                          .isMock())
-                  .isFalse();
-              assertThat(
-                      Mockito.mockingDetails(
-                              context.getBean(CanonicalPublishedPlayerRouteReadService.class))
-                          .isMock())
-                  .isFalse();
-              verify(channelFactory)
-                  .buildChannel(eq("game-design.test:7654"), eq(6565), eq(tlsProperties), eq(true));
-              verify(channelFactory)
-                  .buildChannel(eq("entity.test:7655"), eq(6565), eq(tlsProperties), eq(true));
-              verifyNoInteractions(
-                  context.getBean(GameSessionCanonicalRealmCatalogRepository.class),
-                  context.getBean(CanonicalInitialAdmissionRepository.class),
-                  context.getBean(CanonicalGameInstanceLaunchAssociationRepository.class));
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).hasSingleBean(GameDesignPublishedRealmPolicyClient.class);
+          assertThat(context).hasSingleBean(CanonicalPlayerRouteReadService.class);
+          assertThat(context).hasSingleBean(CanonicalPublishedPlayerRouteReadService.class);
+          assertThat(context).hasSingleBean(CanonicalGameplayRosterSelectionService.class);
+          assertThat(context).hasSingleBean(CanonicalGameplayRosterClient.class);
+          assertThat(context)
+              .doesNotHaveBean(
+                  net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwner
+                      .class);
+          var rosterClient = context.getBean(CanonicalGameplayRosterClient.class);
+          assertThat(Mockito.mockingDetails(rosterClient).isMock()).isFalse();
+          var published =
+              support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture
+                  .canonicalPublishedRoute();
+          var route = published.route();
+          var player =
+              net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+                  .setAccountId("66666666-6666-4666-8666-666666666666")
+                  .setSessionId("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+                  .setRequestId("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+                  .setTenantId(route.canonicalTenantId().toString())
+                  .setRealmId(route.realmId().toString())
+                  .setPlayableStateNamespaceId(route.playableStateNamespaceId().toString())
+                  .setPlayableStateScope(route.playableStateScope())
+                  .setGameInstanceId(route.canonicalGameInstanceId().toString())
+                  .build();
+          assertThatThrownBy(() -> rosterClient.listPreseededRoster(published, player))
+              .isInstanceOfSatisfying(
+                  io.grpc.StatusRuntimeException.class,
+                  failure ->
+                      assertThat(failure.getStatus().getCode())
+                          .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
+          verify(channel, never()).newCall(any(), any());
+          assertThat(
+                  Mockito.mockingDetails(
+                          context.getBean(GameDesignPublishedRealmPolicyClient.class))
+                      .isMock())
+              .isFalse();
+          assertThat(
+                  Mockito.mockingDetails(context.getBean(CanonicalPlayerRouteReadService.class))
+                      .isMock())
+              .isFalse();
+          assertThat(
+                  Mockito.mockingDetails(
+                          context.getBean(CanonicalPublishedPlayerRouteReadService.class))
+                      .isMock())
+              .isFalse();
+          verify(channelFactory)
+              .buildChannel(eq("game-design.test:7654"), eq(6565), eq(tlsProperties), eq(true));
+          verify(channelFactory)
+              .buildChannel(eq("entity.test:7655"), eq(6565), eq(tlsProperties), eq(true));
+          verifyNoInteractions(
+              context.getBean(GameSessionCanonicalRealmCatalogRepository.class),
+              context.getBean(CanonicalInitialAdmissionRepository.class),
+              context.getBean(CanonicalGameInstanceLaunchAssociationRepository.class));
+        });
   }
 
   @Test
@@ -196,10 +193,9 @@ class CanonicalPlayerRouteReadConfigurationTest {
         .withPropertyValues(
             "firemud.canonical-gameplay-roster-owner-read.enabled=true",
             "firemud.grpc.workload-namespace=games.invalid")
-        .run(
-            context -> {
-              assertThat(context).hasFailed();
-              verifyNoInteractions(channelFactory);
-            });
+        .run(context -> {
+          assertThat(context).hasFailed();
+          verifyNoInteractions(channelFactory);
+        });
   }
 }

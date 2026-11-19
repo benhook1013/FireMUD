@@ -429,17 +429,16 @@ class GameLogicClientTest {
     setStub(client, stub);
 
     for (String accountId : INVALID_ACCOUNT_IDS) {
-      assertThatThrownBy(
-              () ->
-                  client.sendCommunication(
-                      sessionContextWithAccountId(accountId),
-                      "Sora",
-                      "R-1021",
-                      CommunicationType.SAY,
-                      "hello",
-                      null,
-                      null,
-                      null))
+      assertThatThrownBy(() ->
+              client.sendCommunication(
+                  sessionContextWithAccountId(accountId),
+                  "Sora",
+                  "R-1021",
+                  CommunicationType.SAY,
+                  "hello",
+                  null,
+                  null,
+                  null))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("canonical non-nil Account UUID");
     }

@@ -259,10 +259,9 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
         intakeClient(pki.gameDesignClient(), "gd-retry")) {
       assertThatThrownBy(() -> client.intake(scenario.intakeRequest()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAVAILABLE));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE));
 
       WorldAuthoredSourceIntakeReceipt committedAfterLostAck =
           repository.read(NAMESPACE, scenario.intakeRequestId()).orElseThrow();
@@ -370,18 +369,17 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
   private AuthoredWorldSourceClient sourceBoundary(Scenario scenario) {
     AuthoredWorldSourceClient syntheticSource = mock(AuthoredWorldSourceClient.class);
     when(syntheticSource.read(any(AuthoredWorldSourceGrpcCodec.ReadRequest.class)))
-        .thenAnswer(
-            invocation -> {
-              AuthoredWorldSourceGrpcCodec.ReadRequest request = invocation.getArgument(0);
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
-              assertThat(request.operationId()).isEqualTo(scenario.sourceOperationId());
-              assertThat(request.canonicalTenantId()).isEqualTo(scenario.canonicalTenantId());
-              assertThat(request.worldSlug()).isEqualTo(scenario.worldSlug());
-              AuthoredWorldSourceEvidence answer = scenario.sourceEvidence();
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return answer;
-            });
+        .thenAnswer(invocation -> {
+          AuthoredWorldSourceGrpcCodec.ReadRequest request = invocation.getArgument(0);
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+          assertThat(request.operationId()).isEqualTo(scenario.sourceOperationId());
+          assertThat(request.canonicalTenantId()).isEqualTo(scenario.canonicalTenantId());
+          assertThat(request.worldSlug()).isEqualTo(scenario.worldSlug());
+          AuthoredWorldSourceEvidence answer = scenario.sourceEvidence();
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return answer;
+        });
     return syntheticSource;
   }
 

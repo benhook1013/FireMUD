@@ -144,10 +144,8 @@ class AccountGameplayAdmissionOriginalAckReceiptRepositoryTest {
           .isInstanceOf(IllegalStateException.class);
     }
     var wrongDecision = committed(evidence, UUID.randomUUID());
-    assertThatThrownBy(
-            () ->
-                repository(dsl(evidence, wrongDecision, null, receipt))
-                    .readExact(evidence, decision))
+    assertThatThrownBy(() ->
+            repository(dsl(evidence, wrongDecision, null, receipt)).readExact(evidence, decision))
         .isInstanceOf(IllegalStateException.class);
 
     var changedCarrier = new java.util.LinkedHashMap<>(evidence.carrier());
@@ -168,181 +166,170 @@ class AccountGameplayAdmissionOriginalAckReceiptRepositoryTest {
     assertThat(valid.receiptXid()).isEqualTo("123457");
     assertThat(valid.committedBeforeMs()).isLessThan(valid.expiresAtMs());
 
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 2,
-                    valid.requestId(),
-                    valid.accountId(),
-                    valid.leaseId(),
-                    valid.leaseFence(),
-                    valid.evidenceSha256(),
-                    decision,
-                    valid.expiresAtMs(),
-                    valid.finalizationXid(),
-                    valid.committedBeforeMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 2,
+                valid.requestId(),
+                valid.accountId(),
+                valid.leaseId(),
+                valid.leaseFence(),
+                valid.evidenceSha256(),
+                decision,
+                valid.expiresAtMs(),
+                valid.finalizationXid(),
+                valid.committedBeforeMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    UUID.randomUUID(),
-                    valid.accountId(),
-                    valid.leaseId(),
-                    valid.leaseFence(),
-                    valid.evidenceSha256(),
-                    decision,
-                    valid.expiresAtMs(),
-                    valid.finalizationXid(),
-                    valid.committedBeforeMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                UUID.randomUUID(),
+                valid.accountId(),
+                valid.leaseId(),
+                valid.leaseFence(),
+                valid.evidenceSha256(),
+                decision,
+                valid.expiresAtMs(),
+                valid.finalizationXid(),
+                valid.committedBeforeMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    valid.requestId(),
-                    UUID.randomUUID(),
-                    valid.leaseId(),
-                    valid.leaseFence(),
-                    valid.evidenceSha256(),
-                    decision,
-                    valid.expiresAtMs(),
-                    valid.finalizationXid(),
-                    valid.committedBeforeMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                valid.requestId(),
+                UUID.randomUUID(),
+                valid.leaseId(),
+                valid.leaseFence(),
+                valid.evidenceSha256(),
+                decision,
+                valid.expiresAtMs(),
+                valid.finalizationXid(),
+                valid.committedBeforeMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    valid.requestId(),
-                    valid.accountId(),
-                    UUID.randomUUID(),
-                    valid.leaseFence(),
-                    valid.evidenceSha256(),
-                    decision,
-                    valid.expiresAtMs(),
-                    valid.finalizationXid(),
-                    valid.committedBeforeMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                valid.requestId(),
+                valid.accountId(),
+                UUID.randomUUID(),
+                valid.leaseFence(),
+                valid.evidenceSha256(),
+                decision,
+                valid.expiresAtMs(),
+                valid.finalizationXid(),
+                valid.committedBeforeMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    valid.requestId(),
-                    valid.accountId(),
-                    valid.leaseId(),
-                    valid.leaseFence() + 1,
-                    valid.evidenceSha256(),
-                    decision,
-                    valid.expiresAtMs(),
-                    valid.finalizationXid(),
-                    valid.committedBeforeMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                valid.requestId(),
+                valid.accountId(),
+                valid.leaseId(),
+                valid.leaseFence() + 1,
+                valid.evidenceSha256(),
+                decision,
+                valid.expiresAtMs(),
+                valid.finalizationXid(),
+                valid.committedBeforeMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    valid.requestId(),
-                    valid.accountId(),
-                    valid.leaseId(),
-                    valid.leaseFence(),
-                    "0".repeat(64),
-                    decision,
-                    valid.expiresAtMs(),
-                    valid.finalizationXid(),
-                    valid.committedBeforeMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                valid.requestId(),
+                valid.accountId(),
+                valid.leaseId(),
+                valid.leaseFence(),
+                "0".repeat(64),
+                decision,
+                valid.expiresAtMs(),
+                valid.finalizationXid(),
+                valid.committedBeforeMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    valid.requestId(),
-                    valid.accountId(),
-                    valid.leaseId(),
-                    valid.leaseFence(),
-                    valid.evidenceSha256(),
-                    UUID.randomUUID(),
-                    valid.expiresAtMs(),
-                    valid.finalizationXid(),
-                    valid.committedBeforeMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                valid.requestId(),
+                valid.accountId(),
+                valid.leaseId(),
+                valid.leaseFence(),
+                valid.evidenceSha256(),
+                UUID.randomUUID(),
+                valid.expiresAtMs(),
+                valid.finalizationXid(),
+                valid.committedBeforeMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    valid.requestId(),
-                    valid.accountId(),
-                    valid.leaseId(),
-                    valid.leaseFence(),
-                    valid.evidenceSha256(),
-                    decision,
-                    valid.expiresAtMs() + 1,
-                    valid.finalizationXid(),
-                    valid.committedBeforeMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                valid.requestId(),
+                valid.accountId(),
+                valid.leaseId(),
+                valid.leaseFence(),
+                valid.evidenceSha256(),
+                decision,
+                valid.expiresAtMs() + 1,
+                valid.finalizationXid(),
+                valid.committedBeforeMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    valid.requestId(),
-                    valid.accountId(),
-                    valid.leaseId(),
-                    valid.leaseFence(),
-                    valid.evidenceSha256(),
-                    decision,
-                    valid.expiresAtMs(),
-                    valid.finalizationXid(),
-                    valid.expiresAtMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                valid.requestId(),
+                valid.accountId(),
+                valid.leaseId(),
+                valid.leaseFence(),
+                valid.evidenceSha256(),
+                decision,
+                valid.expiresAtMs(),
+                valid.finalizationXid(),
+                valid.expiresAtMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    valid.requestId(),
-                    valid.accountId(),
-                    valid.leaseId(),
-                    valid.leaseFence(),
-                    valid.evidenceSha256(),
-                    decision,
-                    valid.expiresAtMs(),
-                    "18446744073709551616",
-                    valid.committedBeforeMs(),
-                    valid.receiptXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                valid.requestId(),
+                valid.accountId(),
+                valid.leaseId(),
+                valid.leaseFence(),
+                valid.evidenceSha256(),
+                decision,
+                valid.expiresAtMs(),
+                "18446744073709551616",
+                valid.committedBeforeMs(),
+                valid.receiptXid()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalAckReceipt(
-                    operation,
-                    (short) 1,
-                    valid.requestId(),
-                    valid.accountId(),
-                    valid.leaseId(),
-                    valid.leaseFence(),
-                    valid.evidenceSha256(),
-                    decision,
-                    valid.expiresAtMs(),
-                    valid.finalizationXid(),
-                    valid.committedBeforeMs(),
-                    valid.finalizationXid()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalAckReceipt(
+                operation,
+                (short) 1,
+                valid.requestId(),
+                valid.accountId(),
+                valid.leaseId(),
+                valid.leaseFence(),
+                valid.evidenceSha256(),
+                decision,
+                valid.expiresAtMs(),
+                valid.finalizationXid(),
+                valid.committedBeforeMs(),
+                valid.finalizationXid()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

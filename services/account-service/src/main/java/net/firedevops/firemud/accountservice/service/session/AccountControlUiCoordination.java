@@ -43,18 +43,17 @@ public final class AccountControlUiCoordination {
   /** Exact readback for the owner's protected delivery workflow. */
   public void requireExactActive(String tokenHash, byte[] exactActive, long expiryMillis) {
     outsideSql();
-    withConnection(
-        commands -> {
-          byte[] key = key(tokenHash);
-          if (!Arrays.equals(exactActive, commands.get(key))) {
-            throw denied();
-          }
-          Long expiry = commands.pexpiretime(key);
-          if (expiry == null || expiry != expiryMillis) {
-            throw denied();
-          }
-          return null;
-        });
+    withConnection(commands -> {
+      byte[] key = key(tokenHash);
+      if (!Arrays.equals(exactActive, commands.get(key))) {
+        throw denied();
+      }
+      Long expiry = commands.pexpiretime(key);
+      if (expiry == null || expiry != expiryMillis) {
+        throw denied();
+      }
+      return null;
+    });
   }
 
   /** Only package-local owner workflow may register a non-authorizing pending candidate. */
@@ -76,19 +75,18 @@ public final class AccountControlUiCoordination {
     outsideSql();
     byte[] replacement = AccountControlUiIssuanceRepository.revokedRegistry(original);
     byte[] expected =
-        withConnection(
-            commands -> {
-              byte[] observed = commands.get(key(original.tokenHash));
-              Long expiry = commands.pexpiretime(key(original.tokenHash));
-              if (expiry == null
-                  || expiry != original.expiryMillis()
-                  || (!Arrays.equals(observed, original.pendingRegistry)
-                      && !Arrays.equals(observed, original.activeRegistry)
-                      && !Arrays.equals(observed, replacement))) {
-                throw denied();
-              }
-              return observed;
-            });
+        withConnection(commands -> {
+          byte[] observed = commands.get(key(original.tokenHash));
+          Long expiry = commands.pexpiretime(key(original.tokenHash));
+          if (expiry == null
+              || expiry != original.expiryMillis()
+              || (!Arrays.equals(observed, original.pendingRegistry)
+                  && !Arrays.equals(observed, original.activeRegistry)
+                  && !Arrays.equals(observed, replacement))) {
+            throw denied();
+          }
+          return observed;
+        });
     return cas(original.tokenHash, expected, replacement, original.expiryMillis());
   }
 
@@ -120,53 +118,52 @@ public final class AccountControlUiCoordination {
     } catch (java.io.IOException | RuntimeException failure) {
       throw denied();
     }
-    return withConnection(
-        commands -> {
-          byte[] key = key(tokenHash);
-          String sha = commands.scriptLoad(source);
-          if (!digest("SHA-1", source).equals(sha)) {
-            throw denied();
-          }
-          Long outcome =
-              commands.evalsha(
-                  sha,
-                  ScriptOutputType.INTEGER,
-                  new byte[][] {key},
-                  expected,
-                  replacement,
-                  Long.toString(expiryMillis).getBytes(StandardCharsets.US_ASCII));
-          if (outcome == null || (outcome != 0L && outcome != 1L)) {
-            throw denied();
-          }
-          List<Object> counts =
-              commands.dispatch(
-                  WaitAof.INSTANCE,
-                  new ArrayOutput<>(ByteArrayCodec.INSTANCE),
-                  new CommandArgs<>(ByteArrayCodec.INSTANCE)
-                      .add(acknowledgements.requiredLocalAofCount())
-                      .add(acknowledgements.requiredReplicaAofCount())
-                      .add(acknowledgements.timeoutMillis()));
-          if (counts == null
-              || counts.size() != 2
-              || !(counts.get(0) instanceof Long local)
-              || !(counts.get(1) instanceof Long replicas)
-              || local < acknowledgements.requiredLocalAofCount()
-              || replicas < acknowledgements.requiredReplicaAofCount()) {
-            throw denied();
-          }
-          Long expiry = commands.pexpiretime(key);
-          if (!Arrays.equals(replacement, commands.get(key))
-              || expiry == null
-              || expiry != expiryMillis) {
-            throw denied();
-          }
-          return new Receipt(
-              tokenHash,
-              digest("SHA-256", replacement),
-              expiryMillis,
-              acknowledgements.requiredLocalAofCount(),
-              acknowledgements.requiredReplicaAofCount());
-        });
+    return withConnection(commands -> {
+      byte[] key = key(tokenHash);
+      String sha = commands.scriptLoad(source);
+      if (!digest("SHA-1", source).equals(sha)) {
+        throw denied();
+      }
+      Long outcome =
+          commands.evalsha(
+              sha,
+              ScriptOutputType.INTEGER,
+              new byte[][] {key},
+              expected,
+              replacement,
+              Long.toString(expiryMillis).getBytes(StandardCharsets.US_ASCII));
+      if (outcome == null || (outcome != 0L && outcome != 1L)) {
+        throw denied();
+      }
+      List<Object> counts =
+          commands.dispatch(
+              WaitAof.INSTANCE,
+              new ArrayOutput<>(ByteArrayCodec.INSTANCE),
+              new CommandArgs<>(ByteArrayCodec.INSTANCE)
+                  .add(acknowledgements.requiredLocalAofCount())
+                  .add(acknowledgements.requiredReplicaAofCount())
+                  .add(acknowledgements.timeoutMillis()));
+      if (counts == null
+          || counts.size() != 2
+          || !(counts.get(0) instanceof Long local)
+          || !(counts.get(1) instanceof Long replicas)
+          || local < acknowledgements.requiredLocalAofCount()
+          || replicas < acknowledgements.requiredReplicaAofCount()) {
+        throw denied();
+      }
+      Long expiry = commands.pexpiretime(key);
+      if (!Arrays.equals(replacement, commands.get(key))
+          || expiry == null
+          || expiry != expiryMillis) {
+        throw denied();
+      }
+      return new Receipt(
+          tokenHash,
+          digest("SHA-256", replacement),
+          expiryMillis,
+          acknowledgements.requiredLocalAofCount(),
+          acknowledgements.requiredReplicaAofCount());
+    });
   }
 
   private <T> T withConnection(

@@ -367,10 +367,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               requestId, originalJwt, mismatchedCaller, target, BigInteger.ONE);
       assertThatThrownBy(() -> withPeer(peer, () -> owner.acquire(mismatchedRequest)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                      .isEqualTo(Status.Code.UNAVAILABLE));
+          .satisfies(failure ->
+              assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE));
       assertThat(fixture.leaseAllocationState(originalRequestId, accountId))
           .isEqualTo(allocationAfterFirst);
       assertThat(fixture.sourceAndIssuanceImageForAuthenticatedAcquire())
@@ -400,10 +399,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               originalJwt, originalBytes, UUID.randomUUID());
       assertThatThrownBy(() -> withPeer(peer, () -> owner.finalizeLease(finalizeWire)))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                      .isEqualTo(Status.Code.UNAVAILABLE));
+          .satisfies(failure ->
+              assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE));
       assertThat(fixture.readLeaseOperation(originalLease).state())
           .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
 
@@ -529,29 +527,25 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         var sourceImageBeforeAnyRpc = fixture.sourceAndIssuanceImageForAuthenticatedAcquire();
         var allocatorBeforeAnyRpc = fixture.leaseAllocationState(accountRequestId, accountId);
         assertThat(allocatorBeforeAnyRpc).isEqualTo(new LeaseAllocationState(0L, 0L, null, null));
-        assertThatThrownBy(
-                () ->
-                    wrongRoleStub
-                        .withDeadlineAfter(5, TimeUnit.SECONDS)
-                        .acquireGameplayAdmissionLease(
-                            AcquireGameplayAdmissionLeaseRequest.getDefaultInstance()))
+        assertThatThrownBy(() ->
+                wrongRoleStub
+                    .withDeadlineAfter(5, TimeUnit.SECONDS)
+                    .acquireGameplayAdmissionLease(
+                        AcquireGameplayAdmissionLeaseRequest.getDefaultInstance()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
-        assertThatThrownBy(
-                () ->
-                    ClientCalls.blockingUnaryCall(
-                        wrongRoleStub.getChannel(),
-                        malformedAcquireMethod(),
-                        wrongRoleStub.getCallOptions().withDeadlineAfter(5, TimeUnit.SECONDS),
-                        new byte[] {0x0f}))
+            .satisfies(failure ->
+                assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
+        assertThatThrownBy(() ->
+                ClientCalls.blockingUnaryCall(
+                    wrongRoleStub.getChannel(),
+                    malformedAcquireMethod(),
+                    wrongRoleStub.getCallOptions().withDeadlineAfter(5, TimeUnit.SECONDS),
+                    new byte[] {0x0f}))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
         assertThat(fixture.leaseOperationCount()).isZero();
         assertThat(fixture.leaseAllocationState(accountRequestId, accountId))
             .isEqualTo(allocatorBeforeAnyRpc);
@@ -823,22 +817,19 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
         TokenIdentity tokenIdentity = fixture.tokenIdentity(fixture.committedCandidate);
         UUID revocationRequestId = UUID.randomUUID();
-        fixture.inSerializableTransaction(
-            () ->
-                fixture.tokenFences.beginRevocationIntent(
-                    tokenIdentity,
-                    revocationRequestId,
-                    AccountGameplayTokenIdentityFenceRepository.revocationDigest(
-                        tokenIdentity, revocationRequestId)));
-        assertThatThrownBy(
-                () ->
-                    stub.withDeadlineAfter(5, TimeUnit.SECONDS)
-                        .finalizeGameplayAdmissionLease(abortFinalizeWire))
+        fixture.inSerializableTransaction(() ->
+            fixture.tokenFences.beginRevocationIntent(
+                tokenIdentity,
+                revocationRequestId,
+                AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                    tokenIdentity, revocationRequestId)));
+        assertThatThrownBy(() ->
+                stub.withDeadlineAfter(5, TimeUnit.SECONDS)
+                    .finalizeGameplayAdmissionLease(abortFinalizeWire))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                        .isEqualTo(Status.Code.UNAVAILABLE));
+            .satisfies(failure ->
+                assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                    .isEqualTo(Status.Code.UNAVAILABLE));
         assertThat(abortDecisionReads.get()).isZero();
         assertThat(fixture.readLeaseOperation(abortedLease)).isEqualTo(retainedAbortBeforeFinalize);
         assertThat(fixture.leaseOperationCount()).isEqualTo(operationCountBeforeAbortFinalize);
@@ -882,25 +873,23 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     try {
       Future<AccountGameplayAdmissionOriginalCommitExecutor.OriginalCommitAcknowledgement>
           originalCommit =
-              executor.submit(
-                  () ->
-                      new AccountGameplayAdmissionOriginalCommitExecutor(commitBarrierDataSource)
-                          .executeWithCurrentSources(
-                              prepared.lease(), decisionId, TEST_NAMESPACE, prepared.candidate()));
+              executor.submit(() ->
+                  new AccountGameplayAdmissionOriginalCommitExecutor(commitBarrierDataSource)
+                      .executeWithCurrentSources(
+                          prepared.lease(), decisionId, TEST_NAMESPACE, prepared.candidate()));
       assertThat(originalCommitReached.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(originalBackendPid.get()).isPositive();
 
       Future<?> tenantWriter =
-          executor.submit(
-              () -> {
-                writerStarted.countDown();
-                try {
-                  fixture.disableTenantGameplay(currentEntitlement);
-                  return null;
-                } finally {
-                  writerCompleted.countDown();
-                }
-              });
+          executor.submit(() -> {
+            writerStarted.countDown();
+            try {
+              fixture.disableTenantGameplay(currentEntitlement);
+              return null;
+            } finally {
+              writerCompleted.countDown();
+            }
+          });
       assertThat(writerStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
       int blockedWriterPid =
@@ -956,32 +945,28 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     try {
       Future<AccountGameplayAdmissionOriginalCommitExecutor.OriginalCommitAcknowledgement>
           originalCommit =
-              executor.submit(
-                  () ->
-                      new AccountGameplayAdmissionOriginalCommitExecutor(commitBarrierDataSource)
-                          .executeWithCurrentSources(
-                              prepared.lease(), decisionId, TEST_NAMESPACE, prepared.candidate()));
+              executor.submit(() ->
+                  new AccountGameplayAdmissionOriginalCommitExecutor(commitBarrierDataSource)
+                      .executeWithCurrentSources(
+                          prepared.lease(), decisionId, TEST_NAMESPACE, prepared.candidate()));
       assertThat(originalCommitReached.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(originalBackendPid.get()).isPositive();
 
       Future<?> accountWriter =
-          executor.submit(
-              () -> {
-                writerStarted.countDown();
-                try {
-                  fixture.inSerializableTransaction(
-                      () -> {
-                        Account updated =
-                            fixture.accounts.findById(fixture.account.getId()).orElseThrow();
-                        updated.setPasswordHash("authority-writer-updated-password-hash");
-                        fixture.accounts.save(updated);
-                        return null;
-                      });
-                  return null;
-                } finally {
-                  writerCompleted.countDown();
-                }
+          executor.submit(() -> {
+            writerStarted.countDown();
+            try {
+              fixture.inSerializableTransaction(() -> {
+                Account updated = fixture.accounts.findById(fixture.account.getId()).orElseThrow();
+                updated.setPasswordHash("authority-writer-updated-password-hash");
+                fixture.accounts.save(updated);
+                return null;
               });
+              return null;
+            } finally {
+              writerCompleted.countDown();
+            }
+          });
       assertThat(writerStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
       int blockedWriterPid =
@@ -1042,32 +1027,29 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     try {
       Future<AccountGameplayAdmissionOriginalCommitExecutor.OriginalCommitAcknowledgement>
           originalCommit =
-              executor.submit(
-                  () ->
-                      new AccountGameplayAdmissionOriginalCommitExecutor(commitBarrierDataSource)
-                          .executeWithCurrentSources(
-                              prepared.lease(), decisionId, TEST_NAMESPACE, prepared.candidate()));
+              executor.submit(() ->
+                  new AccountGameplayAdmissionOriginalCommitExecutor(commitBarrierDataSource)
+                      .executeWithCurrentSources(
+                          prepared.lease(), decisionId, TEST_NAMESPACE, prepared.candidate()));
       assertThat(originalCommitReached.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(originalBackendPid.get()).isPositive();
 
       Future<?> tokenWriter =
-          executor.submit(
-              () -> {
-                writerStarted.countDown();
-                try {
-                  revocation.set(
-                      fixture.inSerializableTransaction(
-                          () ->
-                              fixture.tokenFences.beginRevocationIntent(
-                                  identity,
-                                  revocationRequestId,
-                                  AccountGameplayTokenIdentityFenceRepository.revocationDigest(
-                                      identity, revocationRequestId))));
-                  return null;
-                } finally {
-                  writerCompleted.countDown();
-                }
-              });
+          executor.submit(() -> {
+            writerStarted.countDown();
+            try {
+              revocation.set(
+                  fixture.inSerializableTransaction(() ->
+                      fixture.tokenFences.beginRevocationIntent(
+                          identity,
+                          revocationRequestId,
+                          AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                              identity, revocationRequestId))));
+              return null;
+            } finally {
+              writerCompleted.countDown();
+            }
+          });
       assertThat(writerStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
       int blockedWriterPid =
@@ -1120,11 +1102,10 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     assertThat(disabled.gameplayAvailable()).isFalse();
     assertThat(disabled.allowNewGameplayBindings()).isFalse();
 
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalCommitExecutor(fixture.dataSource)
-                    .executeWithCurrentSources(
-                        prepared.lease(), UUID.randomUUID(), TEST_NAMESPACE, prepared.candidate()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(fixture.dataSource)
+                .executeWithCurrentSources(
+                    prepared.lease(), UUID.randomUUID(), TEST_NAMESPACE, prepared.candidate()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("membership source tenantAuthorityGeneration current equality");
 
@@ -1144,22 +1125,20 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     TokenIdentity identity = fixture.tokenIdentity(prepared.candidate());
     UUID revocationRequestId = UUID.randomUUID();
     var pendingRevocation =
-        fixture.inSerializableTransaction(
-            () ->
-                fixture.tokenFences.beginRevocationIntent(
-                    identity,
-                    revocationRequestId,
-                    AccountGameplayTokenIdentityFenceRepository.revocationDigest(
-                        identity, revocationRequestId)));
+        fixture.inSerializableTransaction(() ->
+            fixture.tokenFences.beginRevocationIntent(
+                identity,
+                revocationRequestId,
+                AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                    identity, revocationRequestId)));
     assertThat(pendingRevocation.state())
         .isEqualTo(AccountGameplayTokenIdentityFence.State.PENDING);
     assertThat(pendingRevocation.tokenIdentityFence()).isEqualTo(2L);
 
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionOriginalCommitExecutor(fixture.dataSource)
-                    .executeWithCurrentSources(
-                        prepared.lease(), UUID.randomUUID(), TEST_NAMESPACE, prepared.candidate()))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(fixture.dataSource)
+                .executeWithCurrentSources(
+                    prepared.lease(), UUID.randomUUID(), TEST_NAMESPACE, prepared.candidate()))
         .isInstanceOf(IllegalStateException.class);
 
     assertThat(fixture.readCandidateRow(prepared.candidate()))
@@ -1219,19 +1198,17 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               new Object[] {leaseId, fence + 1, digest, cleanupId},
               new Object[] {leaseId, fence, "0".repeat(64), cleanupId},
               new Object[] {leaseId, fence, digest, UUID.randomUUID()})) {
-        assertThatThrownBy(
-                () ->
-                    fixture.inSerializableTransaction(
-                        () ->
-                            fixture.dsl.execute(
-                                insertion,
-                                requestId,
-                                UUID.randomUUID(),
-                                changed[0],
-                                changed[1],
-                                changed[2],
-                                changed[3],
-                                decisionId)))
+        assertThatThrownBy(() ->
+                fixture.inSerializableTransaction(() ->
+                    fixture.dsl.execute(
+                        insertion,
+                        requestId,
+                        UUID.randomUUID(),
+                        changed[0],
+                        changed[1],
+                        changed[2],
+                        changed[3],
+                        decisionId)))
             .isInstanceOf(org.jooq.exception.DataAccessException.class)
             .hasMessageContaining("Exact original unknown-decision abort linkage required");
       }
@@ -1248,11 +1225,10 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       assertThat(first.get().getBindingDecisionUuidCount()).isZero();
       assertThat(first.get().getOrphanCleanupUuidList()).containsExactly(cleanupId.toString());
       var retained =
-          fixture.inSerializableTransaction(
-              () ->
-                  new AccountGameplayAdmissionAbortResolutionRepository(fixture.dsl)
-                      .readExact(prepared.lease(), cleanupId, decisionId)
-                      .orElseThrow());
+          fixture.inSerializableTransaction(() ->
+              new AccountGameplayAdmissionAbortResolutionRepository(fixture.dsl)
+                  .readExact(prepared.lease(), cleanupId, decisionId)
+                  .orElseThrow());
       assertThat(retained)
           .isEqualTo(
               new AccountGameplayAdmissionAbortResolution(
@@ -1346,13 +1322,12 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                 assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
                 TokenIdentity token = fixture.tokenIdentity(fixture.committedCandidate);
                 UUID revocation = UUID.randomUUID();
-                fixture.inSerializableTransaction(
-                    () ->
-                        fixture.tokenFences.beginRevocationIntent(
-                            token,
-                            revocation,
-                            AccountGameplayTokenIdentityFenceRepository.revocationDigest(
-                                token, revocation)));
+                fixture.inSerializableTransaction(() ->
+                    fixture.tokenFences.beginRevocationIntent(
+                        token,
+                        revocation,
+                        AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                            token, revocation)));
                 callerMovementReached.set(true);
                 return decision;
               })
@@ -1865,28 +1840,25 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       Candidate candidate,
       Target target) {
     when(decisionClient.read(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              UUID decisionId = invocation.getArgument(0);
-              AccountGameplayAdmissionLeaseEvidence expectedLease = invocation.getArgument(1);
-              var wireRead =
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toRequest(
-                      decisionId, expectedLease);
-              var parsedRead =
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(wireRead);
-              var controlledWireEvidence =
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toResponse(
-                      parsedRead,
-                      decisionId,
-                      expectedLease,
-                      BigInteger.ONE,
-                      null,
-                      null,
-                      candidate,
-                      target);
-              return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromResponse(
-                  parsedRead, controlledWireEvidence);
-            });
+        .thenAnswer(invocation -> {
+          UUID decisionId = invocation.getArgument(0);
+          AccountGameplayAdmissionLeaseEvidence expectedLease = invocation.getArgument(1);
+          var wireRead =
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toRequest(decisionId, expectedLease);
+          var parsedRead = CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(wireRead);
+          var controlledWireEvidence =
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toResponse(
+                  parsedRead,
+                  decisionId,
+                  expectedLease,
+                  BigInteger.ONE,
+                  null,
+                  null,
+                  candidate,
+                  target);
+          return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromResponse(
+              parsedRead, controlledWireEvidence);
+        });
   }
 
   private static MethodDescriptor<byte[], AccountGameplayAdmissionLeaseResponse>
@@ -1926,12 +1898,11 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     Optional<AccountSecurityCutoff> accountCutoff =
         tuple
             .accountSecurityCutoff()
-            .map(
-                cutoff ->
-                    new AccountSecurityCutoff(
-                        cutoff.accountAuthorityGeneration(),
-                        cutoff.outboxStreamKey(),
-                        cutoff.outboxSequence()));
+            .map(cutoff ->
+                new AccountSecurityCutoff(
+                    cutoff.accountAuthorityGeneration(),
+                    cutoff.outboxStreamKey(),
+                    cutoff.outboxSequence()));
     Map<String, Object> authorityTuple =
         new LinkedHashMap<>(
             GameSessionAccountDelegationProfile.authorityTuple(
@@ -1943,20 +1914,18 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     authorityTuple.put("privateRealmGrantVersions", tuple.privateRealmGrantVersions());
     tuple
         .tenantBillingCutoff()
-        .ifPresent(
-            cutoffs -> {
-              Map<String, Object> mapped = new LinkedHashMap<>();
-              cutoffs.forEach(
-                  (tenantId, cutoff) ->
-                      mapped.put(
-                          tenantId,
-                          Map.of(
-                              "tenantAuthorityGeneration", cutoff.tenantAuthorityGeneration(),
-                              "tenantBillingSequence", cutoff.tenantBillingSequence(),
-                              "outboxStreamKey", cutoff.outboxStreamKey(),
-                              "outboxSequence", cutoff.outboxSequence())));
-              authorityTuple.put("tenantBillingCutoff", Map.copyOf(mapped));
-            });
+        .ifPresent(cutoffs -> {
+          Map<String, Object> mapped = new LinkedHashMap<>();
+          cutoffs.forEach((tenantId, cutoff) ->
+              mapped.put(
+                  tenantId,
+                  Map.of(
+                      "tenantAuthorityGeneration", cutoff.tenantAuthorityGeneration(),
+                      "tenantBillingSequence", cutoff.tenantBillingSequence(),
+                      "outboxStreamKey", cutoff.outboxStreamKey(),
+                      "outboxSequence", cutoff.outboxSequence())));
+          authorityTuple.put("tenantBillingCutoff", Map.copyOf(mapped));
+        });
 
     Map<String, Object> membershipBaseline =
         Map.of(
@@ -1965,11 +1934,10 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
             "membershipAuthorityGeneration", snapshot.membershipAuthorityGeneration());
     List<Map<String, String>> outboxCheckpoints =
         snapshot.checkpoints().stream()
-            .map(
-                checkpoint ->
-                    Map.of(
-                        "outboxStreamKey", checkpoint.outboxStreamKey(),
-                        "outboxSequence", checkpoint.outboxSequence()))
+            .map(checkpoint ->
+                Map.of(
+                    "outboxStreamKey", checkpoint.outboxStreamKey(),
+                    "outboxSequence", checkpoint.outboxSequence()))
             .toList();
     TokenIdentity tokenIdentity = fixture.tokenIdentity(candidate);
     var activeFence = fixture.tokenFences.requireActiveReadback(tokenIdentity);
@@ -2157,10 +2125,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           new AccountAuthEvidenceBundleRepository(dsl, generations, authorityOutbox);
       this.issuance = new AccountGameplayDelegationIssuanceRepository(dsl, sourceEvidence, bundles);
       this.issuanceSource =
-          transaction.execute(
-              status ->
-                  sourceEvidence.readCurrentIssuerAccountSources(
-                      ACCOUNT_ISSUER, account.getAccountUuid()));
+          transaction.execute(status ->
+              sourceEvidence.readCurrentIssuerAccountSources(
+                  ACCOUNT_ISSUER, account.getAccountUuid()));
       this.committedCandidate = createCommittedIssuanceCandidate(bundles, redisClient);
     }
 
@@ -2171,13 +2138,11 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     void beginPlayerEntitlementLoginRevocation() {
       var identity = tokenIdentity(committedCandidate);
       UUID requestId = UUID.randomUUID();
-      transaction.execute(
-          status ->
-              tokenFences.beginRevocationIntent(
-                  identity,
-                  requestId,
-                  AccountGameplayTokenIdentityFenceRepository.revocationDigest(
-                      identity, requestId)));
+      transaction.execute(status ->
+          tokenFences.beginRevocationIntent(
+              identity,
+              requestId,
+              AccountGameplayTokenIdentityFenceRepository.revocationDigest(identity, requestId)));
     }
 
     net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner
@@ -2221,36 +2186,31 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
     private void establishTenantEntitlementAndMembership(
         AccountConnectScopeRepository connectScopes) {
-      transaction.execute(
-          status -> {
-            freshTenants.importVerified(tenantEvidence);
-            sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
-            generations.initializeTenantIfAbsent(tenantUuid);
-            generations.initialize(AuthorityScope.membership(account.getAccountUuid(), tenantUuid));
-            connectScopes.insertCanonical(account.getId(), joinScope, tenantProvenance);
-            joinOperations.insertCanonicalIntent(
-                joinRequestId.toString(), joinScope, callerBinding);
-            return null;
-          });
+      transaction.execute(status -> {
+        freshTenants.importVerified(tenantEvidence);
+        sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
+        generations.initializeTenantIfAbsent(tenantUuid);
+        generations.initialize(AuthorityScope.membership(account.getAccountUuid(), tenantUuid));
+        connectScopes.insertCanonical(account.getId(), joinScope, tenantProvenance);
+        joinOperations.insertCanonicalIntent(joinRequestId.toString(), joinScope, callerBinding);
+        return null;
+      });
       DemoTenantEntitlementSnapshot entitlement =
-          transaction.execute(
-              status ->
-                  demoEntitlements.provision(
-                      AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest
-                          .entitlementRequest(tenantUuid, tenantEvidence),
-                      tenantEvidence));
-      transaction.execute(
-          status -> {
-            joinOperations.bindCanonicalPolicyEvidence(
-                joinRequestId.toString(),
-                joinScope,
-                callerBinding,
-                entitlement.allowPublicJoin(),
-                entitlement.entitlementVersion());
-            joinTerminal.commitCanonicalFirstJoin(
-                joinScope, joinRequestId.toString(), callerBinding);
-            return null;
-          });
+          transaction.execute(status ->
+              demoEntitlements.provision(
+                  AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.entitlementRequest(
+                      tenantUuid, tenantEvidence),
+                  tenantEvidence));
+      transaction.execute(status -> {
+        joinOperations.bindCanonicalPolicyEvidence(
+            joinRequestId.toString(),
+            joinScope,
+            callerBinding,
+            entitlement.allowPublicJoin(),
+            entitlement.entitlementVersion());
+        joinTerminal.commitCanonicalFirstJoin(joinScope, joinRequestId.toString(), callerBinding);
+        return null;
+      });
     }
 
     private CommittedCandidateVerificationData createCommittedIssuanceCandidate(
@@ -2262,12 +2222,11 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           issuanceSource
               .account()
               .accountSecurityCutoff()
-              .map(
-                  value ->
-                      new AccountSecurityCutoff(
-                          value.accountAuthorityGeneration(),
-                          value.outboxStreamKey(),
-                          value.outboxSequence()));
+              .map(value ->
+                  new AccountSecurityCutoff(
+                      value.accountAuthorityGeneration(),
+                      value.outboxStreamKey(),
+                      value.outboxSequence()));
       UUID operationId = UUID.randomUUID();
       UUID requestId = UUID.randomUUID();
       UUID callerContextId = UUID.randomUUID();
@@ -2358,41 +2317,39 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
     private AccountGameplayAdmissionCurrentSources.Current readCurrent(
         CommittedCandidateVerificationData expectedCandidate) {
-      return serializable.execute(
-          status -> {
-            if (!TransactionSynchronizationManager.isActualTransactionActive()
-                || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
-                || !Integer.valueOf(Connection.TRANSACTION_SERIALIZABLE)
-                    .equals(
-                        TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
-              throw new IllegalStateException("Expected writable SERIALIZABLE Account transaction");
-            }
-            Object resource = TransactionSynchronizationManager.getResource(dataSource);
-            if (!(resource instanceof ConnectionHolder holder)) {
-              throw new IllegalStateException("Expected the manager-enlisted Account connection");
-            }
-            Connection connection = holder.getConnection();
-            DSLContext exactDsl = DSL.using(connection, SQLDialect.POSTGRES);
-            try {
-              Integer backendBefore =
-                  exactDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
-              var current =
-                  AccountGameplayAdmissionCurrentSources.bind(exactDsl, TEST_NAMESPACE)
-                      .readCurrentPublicProductionNew(
-                          tenantUuid, expectedCandidate.identity().tokenJti(), expectedCandidate);
-              Integer backendAfter =
-                  exactDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
-              assertThat(backendAfter).isEqualTo(backendBefore);
-              assertThat(connection.getAutoCommit()).isFalse();
-              assertThat(connection.isReadOnly()).isFalse();
-              assertThat(connection.getTransactionIsolation())
-                  .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
-              return current;
-            } catch (SQLException failure) {
-              throw new IllegalStateException(
-                  "Could not verify the enlisted Account connection", failure);
-            }
-          });
+      return serializable.execute(status -> {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+            || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
+            || !Integer.valueOf(Connection.TRANSACTION_SERIALIZABLE)
+                .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())) {
+          throw new IllegalStateException("Expected writable SERIALIZABLE Account transaction");
+        }
+        Object resource = TransactionSynchronizationManager.getResource(dataSource);
+        if (!(resource instanceof ConnectionHolder holder)) {
+          throw new IllegalStateException("Expected the manager-enlisted Account connection");
+        }
+        Connection connection = holder.getConnection();
+        DSLContext exactDsl = DSL.using(connection, SQLDialect.POSTGRES);
+        try {
+          Integer backendBefore =
+              exactDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+          var current =
+              AccountGameplayAdmissionCurrentSources.bind(exactDsl, TEST_NAMESPACE)
+                  .readCurrentPublicProductionNew(
+                      tenantUuid, expectedCandidate.identity().tokenJti(), expectedCandidate);
+          Integer backendAfter =
+              exactDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+          assertThat(backendAfter).isEqualTo(backendBefore);
+          assertThat(connection.getAutoCommit()).isFalse();
+          assertThat(connection.isReadOnly()).isFalse();
+          assertThat(connection.getTransactionIsolation())
+              .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
+          return current;
+        } catch (SQLException failure) {
+          throw new IllegalStateException(
+              "Could not verify the enlisted Account connection", failure);
+        }
+      });
     }
 
     private PreparedAdmission prepareAdmission() {
@@ -2403,30 +2360,29 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
     private AccountGameplayAdmissionLeaseEvidence beginPendingAdmissionLease(
         AccountGameplayAdmissionCurrentSources.Current current) {
-      return inSerializableTransaction(
-          () -> {
-            UUID requestId = UUID.randomUUID();
-            UUID leaseId = UUID.randomUUID();
-            var allocation = leases.allocate(account.getAccountUuid(), requestId, leaseId);
-            long evaluatedAt = currentDatabaseMillisOnEnlistedConnection();
-            Map<String, Object> carrier = new LinkedHashMap<>();
-            carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
-            carrier.put("schemaVersion", "1");
-            carrier.put("mode", "PUBLIC_PRODUCTION");
-            carrier.put("targetNamespace", TEST_NAMESPACE);
-            carrier.put("callerWorkload", CALLER_WORKLOAD);
-            carrier.put("requestId", allocation.requestId().toString());
-            carrier.put("leaseId", allocation.leaseId().toString());
-            carrier.put("leaseFence", Long.toString(allocation.leaseFence()));
-            carrier.put("leaseKind", "NEW_BINDING");
-            carrier.put("bindingScope", bindingScope());
-            carrier.putAll(current.leaseSourceFields());
-            carrier.put("evaluatedAt", Long.toString(evaluatedAt));
-            carrier.put("expiresAt", Long.toString(evaluatedAt + 14_000L));
-            var evidence = AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
-            leases.beginPending(evidence);
-            return evidence;
-          });
+      return inSerializableTransaction(() -> {
+        UUID requestId = UUID.randomUUID();
+        UUID leaseId = UUID.randomUUID();
+        var allocation = leases.allocate(account.getAccountUuid(), requestId, leaseId);
+        long evaluatedAt = currentDatabaseMillisOnEnlistedConnection();
+        Map<String, Object> carrier = new LinkedHashMap<>();
+        carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+        carrier.put("schemaVersion", "1");
+        carrier.put("mode", "PUBLIC_PRODUCTION");
+        carrier.put("targetNamespace", TEST_NAMESPACE);
+        carrier.put("callerWorkload", CALLER_WORKLOAD);
+        carrier.put("requestId", allocation.requestId().toString());
+        carrier.put("leaseId", allocation.leaseId().toString());
+        carrier.put("leaseFence", Long.toString(allocation.leaseFence()));
+        carrier.put("leaseKind", "NEW_BINDING");
+        carrier.put("bindingScope", bindingScope());
+        carrier.putAll(current.leaseSourceFields());
+        carrier.put("evaluatedAt", Long.toString(evaluatedAt));
+        carrier.put("expiresAt", Long.toString(evaluatedAt + 14_000L));
+        var evidence = AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+        leases.beginPending(evidence);
+        return evidence;
+      });
     }
 
     private Map<String, Object> bindingScope() {
@@ -2449,11 +2405,10 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     }
 
     private CommittedCandidateVerificationData readCommittedCandidate() {
-      return transaction.execute(
-          status ->
-              issuance
-                  .readCurrentCommittedCandidateByJti(committedCandidate.identity().tokenJti())
-                  .orElseThrow());
+      return transaction.execute(status ->
+          issuance
+              .readCurrentCommittedCandidateByJti(committedCandidate.identity().tokenJti())
+              .orElseThrow());
     }
 
     private TokenIdentity tokenIdentity(CommittedCandidateVerificationData candidate) {
@@ -2493,14 +2448,13 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
     private AccountGameplayAdmissionLeaseOperation readLeaseOperation(
         AccountGameplayAdmissionLeaseEvidence evidence) {
-      return inSerializableTransaction(
-          () ->
-              leases
-                  .findByRequest(
-                      account.getAccountUuid(),
-                      UUID.fromString((String) evidence.carrier().get("requestId")),
-                      CALLER_WORKLOAD)
-                  .orElseThrow());
+      return inSerializableTransaction(() ->
+          leases
+              .findByRequest(
+                  account.getAccountUuid(),
+                  UUID.fromString((String) evidence.carrier().get("requestId")),
+                  CALLER_WORKLOAD)
+              .orElseThrow());
     }
 
     private CandidateRow readCandidateRow(CommittedCandidateVerificationData candidate) {
@@ -2617,22 +2571,20 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     /** Adds only the two legitimate allocator-table exclusions to the original strict image. */
     private List<String> sourceAndIssuanceImageForAuthenticatedAcquire() {
       return sourceAndIssuanceImage().stream()
-          .filter(
-              tableImage ->
-                  !tableImage.startsWith("account_gameplay_admission_lease_allocations:")
-                      && !tableImage.startsWith("account_gameplay_admission_lease_fences:"))
+          .filter(tableImage ->
+              !tableImage.startsWith("account_gameplay_admission_lease_allocations:")
+                  && !tableImage.startsWith("account_gameplay_admission_lease_fences:"))
           .toList();
     }
 
     /** Also excludes only the durable ACK table legitimately written by fresh finalization. */
     private List<String> sourceAndIssuanceImageForAuthenticatedCommit() {
       return sourceAndIssuanceImage().stream()
-          .filter(
-              tableImage ->
-                  !tableImage.startsWith("account_gameplay_admission_lease_allocations:")
-                      && !tableImage.startsWith("account_gameplay_admission_lease_fences:")
-                      && !tableImage.startsWith(
-                          "account_gameplay_admission_original_commit_ack_receipts:"))
+          .filter(tableImage ->
+              !tableImage.startsWith("account_gameplay_admission_lease_allocations:")
+                  && !tableImage.startsWith("account_gameplay_admission_lease_fences:")
+                  && !tableImage.startsWith(
+                      "account_gameplay_admission_original_commit_ack_receipts:"))
           .toList();
     }
 
@@ -3024,45 +2976,43 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
       when(commands.<Long>evalsha(
               anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
-          .thenAnswer(
-              invocation -> {
-                byte[][] keys = (byte[][]) invocation.getRawArguments()[2];
-                byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
-                String key = new String(keys[0], StandardCharsets.US_ASCII);
-                if (key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
-                  if (arguments.length == 2) pendingRecord.set(arguments[0].clone());
-                  else if (arguments.length == 3) pendingRecord.set(arguments[1].clone());
-                  else throw new AssertionError("Unexpected token registry script arguments");
-                  absoluteExpiryMillis.set(
-                      Long.parseLong(
-                          new String(arguments[arguments.length - 1], StandardCharsets.US_ASCII)));
-                } else if (key.equals(
-                    AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
-                        + GameSessionAccountDelegationProfile.ISSUER)) {
-                  authorityProjectionBytes[0] = arguments[0].clone();
-                } else if (key.equals(
-                    AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)) {
-                  if (arguments.length == 3 && arguments[2].length > 0) {
-                    authorityProjectionBytes[1] = arguments[2].clone();
-                  }
-                }
-                return 1L;
-              });
+          .thenAnswer(invocation -> {
+            byte[][] keys = (byte[][]) invocation.getRawArguments()[2];
+            byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
+            String key = new String(keys[0], StandardCharsets.US_ASCII);
+            if (key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
+              if (arguments.length == 2) pendingRecord.set(arguments[0].clone());
+              else if (arguments.length == 3) pendingRecord.set(arguments[1].clone());
+              else throw new AssertionError("Unexpected token registry script arguments");
+              absoluteExpiryMillis.set(
+                  Long.parseLong(
+                      new String(arguments[arguments.length - 1], StandardCharsets.US_ASCII)));
+            } else if (key.equals(
+                AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
+                    + GameSessionAccountDelegationProfile.ISSUER)) {
+              authorityProjectionBytes[0] = arguments[0].clone();
+            } else if (key.equals(
+                AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)) {
+              if (arguments.length == 3 && arguments[2].length > 0) {
+                authorityProjectionBytes[1] = arguments[2].clone();
+              }
+            }
+            return 1L;
+          });
       when(commands.get(any(byte[].class)))
-          .thenAnswer(
-              invocation -> {
-                String key = new String(invocation.getArgument(0), StandardCharsets.US_ASCII);
-                if (key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
-                  byte[] value = pendingRecord.get();
-                  return value == null ? null : value.clone();
-                }
-                if ((AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
-                        + GameSessionAccountDelegationProfile.ISSUER)
-                    .equals(key)) return authorityProjectionBytes[0].clone();
-                if ((AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)
-                    .equals(key)) return authorityProjectionBytes[1].clone();
-                return null;
-              });
+          .thenAnswer(invocation -> {
+            String key = new String(invocation.getArgument(0), StandardCharsets.US_ASCII);
+            if (key.startsWith(AccountGameplayDelegationRedisClient.TOKEN_KEY_PREFIX)) {
+              byte[] value = pendingRecord.get();
+              return value == null ? null : value.clone();
+            }
+            if ((AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
+                    + GameSessionAccountDelegationProfile.ISSUER)
+                .equals(key)) return authorityProjectionBytes[0].clone();
+            if ((AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)
+                .equals(key)) return authorityProjectionBytes[1].clone();
+            return null;
+          });
       when(commands.pexpiretime(any(byte[].class)))
           .thenAnswer(invocation -> absoluteExpiryMillis.get());
       when(commands.pttl(any(byte[].class))).thenReturn(-1L);

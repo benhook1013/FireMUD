@@ -46,11 +46,10 @@ public final class WorldDraftGraphAppliedResult {
     result.put("operationBytesBase64", base64(application.operation().canonicalBytes()));
     result.put("graphBytesBase64", base64(this.graphBytes));
     result.put("graphDigest", digest(this.graphBytes));
-    startLocationReceipt.ifPresent(
-        receipt -> {
-          result.put("startLocationReceiptBase64", base64(receipt.canonicalBytes()));
-          result.put("startLocationReceiptDigest", receipt.receiptDigest());
-        });
+    startLocationReceipt.ifPresent(receipt -> {
+      result.put("startLocationReceiptBase64", base64(receipt.canonicalBytes()));
+      result.put("startLocationReceiptDigest", receipt.receiptDigest());
+    });
     result.put("appliedEpochs", appliedEpochs());
     try {
       canonicalBytes =
@@ -131,15 +130,14 @@ public final class WorldDraftGraphAppliedResult {
 
   public List<AppliedEpoch> appliedEpochs() {
     return application.operation().binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-        .map(
-            unit ->
-                new AppliedEpoch(
-                    unit.aggregateType(),
-                    unit.aggregateId(),
-                    unit.scopeType(),
-                    unit.scopeId(),
-                    unit.expectedEpoch(),
-                    new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+        .map(unit ->
+            new AppliedEpoch(
+                unit.aggregateType(),
+                unit.aggregateId(),
+                unit.scopeType(),
+                unit.scopeId(),
+                unit.expectedEpoch(),
+                new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
         .toList();
   }
 

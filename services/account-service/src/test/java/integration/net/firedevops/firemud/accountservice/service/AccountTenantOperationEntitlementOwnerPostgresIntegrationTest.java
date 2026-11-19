@@ -167,21 +167,19 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
     assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
     String marker = "capture_marker_" + UUID.randomUUID().toString().replace("-", "");
     AtomicInteger captures = new AtomicInteger();
-    assertThatThrownBy(
-            () ->
-                f.service()
-                    .readCurrentAndCapture(
-                        f.tenantId(),
-                        receipt -> {
-                          captures.incrementAndGet();
-                          assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                              .isTrue();
-                          assertThat(
-                                  TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                              .isFalse();
-                          f.dsl().execute("CREATE TABLE " + marker + " (id bigint)");
-                          throw new IllegalStateException("controlled capture rollback");
-                        }))
+    assertThatThrownBy(() ->
+            f.service()
+                .readCurrentAndCapture(
+                    f.tenantId(),
+                    receipt -> {
+                      captures.incrementAndGet();
+                      assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                          .isTrue();
+                      assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                          .isFalse();
+                      f.dsl().execute("CREATE TABLE " + marker + " (id bigint)");
+                      throw new IllegalStateException("controlled capture rollback");
+                    }))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE")
         .hasCauseInstanceOf(IllegalStateException.class)
         .hasRootCauseMessage("controlled capture rollback");
@@ -203,26 +201,25 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
     var tenantSources = new FreshTenantIdentityAssociationRepository(f.dsl(), "prod");
     var committed =
         f.transaction()
-            .execute(
-                status -> {
-                  var source = tenantSources.read(f.tenantId()).orElseThrow();
-                  return c.demos()
-                      .provision(
-                          new DemoTenantEntitlementRequest(
-                              UUID.randomUUID(),
-                              f.tenantId(),
-                              source.creationRequestId(),
-                              source.requestDigest(),
-                              null,
-                              null,
-                              null,
-                              true,
-                              false,
-                              true,
-                              false,
-                              new DemoTenantEntitlementRequest.Quotas(3, 1, 500)),
-                          source);
-                });
+            .execute(status -> {
+              var source = tenantSources.read(f.tenantId()).orElseThrow();
+              return c.demos()
+                  .provision(
+                      new DemoTenantEntitlementRequest(
+                          UUID.randomUUID(),
+                          f.tenantId(),
+                          source.creationRequestId(),
+                          source.requestDigest(),
+                          null,
+                          null,
+                          null,
+                          true,
+                          false,
+                          true,
+                          false,
+                          new DemoTenantEntitlementRequest.Quotas(3, 1, 500)),
+                      source);
+            });
     assertThat(committed).isNotNull();
     int beforeReads = f.transport().reads();
     var evaluated = c.owner().evaluateDemo(new Request(f.tenantId(), UUID.randomUUID(), WORLD));
@@ -245,21 +242,19 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
   void wrongWorkloadNamespaceAndPlayerRequestsFailBeforeSourceReads() {
     Context c = context();
     var f = c.fixture();
-    assertThatThrownBy(
-            () ->
-                c.owner()
-                    .evaluatePaid(
-                        new Request(
-                            f.tenantId(),
-                            UUID.randomUUID(),
-                            "spiffe://firemud/ns/another/sa/world-management-service")))
+    assertThatThrownBy(() ->
+            c.owner()
+                .evaluatePaid(
+                    new Request(
+                        f.tenantId(),
+                        UUID.randomUUID(),
+                        "spiffe://firemud/ns/another/sa/world-management-service")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Request(
-                    f.tenantId(),
-                    UUID.randomUUID(),
-                    "spiffe://firemud/ns/prod/sa/game-session-service"))
+    assertThatThrownBy(() ->
+            new Request(
+                f.tenantId(),
+                UUID.randomUUID(),
+                "spiffe://firemud/ns/prod/sa/game-session-service"))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new Request(new UUID(0L, 0L), UUID.randomUUID(), WORLD))
         .isInstanceOf(IllegalArgumentException.class);
@@ -272,12 +267,10 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
     var expected =
         c.fixture()
             .transaction()
-            .execute(
-                status ->
-                    new AccountAuthorityOutboxRepository(c.fixture().dsl())
-                        .readCheckpoint(
-                            TenantAuthorityEventV1Codec.streamKey(c.fixture().tenantId()))
-                        .orElseThrow());
+            .execute(status ->
+                new AccountAuthorityOutboxRepository(c.fixture().dsl())
+                    .readCheckpoint(TenantAuthorityEventV1Codec.streamKey(c.fixture().tenantId()))
+                    .orElseThrow());
     assertThat(expected).isNotNull();
     var actual = (List<Map<String, Object>>) value.fields().get("outboxCheckpoints");
     assertThat(actual)

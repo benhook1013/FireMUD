@@ -107,18 +107,17 @@ class WorldDraftStartLocationEvidenceTest {
       assertRejected(changed(change));
     }
 
-    assertThatThrownBy(
-            () ->
-                WorldDraftStartLocationEvidence.create(
-                    "invalid/namespace",
-                    OPERATION_ID,
-                    REQUEST_ID,
-                    COMMIT_ID,
-                    FENCE_ID,
-                    ACCOUNT_BINDING_DIGEST,
-                    BINDING_DIGEST,
-                    START_LOCATION,
-                    GRAPH_DIGEST))
+    assertThatThrownBy(() ->
+            WorldDraftStartLocationEvidence.create(
+                "invalid/namespace",
+                OPERATION_ID,
+                REQUEST_ID,
+                COMMIT_ID,
+                FENCE_ID,
+                ACCOUNT_BINDING_DIGEST,
+                BINDING_DIGEST,
+                START_LOCATION,
+                GRAPH_DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

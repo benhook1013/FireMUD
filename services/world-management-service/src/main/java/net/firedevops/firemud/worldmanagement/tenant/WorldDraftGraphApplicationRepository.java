@@ -227,9 +227,8 @@ public class WorldDraftGraphApplicationRepository {
     var result = WorldDraftGraphAppliedResult.create(application, stored.graphBytes());
     result
         .startLocationReceipt()
-        .ifPresent(
-            receipt ->
-                startLocations.store(receipt, application.operation().accountBindingBytes()));
+        .ifPresent(receipt ->
+            startLocations.store(receipt, application.operation().accountBindingBytes()));
     dsl.execute(
         "INSERT INTO world_draft_graph_application (operation_id,request_id,commit_id,authorization_fence_id,"
             + "operation_bytes,account_binding_bytes,account_binding_digest,result_bytes,result_digest) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -490,12 +489,11 @@ public class WorldDraftGraphApplicationRepository {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly())
       throw new ConflictException("Writable World application transaction required");
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED)
-            throw new ConflictException("World application requires READ_COMMITTED");
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED)
+        throw new ConflictException("World application requires READ_COMMITTED");
+    });
   }
 }

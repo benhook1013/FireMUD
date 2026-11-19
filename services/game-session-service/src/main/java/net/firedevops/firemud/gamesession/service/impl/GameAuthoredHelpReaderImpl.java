@@ -32,9 +32,8 @@ public class GameAuthoredHelpReaderImpl implements GameAuthoredHelpReader {
         .filter(instance -> matchesAdmittedRuntime(context, instance))
         .map(GameInstance::getGameTemplateId)
         .filter(templateId -> templateId != null && templateId > 0L)
-        .flatMap(
-            templateId ->
-                gameDesignClient.resolveAuthoredHelpTopic(context.tenantId(), templateId, topic));
+        .flatMap(templateId ->
+            gameDesignClient.resolveAuthoredHelpTopic(context.tenantId(), templateId, topic));
   }
 
   private boolean matchesAdmittedRuntime(SessionContext context, GameInstance instance) {

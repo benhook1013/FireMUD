@@ -28,8 +28,8 @@ import org.springframework.dao.TransientDataAccessException;
 
 /**
  * Opt-in gRPC adapter for authenticated authored-source intake and exact receipt readback. World
- * binds the trusted namespace locally, and each method independently requires the exact same-
- * namespace Game Design mTLS peer.
+ * binds the trusted namespace locally, and each method independently requires the exact
+ * same-namespace Game Design mTLS peer.
  */
 public final class WorldAuthoredSourceIntakeGrpcService
     extends WorldAuthoredSourceIntakeServiceGrpc.WorldAuthoredSourceIntakeServiceImplBase {

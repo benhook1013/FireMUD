@@ -74,16 +74,12 @@ class TemplateConfigSourceTest {
         .hasMessage("TEMPLATE_CONFIG_AUTOMATION_EXACT_OWNER_READ_UNAVAILABLE");
     assertThatThrownBy(patch::requireAvailableOwnerReads)
         .hasMessage("TEMPLATE_CONFIG_AUTOMATION_EXACT_OWNER_READ_UNAVAILABLE");
-    assertThatThrownBy(
-            () ->
-                new TemplateConfigSource.Config(
-                    config().replace("\"items\":[]", "\"equipment\":[]")))
+    assertThatThrownBy(() ->
+            new TemplateConfigSource.Config(config().replace("\"items\":[]", "\"equipment\":[]")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new TemplateConfigSource.Config(
-                    config()
-                        .replace("\"regions\":[]", "\"regions\":[{\"regionTemplateId\":\"7\"}]")))
+    assertThatThrownBy(() ->
+            new TemplateConfigSource.Config(
+                config().replace("\"regions\":[]", "\"regions\":[{\"regionTemplateId\":\"7\"}]")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -106,19 +102,17 @@ class TemplateConfigSourceTest {
             sibling, "1", create.commitId(), UUID.randomUUID(), inherited);
     assertThat(TemplateConfigSourceSnapshot.fromStored(snapshot.canonicalJson()))
         .isEqualTo(snapshot);
-    assertThatThrownBy(
-            () ->
-                TemplateConfigSource.replay(
-                    List.of(), binding(TemplateConfigSource.deletePayload("7")), Map.of()))
+    assertThatThrownBy(() ->
+            TemplateConfigSource.replay(
+                List.of(), binding(TemplateConfigSource.deletePayload("7")), Map.of()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                TemplateConfigSource.replay(
-                    List.of(),
-                    binding(
-                        TemplateConfigSource.upsertPayload(
-                            "7", new TemplateConfigSource.Config(config()))),
-                    Map.of()))
+    assertThatThrownBy(() ->
+            TemplateConfigSource.replay(
+                List.of(),
+                binding(
+                    TemplateConfigSource.upsertPayload(
+                        "7", new TemplateConfigSource.Config(config()))),
+                Map.of()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -136,12 +130,11 @@ class TemplateConfigSourceTest {
     assertThat(GameplayRuleSource.mutations(binding)).isEmpty();
     assertThat(CommandSource.hasRealmPolicyRevision(binding)).isFalse();
     String wrongBase = config().replace(VERSION.toString(), UUID.randomUUID().toString());
-    assertThatThrownBy(
-            () ->
-                TemplateConfigSource.mutations(
-                    binding(
-                        TemplateConfigSource.createPayload(
-                            "Starter", new TemplateConfigSource.Config(wrongBase)))))
+    assertThatThrownBy(() ->
+            TemplateConfigSource.mutations(
+                binding(
+                    TemplateConfigSource.createPayload(
+                        "Starter", new TemplateConfigSource.Config(wrongBase)))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -233,16 +226,14 @@ class TemplateConfigSourceTest {
                 "AUTOMATION_SCRIPTING"));
     assertThatThrownBy(() -> TemplateConfigSource.mutations(binding(missingInventory)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                TemplateConfigSource.mutations(
-                    binding(valid.replace("AUTOMATION_SCRIPTING", "ENTITY_MANAGEMENT"))))
+    assertThatThrownBy(() ->
+            TemplateConfigSource.mutations(
+                binding(valid.replace("AUTOMATION_SCRIPTING", "ENTITY_MANAGEMENT"))))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationAuthoredSourceInventoryDeclaration.parse(
-                    automationInventory()
-                        .replace("\"SCRIPT_DEFINITIONS\":[]", "\"SCRIPT_DEFINITIONS\":[{}]")))
+    assertThatThrownBy(() ->
+            AutomationAuthoredSourceInventoryDeclaration.parse(
+                automationInventory()
+                    .replace("\"SCRIPT_DEFINITIONS\":[]", "\"SCRIPT_DEFINITIONS\":[{}]")))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(
             TemplateConfigSourceSnapshot.fromStored(
@@ -294,16 +285,14 @@ class TemplateConfigSourceTest {
                 "ENTITY_MANAGEMENT"));
     assertThatThrownBy(() -> TemplateConfigSource.mutations(binding(missingEntityInventory)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntityAuthoredSourceInventoryDeclaration.parse(
-                    entityInventory()
-                        .replace("\"ITEM_TEMPLATE_ROOTS\":[]", "\"ITEM_TEMPLATE_ROOTS\":[{}]")))
+    assertThatThrownBy(() ->
+            EntityAuthoredSourceInventoryDeclaration.parse(
+                entityInventory()
+                    .replace("\"ITEM_TEMPLATE_ROOTS\":[]", "\"ITEM_TEMPLATE_ROOTS\":[{}]")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntityAuthoredSourceInventoryDeclaration.parse(
-                    entityInventory().replace("\"families\":{", "\"families\":{\"UNKNOWN\":[],")))
+    assertThatThrownBy(() ->
+            EntityAuthoredSourceInventoryDeclaration.parse(
+                entityInventory().replace("\"families\":{", "\"families\":{\"UNKNOWN\":[],")))
         .isInstanceOf(IllegalArgumentException.class);
 
     var declarations = TemplateConfigSource.replayOwnerInventoryDeclarations(List.of(), authored);

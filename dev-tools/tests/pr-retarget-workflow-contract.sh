@@ -2185,7 +2185,8 @@ fi
 if [[ -n "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
   case "$*" in
     *actions/runs/101) cat "$CONTRACT_DUPLICATE_DIR/duplicate-source.json"; exit 0 ;;
-    *actions/runs/202) cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher.json"; exit 0 ;;
+    "api repos/example/FireMUD") printf '%s\n' '{"full_name":"example/FireMUD","default_branch":"develop"}'; exit 0 ;;
+    *actions/runs/202) cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-${CONTRACT_DUPLICATE_PATH:-bare}.json"; exit 0 ;;
     *actions/runs/202/attempts/2/jobs?per_page=100)
       cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-$CONTRACT_DUPLICATE_JOB.json"; exit 0 ;;
   esac
@@ -2306,9 +2307,19 @@ repository = {"full_name": "example/FireMUD"}
 (root / "duplicate-inventory.json").write_text(json.dumps({"workflow_runs": [pending_duplicate, source]}))
 (root / "duplicate-source.json").write_text(json.dumps({**source, "run_attempt": 1,
     "repository": repository, "head_repository": repository}))
-(root / "duplicate-publisher.json").write_text(json.dumps({**base, "run_attempt": 2,
-    "path": ".github/workflows/publish-pr-runtime-images.yml", "repository": repository,
-    "head_repository": repository}))
+publisher_path = ".github/workflows/publish-pr-runtime-images.yml"
+publisher = {**base, "run_attempt": 2, "path": publisher_path, "head_branch": "develop", "repository": repository,
+    "head_repository": repository}
+for variant, change in {
+    "bare": {},
+    "qualified": {"path": publisher_path + "@develop"},
+    "wrong-ref": {"path": publisher_path + "@other", "head_branch": "other"},
+    "wrong-head": {"path": publisher_path + "@develop", "head_branch": "other"},
+    "full-ref": {"path": publisher_path + "@refs/heads/develop"},
+    "wrong-workflow": {"path": ".github/workflows/other.yml@develop"},
+    "fork": {"path": publisher_path + "@develop", "head_repository": {"full_name": "fork/FireMUD"}},
+}.items():
+    (root / f"duplicate-publisher-{variant}.json").write_text(json.dumps({**publisher, **change}))
 for conclusion in ["success", "skipped"]:
     (root / f"duplicate-jobs-{conclusion}.json").write_text(json.dumps({"total_count": 1, "jobs": [
         {"name": "Publish Fixed PR Merge Image Tags", "run_id": 202, "run_attempt": 2,
@@ -2350,6 +2361,22 @@ for conclusion in success skipped; do
     [[ "$conclusion" == "skipped" ]] || { cat "$contract_fixture_dir/duplicate-$conclusion.error" >&2; exit 1; }
     require_contains "$contract_fixture_dir/duplicate-$conclusion.output" 'Waiting for runtime-images workflow 104'
     require_contains "$contract_fixture_dir/duplicate-$conclusion.error" 'Timed out waiting for runtime-images workflow'
+  fi
+done
+for variant in qualified wrong-ref wrong-head full-ref wrong-workflow fork; do
+  if CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success CONTRACT_DUPLICATE_PATH="$variant" \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-inventory.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/publisher-$variant.output" 2>"$contract_fixture_dir/publisher-$variant.error"; then
+    [[ "$variant" == "qualified" ]] || { echo "Untrusted publisher path bypassed: $variant" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/publisher-$variant.output" 'Trusted PR image publisher 202 succeeded'
+  else
+    [[ "$variant" != "qualified" ]] || { cat "$contract_fixture_dir/publisher-$variant.error" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/publisher-$variant.error" 'Timed out waiting for runtime-images workflow'
   fi
 done
 for fixture in missing-url empty-url; do

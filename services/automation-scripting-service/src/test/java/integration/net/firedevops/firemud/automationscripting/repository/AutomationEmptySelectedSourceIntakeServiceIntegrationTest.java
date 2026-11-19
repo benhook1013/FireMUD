@@ -74,14 +74,12 @@ class AutomationEmptySelectedSourceIntakeServiceIntegrationTest {
     when(repository.retainFresh(any(SelectedOwnerEmptySourceInputs.class), anyString()))
         .thenReturn(receipt);
     when(accountClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                new SelectedOwnerIntakeAuthorizationReadEvidence(invocation.getArgument(0)));
+        .thenAnswer(invocation ->
+            new SelectedOwnerIntakeAuthorizationReadEvidence(invocation.getArgument(0)));
     when(worldClient.read(any()))
-        .thenAnswer(
-            invocation ->
-                new SelectedOwnerWorldInventoryReadEvidence(
-                    invocation.getArgument(0), fixture.worldEvidence().inventory()));
+        .thenAnswer(invocation ->
+            new SelectedOwnerWorldInventoryReadEvidence(
+                invocation.getArgument(0), fixture.worldEvidence().inventory()));
 
     var service =
         new AutomationEmptySelectedSourceIntakeService(
@@ -164,46 +162,40 @@ class AutomationEmptySelectedSourceIntakeServiceIntegrationTest {
 
       AtomicInteger accountReads = new AtomicInteger();
       when(accountClient.read(any()))
-          .thenAnswer(
-              invocation -> {
-                var request =
-                    invocation.getArgument(
-                        0, SelectedOwnerIntakeAuthorizationReadEvidence.Request.class);
-                int call = accountReads.incrementAndGet();
-                if (failure == ReadFailure.FIRST_ACCOUNT_UNAVAILABLE && call == 1
-                    || failure == ReadFailure.FINAL_ACCOUNT_UNAVAILABLE && call == 2) {
-                  return null;
-                }
-                if (failure == ReadFailure.FIRST_ACCOUNT_MISMATCH && call == 1
-                    || failure == ReadFailure.FINAL_ACCOUNT_MISMATCH && call == 2) {
-                  request = mismatched(request);
-                }
-                return new SelectedOwnerIntakeAuthorizationReadEvidence(request);
-              });
+          .thenAnswer(invocation -> {
+            var request =
+                invocation.getArgument(
+                    0, SelectedOwnerIntakeAuthorizationReadEvidence.Request.class);
+            int call = accountReads.incrementAndGet();
+            if (failure == ReadFailure.FIRST_ACCOUNT_UNAVAILABLE && call == 1
+                || failure == ReadFailure.FINAL_ACCOUNT_UNAVAILABLE && call == 2) {
+              return null;
+            }
+            if (failure == ReadFailure.FIRST_ACCOUNT_MISMATCH && call == 1
+                || failure == ReadFailure.FINAL_ACCOUNT_MISMATCH && call == 2) {
+              request = mismatched(request);
+            }
+            return new SelectedOwnerIntakeAuthorizationReadEvidence(request);
+          });
 
       AtomicInteger worldReads = new AtomicInteger();
       when(worldClient.read(any()))
-          .thenAnswer(
-              invocation -> {
-                var request =
-                    invocation.getArgument(
-                        0, SelectedOwnerWorldInventoryReadEvidence.Request.class);
-                worldReads.incrementAndGet();
-                if (failure == ReadFailure.WORLD_UNAVAILABLE) return null;
-                if (failure == ReadFailure.WORLD_MISMATCH) request = mismatched(request);
-                return new SelectedOwnerWorldInventoryReadEvidence(
-                    request, fixture.worldEvidence().inventory());
-              });
+          .thenAnswer(invocation -> {
+            var request =
+                invocation.getArgument(0, SelectedOwnerWorldInventoryReadEvidence.Request.class);
+            worldReads.incrementAndGet();
+            if (failure == ReadFailure.WORLD_UNAVAILABLE) return null;
+            if (failure == ReadFailure.WORLD_MISMATCH) request = mismatched(request);
+            return new SelectedOwnerWorldInventoryReadEvidence(
+                request, fixture.worldEvidence().inventory());
+          });
 
       var service =
           new AutomationEmptySelectedSourceIntakeService(
               repository, accountClient, worldClient, NAMESPACE);
-      assertThatThrownBy(
-              () ->
-                  withGameDesignPeer(
-                      () ->
-                          service.retain(
-                              NAMESPACE, fixture.authorization(), fixture.freezeEvidence())))
+      assertThatThrownBy(() ->
+              withGameDesignPeer(() ->
+                  service.retain(NAMESPACE, fixture.authorization(), fixture.freezeEvidence())))
           .as(failure.name())
           .isInstanceOf(IllegalStateException.class);
 

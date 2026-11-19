@@ -38,11 +38,10 @@ class RedisMovementEffectIdempotencyServiceTest {
   void setUp() {
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     when(redisTemplate.execute(Mockito.any(SessionCallback.class)))
-        .thenAnswer(
-            invocation -> {
-              SessionCallback<?> callback = invocation.getArgument(0);
-              return callback.execute((RedisOperations<String, Object>) redisTemplate);
-            });
+        .thenAnswer(invocation -> {
+          SessionCallback<?> callback = invocation.getArgument(0);
+          return callback.execute((RedisOperations<String, Object>) redisTemplate);
+        });
     when(redisTemplate.exec()).thenReturn(List.of(1L));
     service = new RedisMovementEffectIdempotencyService(redisTemplate, TTL.toMillis());
   }

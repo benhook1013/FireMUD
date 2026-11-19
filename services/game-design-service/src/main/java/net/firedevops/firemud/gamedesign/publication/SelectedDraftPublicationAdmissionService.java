@@ -185,15 +185,14 @@ public final class SelectedDraftPublicationAdmissionService {
                 .selectedCommit()
                 .affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT)
                 .stream()
-                .map(
-                    unit ->
-                        new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                            unit.owner().name(),
-                            unit.aggregateType(),
-                            unit.aggregateId(),
-                            unit.scopeType(),
-                            unit.scopeId(),
-                            unit.expectedEpoch()))
+                .map(unit ->
+                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                        unit.owner().name(),
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch()))
                 .toList());
     WorldPublishedStartLocationEvidence worldEvidence = worldClient.read(worldRequest);
     requireExactWorldReadback(worldRequest, worldEvidence);
@@ -203,14 +202,13 @@ public final class SelectedDraftPublicationAdmissionService {
         readAndVerifyWorldSource(worldEvidence, selection.target());
 
     return Objects.requireNonNull(
-        reservationTransaction.execute(
-            status ->
-                owner.reserve(
-                    intent,
-                    accountEvidence.request().binding(),
-                    worldEvidence,
-                    inventory,
-                    worldSourceRead)),
+        reservationTransaction.execute(status ->
+            owner.reserve(
+                intent,
+                accountEvidence.request().binding(),
+                worldEvidence,
+                inventory,
+                worldSourceRead)),
         "Selected Draft publication reservation returned no result");
   }
 

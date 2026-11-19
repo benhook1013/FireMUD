@@ -123,21 +123,17 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     AccountGameplayDelegationResponseEnvelopeRepository.SealedCandidateObservation first;
     try {
       Future<AccountAuthEvidenceBundle> directCapture =
-          concurrentCaptureAndSeal.submit(
-              () -> {
-                captureAndSealStart.await();
-                return inTransaction(context, () -> bundles.captureAndPersist(pending.requestId()));
-              });
+          concurrentCaptureAndSeal.submit(() -> {
+            captureAndSealStart.await();
+            return inTransaction(context, () -> bundles.captureAndPersist(pending.requestId()));
+          });
       Future<AccountGameplayDelegationResponseEnvelopeRepository.SealedCandidateObservation> seal =
-          concurrentCaptureAndSeal.submit(
-              () -> {
-                captureAndSealStart.await();
-                return inTransaction(
-                    context,
-                    () ->
-                        realResponses.sealPendingCandidate(
-                            pending.requestId(), caller, compactJwt));
-              });
+          concurrentCaptureAndSeal.submit(() -> {
+            captureAndSealStart.await();
+            return inTransaction(
+                context,
+                () -> realResponses.sealPendingCandidate(pending.requestId(), caller, compactJwt));
+          });
       captureAndSealStart.countDown();
       concurrentBundle = awaitConcurrentProof(directCapture);
       first = awaitConcurrentProof(seal);
@@ -199,23 +195,21 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
             .get("pending_registry_candidate_bytes", byte[].class);
     assertThat(new String(boundMetadata, StandardCharsets.ISO_8859_1)).doesNotContain(compactJwt);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        realResponses.sealPendingCandidate(
-                            pending.requestId(), caller, compactJwt + "A")))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    realResponses.sealPendingCandidate(
+                        pending.requestId(), caller, compactJwt + "A")))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class);
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE account_gameplay_delegation_response_envelopes "
-                        + "SET envelope_bytes = ? WHERE operation_id = ?",
-                    new byte[] {1, 2, 3},
-                    pending.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE account_gameplay_delegation_response_envelopes "
+                    + "SET envelope_bytes = ? WHERE operation_id = ?",
+                new byte[] {1, 2, 3},
+                pending.operationId()))
         .isInstanceOf(DataAccessException.class);
     assertThat(
             Objects.requireNonNull(
@@ -249,24 +243,23 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
                 .get("bundle_count", Long.class))
         .isEqualTo(2L);
     byte[] fakeCiphertext = new byte[] {1, 2, 3};
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO account_gameplay_delegation_response_envelopes "
-                        + "(operation_id, request_id, token_hash, signer_kid, "
-                        + "signer_generation, authority_evidence_bundle_sha256, "
-                        + "issuance_fence, response_recovery_expiry_epoch_ms, "
-                        + "envelope_sha256, envelope_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    secondPending.operationId(),
-                    secondPending.requestId(),
-                    secondCandidate.tokenHash(),
-                    secondCandidate.kid(),
-                    secondCandidate.signerGeneration(),
-                    "a".repeat(64),
-                    authority.issuanceFence().value(),
-                    Math.multiplyExact(secondPending.expiresAtEpochSecond(), 1_000L),
-                    sha256(fakeCiphertext),
-                    fakeCiphertext))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO account_gameplay_delegation_response_envelopes "
+                    + "(operation_id, request_id, token_hash, signer_kid, "
+                    + "signer_generation, authority_evidence_bundle_sha256, "
+                    + "issuance_fence, response_recovery_expiry_epoch_ms, "
+                    + "envelope_sha256, envelope_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                secondPending.operationId(),
+                secondPending.requestId(),
+                secondCandidate.tokenHash(),
+                secondCandidate.kid(),
+                secondCandidate.signerGeneration(),
+                "a".repeat(64),
+                authority.issuanceFence().value(),
+                Math.multiplyExact(secondPending.expiresAtEpochSecond(), 1_000L),
+                sha256(fakeCiphertext),
+                fakeCiphertext))
         .isInstanceOf(DataAccessException.class);
 
     var unavailableCrypto =
@@ -276,13 +269,12 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
             dsl, sourceEvidence, bundles, unavailableCrypto);
     CallerIdentity secondCaller =
         new CallerIdentity(secondPending.callerWorkload(), secondPending.callerContextId());
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        unavailableResponses.sealPendingCandidate(
-                            secondPending.requestId(), secondCaller, secondJwt)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    unavailableResponses.sealPendingCandidate(
+                        secondPending.requestId(), secondCaller, secondJwt)))
         .isInstanceOf(AccountResponseEnvelopeKeyring.KeyUnavailableException.class);
     assertThat(
             Objects.requireNonNull(
@@ -325,25 +317,23 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     ExecutorService concurrentRetries = Executors.newFixedThreadPool(2);
     try {
       Future<SealedCandidateObservation> firstRetry =
-          concurrentRetries.submit(
-              () -> {
-                concurrentStart.await();
-                return inTransaction(
-                    context,
-                    () ->
-                        realResponses.sealPendingCandidate(
-                            secondPending.requestId(), secondCaller, secondJwt));
-              });
+          concurrentRetries.submit(() -> {
+            concurrentStart.await();
+            return inTransaction(
+                context,
+                () ->
+                    realResponses.sealPendingCandidate(
+                        secondPending.requestId(), secondCaller, secondJwt));
+          });
       Future<SealedCandidateObservation> secondRetry =
-          concurrentRetries.submit(
-              () -> {
-                concurrentStart.await();
-                return inTransaction(
-                    context,
-                    () ->
-                        realResponses.sealPendingCandidate(
-                            secondPending.requestId(), secondCaller, secondJwt));
-              });
+          concurrentRetries.submit(() -> {
+            concurrentStart.await();
+            return inTransaction(
+                context,
+                () ->
+                    realResponses.sealPendingCandidate(
+                        secondPending.requestId(), secondCaller, secondJwt));
+          });
       concurrentStart.countDown();
       var firstConcurrentObservation = awaitConcurrentProof(firstRetry);
       var secondConcurrentObservation = awaitConcurrentProof(secondRetry);
@@ -376,16 +366,15 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
     AccountGameplayDelegationResponseEnvelopeRepository expiredResponses =
         new AccountGameplayDelegationResponseEnvelopeRepository(
             dsl, sourceEvidence, bundles, realCrypto);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        expiredResponses.sealPendingCandidate(
-                            expiredPending.requestId(),
-                            new CallerIdentity(
-                                expiredPending.callerWorkload(), expiredPending.callerContextId()),
-                            expiredJwt)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    expiredResponses.sealPendingCandidate(
+                        expiredPending.requestId(),
+                        new CallerIdentity(
+                            expiredPending.callerWorkload(), expiredPending.callerContextId()),
+                        expiredJwt)))
         .isInstanceOf(
             AccountGameplayDelegationResponseEnvelopeRepository.ResponseRecoveryExpiredException
                 .class);
@@ -446,12 +435,11 @@ class AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest {
         snapshot
             .account()
             .accountSecurityCutoff()
-            .map(
-                value ->
-                    new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
-                        value.accountAuthorityGeneration(),
-                        value.outboxStreamKey(),
-                        value.outboxSequence()));
+            .map(value ->
+                new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
+                    value.accountAuthorityGeneration(),
+                    value.outboxStreamKey(),
+                    value.outboxSequence()));
     return new AccountAuthoritySnapshot(
         snapshot.account().scope().accountId(),
         snapshot.issuer().generation(),

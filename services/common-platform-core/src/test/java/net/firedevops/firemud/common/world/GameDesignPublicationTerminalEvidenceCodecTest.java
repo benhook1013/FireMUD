@@ -54,20 +54,19 @@ class GameDesignPublicationTerminalEvidenceCodecTest {
                 fixture.operation().account(), selector));
     var participants =
         previous.participantDigests().stream()
-            .map(
-                participant ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
+            .map(participant ->
+                new GameDesignPublicationTerminalEvidence.Participant(
+                    participant.participantKey(),
+                    participant.scopeValue(),
+                    participant.baseVersionId(),
+                    participant.appliedCommitId(),
+                    participant.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
                         participant.participantKey(),
-                        participant.scopeValue(),
-                        participant.baseVersionId(),
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            participant.participantKey(),
-                            AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION),
-                        participant.abilitySchemaDigest(),
-                        participant.errorCode(),
-                        participant.errorMessage()))
+                        AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION),
+                    participant.abilitySchemaDigest(),
+                    participant.errorCode(),
+                    participant.errorMessage()))
             .toList();
     var release =
         new GameDesignPublicationTerminalEvidence.ReleaseContent(
@@ -120,23 +119,22 @@ class GameDesignPublicationTerminalEvidenceCodecTest {
             null,
             null,
             null));
-    assertThatThrownBy(
-            () ->
-                new GameDesignPublicationTerminalEvidence.ReleaseContent(
-                    previous.canonicalTenantId(),
-                    previous.canonicalVersionId(),
-                    previous.publishedReleaseBundleRef(),
-                    previous.versionNumber(),
-                    "v4",
-                    previous.publishWorkflowId(),
-                    previous.manifestHash(),
-                    previous.manifestSchemaVersion(),
-                    previous.artifactDigests(),
-                    previous.requiredManifestAssetKeys(),
-                    mixedParticipants,
-                    previous.commandDefinitions(),
-                    previous.generationConfigRevision(),
-                    selector))
+    assertThatThrownBy(() ->
+            new GameDesignPublicationTerminalEvidence.ReleaseContent(
+                previous.canonicalTenantId(),
+                previous.canonicalVersionId(),
+                previous.publishedReleaseBundleRef(),
+                previous.versionNumber(),
+                "v4",
+                previous.publishWorkflowId(),
+                previous.manifestHash(),
+                previous.manifestSchemaVersion(),
+                previous.artifactDigests(),
+                previous.requiredManifestAssetKeys(),
+                mixedParticipants,
+                previous.commandDefinitions(),
+                previous.generationConfigRevision(),
+                selector))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Incomplete or changed required participant proof");
   }
@@ -189,10 +187,9 @@ class GameDesignPublicationTerminalEvidenceCodecTest {
             .setCanonicalResponseBytes(ByteString.copyFrom(malformedResponseBytes.toByteArray()))
             .build();
 
-    assertThatThrownBy(
-            () ->
-                GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
-                    maxEpochRequest, malformedWireResponse))
+    assertThatThrownBy(() ->
+            GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
+                maxEpochRequest, malformedWireResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Published version-state epoch exceeds owner range");
   }
@@ -218,13 +215,12 @@ class GameDesignPublicationTerminalEvidenceCodecTest {
         replaceFrame(fixture.terminal().canonicalBytes(), 3, malformedRelease);
     byte[] malformedResponse = replaceFrame(result.canonicalBytes(), 3, malformedTerminal);
 
-    assertThatThrownBy(
-            () ->
-                GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setCanonicalResponseBytes(ByteString.copyFrom(malformedResponse))
-                        .build()))
+    assertThatThrownBy(() ->
+            GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setCanonicalResponseBytes(ByteString.copyFrom(malformedResponse))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("supported range");
   }

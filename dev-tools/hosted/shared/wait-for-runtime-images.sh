@@ -284,7 +284,7 @@ print(
 # Only a source-ID-bound typed callback with positive native publication proof
 # can finish the wait ahead of a pending producer. Skipped publication cannot.
 use_completed_duplicate_publication() {
-  local state older_id older_created inventory upper line publisher_id run attempt jobs latest
+  local state older_id older_created inventory upper line publisher_id run attempt jobs latest publisher_path default_branch repository_info
   IFS=$'\t' read -r state older_id _ _ _ _ older_created <<<"$1"
   [[ "$state" == "found" ]] || return 1
   local source source_attempt source_latest
@@ -300,10 +300,23 @@ use_completed_duplicate_publication() {
   IFS=$'\t' read -r state publisher_id _ <<<"$line"
   [[ "$state" == "found" && "$publisher_id" =~ ^[1-9][0-9]*$ ]] || return 1
   run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || return 1
-  attempt="$(jq -er --argjson id "$publisher_id" --arg repo "$GITHUB_REPOSITORY" \
+  publisher_path="$(jq -er '.path | select(type == "string")' <<<"$run")" || return 1
+  default_branch=""
+  if [[ "$publisher_path" != ".github/workflows/publish-pr-runtime-images.yml" ]]; then
+    # GitHub may qualify the path by its short ref. A typed dispatch runs
+    # on the repository default; bind any suffix to that authoritative ref.
+    [[ "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@"* ]] || return 1
+    repository_info="$(gh api "repos/${GITHUB_REPOSITORY}")" || return 1
+    default_branch="$(jq -er --arg repo "$GITHUB_REPOSITORY" '
+      select(.full_name == $repo) | .default_branch
+      | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$"))
+    ' <<<"$repository_info")" || return 1
+    [[ "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@${default_branch}" ]] || return 1
+  fi
+  attempt="$(jq -er --argjson id "$publisher_id" --arg repo "$GITHUB_REPOSITORY" --arg path "$publisher_path" --arg branch "$default_branch" \
     --arg title "Publish PR Runtime Images source-run-${older_id}" '
       select(.id == $id and .event == "repository_dispatch" and .display_title == $title
-        and .path == ".github/workflows/publish-pr-runtime-images.yml"
+        and .path == $path and ($branch == "" or .head_branch == $branch)
         and .repository.full_name == $repo and .head_repository.full_name == $repo
         and .status == "completed" and .conclusion == "success")
       | .run_attempt | select(type == "number" and . >= 1 and floor == .)
@@ -319,8 +332,9 @@ use_completed_duplicate_publication() {
           ($steps | length) == 1 and $steps[0].status == "completed" and $steps[0].conclusion == "success")))
   ' <<<"$jobs" >/dev/null || return 1
   latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || return 1
-  jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" '
+  jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" --arg path "$publisher_path" --arg branch "$default_branch" '
     .id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"
+    and .path == $path and ($branch == "" or .head_branch == $branch)
   ' <<<"$latest" >/dev/null || return 1
   source_latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || return 1
   jq -e --argjson attempt "$source_attempt" '.run_attempt == $attempt' <<<"$source_latest" >/dev/null || return 1

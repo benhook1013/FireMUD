@@ -178,10 +178,9 @@ class InitialGameplayRecoverCodecTest {
   @Test
   void rejectsUtf16AndUtf32EvenWhenTheirBytesAreValidUtf8() {
     for (String encoding : List.of("UTF-16BE", "UTF-16LE", "UTF-32BE", "UTF-32LE")) {
-      assertThatThrownBy(
-              () ->
-                  InitialGameplayRecoverCodec.decode(
-                      WIRE.getBytes(java.nio.charset.Charset.forName(encoding))))
+      assertThatThrownBy(() ->
+              InitialGameplayRecoverCodec.decode(
+                  WIRE.getBytes(java.nio.charset.Charset.forName(encoding))))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

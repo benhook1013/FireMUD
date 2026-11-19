@@ -74,10 +74,8 @@ public final class WorldPublishedStartLocationRepository {
     var receipt =
         applied
             .startLocationReceipt()
-            .orElseThrow(
-                () ->
-                    new ConflictException(
-                        "World published selector lacks original selector receipt"));
+            .orElseThrow(() ->
+                new ConflictException("World published selector lacks original selector receipt"));
     if (!plan.binding().equals(application.plan().binding())
         || !plan.ownerBinding().equals(application.plan().ownerBinding())
         || !Arrays.equals(account.canonicalBytes(), application.operation().accountBindingBytes())

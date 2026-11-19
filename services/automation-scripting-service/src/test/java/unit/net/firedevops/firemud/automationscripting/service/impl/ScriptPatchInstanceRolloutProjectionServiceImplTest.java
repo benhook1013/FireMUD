@@ -86,34 +86,30 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
-    assertThatThrownBy(
-            () ->
-                service.listProjections(
-                    "1",
-                    "game-1",
-                    "patch-1",
-                    2L,
-                    "",
-                    ScriptPatchInstanceRolloutStatus
-                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
-                    0L,
-                    0L))
+    assertThatThrownBy(() ->
+            service.listProjections(
+                "1",
+                "game-1",
+                "patch-1",
+                2L,
+                "",
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                0L,
+                0L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
-    assertThatThrownBy(
-            () ->
-                service.listEvents(
-                    "1",
-                    "game-1",
-                    "patch-1",
-                    2L,
-                    null,
-                    ScriptPatchInstanceRolloutStatus
-                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
-                    0L,
-                    0L,
-                    25))
+    assertThatThrownBy(() ->
+            service.listEvents(
+                "1",
+                "game-1",
+                "patch-1",
+                2L,
+                null,
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                0L,
+                0L,
+                25))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
@@ -141,34 +137,30 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
-    assertThatThrownBy(
-            () ->
-                service.listProjections(
-                    "1",
-                    "game-1",
-                    "patch-1",
-                    0L,
-                    "request-1",
-                    ScriptPatchInstanceRolloutStatus
-                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
-                    0L,
-                    0L))
+    assertThatThrownBy(() ->
+            service.listProjections(
+                "1",
+                "game-1",
+                "patch-1",
+                0L,
+                "request-1",
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                0L,
+                0L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
-    assertThatThrownBy(
-            () ->
-                service.listEvents(
-                    "1",
-                    "game-1",
-                    "patch-1",
-                    0L,
-                    "request-1",
-                    ScriptPatchInstanceRolloutStatus
-                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
-                    0L,
-                    0L,
-                    25))
+    assertThatThrownBy(() ->
+            service.listEvents(
+                "1",
+                "game-1",
+                "patch-1",
+                0L,
+                "request-1",
+                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                0L,
+                0L,
+                25))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
@@ -213,15 +205,14 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
     when(repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1"))
         .thenReturn(Optional.of(existing), Optional.of(existing));
     when(repository.save(Mockito.any(ScriptPatchInstanceRolloutProjection.class)))
-        .thenAnswer(
-            invocation -> {
-              ScriptPatchInstanceRolloutProjection saved = invocation.getArgument(0);
-              existing.setRolloutStatus(saved.getRolloutStatus());
-              existing.setStatusReason(saved.getStatusReason());
-              existing.setLastChangedAt(saved.getLastChangedAt());
-              existing.setProjectionRefreshedAt(saved.getProjectionRefreshedAt());
-              return existing;
-            });
+        .thenAnswer(invocation -> {
+          ScriptPatchInstanceRolloutProjection saved = invocation.getArgument(0);
+          existing.setRolloutStatus(saved.getRolloutStatus());
+          existing.setStatusReason(saved.getStatusReason());
+          existing.setLastChangedAt(saved.getLastChangedAt());
+          existing.setProjectionRefreshedAt(saved.getProjectionRefreshedAt());
+          return existing;
+        });
     ScriptPatchInstanceRolloutProjectionServiceImpl service =
         new ScriptPatchInstanceRolloutProjectionServiceImpl(
             repository,
@@ -297,18 +288,17 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
     when(repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1"))
         .thenReturn(Optional.of(existing), Optional.of(existing));
     when(repository.save(Mockito.any(ScriptPatchInstanceRolloutProjection.class)))
-        .thenAnswer(
-            invocation -> {
-              ScriptPatchInstanceRolloutProjection saved = invocation.getArgument(0);
-              existing.setScriptPinEpoch(saved.getScriptPinEpoch());
-              existing.setLastObservedControlPlaneRequestId(
-                  saved.getLastObservedControlPlaneRequestId());
-              existing.setRolloutStatus(saved.getRolloutStatus());
-              existing.setStatusReason(saved.getStatusReason());
-              existing.setLastChangedAt(saved.getLastChangedAt());
-              existing.setProjectionRefreshedAt(saved.getProjectionRefreshedAt());
-              return existing;
-            });
+        .thenAnswer(invocation -> {
+          ScriptPatchInstanceRolloutProjection saved = invocation.getArgument(0);
+          existing.setScriptPinEpoch(saved.getScriptPinEpoch());
+          existing.setLastObservedControlPlaneRequestId(
+              saved.getLastObservedControlPlaneRequestId());
+          existing.setRolloutStatus(saved.getRolloutStatus());
+          existing.setStatusReason(saved.getStatusReason());
+          existing.setLastChangedAt(saved.getLastChangedAt());
+          existing.setProjectionRefreshedAt(saved.getProjectionRefreshedAt());
+          return existing;
+        });
     ScriptPatchInstanceRolloutProjectionServiceImpl service =
         new ScriptPatchInstanceRolloutProjectionServiceImpl(
             repository,

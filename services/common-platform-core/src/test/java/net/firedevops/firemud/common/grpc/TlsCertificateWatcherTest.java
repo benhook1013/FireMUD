@@ -464,16 +464,15 @@ class TlsCertificateWatcherTest {
 
       CountDownLatch closeFinished = new CountDownLatch(1);
       Thread closeThread =
-          new Thread(
-              () -> {
-                try {
-                  watcher.close();
-                } catch (Throwable e) {
-                  closeFailure.set(e);
-                } finally {
-                  closeFinished.countDown();
-                }
-              });
+          new Thread(() -> {
+            try {
+              watcher.close();
+            } catch (Throwable e) {
+              closeFailure.set(e);
+            } finally {
+              closeFinished.countDown();
+            }
+          });
       closeThread.start();
 
       assertFalse(closeFinished.await(200, TimeUnit.MILLISECONDS));
@@ -718,35 +717,33 @@ class TlsCertificateWatcherTest {
     CountDownLatch releaseLock = new CountDownLatch(1);
     CountDownLatch recoveryStarted = new CountDownLatch(1);
     Thread lockHolder =
-        new Thread(
-            () -> {
-              callbackMonitor.lock();
-              try {
-                lockAcquired.countDown();
-                try {
-                  releaseLock.await();
-                } catch (InterruptedException e) {
-                  Thread.currentThread().interrupt();
-                }
-              } finally {
-                callbackMonitor.unlock();
-              }
-            });
+        new Thread(() -> {
+          callbackMonitor.lock();
+          try {
+            lockAcquired.countDown();
+            try {
+              releaseLock.await();
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+            }
+          } finally {
+            callbackMonitor.unlock();
+          }
+        });
     lockHolder.start();
     try {
       assertTrue(lockAcquired.await(5, TimeUnit.SECONDS));
       AtomicBoolean recoveryFinished = new AtomicBoolean();
       Thread recovery =
-          new Thread(
-              () -> {
-                try {
-                  recoveryStarted.countDown();
-                  retryMethod.invoke(watcher);
-                  recoveryFinished.set(true);
-                } catch (ReflectiveOperationException e) {
-                  throw new AssertionError("failed to invoke registration recovery", e);
-                }
-              });
+          new Thread(() -> {
+            try {
+              recoveryStarted.countDown();
+              retryMethod.invoke(watcher);
+              recoveryFinished.set(true);
+            } catch (ReflectiveOperationException e) {
+              throw new AssertionError("failed to invoke registration recovery", e);
+            }
+          });
       recovery.start();
       assertTrue(recoveryStarted.await(5, TimeUnit.SECONDS));
       assertFalse(callbackInvoked.await(100, TimeUnit.MILLISECONDS));
@@ -780,14 +777,13 @@ class TlsCertificateWatcherTest {
     AtomicReference<Throwable> waiterFailure = new AtomicReference<>();
     callbackMonitor.lock();
     Thread waiter =
-        new Thread(
-            () -> {
-              try {
-                invokeReloadCallback(watcher, false);
-              } catch (Throwable failure) {
-                waiterFailure.set(failure);
-              }
-            });
+        new Thread(() -> {
+          try {
+            invokeReloadCallback(watcher, false);
+          } catch (Throwable failure) {
+            waiterFailure.set(failure);
+          }
+        });
     waiter.start();
     try {
       awaitLockWaiter(waiter);
@@ -827,27 +823,25 @@ class TlsCertificateWatcherTest {
     callbackStateMonitorField.setAccessible(true);
     Object callbackStateMonitor = callbackStateMonitorField.get(watcher);
     Thread invocation =
-        new Thread(
-            () -> {
-              try {
-                invokeReloadCallback(watcher, false);
-              } catch (Throwable failure) {
-                invocationFailure.set(failure);
-              }
-            });
+        new Thread(() -> {
+          try {
+            invokeReloadCallback(watcher, false);
+          } catch (Throwable failure) {
+            invocationFailure.set(failure);
+          }
+        });
     CountDownLatch closeFinished = new CountDownLatch(1);
     Thread closeThread =
-        new Thread(
-            () -> {
-              closeStarted.set(true);
-              try {
-                watcher.close();
-              } catch (Throwable failure) {
-                closeFailure.set(failure);
-              } finally {
-                closeFinished.countDown();
-              }
-            });
+        new Thread(() -> {
+          closeStarted.set(true);
+          try {
+            watcher.close();
+          } catch (Throwable failure) {
+            closeFailure.set(failure);
+          } finally {
+            closeFinished.countDown();
+          }
+        });
 
     synchronized (callbackStateMonitor) {
       invocation.start();
@@ -875,14 +869,13 @@ class TlsCertificateWatcherTest {
     ScheduledExecutorService retryExecutor = retryExecutor(watcher);
     Method retryMethod = TlsCertificateWatcher.class.getDeclaredMethod("retryReloadCallback");
     retryMethod.setAccessible(true);
-    return retryExecutor.submit(
-        () -> {
-          try {
-            retryMethod.invoke(watcher);
-          } catch (ReflectiveOperationException e) {
-            throw new AssertionError("failed to invoke callback retry", e);
-          }
-        });
+    return retryExecutor.submit(() -> {
+      try {
+        retryMethod.invoke(watcher);
+      } catch (ReflectiveOperationException e) {
+        throw new AssertionError("failed to invoke callback retry", e);
+      }
+    });
   }
 
   private static ScheduledExecutorService retryExecutor(TlsCertificateWatcher watcher)

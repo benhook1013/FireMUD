@@ -75,10 +75,9 @@ class DraftAuthorizationFenceSelectedOwnerIntakeTest {
     DraftCommitBinding changed =
         selected(fixture.selected.requestId(), fixture.selected.commitId(), "changed");
 
-    assertThatThrownBy(
-            () ->
-                fixture.repository.requireSelectedOwnerIntakeAdmission(
-                    List.of(fixture.currentSource), changed))
+    assertThatThrownBy(() ->
+            fixture.repository.requireSelectedOwnerIntakeAdmission(
+                List.of(fixture.currentSource), changed))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("committed and settled");
   }

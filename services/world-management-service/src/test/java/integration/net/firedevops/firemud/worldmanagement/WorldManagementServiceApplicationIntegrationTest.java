@@ -195,17 +195,15 @@ class WorldManagementServiceApplicationIntegrationTest {
     CountDownLatch releaseFirst = new CountDownLatch(1);
     try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
       Future<List<WorldEvent>> firstSweep =
-          executor.submit(
-              () ->
-                  transactionTemplate.execute(
-                      status -> {
-                        List<WorldEvent> claimed =
-                            worldEventRepository.findDueEventsForShard(repositoryCutoff, 0);
-                        assertThat(claimed).extracting(WorldEvent::getId).contains(eventId);
-                        firstClaimed.countDown();
-                        awaitLatch(releaseFirst);
-                        return claimed;
-                      }));
+          executor.submit(() ->
+              transactionTemplate.execute(status -> {
+                List<WorldEvent> claimed =
+                    worldEventRepository.findDueEventsForShard(repositoryCutoff, 0);
+                assertThat(claimed).extracting(WorldEvent::getId).contains(eventId);
+                firstClaimed.countDown();
+                awaitLatch(releaseFirst);
+                return claimed;
+              }));
 
       assertThat(firstClaimed.await(5, TimeUnit.SECONDS)).isTrue();
 

@@ -128,20 +128,19 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             long.class);
     lookup.setAccessible(true);
     var historical =
-        fixture.transactions.execute(
-            status -> {
-              try {
-                return lookup.invoke(
-                    fixture.pointerRepository,
-                    origin.targetNamespace(),
-                    origin.canonicalTenantId(),
-                    origin.realmId(),
-                    origin.pointerVersion(),
-                    origin.catalogRevision());
-              } catch (ReflectiveOperationException exception) {
-                throw new IllegalStateException("Historical owner lookup failed", exception);
-              }
-            });
+        fixture.transactions.execute(status -> {
+          try {
+            return lookup.invoke(
+                fixture.pointerRepository,
+                origin.targetNamespace(),
+                origin.canonicalTenantId(),
+                origin.realmId(),
+                origin.pointerVersion(),
+                origin.catalogRevision());
+          } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Historical owner lookup failed", exception);
+          }
+        });
     assertThat(historical).usingRecursiveComparison().isEqualTo(origin);
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(before);
   }
@@ -217,11 +216,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 java.time.Duration.ofMillis(1),
                 java.time.Duration.ofSeconds(1),
                 8));
-    fixture.transactions.executeWithoutResult(
-        status -> {
-          references.begin(request);
-          references.completeUnissuedDenied(request);
-        });
+    fixture.transactions.executeWithoutResult(status -> {
+      references.begin(request);
+      references.completeUnissuedDenied(request);
+    });
     byte[] retainedResponseBytes = references.find(request).orElseThrow().toByteArray();
     String retained =
         fixture
@@ -266,54 +264,49 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     .class),
             new SimpleMeterRegistry());
     // This is the actual guard hidden by the old whole-route mock.
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.execute(
-                    status ->
-                        fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
-                            NAMESPACE, TENANT, current.realmId())))
+    assertThatThrownBy(() ->
+            fixture.transactions.execute(status ->
+                fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
+                    NAMESPACE, TENANT, current.realmId())))
         .isInstanceOf(IllegalStateException.class);
     try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
       var retirement =
           new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<Boolean>>();
       var recovery =
           new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>>();
-      fixture.transactions.executeWithoutResult(
-          status -> {
-            fixture.dsl.fetchSingle(
-                "SELECT id FROM gameplay_admission_pointer WHERE target_namespace = ? "
-                    + "AND canonical_tenant_id = ? AND realm_id = ? FOR UPDATE",
-                NAMESPACE,
-                TENANT,
-                current.realmId());
-            int pointerHolderPid =
-                Objects.requireNonNull(
-                    fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
-            retirement.set(executor.submit(() -> owner.retireTarget(request)));
-            try {
-              assertThat(lockAttempted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-              awaitBackendBlockedBy(fixture.dsl, retirementPid.get(), pointerHolderPid);
-              recovery.set(
-                  executor.submit(
-                      () ->
-                          fixture.transactions.execute(
-                              ignored -> {
-                                recoveryPid.set(
-                                    Objects.requireNonNull(
-                                        fixture
-                                            .dsl
-                                            .fetchSingle("SELECT pg_backend_pid()")
-                                            .get(0, Integer.class)));
-                                recoveryStarted.countDown();
-                                return references.begin(request);
-                              })));
-              assertThat(recoveryStarted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-              awaitBackendBlockedBy(fixture.dsl, recoveryPid.get(), retirementPid.get());
-            } catch (InterruptedException interrupted) {
-              Thread.currentThread().interrupt();
-              throw new IllegalStateException(interrupted);
-            }
-          });
+      fixture.transactions.executeWithoutResult(status -> {
+        fixture.dsl.fetchSingle(
+            "SELECT id FROM gameplay_admission_pointer WHERE target_namespace = ? "
+                + "AND canonical_tenant_id = ? AND realm_id = ? FOR UPDATE",
+            NAMESPACE,
+            TENANT,
+            current.realmId());
+        int pointerHolderPid =
+            Objects.requireNonNull(
+                fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+        retirement.set(executor.submit(() -> owner.retireTarget(request)));
+        try {
+          assertThat(lockAttempted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+          awaitBackendBlockedBy(fixture.dsl, retirementPid.get(), pointerHolderPid);
+          recovery.set(
+              executor.submit(() ->
+                  fixture.transactions.execute(ignored -> {
+                    recoveryPid.set(
+                        Objects.requireNonNull(
+                            fixture
+                                .dsl
+                                .fetchSingle("SELECT pg_backend_pid()")
+                                .get(0, Integer.class)));
+                    recoveryStarted.countDown();
+                    return references.begin(request);
+                  })));
+          assertThat(recoveryStarted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+          awaitBackendBlockedBy(fixture.dsl, recoveryPid.get(), retirementPid.get());
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException(interrupted);
+        }
+      });
       // Actual pointer supersession reaches the lock path; the stored minimum still protects it.
       assertThat(retirement.get().get(5L, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
       assertThatThrownBy(() -> recovery.get().get(5L, java.util.concurrent.TimeUnit.SECONDS))
@@ -375,40 +368,32 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .hasMessageContaining("active owner transaction");
     var readOnly = new TransactionTemplate(fixture.transactionManager);
     readOnly.setReadOnly(true);
-    assertThatThrownBy(
-            () ->
-                readOnly.execute(
-                    status ->
-                        fixture.pointerRepository.lockOriginalClosedOrigin(
-                            NAMESPACE, origin.requestId())))
+    assertThatThrownBy(() ->
+            readOnly.execute(status ->
+                fixture.pointerRepository.lockOriginalClosedOrigin(NAMESPACE, origin.requestId())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("read-write transaction");
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.execute(
-                    status ->
-                        fixture.pointerRepository.readOriginalClosedOrigin(
-                            NAMESPACE, origin.requestId())))
+    assertThatThrownBy(() ->
+            fixture.transactions.execute(status ->
+                fixture.pointerRepository.readOriginalClosedOrigin(NAMESPACE, origin.requestId())))
         .isInstanceOf(IllegalStateException.class);
-    fixture.transactions.executeWithoutResult(
-        status -> {
-          var lockedOrigin =
-              fixture
-                  .pointerRepository
-                  .lockOriginalClosedOrigin(NAMESPACE, origin.requestId())
-                  .orElseThrow();
-          assertThat(lockedOrigin.requestId()).isEqualTo(origin.requestId());
-          assertThat(lockedOrigin.requestDigest()).isEqualTo(origin.requestDigest());
-          assertThat(lockedOrigin.receiptDigest()).isEqualTo(origin.receiptDigest());
-          assertThat(lockedOrigin.auditEventId()).isEqualTo(origin.auditEventId());
-          assertThat(
-                  fixture.pointerRepository.lockOriginalClosedOrigin(NAMESPACE, UUID.randomUUID()))
-              .isEmpty();
-          assertThat(
-                  fixture.pointerRepository.lockOriginalClosedOrigin(
-                      "substituted-namespace", origin.requestId()))
-              .isEmpty();
-        });
+    fixture.transactions.executeWithoutResult(status -> {
+      var lockedOrigin =
+          fixture
+              .pointerRepository
+              .lockOriginalClosedOrigin(NAMESPACE, origin.requestId())
+              .orElseThrow();
+      assertThat(lockedOrigin.requestId()).isEqualTo(origin.requestId());
+      assertThat(lockedOrigin.requestDigest()).isEqualTo(origin.requestDigest());
+      assertThat(lockedOrigin.receiptDigest()).isEqualTo(origin.receiptDigest());
+      assertThat(lockedOrigin.auditEventId()).isEqualTo(origin.auditEventId());
+      assertThat(fixture.pointerRepository.lockOriginalClosedOrigin(NAMESPACE, UUID.randomUUID()))
+          .isEmpty();
+      assertThat(
+              fixture.pointerRepository.lockOriginalClosedOrigin(
+                  "substituted-namespace", origin.requestId()))
+          .isEmpty();
+    });
     String originalOwnerRows = pointerAndAuditProjection(fixture);
     var references =
         new CanonicalGameplayRosterReferenceRepository(
@@ -466,27 +451,25 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         net.firedevops.firemud.gamesession.v1.CanonicalGameplayRosterSelectionInput.newBuilder()
             .setSchemaVersion(1)
             .build();
-    fixture.transactions.executeWithoutResult(
-        status -> {
-          references.begin(missingRoster);
-          references.reserveSelectionInput(missingRoster, input);
-          references.markRosterReadStarted(missingRoster);
-          references.begin(missingAssignment);
-          references.reserveSelectionInput(missingAssignment, input);
-          references.markRosterReadStarted(missingAssignment);
-          references.record(missingAssignment, roster);
-          references.selectOriginal(missingAssignment, actor);
-        });
+    fixture.transactions.executeWithoutResult(status -> {
+      references.begin(missingRoster);
+      references.reserveSelectionInput(missingRoster, input);
+      references.markRosterReadStarted(missingRoster);
+      references.begin(missingAssignment);
+      references.reserveSelectionInput(missingAssignment, input);
+      references.markRosterReadStarted(missingAssignment);
+      references.record(missingAssignment, roster);
+      references.selectOriginal(missingAssignment, actor);
+    });
     Thread.sleep(5L);
     var recoveryClient =
         mock(net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClient.class);
     org.mockito.Mockito.when(recoveryClient.read(any()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
+        });
     var admissions = org.mockito.Mockito.spy(fixture.initialAdmissionRepository);
     org.mockito.Mockito.doAnswer(
             call -> {
@@ -604,11 +587,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
               .setSnapshotDigest(roster.getSnapshotDigest())
               .setMinimumRetentionMillis(1L)
               .build();
-      fixture.transactions.execute(
-          ignored ->
-              references.acknowledgeRetirement(
-                  acknowledgement,
-                  "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service"));
+      fixture.transactions.execute(ignored ->
+          references.acknowledgeRetirement(
+              acknowledgement,
+              "spiffe://firemud/ns/" + NAMESPACE + "/sa/entity-management-service"));
     }
     assertThat(
             fixture.transactions.<Boolean>execute(
@@ -662,10 +644,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         new CanonicalInitialAdmissionRepository(
             unjoinedDsl, fixture.catalogRepository, fixture.pointerRepository);
 
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.execute(
-                    ignored -> admissions.lockExactCurrentOpenSnapshot(qualified)))
+    assertThatThrownBy(() ->
+            fixture.transactions.execute(
+                ignored -> admissions.lockExactCurrentOpenSnapshot(qualified)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage(
             "Exact current OPEN lock requires the DSL connection to join the owner transaction");
@@ -686,53 +667,49 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             java.util.concurrent.Future<CanonicalInitialAdmissionRepository.CurrentOpenSnapshot>>();
 
     try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
-      fixture.transactions.executeWithoutResult(
-          ignored -> {
-            fixture.dsl.fetchSingle(
-                "SELECT realm_id FROM game_session_canonical_realm_catalog "
-                    + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? "
-                    + "FOR UPDATE",
-                NAMESPACE,
-                TENANT,
-                qualified.ownerProof().realmId());
-            holderPid.set(
-                Objects.requireNonNull(
-                    fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
-            reader.set(
-                executor.submit(
-                    () ->
-                        fixture.transactions.execute(
-                            transaction -> {
-                              readerPid.set(
-                                  Objects.requireNonNull(
-                                      fixture
-                                          .dsl
-                                          .fetchSingle("SELECT pg_backend_pid()")
-                                          .get(0, Integer.class)));
-                              readerStarted.countDown();
-                              return fixture.initialAdmissionRepository
-                                  .lockExactCurrentOpenSnapshot(qualified);
-                            })));
-            try {
-              assertThat(readerStarted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-              awaitBackendBlockedBy(fixture.dsl, readerPid.get(), holderPid.get());
-            } catch (InterruptedException interrupted) {
-              Thread.currentThread().interrupt();
-              throw new IllegalStateException(interrupted);
-            }
-            assertThat(
-                    fixture
-                        .dsl
-                        .fetchSingle(
-                            "SELECT count(*) FROM pg_locks "
-                                + "WHERE pid = ? "
-                                + "AND relation = to_regclass('gameplay_admission_pointer') "
-                                + "AND mode = 'RowShareLock' AND granted",
-                            readerPid.get())
-                        .get(0, Long.class))
-                .as("reader holds no OPEN pointer row-lock relation while catalog is contested")
-                .isZero();
-          });
+      fixture.transactions.executeWithoutResult(ignored -> {
+        fixture.dsl.fetchSingle(
+            "SELECT realm_id FROM game_session_canonical_realm_catalog "
+                + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? "
+                + "FOR UPDATE",
+            NAMESPACE,
+            TENANT,
+            qualified.ownerProof().realmId());
+        holderPid.set(
+            Objects.requireNonNull(
+                fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class)));
+        reader.set(
+            executor.submit(() ->
+                fixture.transactions.execute(transaction -> {
+                  readerPid.set(
+                      Objects.requireNonNull(
+                          fixture
+                              .dsl
+                              .fetchSingle("SELECT pg_backend_pid()")
+                              .get(0, Integer.class)));
+                  readerStarted.countDown();
+                  return fixture.initialAdmissionRepository.lockExactCurrentOpenSnapshot(qualified);
+                })));
+        try {
+          assertThat(readerStarted.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+          awaitBackendBlockedBy(fixture.dsl, readerPid.get(), holderPid.get());
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException(interrupted);
+        }
+        assertThat(
+                fixture
+                    .dsl
+                    .fetchSingle(
+                        "SELECT count(*) FROM pg_locks "
+                            + "WHERE pid = ? "
+                            + "AND relation = to_regclass('gameplay_admission_pointer') "
+                            + "AND mode = 'RowShareLock' AND granted",
+                        readerPid.get())
+                    .get(0, Long.class))
+            .as("reader holds no OPEN pointer row-lock relation while catalog is contested")
+            .isZero();
+      });
       assertThat(reader.get().get(5L, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(qualified);
     }
   }
@@ -781,55 +758,54 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .isZero();
 
     UUID mismatchedGameInstance = uuid(998);
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "INSERT INTO gameplay_admission_pointer_event ("
-                        + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
-                        + "game_instance_id, pointer_version, visible, requires_character_selection, "
-                        + "state_scope, character_creation_policy, actor_principal, reason, "
-                        + "control_plane_request_id, occurred_at, prepared_version_upgrade_id, "
-                        + "public_production_realm, catalog_revision, realm_id, "
-                        + "playable_state_namespace_id, representation_version, target_namespace, "
-                        + "canonical_tenant_id, admission_state, canonical_game_instance_id, "
-                        + "canonical_version_id, runtime_version_id, initial_admission_request_id, "
-                        + "initial_admission_request_digest, initial_admission_origin_kind, "
-                        + "initial_admission_prior_pointer_version, initial_admission_active_epoch, "
-                        + "initial_admission_hold_id, initial_admission_hold_fence, "
-                        + "initial_admission_hold_binding_digest) "
-                        + "SELECT attempt.world_slug, catalog.realm_slug, catalog.source_world_display_name, "
-                        + "catalog.realm_display_name, attempt.game_session_tenant_id, attempt.game_instance_id, "
-                        + "CASE WHEN attempt.origin_kind = 'NO_PRIOR_POINTER' THEN 1 "
-                        + "ELSE attempt.expected_prior_pointer_version + 1 END, catalog.visible, NULL, "
-                        + "attempt.playable_state_scope, catalog.character_creation_policy, "
-                        + "'game-session-canonical-initial-admission', 'World-held initial admission', "
-                        + "attempt.initial_admission_request_id, CURRENT_TIMESTAMP, NULL, "
-                        + "catalog.public_production, attempt.expected_catalog_revision, attempt.realm_id, "
-                        + "attempt.playable_state_namespace_id, 3, attempt.target_namespace, "
-                        + "attempt.canonical_tenant_id, 'OPEN', ?, attempt.canonical_version_id, "
-                        + "attempt.runtime_version_id, attempt.initial_admission_request_id, "
-                        + "attempt.request_digest, attempt.origin_kind, attempt.expected_prior_pointer_version, "
-                        + "attempt.active_lifecycle_epoch, attempt.hold_id, attempt.hold_fence, "
-                        + "attempt.hold_binding_digest "
-                        + "FROM game_session_canonical_initial_admission_attempt attempt "
-                        + "JOIN game_session_canonical_realm_catalog catalog "
-                        + "ON catalog.target_namespace = attempt.target_namespace "
-                        + "AND catalog.canonical_tenant_id = attempt.canonical_tenant_id "
-                        + "AND catalog.realm_id = attempt.realm_id "
-                        + "AND catalog.catalog_revision = attempt.expected_catalog_revision "
-                        + "JOIN game_session_canonical_instance_launch launch "
-                        + "ON launch.target_namespace = attempt.target_namespace "
-                        + "AND launch.canonical_tenant_id = attempt.canonical_tenant_id "
-                        + "AND launch.canonical_realm_id = attempt.realm_id "
-                        + "AND launch.game_session_tenant_id = attempt.game_session_tenant_id "
-                        + "AND launch.game_instance_id = attempt.game_instance_id "
-                        + "AND launch.game_instance_uuid = attempt.canonical_game_instance_id "
-                        + "AND launch.version_id = attempt.runtime_version_id "
-                        + "WHERE attempt.target_namespace = ? "
-                        + "AND attempt.initial_admission_request_id = ? AND attempt.status = 'PENDING'",
-                    mismatchedGameInstance,
-                    NAMESPACE,
-                    request.initialAdmissionRequestId()))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "INSERT INTO gameplay_admission_pointer_event ("
+                    + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+                    + "game_instance_id, pointer_version, visible, requires_character_selection, "
+                    + "state_scope, character_creation_policy, actor_principal, reason, "
+                    + "control_plane_request_id, occurred_at, prepared_version_upgrade_id, "
+                    + "public_production_realm, catalog_revision, realm_id, "
+                    + "playable_state_namespace_id, representation_version, target_namespace, "
+                    + "canonical_tenant_id, admission_state, canonical_game_instance_id, "
+                    + "canonical_version_id, runtime_version_id, initial_admission_request_id, "
+                    + "initial_admission_request_digest, initial_admission_origin_kind, "
+                    + "initial_admission_prior_pointer_version, initial_admission_active_epoch, "
+                    + "initial_admission_hold_id, initial_admission_hold_fence, "
+                    + "initial_admission_hold_binding_digest) "
+                    + "SELECT attempt.world_slug, catalog.realm_slug, catalog.source_world_display_name, "
+                    + "catalog.realm_display_name, attempt.game_session_tenant_id, attempt.game_instance_id, "
+                    + "CASE WHEN attempt.origin_kind = 'NO_PRIOR_POINTER' THEN 1 "
+                    + "ELSE attempt.expected_prior_pointer_version + 1 END, catalog.visible, NULL, "
+                    + "attempt.playable_state_scope, catalog.character_creation_policy, "
+                    + "'game-session-canonical-initial-admission', 'World-held initial admission', "
+                    + "attempt.initial_admission_request_id, CURRENT_TIMESTAMP, NULL, "
+                    + "catalog.public_production, attempt.expected_catalog_revision, attempt.realm_id, "
+                    + "attempt.playable_state_namespace_id, 3, attempt.target_namespace, "
+                    + "attempt.canonical_tenant_id, 'OPEN', ?, attempt.canonical_version_id, "
+                    + "attempt.runtime_version_id, attempt.initial_admission_request_id, "
+                    + "attempt.request_digest, attempt.origin_kind, attempt.expected_prior_pointer_version, "
+                    + "attempt.active_lifecycle_epoch, attempt.hold_id, attempt.hold_fence, "
+                    + "attempt.hold_binding_digest "
+                    + "FROM game_session_canonical_initial_admission_attempt attempt "
+                    + "JOIN game_session_canonical_realm_catalog catalog "
+                    + "ON catalog.target_namespace = attempt.target_namespace "
+                    + "AND catalog.canonical_tenant_id = attempt.canonical_tenant_id "
+                    + "AND catalog.realm_id = attempt.realm_id "
+                    + "AND catalog.catalog_revision = attempt.expected_catalog_revision "
+                    + "JOIN game_session_canonical_instance_launch launch "
+                    + "ON launch.target_namespace = attempt.target_namespace "
+                    + "AND launch.canonical_tenant_id = attempt.canonical_tenant_id "
+                    + "AND launch.canonical_realm_id = attempt.realm_id "
+                    + "AND launch.game_session_tenant_id = attempt.game_session_tenant_id "
+                    + "AND launch.game_instance_id = attempt.game_instance_id "
+                    + "AND launch.game_instance_uuid = attempt.canonical_game_instance_id "
+                    + "AND launch.version_id = attempt.runtime_version_id "
+                    + "WHERE attempt.target_namespace = ? "
+                    + "AND attempt.initial_admission_request_id = ? AND attempt.status = 'PENDING'",
+                mismatchedGameInstance,
+                NAMESPACE,
+                request.initialAdmissionRequestId()))
         .hasMessageContaining("Numeric-only tenant scope cannot use a fresh source-bound key");
     assertThat(
             fixture.initialAdmissionRepository.read(NAMESPACE, request.initialAdmissionRequestId()))
@@ -842,16 +818,12 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .isZero();
 
     for (int retry = 0; retry < 2; retry++) {
-      assertHumanProtectionUnavailable(
-          () ->
-              fixture.transactions.executeWithoutResult(
-                  status ->
-                      fixture.initialAdmissionRepository.commit(request, testWorldProof(request))));
-      assertHumanProtectionUnavailable(
-          () ->
-              fixture.transactions.executeWithoutResult(
-                  status ->
-                      fixture.initialAdmissionRepository.abort(request, "Missing protection")));
+      assertHumanProtectionUnavailable(() ->
+          fixture.transactions.executeWithoutResult(status ->
+              fixture.initialAdmissionRepository.commit(request, testWorldProof(request))));
+      assertHumanProtectionUnavailable(() ->
+          fixture.transactions.executeWithoutResult(
+              status -> fixture.initialAdmissionRepository.abort(request, "Missing protection")));
       assertThat(attemptProjection(fixture, request)).isEqualTo(before);
       assertThat(
               fixture.initialAdmissionRepository.read(
@@ -939,11 +911,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             "canonical-initial-admission-test",
             "Create exact CLOSED origin");
     var preparedClosed = fixture.pointerRepository.prepareInitialClosed(closeRequest);
-    fixture.transactions.execute(
-        status -> {
-          fixture.pointerRepository.createInitialClosed(preparedClosed);
-          return null;
-        });
+    fixture.transactions.execute(status -> {
+      fixture.pointerRepository.createInitialClosed(preparedClosed);
+      return null;
+    });
 
     CanonicalInitialAdmissionRequest unsupportedPriorVersion =
         initialAdmissionRequest(
@@ -974,10 +945,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     assertHumanProtectionUnavailable(
         () -> fixture.initialAdmissionRepository.reserve(firstOpenRequest));
     assertNoAttemptAndNoPending(fixture, firstOpenRequest);
-    assertHumanProtectionUnavailable(
-        () ->
-            fixture.initialAdmissionRepository.commit(
-                firstOpenRequest, testWorldProof(firstOpenRequest)));
+    assertHumanProtectionUnavailable(() ->
+        fixture.initialAdmissionRepository.commit(
+            firstOpenRequest, testWorldProof(firstOpenRequest)));
     assertHumanProtectionUnavailable(
         () -> fixture.initialAdmissionRepository.abort(firstOpenRequest, "Missing protection"));
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(closedBefore);
@@ -1084,17 +1054,14 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     terminalColumns.put("abort_proof_digest", "sha256:" + "f".repeat(64));
     terminalColumns.put("terminal_at", terminalColumns.get("updated_at"));
 
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.executeWithoutResult(
-                    status ->
-                        fixture
-                            .dsl
-                            .insertInto(
-                                DSL.table(
-                                    DSL.name("game_session_canonical_initial_admission_attempt")))
-                            .set(terminalColumns)
-                            .execute()))
+    assertThatThrownBy(() ->
+            fixture.transactions.executeWithoutResult(status ->
+                fixture
+                    .dsl
+                    .insertInto(
+                        DSL.table(DSL.name("game_session_canonical_initial_admission_attempt")))
+                    .set(terminalColumns)
+                    .execute()))
         .isInstanceOfSatisfying(
             DataAccessException.class,
             exception -> {
@@ -1103,20 +1070,18 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                   .hasStackTraceContaining(
                       "New canonical initial-admission attempts must begin PENDING");
             });
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.executeWithoutResult(
-                    status ->
-                        fixture.dsl.execute(
-                            "UPDATE game_session_canonical_initial_admission_attempt SET "
-                                + "status = 'ABORTED', abort_reason = ?, abort_proof_digest = ?, "
-                                + "updated_at = updated_at + INTERVAL '1 second', "
-                                + "terminal_at = updated_at + INTERVAL '1 second' "
-                                + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                            terminalColumns.get("abort_reason"),
-                            terminalColumns.get("abort_proof_digest"),
-                            NAMESPACE,
-                            request.initialAdmissionRequestId())))
+    assertThatThrownBy(() ->
+            fixture.transactions.executeWithoutResult(status ->
+                fixture.dsl.execute(
+                    "UPDATE game_session_canonical_initial_admission_attempt SET "
+                        + "status = 'ABORTED', abort_reason = ?, abort_proof_digest = ?, "
+                        + "updated_at = updated_at + INTERVAL '1 second', "
+                        + "terminal_at = updated_at + INTERVAL '1 second' "
+                        + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                    terminalColumns.get("abort_reason"),
+                    terminalColumns.get("abort_proof_digest"),
+                    NAMESPACE,
+                    request.initialAdmissionRequestId())))
         .isInstanceOfSatisfying(
             DataAccessException.class,
             exception ->
@@ -1133,17 +1098,14 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             "original_owner_fence")) {
       var partial = new HashMap<>(terminalColumns);
       putControlledPartialProtection(fixture, partial, missing);
-      assertThatThrownBy(
-              () ->
-                  fixture.transactions.executeWithoutResult(
-                      status ->
-                          fixture
-                              .dsl
-                              .insertInto(
-                                  DSL.table(
-                                      DSL.name("game_session_canonical_initial_admission_attempt")))
-                              .set(partial)
-                              .execute()))
+      assertThatThrownBy(() ->
+              fixture.transactions.executeWithoutResult(status ->
+                  fixture
+                      .dsl
+                      .insertInto(
+                          DSL.table(DSL.name("game_session_canonical_initial_admission_attempt")))
+                      .set(partial)
+                      .execute()))
           .isInstanceOfSatisfying(
               DataAccessException.class,
               exception -> {
@@ -1152,28 +1114,26 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     .hasStackTraceContaining(
                         "New canonical initial-admission attempts must begin PENDING");
               });
-      assertThatThrownBy(
-              () ->
-                  fixture.transactions.executeWithoutResult(
-                      status ->
-                          fixture.dsl.execute(
-                              "UPDATE game_session_canonical_initial_admission_attempt SET status = 'ABORTED', "
-                                  + "abort_reason = ?, abort_proof_digest = ?, updated_at = updated_at + INTERVAL '1 second', "
-                                  + "terminal_at = updated_at + INTERVAL '1 second', account_protection_evidence_version = ?, "
-                                  + "account_protection_id = ?, account_protection_fence = ?, original_owner_attempt_id = ?, "
-                                  + "original_owner_mutation_id = ?, original_owner_fence = ?, account_protection_evidence_bytes = ? "
-                                  + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                              partial.get("abort_reason"),
-                              partial.get("abort_proof_digest"),
-                              partial.get("account_protection_evidence_version"),
-                              partial.get("account_protection_id"),
-                              partial.get("account_protection_fence"),
-                              partial.get("original_owner_attempt_id"),
-                              partial.get("original_owner_mutation_id"),
-                              partial.get("original_owner_fence"),
-                              partial.get("account_protection_evidence_bytes"),
-                              NAMESPACE,
-                              request.initialAdmissionRequestId())))
+      assertThatThrownBy(() ->
+              fixture.transactions.executeWithoutResult(status ->
+                  fixture.dsl.execute(
+                      "UPDATE game_session_canonical_initial_admission_attempt SET status = 'ABORTED', "
+                          + "abort_reason = ?, abort_proof_digest = ?, updated_at = updated_at + INTERVAL '1 second', "
+                          + "terminal_at = updated_at + INTERVAL '1 second', account_protection_evidence_version = ?, "
+                          + "account_protection_id = ?, account_protection_fence = ?, original_owner_attempt_id = ?, "
+                          + "original_owner_mutation_id = ?, original_owner_fence = ?, account_protection_evidence_bytes = ? "
+                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                      partial.get("abort_reason"),
+                      partial.get("abort_proof_digest"),
+                      partial.get("account_protection_evidence_version"),
+                      partial.get("account_protection_id"),
+                      partial.get("account_protection_fence"),
+                      partial.get("original_owner_attempt_id"),
+                      partial.get("original_owner_mutation_id"),
+                      partial.get("original_owner_fence"),
+                      partial.get("account_protection_evidence_bytes"),
+                      NAMESPACE,
+                      request.initialAdmissionRequestId())))
           .isInstanceOfSatisfying(
               DataAccessException.class,
               exception ->
@@ -1363,19 +1323,16 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             .containsOnlyNulls();
         assertHumanProtectionUnavailable(
             () -> predecessor.initialAdmissionRepository.commit(request, testWorldProof(request)));
-        assertHumanProtectionUnavailable(
-            () ->
-                predecessor.initialAdmissionRepository.abort(
-                    request, "Current Human retry remains unprotected"));
-        assertThatThrownBy(
-                () ->
-                    predecessor.transactions.executeWithoutResult(
-                        status ->
-                            predecessor.dsl.execute(
-                                "UPDATE game_session_canonical_initial_admission_attempt SET updated_at = updated_at + INTERVAL '1 second' "
-                                    + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                                NAMESPACE,
-                                request.initialAdmissionRequestId())))
+        assertHumanProtectionUnavailable(() ->
+            predecessor.initialAdmissionRepository.abort(
+                request, "Current Human retry remains unprotected"));
+        assertThatThrownBy(() ->
+                predecessor.transactions.executeWithoutResult(status ->
+                    predecessor.dsl.execute(
+                        "UPDATE game_session_canonical_initial_admission_attempt SET updated_at = updated_at + INTERVAL '1 second' "
+                            + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                        NAMESPACE,
+                        request.initialAdmissionRequestId())))
             .isInstanceOf(DataAccessException.class);
         assertThat(predecessorAttemptProjection(predecessor, request)).isEqualTo(originalAttempt);
         assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
@@ -1422,14 +1379,12 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         "ALTER TABLE game_session_canonical_initial_admission_attempt DISABLE TRIGGER "
             + "game_session_canonical_initial_admission_v44_terminal_evidence");
     try {
-      fixture.transactions.executeWithoutResult(
-          status ->
-              fixture
-                  .dsl
-                  .insertInto(
-                      DSL.table(DSL.name("game_session_canonical_initial_admission_attempt")))
-                  .set(partial)
-                  .execute());
+      fixture.transactions.executeWithoutResult(status ->
+          fixture
+              .dsl
+              .insertInto(DSL.table(DSL.name("game_session_canonical_initial_admission_attempt")))
+              .set(partial)
+              .execute());
     } finally {
       fixture.dsl.execute(
           "ALTER TABLE game_session_canonical_initial_admission_attempt ENABLE TRIGGER "
@@ -1510,15 +1465,14 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     IntakeReceipt source = fixture.registerSource();
     var association =
         Objects.requireNonNull(
-            fixture.transactions.execute(
-                status ->
-                    new GameSessionFreshTenantAssociationRepository(fixture.dsl)
-                        .associateFresh(
-                            ASSOCIATION_OPERATION,
-                            NAMESPACE,
-                            source,
-                            CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
-                                source.source()))));
+            fixture.transactions.execute(status ->
+                new GameSessionFreshTenantAssociationRepository(fixture.dsl)
+                    .associateFresh(
+                        ASSOCIATION_OPERATION,
+                        NAMESPACE,
+                        source,
+                        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                            source.source()))));
     var request = catalogRequest(source);
     var policy = publishedPolicy(source);
     // This preparation is compatible with1005 and validates the complete closed policy/source
@@ -1600,70 +1554,69 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             catalogDigest,
             receiptDigest,
             source);
-    fixture.transactions.executeWithoutResult(
-        status -> {
-          fixture.dsl.execute(
-              "INSERT INTO gameplay_tenant_shared_playable_state_namespace (tenant_id, "
-                  + "playable_state_namespace_id, canonical_tenant_id, target_namespace, "
-                  + "source_intake_operation_id, source_intake_schema_version, source_intake_request_id, "
-                  + "source_intake_request_digest, source_intake_receipt_digest, source_schema_version, "
-                  + "source_registration_request_id, source_operation_id, source_request_digest, "
-                  + "source_game_row_id, source_game_tenant_key, source_provenance_kind, source_evidence_digest) "
-                  + "VALUES (NULL, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              namespace,
-              TENANT,
-              NAMESPACE,
-              source.operationId(),
-              source.intakeRequestId(),
-              source.requestDigest(),
-              source.receiptDigest(),
-              authored.schemaVersion(),
-              authored.registrationRequestId(),
-              authored.operationId(),
-              authored.requestDigest(),
-              authored.sourceGameRowId(),
-              authored.sourceGameTenantKey(),
-              authored.provenanceKind(),
-              authored.evidenceDigest());
-          fixture.dsl.execute(
-              "INSERT INTO game_session_canonical_realm_catalog (target_namespace, canonical_tenant_id, "
-                  + "tenant_slug, world_slug, realm_id, realm_slug, realm_display_name, visible, "
-                  + "public_production, state_scope, playable_state_namespace_id, character_creation_policy, "
-                  + "catalog_revision, creation_request_id, request_digest, receipt_digest, "
-                  + "source_intake_operation_id, source_intake_schema_version, source_intake_request_id, "
-                  + "source_intake_request_digest, source_intake_receipt_digest, source_schema_version, "
-                  + "source_registration_request_id, source_operation_id, source_request_digest, "
-                  + "source_world_display_name, source_game_row_id, source_game_tenant_key, "
-                  + "source_provenance_kind, source_evidence_digest, complete_policy_set_evidence) "
-                  + "VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, ?, 1, ?, ?, ?, ?, 1, "
-                  + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              NAMESPACE,
-              TENANT,
-              authored.tenantSlug(),
-              authored.worldSlug(),
-              realm,
-              request.realmSlug(),
-              request.realmDisplayName(),
-              namespace,
-              request.characterCreationPolicy(),
-              request.requestId(),
-              catalogDigest,
-              receiptDigest,
-              source.operationId(),
-              source.intakeRequestId(),
-              source.requestDigest(),
-              source.receiptDigest(),
-              authored.schemaVersion(),
-              authored.registrationRequestId(),
-              authored.operationId(),
-              authored.requestDigest(),
-              authored.worldDisplayName(),
-              authored.sourceGameRowId(),
-              authored.sourceGameTenantKey(),
-              authored.provenanceKind(),
-              authored.evidenceDigest(),
-              policyBytes);
-        });
+    fixture.transactions.executeWithoutResult(status -> {
+      fixture.dsl.execute(
+          "INSERT INTO gameplay_tenant_shared_playable_state_namespace (tenant_id, "
+              + "playable_state_namespace_id, canonical_tenant_id, target_namespace, "
+              + "source_intake_operation_id, source_intake_schema_version, source_intake_request_id, "
+              + "source_intake_request_digest, source_intake_receipt_digest, source_schema_version, "
+              + "source_registration_request_id, source_operation_id, source_request_digest, "
+              + "source_game_row_id, source_game_tenant_key, source_provenance_kind, source_evidence_digest) "
+              + "VALUES (NULL, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          namespace,
+          TENANT,
+          NAMESPACE,
+          source.operationId(),
+          source.intakeRequestId(),
+          source.requestDigest(),
+          source.receiptDigest(),
+          authored.schemaVersion(),
+          authored.registrationRequestId(),
+          authored.operationId(),
+          authored.requestDigest(),
+          authored.sourceGameRowId(),
+          authored.sourceGameTenantKey(),
+          authored.provenanceKind(),
+          authored.evidenceDigest());
+      fixture.dsl.execute(
+          "INSERT INTO game_session_canonical_realm_catalog (target_namespace, canonical_tenant_id, "
+              + "tenant_slug, world_slug, realm_id, realm_slug, realm_display_name, visible, "
+              + "public_production, state_scope, playable_state_namespace_id, character_creation_policy, "
+              + "catalog_revision, creation_request_id, request_digest, receipt_digest, "
+              + "source_intake_operation_id, source_intake_schema_version, source_intake_request_id, "
+              + "source_intake_request_digest, source_intake_receipt_digest, source_schema_version, "
+              + "source_registration_request_id, source_operation_id, source_request_digest, "
+              + "source_world_display_name, source_game_row_id, source_game_tenant_key, "
+              + "source_provenance_kind, source_evidence_digest, complete_policy_set_evidence) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, ?, 1, ?, ?, ?, ?, 1, "
+              + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          NAMESPACE,
+          TENANT,
+          authored.tenantSlug(),
+          authored.worldSlug(),
+          realm,
+          request.realmSlug(),
+          request.realmDisplayName(),
+          namespace,
+          request.characterCreationPolicy(),
+          request.requestId(),
+          catalogDigest,
+          receiptDigest,
+          source.operationId(),
+          source.intakeRequestId(),
+          source.requestDigest(),
+          source.receiptDigest(),
+          authored.schemaVersion(),
+          authored.registrationRequestId(),
+          authored.operationId(),
+          authored.requestDigest(),
+          authored.worldDisplayName(),
+          authored.sourceGameRowId(),
+          authored.sourceGameTenantKey(),
+          authored.provenanceKind(),
+          authored.evidenceDigest(),
+          policyBytes);
+    });
     var preparationRequest = preparationRequest(source, catalog);
     var descriptor =
         AuthoredWorldLaunchDescriptorEvidence.create(
@@ -1695,81 +1648,80 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     long tenantId = association.legacyGameSessionTenantId();
     var sourceIdentity = association.sourceEvidence();
     Long instanceId =
-        fixture.transactions.execute(
-            status -> {
-              long allocated =
-                  fixture
-                      .dsl
-                      .fetchSingle(
-                          "INSERT INTO game_instances (tenant_id, runtime_version, owner_account_uuid, status, "
-                              + "row_version, game_template_id, launch_descriptor_id, version_id, release_bundle_id, "
-                              + "version_state_epoch, generation_config_revision, run_owned_start_request_id, "
-                              + "run_owned_start_request_digest, run_owned_start_published_release_bundle_ref, "
-                              + "game_instance_uuid) VALUES (?, ?, ?, 'STARTING', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                              + "RETURNING id",
-                          tenantId,
-                          Long.toString(descriptor.versionId()),
-                          ACTOR,
-                          descriptor.gameTemplateId(),
-                          descriptor.launchDescriptorId(),
-                          descriptor.versionId(),
-                          descriptor.releaseBundleId(),
-                          descriptor.versionStateEpoch(),
-                          descriptor.generationConfigRevision(),
-                          tuple.controlPlaneRequestId(),
-                          tuple.mutationDigest(),
-                          descriptor.publishedReleaseBundleRef(),
-                          instanceUuid)
-                      .get("id", Long.class);
-              fixture.dsl.execute(
-                  "INSERT INTO game_session_canonical_instance_launch (target_namespace, control_plane_request_id, "
-                      + "game_session_tenant_id, canonical_tenant_id, tenant_association_operation_id, "
-                      + "tenant_association_request_id, tenant_source_schema_version, tenant_source_target_namespace, "
-                      + "tenant_source_request_id, tenant_source_canonical_tenant_id, tenant_source_game_row_id, "
-                      + "tenant_source_game_tenant_key, tenant_source_provenance_kind, tenant_association_kind, "
-                      + "game_instance_id, game_instance_uuid, canonical_realm_id, world_slug, "
-                      + "playable_state_namespace_id, playable_state_scope, public_production, "
-                      + "captured_starting_row_version, game_template_id, launch_descriptor_id, version_id, "
-                      + "release_bundle_id, generation_config_revision, version_state_epoch, complete_launch_binding_evidence, "
-                      + "original_start_session_tuple, catalog_creation_request_id, catalog_revision, "
-                      + "catalog_source_intake_operation_id, catalog_source_intake_request_id) "
-                      + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FRESH_SOURCE_BOUND', ?, ?, ?, ?, ?, "
-                      + "'SHARED', TRUE, 0, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), ?, ?, 1, ?, ?)",
-                  NAMESPACE,
-                  tuple.controlPlaneRequestId(),
-                  tenantId,
-                  TENANT,
-                  ASSOCIATION_OPERATION,
-                  sourceIdentity.requestId(),
-                  sourceIdentity.schemaVersion(),
-                  NAMESPACE,
-                  sourceIdentity.requestId(),
-                  TENANT,
-                  sourceIdentity.sourceGameRowId(),
-                  sourceIdentity.sourceGameTenantKey(),
-                  sourceIdentity.provenanceKind(),
-                  allocated,
-                  instanceUuid,
-                  realm,
-                  authored.worldSlug(),
-                  namespace,
-                  descriptor.gameTemplateId(),
-                  descriptor.launchDescriptorId(),
-                  descriptor.versionId(),
-                  descriptor.releaseBundleId(),
-                  descriptor.generationConfigRevision(),
-                  descriptor.versionStateEpoch(),
-                  bindingJson,
-                  tuple.canonicalBytes(),
-                  CATALOG_REQUEST,
-                  source.operationId(),
-                  source.intakeRequestId());
-              fixture.dsl.execute(
-                  "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
-                  tenantId,
-                  allocated);
-              return allocated;
-            });
+        fixture.transactions.execute(status -> {
+          long allocated =
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "INSERT INTO game_instances (tenant_id, runtime_version, owner_account_uuid, status, "
+                          + "row_version, game_template_id, launch_descriptor_id, version_id, release_bundle_id, "
+                          + "version_state_epoch, generation_config_revision, run_owned_start_request_id, "
+                          + "run_owned_start_request_digest, run_owned_start_published_release_bundle_ref, "
+                          + "game_instance_uuid) VALUES (?, ?, ?, 'STARTING', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                          + "RETURNING id",
+                      tenantId,
+                      Long.toString(descriptor.versionId()),
+                      ACTOR,
+                      descriptor.gameTemplateId(),
+                      descriptor.launchDescriptorId(),
+                      descriptor.versionId(),
+                      descriptor.releaseBundleId(),
+                      descriptor.versionStateEpoch(),
+                      descriptor.generationConfigRevision(),
+                      tuple.controlPlaneRequestId(),
+                      tuple.mutationDigest(),
+                      descriptor.publishedReleaseBundleRef(),
+                      instanceUuid)
+                  .get("id", Long.class);
+          fixture.dsl.execute(
+              "INSERT INTO game_session_canonical_instance_launch (target_namespace, control_plane_request_id, "
+                  + "game_session_tenant_id, canonical_tenant_id, tenant_association_operation_id, "
+                  + "tenant_association_request_id, tenant_source_schema_version, tenant_source_target_namespace, "
+                  + "tenant_source_request_id, tenant_source_canonical_tenant_id, tenant_source_game_row_id, "
+                  + "tenant_source_game_tenant_key, tenant_source_provenance_kind, tenant_association_kind, "
+                  + "game_instance_id, game_instance_uuid, canonical_realm_id, world_slug, "
+                  + "playable_state_namespace_id, playable_state_scope, public_production, "
+                  + "captured_starting_row_version, game_template_id, launch_descriptor_id, version_id, "
+                  + "release_bundle_id, generation_config_revision, version_state_epoch, complete_launch_binding_evidence, "
+                  + "original_start_session_tuple, catalog_creation_request_id, catalog_revision, "
+                  + "catalog_source_intake_operation_id, catalog_source_intake_request_id) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FRESH_SOURCE_BOUND', ?, ?, ?, ?, ?, "
+                  + "'SHARED', TRUE, 0, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), ?, ?, 1, ?, ?)",
+              NAMESPACE,
+              tuple.controlPlaneRequestId(),
+              tenantId,
+              TENANT,
+              ASSOCIATION_OPERATION,
+              sourceIdentity.requestId(),
+              sourceIdentity.schemaVersion(),
+              NAMESPACE,
+              sourceIdentity.requestId(),
+              TENANT,
+              sourceIdentity.sourceGameRowId(),
+              sourceIdentity.sourceGameTenantKey(),
+              sourceIdentity.provenanceKind(),
+              allocated,
+              instanceUuid,
+              realm,
+              authored.worldSlug(),
+              namespace,
+              descriptor.gameTemplateId(),
+              descriptor.launchDescriptorId(),
+              descriptor.versionId(),
+              descriptor.releaseBundleId(),
+              descriptor.generationConfigRevision(),
+              descriptor.versionStateEpoch(),
+              bindingJson,
+              tuple.canonicalBytes(),
+              CATALOG_REQUEST,
+              source.operationId(),
+              source.intakeRequestId());
+          fixture.dsl.execute(
+              "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+              tenantId,
+              allocated);
+          return allocated;
+        });
     var captured =
         new CanonicalGameInstanceLaunchAssociation(
             NAMESPACE,
@@ -1797,37 +1749,36 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       Fixture fixture,
       CanonicalInitialAdmissionLaunchTarget launch,
       CanonicalInitialAdmissionRequest request) {
-    fixture.transactions.executeWithoutResult(
-        status ->
-            fixture.dsl.execute(
-                "INSERT INTO game_session_canonical_initial_admission_attempt (target_namespace, "
-                    + "initial_admission_request_id, request_digest, canonical_tenant_id, world_slug, realm_id, "
-                    + "playable_state_namespace_id, playable_state_scope, canonical_game_instance_id, "
-                    + "game_session_tenant_id, game_instance_id, canonical_version_id, runtime_version_id, "
-                    + "expected_catalog_revision, origin_kind, expected_prior_pointer_version, active_lifecycle_epoch, "
-                    + "hold_id, hold_fence, hold_binding_digest, status, created_at, updated_at) "
-                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', "
-                    + "clock_timestamp(), clock_timestamp())",
-                NAMESPACE,
-                request.initialAdmissionRequestId(),
-                request.requestDigest(),
-                TENANT,
-                request.worldSlug(),
-                request.realmId(),
-                request.playableStateNamespaceId(),
-                request.playableStateScope(),
-                request.canonicalGameInstanceId(),
-                launch.association().gameSessionTenantId(),
-                launch.gameInstanceId(),
-                request.canonicalVersionId(),
-                launch.runtimeVersionId(),
-                request.expectedCatalogRevision(),
-                request.originKind().name(),
-                request.expectedPriorPointerVersion(),
-                request.activeLifecycleEpoch(),
-                request.holdId(),
-                request.holdFence(),
-                request.holdBindingDigest()));
+    fixture.transactions.executeWithoutResult(status ->
+        fixture.dsl.execute(
+            "INSERT INTO game_session_canonical_initial_admission_attempt (target_namespace, "
+                + "initial_admission_request_id, request_digest, canonical_tenant_id, world_slug, realm_id, "
+                + "playable_state_namespace_id, playable_state_scope, canonical_game_instance_id, "
+                + "game_session_tenant_id, game_instance_id, canonical_version_id, runtime_version_id, "
+                + "expected_catalog_revision, origin_kind, expected_prior_pointer_version, active_lifecycle_epoch, "
+                + "hold_id, hold_fence, hold_binding_digest, status, created_at, updated_at) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', "
+                + "clock_timestamp(), clock_timestamp())",
+            NAMESPACE,
+            request.initialAdmissionRequestId(),
+            request.requestDigest(),
+            TENANT,
+            request.worldSlug(),
+            request.realmId(),
+            request.playableStateNamespaceId(),
+            request.playableStateScope(),
+            request.canonicalGameInstanceId(),
+            launch.association().gameSessionTenantId(),
+            launch.gameInstanceId(),
+            request.canonicalVersionId(),
+            launch.runtimeVersionId(),
+            request.expectedCatalogRevision(),
+            request.originKind().name(),
+            request.expectedPriorPointerVersion(),
+            request.activeLifecycleEpoch(),
+            request.holdId(),
+            request.holdFence(),
+            request.holdBindingDigest()));
   }
 
   /** Independent SQL encoding of the predecessor catalog's decimal-length UTF-8 framing. */
@@ -1901,79 +1852,78 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       CanonicalInitialAdmissionRequest request,
       net.firedevops.firemud.gamesession.dto.CanonicalClosedAdmissionPointerSnapshot origin) {
     Instant terminalAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
-    fixture.transactions.executeWithoutResult(
-        status -> {
-          long audit =
-              new GameplayAdmissionPointerEventRepository(fixture.dsl)
-                  .appendCanonicalInitialAdmissionOpen(
-                      request,
-                      prepared.catalog(),
-                      launch,
-                      2L,
-                      prepared.catalog().catalogRevision(),
-                      terminalAt);
-          long pointer =
-              fixture
-                  .dsl
-                  .fetchSingle(
-                      "UPDATE gameplay_admission_pointer SET (world_slug, realm_slug, world_display_name, realm_display_name, "
-                          + "tenant_id, game_instance_id, pointer_version, visible, requires_character_selection, state_scope, "
-                          + "character_creation_policy, last_updated_by, last_update_reason, updated_at, public_production_realm, "
-                          + "catalog_revision, realm_id, playable_state_namespace_id, representation_version, target_namespace, "
-                          + "canonical_tenant_id, admission_state, canonical_game_instance_id, canonical_version_id, runtime_version_id, "
-                          + "initial_admission_request_id, initial_admission_request_digest, initial_admission_origin_kind, "
-                          + "initial_admission_prior_pointer_version, initial_admission_active_epoch, initial_admission_hold_id, "
-                          + "initial_admission_hold_fence, initial_admission_hold_binding_digest) = "
-                          + "(SELECT world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, game_instance_id, "
-                          + "pointer_version, visible, requires_character_selection, state_scope, character_creation_policy, "
-                          + "actor_principal, reason, occurred_at, public_production_realm, catalog_revision, realm_id, "
-                          + "playable_state_namespace_id, representation_version, target_namespace, canonical_tenant_id, admission_state, "
-                          + "canonical_game_instance_id, canonical_version_id, runtime_version_id, initial_admission_request_id, "
-                          + "initial_admission_request_digest, initial_admission_origin_kind, initial_admission_prior_pointer_version, "
-                          + "initial_admission_active_epoch, initial_admission_hold_id, initial_admission_hold_fence, initial_admission_hold_binding_digest "
-                          + "FROM gameplay_admission_pointer_event WHERE id = ?) WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? RETURNING id",
-                      audit,
-                      NAMESPACE,
-                      TENANT,
-                      request.realmId())
-                  .get("id", Long.class);
-          String proof =
-              fixture
-                  .dsl
-                  .fetchSingle(
-                      "SELECT 'sha256:' || encode(sha256(string_agg(int4send(octet_length(convert_to(field, 'UTF8'))) "
-                          + "|| convert_to(field, 'UTF8'), ''::BYTEA ORDER BY ordinal)), 'hex') AS proof "
-                          + "FROM game_session_canonical_initial_admission_attempt attempt CROSS JOIN LATERAL unnest(ARRAY["
-                          + "'gs-canonical-initial-admission-commit-proof/v1', request_digest, initial_admission_request_id, "
-                          + "target_namespace, canonical_tenant_id::TEXT, world_slug, realm_id::TEXT, playable_state_namespace_id::TEXT, "
-                          + "playable_state_scope, canonical_game_instance_id::TEXT, canonical_version_id::TEXT, runtime_version_id::TEXT, "
-                          + "active_lifecycle_epoch::TEXT, expected_catalog_revision::TEXT, origin_kind, expected_prior_pointer_version::TEXT, "
-                          + "hold_id::TEXT, hold_fence::TEXT, hold_binding_digest, '2', ?::TEXT, ?::TEXT, ?::TEXT, ?::TEXT, ?::TEXT]) "
-                          + "WITH ORDINALITY fields(field, ordinal) WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                      Long.toString(audit),
-                      origin.requestId().toString(),
-                      origin.requestDigest(),
-                      Long.toString(origin.auditEventId()),
-                      terminalAt.toString(),
-                      NAMESPACE,
-                      request.initialAdmissionRequestId())
-                  .get("proof", String.class);
-          fixture.dsl.execute(
-              "UPDATE game_session_canonical_initial_admission_attempt SET status = 'COMMITTED', pointer_id = ?, "
-                  + "pointer_version = 2, audit_event_id = ?, prior_pointer_request_id = ?, prior_pointer_request_digest = ?, "
-                  + "prior_pointer_audit_event_id = ?, commit_proof_digest = ?, updated_at = CAST(? AS TIMESTAMPTZ), "
-                  + "terminal_at = CAST(? AS TIMESTAMPTZ) WHERE target_namespace = ? AND initial_admission_request_id = ?",
-              pointer,
-              audit,
-              origin.requestId(),
-              origin.requestDigest(),
-              origin.auditEventId(),
-              proof,
-              terminalAt.atOffset(ZoneOffset.UTC),
-              terminalAt.atOffset(ZoneOffset.UTC),
-              NAMESPACE,
-              request.initialAdmissionRequestId());
-        });
+    fixture.transactions.executeWithoutResult(status -> {
+      long audit =
+          new GameplayAdmissionPointerEventRepository(fixture.dsl)
+              .appendCanonicalInitialAdmissionOpen(
+                  request,
+                  prepared.catalog(),
+                  launch,
+                  2L,
+                  prepared.catalog().catalogRevision(),
+                  terminalAt);
+      long pointer =
+          fixture
+              .dsl
+              .fetchSingle(
+                  "UPDATE gameplay_admission_pointer SET (world_slug, realm_slug, world_display_name, realm_display_name, "
+                      + "tenant_id, game_instance_id, pointer_version, visible, requires_character_selection, state_scope, "
+                      + "character_creation_policy, last_updated_by, last_update_reason, updated_at, public_production_realm, "
+                      + "catalog_revision, realm_id, playable_state_namespace_id, representation_version, target_namespace, "
+                      + "canonical_tenant_id, admission_state, canonical_game_instance_id, canonical_version_id, runtime_version_id, "
+                      + "initial_admission_request_id, initial_admission_request_digest, initial_admission_origin_kind, "
+                      + "initial_admission_prior_pointer_version, initial_admission_active_epoch, initial_admission_hold_id, "
+                      + "initial_admission_hold_fence, initial_admission_hold_binding_digest) = "
+                      + "(SELECT world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, game_instance_id, "
+                      + "pointer_version, visible, requires_character_selection, state_scope, character_creation_policy, "
+                      + "actor_principal, reason, occurred_at, public_production_realm, catalog_revision, realm_id, "
+                      + "playable_state_namespace_id, representation_version, target_namespace, canonical_tenant_id, admission_state, "
+                      + "canonical_game_instance_id, canonical_version_id, runtime_version_id, initial_admission_request_id, "
+                      + "initial_admission_request_digest, initial_admission_origin_kind, initial_admission_prior_pointer_version, "
+                      + "initial_admission_active_epoch, initial_admission_hold_id, initial_admission_hold_fence, initial_admission_hold_binding_digest "
+                      + "FROM gameplay_admission_pointer_event WHERE id = ?) WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? RETURNING id",
+                  audit,
+                  NAMESPACE,
+                  TENANT,
+                  request.realmId())
+              .get("id", Long.class);
+      String proof =
+          fixture
+              .dsl
+              .fetchSingle(
+                  "SELECT 'sha256:' || encode(sha256(string_agg(int4send(octet_length(convert_to(field, 'UTF8'))) "
+                      + "|| convert_to(field, 'UTF8'), ''::BYTEA ORDER BY ordinal)), 'hex') AS proof "
+                      + "FROM game_session_canonical_initial_admission_attempt attempt CROSS JOIN LATERAL unnest(ARRAY["
+                      + "'gs-canonical-initial-admission-commit-proof/v1', request_digest, initial_admission_request_id, "
+                      + "target_namespace, canonical_tenant_id::TEXT, world_slug, realm_id::TEXT, playable_state_namespace_id::TEXT, "
+                      + "playable_state_scope, canonical_game_instance_id::TEXT, canonical_version_id::TEXT, runtime_version_id::TEXT, "
+                      + "active_lifecycle_epoch::TEXT, expected_catalog_revision::TEXT, origin_kind, expected_prior_pointer_version::TEXT, "
+                      + "hold_id::TEXT, hold_fence::TEXT, hold_binding_digest, '2', ?::TEXT, ?::TEXT, ?::TEXT, ?::TEXT, ?::TEXT]) "
+                      + "WITH ORDINALITY fields(field, ordinal) WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                  Long.toString(audit),
+                  origin.requestId().toString(),
+                  origin.requestDigest(),
+                  Long.toString(origin.auditEventId()),
+                  terminalAt.toString(),
+                  NAMESPACE,
+                  request.initialAdmissionRequestId())
+              .get("proof", String.class);
+      fixture.dsl.execute(
+          "UPDATE game_session_canonical_initial_admission_attempt SET status = 'COMMITTED', pointer_id = ?, "
+              + "pointer_version = 2, audit_event_id = ?, prior_pointer_request_id = ?, prior_pointer_request_digest = ?, "
+              + "prior_pointer_audit_event_id = ?, commit_proof_digest = ?, updated_at = CAST(? AS TIMESTAMPTZ), "
+              + "terminal_at = CAST(? AS TIMESTAMPTZ) WHERE target_namespace = ? AND initial_admission_request_id = ?",
+          pointer,
+          audit,
+          origin.requestId(),
+          origin.requestDigest(),
+          origin.auditEventId(),
+          proof,
+          terminalAt.atOffset(ZoneOffset.UTC),
+          terminalAt.atOffset(ZoneOffset.UTC),
+          NAMESPACE,
+          request.initialAdmissionRequestId());
+    });
   }
 
   private static void seedPre1006Terminal(
@@ -1992,82 +1942,80 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 .get(0, Long.class))
         .isZero();
     Instant terminalAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
-    fixture.transactions.executeWithoutResult(
-        status -> {
-          Long pointerId = null;
-          Long auditId = null;
-          String reason = "Explicit pre1006 owner abort fixture";
-          if (committed) {
-            auditId =
-                new GameplayAdmissionPointerEventRepository(fixture.dsl)
-                    .appendCanonicalInitialAdmissionOpen(
-                        request,
-                        prepared.catalog(),
-                        launch,
-                        1L,
-                        prepared.catalog().catalogRevision(),
-                        terminalAt);
-            pointerId =
-                fixture
-                    .dsl
-                    .fetchSingle(
-                        "INSERT INTO gameplay_admission_pointer (world_slug, realm_slug, world_display_name, "
-                            + "realm_display_name, tenant_id, game_instance_id, pointer_version, visible, "
-                            + "requires_character_selection, state_scope, character_creation_policy, "
-                            + "last_updated_by, last_update_reason, created_at, updated_at, "
-                            + "public_production_realm, catalog_revision, realm_id, playable_state_namespace_id, "
-                            + "representation_version, target_namespace, canonical_tenant_id, admission_state, "
-                            + "canonical_game_instance_id, canonical_version_id, runtime_version_id, "
-                            + "initial_admission_request_id, initial_admission_request_digest, "
-                            + "initial_admission_origin_kind, initial_admission_prior_pointer_version, "
-                            + "initial_admission_active_epoch, initial_admission_hold_id, "
-                            + "initial_admission_hold_fence, initial_admission_hold_binding_digest) "
-                            + "SELECT world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
-                            + "game_instance_id, pointer_version, visible, requires_character_selection, "
-                            + "state_scope, character_creation_policy, actor_principal, reason, occurred_at, "
-                            + "occurred_at, public_production_realm, catalog_revision, realm_id, "
-                            + "playable_state_namespace_id, representation_version, target_namespace, "
-                            + "canonical_tenant_id, admission_state, canonical_game_instance_id, "
-                            + "canonical_version_id, runtime_version_id, initial_admission_request_id, "
-                            + "initial_admission_request_digest, initial_admission_origin_kind, "
-                            + "initial_admission_prior_pointer_version, initial_admission_active_epoch, "
-                            + "initial_admission_hold_id, initial_admission_hold_fence, "
-                            + "initial_admission_hold_binding_digest FROM gameplay_admission_pointer_event "
-                            + "WHERE id = ? RETURNING id",
-                        auditId)
-                    .get("id", Long.class);
-          }
-          String proof =
-              predecessorTerminalProofDigest(
-                  fixture, request, committed, auditId, reason, terminalAt);
-          if (committed) {
-            fixture.dsl.execute(
-                "UPDATE game_session_canonical_initial_admission_attempt SET "
-                    + "status = 'COMMITTED', pointer_id = ?, pointer_version = 1, audit_event_id = ?, "
-                    + "commit_proof_digest = ?, updated_at = CAST(? AS TIMESTAMPTZ), "
-                    + "terminal_at = CAST(? AS TIMESTAMPTZ) "
-                    + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                pointerId,
-                auditId,
-                proof,
-                terminalAt.atOffset(ZoneOffset.UTC),
-                terminalAt.atOffset(ZoneOffset.UTC),
-                NAMESPACE,
-                request.initialAdmissionRequestId());
-          } else {
-            fixture.dsl.execute(
-                "UPDATE game_session_canonical_initial_admission_attempt SET "
-                    + "status = 'ABORTED', abort_reason = ?, abort_proof_digest = ?, "
-                    + "updated_at = CAST(? AS TIMESTAMPTZ), terminal_at = CAST(? AS TIMESTAMPTZ) "
-                    + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                reason,
-                proof,
-                terminalAt.atOffset(ZoneOffset.UTC),
-                terminalAt.atOffset(ZoneOffset.UTC),
-                NAMESPACE,
-                request.initialAdmissionRequestId());
-          }
-        });
+    fixture.transactions.executeWithoutResult(status -> {
+      Long pointerId = null;
+      Long auditId = null;
+      String reason = "Explicit pre1006 owner abort fixture";
+      if (committed) {
+        auditId =
+            new GameplayAdmissionPointerEventRepository(fixture.dsl)
+                .appendCanonicalInitialAdmissionOpen(
+                    request,
+                    prepared.catalog(),
+                    launch,
+                    1L,
+                    prepared.catalog().catalogRevision(),
+                    terminalAt);
+        pointerId =
+            fixture
+                .dsl
+                .fetchSingle(
+                    "INSERT INTO gameplay_admission_pointer (world_slug, realm_slug, world_display_name, "
+                        + "realm_display_name, tenant_id, game_instance_id, pointer_version, visible, "
+                        + "requires_character_selection, state_scope, character_creation_policy, "
+                        + "last_updated_by, last_update_reason, created_at, updated_at, "
+                        + "public_production_realm, catalog_revision, realm_id, playable_state_namespace_id, "
+                        + "representation_version, target_namespace, canonical_tenant_id, admission_state, "
+                        + "canonical_game_instance_id, canonical_version_id, runtime_version_id, "
+                        + "initial_admission_request_id, initial_admission_request_digest, "
+                        + "initial_admission_origin_kind, initial_admission_prior_pointer_version, "
+                        + "initial_admission_active_epoch, initial_admission_hold_id, "
+                        + "initial_admission_hold_fence, initial_admission_hold_binding_digest) "
+                        + "SELECT world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+                        + "game_instance_id, pointer_version, visible, requires_character_selection, "
+                        + "state_scope, character_creation_policy, actor_principal, reason, occurred_at, "
+                        + "occurred_at, public_production_realm, catalog_revision, realm_id, "
+                        + "playable_state_namespace_id, representation_version, target_namespace, "
+                        + "canonical_tenant_id, admission_state, canonical_game_instance_id, "
+                        + "canonical_version_id, runtime_version_id, initial_admission_request_id, "
+                        + "initial_admission_request_digest, initial_admission_origin_kind, "
+                        + "initial_admission_prior_pointer_version, initial_admission_active_epoch, "
+                        + "initial_admission_hold_id, initial_admission_hold_fence, "
+                        + "initial_admission_hold_binding_digest FROM gameplay_admission_pointer_event "
+                        + "WHERE id = ? RETURNING id",
+                    auditId)
+                .get("id", Long.class);
+      }
+      String proof =
+          predecessorTerminalProofDigest(fixture, request, committed, auditId, reason, terminalAt);
+      if (committed) {
+        fixture.dsl.execute(
+            "UPDATE game_session_canonical_initial_admission_attempt SET "
+                + "status = 'COMMITTED', pointer_id = ?, pointer_version = 1, audit_event_id = ?, "
+                + "commit_proof_digest = ?, updated_at = CAST(? AS TIMESTAMPTZ), "
+                + "terminal_at = CAST(? AS TIMESTAMPTZ) "
+                + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+            pointerId,
+            auditId,
+            proof,
+            terminalAt.atOffset(ZoneOffset.UTC),
+            terminalAt.atOffset(ZoneOffset.UTC),
+            NAMESPACE,
+            request.initialAdmissionRequestId());
+      } else {
+        fixture.dsl.execute(
+            "UPDATE game_session_canonical_initial_admission_attempt SET "
+                + "status = 'ABORTED', abort_reason = ?, abort_proof_digest = ?, "
+                + "updated_at = CAST(? AS TIMESTAMPTZ), terminal_at = CAST(? AS TIMESTAMPTZ) "
+                + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+            reason,
+            proof,
+            terminalAt.atOffset(ZoneOffset.UTC),
+            terminalAt.atOffset(ZoneOffset.UTC),
+            NAMESPACE,
+            request.initialAdmissionRequestId());
+      }
+    });
   }
 
   /** Independent PostgreSQL encoding of the retained v1 length-prefixed terminal frame. */
@@ -2251,42 +2199,37 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         for (int index = 0; index < requests.size(); index++) {
           int slot = index;
           readers.add(
-              executor.submit(
-                  () ->
-                      fixture.transactions.execute(
-                          status -> {
-                            readerPids
-                                .get(slot)
-                                .set(
-                                    Objects.requireNonNull(
-                                        fixture
-                                            .dsl
-                                            .fetchSingle("SELECT pg_backend_pid()")
-                                            .get(0, Integer.class)));
-                            var original = references.begin(requests.get(slot));
-                            assertThat(
-                                    fixture.initialAdmissionRepository.lockExactCurrentOpenSnapshot(
-                                        qualified))
-                                .isEqualTo(qualified);
-                            assertThat(references.find(requests.get(slot))).contains(original);
-                            acquired.get(slot).countDown();
-                            try {
-                              if (!release
-                                  .get(slot)
-                                  .await(30L, java.util.concurrent.TimeUnit.SECONDS)) {
-                                throw new IllegalStateException(
-                                    "Current-source reader was not released");
-                              }
-                            } catch (InterruptedException interrupted) {
-                              Thread.currentThread().interrupt();
-                              throw new IllegalStateException(interrupted);
-                            } finally {
-                              // Retained owner histories and existing selection assertions remain
-                              // unchanged.
-                              status.setRollbackOnly();
-                            }
-                            return original.getTargetFenceUuid();
-                          })));
+              executor.submit(() ->
+                  fixture.transactions.execute(status -> {
+                    readerPids
+                        .get(slot)
+                        .set(
+                            Objects.requireNonNull(
+                                fixture
+                                    .dsl
+                                    .fetchSingle("SELECT pg_backend_pid()")
+                                    .get(0, Integer.class)));
+                    var original = references.begin(requests.get(slot));
+                    assertThat(
+                            fixture.initialAdmissionRepository.lockExactCurrentOpenSnapshot(
+                                qualified))
+                        .isEqualTo(qualified);
+                    assertThat(references.find(requests.get(slot))).contains(original);
+                    acquired.get(slot).countDown();
+                    try {
+                      if (!release.get(slot).await(30L, java.util.concurrent.TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("Current-source reader was not released");
+                      }
+                    } catch (InterruptedException interrupted) {
+                      Thread.currentThread().interrupt();
+                      throw new IllegalStateException(interrupted);
+                    } finally {
+                      // Retained owner histories and existing selection assertions remain
+                      // unchanged.
+                      status.setRollbackOnly();
+                    }
+                    return original.getTargetFenceUuid();
+                  })));
           // Both complete revalidations must acquire their shared locks while the first stays open.
           assertThat(acquired.get(slot).await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         }
@@ -2296,25 +2239,23 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
           int slot = index;
           var started = new java.util.concurrent.CountDownLatch(1);
           writers.add(
-              executor.submit(
-                  () ->
-                      fixture.transactions.execute(
-                          status -> {
-                            writerPids
-                                .get(slot)
-                                .set(
-                                    Objects.requireNonNull(
-                                        fixture
-                                            .dsl
-                                            .fetchSingle("SELECT pg_backend_pid()")
-                                            .get(0, Integer.class)));
-                            started.countDown();
-                            var locked =
-                                fixture.dsl.fetchSingle(
-                                    writerSql.get(slot), NAMESPACE, TENANT, current.realmId());
-                            status.setRollbackOnly();
-                            return locked.get(0);
-                          })));
+              executor.submit(() ->
+                  fixture.transactions.execute(status -> {
+                    writerPids
+                        .get(slot)
+                        .set(
+                            Objects.requireNonNull(
+                                fixture
+                                    .dsl
+                                    .fetchSingle("SELECT pg_backend_pid()")
+                                    .get(0, Integer.class)));
+                    started.countDown();
+                    var locked =
+                        fixture.dsl.fetchSingle(
+                            writerSql.get(slot), NAMESPACE, TENANT, current.realmId());
+                    status.setRollbackOnly();
+                    return locked.get(0);
+                  })));
           assertThat(started.await(5L, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
           int holder =
               awaitBackendBlockedByCurrentSourceReader(
@@ -2518,11 +2459,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .extracting(row -> row.get("tgtype", Integer.class))
         .containsExactly(9, 17);
     assertThat(launchTriggers)
-        .allSatisfy(
-            trigger -> {
-              assertThat(trigger.get("tgenabled", String.class)).isEqualTo("O");
-              assertThat(trigger.get("tgisinternal", Boolean.class)).isTrue();
-            });
+        .allSatisfy(trigger -> {
+          assertThat(trigger.get("tgenabled", String.class)).isEqualTo("O");
+          assertThat(trigger.get("tgisinternal", Boolean.class)).isTrue();
+        });
   }
 
   private static void assertV1040CompletionForeignKeyTriggers(Fixture fixture) {
@@ -2542,11 +2482,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "AND child_namespace.nspname = current_schema()");
     assertThat(triggers).hasSize(6);
     assertThat(triggers)
-        .allSatisfy(
-            trigger -> {
-              assertThat(trigger.get("tgenabled", String.class)).isEqualTo("O");
-              assertThat(trigger.get("tgisinternal", Boolean.class)).isTrue();
-            });
+        .allSatisfy(trigger -> {
+          assertThat(trigger.get("tgenabled", String.class)).isEqualTo("O");
+          assertThat(trigger.get("tgisinternal", Boolean.class)).isTrue();
+        });
   }
 
   private static String otherGuardProjection(Fixture fixture) {
@@ -2959,15 +2898,13 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     }
 
     CanonicalRealmCatalogSnapshot createCatalog(IntakeReceipt source) {
-      transactions.execute(
-          status ->
-              new GameSessionFreshTenantAssociationRepository(dsl)
-                  .associateFresh(
-                      ASSOCIATION_OPERATION,
-                      NAMESPACE,
-                      source,
-                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
-                          source.source())));
+      transactions.execute(status ->
+          new GameSessionFreshTenantAssociationRepository(dsl)
+              .associateFresh(
+                  ASSOCIATION_OPERATION,
+                  NAMESPACE,
+                  source,
+                  CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source.source())));
       var prepared =
           catalogRepository.prepareInitialPublicProduction(
               catalogRequest(source), publishedPolicy(source));
@@ -2988,31 +2925,30 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
           dsl, transactions, tuple, source.source(), publishedPolicy(source), binding);
       return Objects.requireNonNull(
-          transactions.execute(
-              status -> {
-                var association =
-                    new GameSessionFreshTenantAssociationRepository(dsl)
-                        .associateFresh(
-                            ASSOCIATION_OPERATION,
-                            NAMESPACE,
-                            source,
-                            CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
-                                source.source()));
-                var starting =
-                    new GameSessionCanonicalStartingInstanceRepository(dsl, NAMESPACE)
-                        .createStarting(
-                            association,
-                            binding,
-                            ACTOR,
-                            tuple.controlPlaneRequestId(),
-                            tuple.mutationDigest(),
-                            tuple);
-                dsl.execute(
-                    "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
-                    association.legacyGameSessionTenantId(),
-                    starting.gameInstanceId());
-                return association;
-              }),
+          transactions.execute(status -> {
+            var association =
+                new GameSessionFreshTenantAssociationRepository(dsl)
+                    .associateFresh(
+                        ASSOCIATION_OPERATION,
+                        NAMESPACE,
+                        source,
+                        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                            source.source()));
+            var starting =
+                new GameSessionCanonicalStartingInstanceRepository(dsl, NAMESPACE)
+                    .createStarting(
+                        association,
+                        binding,
+                        ACTOR,
+                        tuple.controlPlaneRequestId(),
+                        tuple.mutationDigest(),
+                        tuple);
+            dsl.execute(
+                "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+                association.legacyGameSessionTenantId(),
+                starting.gameInstanceId());
+            return association;
+          }),
           "Controlled actual GS tenant association");
     }
   }

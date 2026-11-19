@@ -210,62 +210,59 @@ class RemoteFollowupResultServiceImplTest {
     request.setLimit(25);
 
     when(gameSessionControlPlaneClient.listRemoteFollowupResults(
-            argThat(
-                grpcRequest ->
-                    "2".equals(grpcRequest.getTenantId())
-                        && "coord-1".equals(grpcRequest.getCoordinatorId())
-                        && "rf-1".equals(grpcRequest.getFollowupId())
-                        && "7".equals(grpcRequest.getOriginGameInstanceId())
-                        && "region-a".equals(grpcRequest.getOriginRegionId())
-                        && grpcRequest.getOriginRegionEpoch() == 3L
-                        && "9".equals(grpcRequest.getTargetGameInstanceId())
-                        && "region-b".equals(grpcRequest.getTargetRegionId())
-                        && grpcRequest.getTargetRegionEpoch() == 4L
-                        && "region-origin-current"
-                            .equals(grpcRequest.getCurrentOriginRuntimeRegionId())
-                        && grpcRequest.getCurrentOriginRuntimeRegionEpoch() == 13L
-                        && "7".equals(grpcRequest.getCurrentOriginRuntimeGameInstanceId())
-                        && "region-target-current"
-                            .equals(grpcRequest.getCurrentTargetRuntimeRegionId())
-                        && grpcRequest.getCurrentTargetRuntimeRegionEpoch() == 14L
-                        && "9".equals(grpcRequest.getCurrentTargetRuntimeGameInstanceId())
-                        && "REMOTE_APPLIED".equals(grpcRequest.getOutcome())
-                        && "script-1".equals(grpcRequest.getScriptId())
-                        && "plugin-1".equals(grpcRequest.getPluginId())
-                        && "patch-1".equals(grpcRequest.getScriptPatchVersion())
-                        && "plugin-v1".equals(grpcRequest.getPluginVersionId())
-                        && grpcRequest.getPlayableStateScope()
-                            == PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED
-                        && "demo".equals(grpcRequest.getWorldSlug())
-                        && "production".equals(grpcRequest.getRealmSlug())
-                        && grpcRequest.getPointerVersion() == 17L
-                        && "RATE_LIMIT".equals(grpcRequest.getResultErrorCode())
-                        && "work-1".equals(grpcRequest.getAutomationWorkItemId())
-                        && "auto-1".equals(grpcRequest.getResultCommandId())
-                        && "APPLIED".equals(grpcRequest.getResultCommandExecutionOutcome())
-                        && "SUCCESS".equals(grpcRequest.getResultCommandGameplayResult())
-                        && "npc-7".equals(grpcRequest.getTargetEntityId())
-                        && "entity:npc-7".equals(grpcRequest.getClaimTargetAggregate())
-                        && "remote-followup:dispatch-1".equals(grpcRequest.getEffectKey())
-                        && "REMOTE_REJECTED".equals(grpcRequest.getFailureCode())
-                        && "trigger_script_event".equals(grpcRequest.getPayloadKind())
-                        && "REMOTE_FOLLOWUP".equals(grpcRequest.getOriginSourceKind())
-                        && "SCHEDULED".equals(grpcRequest.getOriginSourceState())
-                        && "onEnterRegion".equals(grpcRequest.getEventType())
-                        && "remote-enter-1".equals(grpcRequest.getScriptEventId())
-                        && "Target region rejected the remote gameplay command"
-                            .equals(grpcRequest.getResultMessage())
-                        && grpcRequest.getRequiresSoloTick()
-                        && "REMOTE_FOLLOWUP".equals(grpcRequest.getQueueSourceKind())
-                        && "TARGET_REGION_CLAIMED".equals(grpcRequest.getQueueSourceState())
-                        && grpcRequest.getQueueSourceOrdinal() == 3L
-                        && grpcRequest.getQueueSourceDueTickId() == 55L
-                        && grpcRequest.getQueueSourceDueAtMs() == 1700L
-                        && "late_result_safe_to_ignore".equals(grpcRequest.getLateResultPolicy())
-                        && "tick-batch-7".equals(grpcRequest.getClaimedTickBatchId())
-                        && "dispatch-1".equals(grpcRequest.getAutomationDispatchId())
-                        && "cmd-1".equals(grpcRequest.getCommandId())
-                        && grpcRequest.getLimit() == 25)))
+            argThat(grpcRequest ->
+                "2".equals(grpcRequest.getTenantId())
+                    && "coord-1".equals(grpcRequest.getCoordinatorId())
+                    && "rf-1".equals(grpcRequest.getFollowupId())
+                    && "7".equals(grpcRequest.getOriginGameInstanceId())
+                    && "region-a".equals(grpcRequest.getOriginRegionId())
+                    && grpcRequest.getOriginRegionEpoch() == 3L
+                    && "9".equals(grpcRequest.getTargetGameInstanceId())
+                    && "region-b".equals(grpcRequest.getTargetRegionId())
+                    && grpcRequest.getTargetRegionEpoch() == 4L
+                    && "region-origin-current".equals(grpcRequest.getCurrentOriginRuntimeRegionId())
+                    && grpcRequest.getCurrentOriginRuntimeRegionEpoch() == 13L
+                    && "7".equals(grpcRequest.getCurrentOriginRuntimeGameInstanceId())
+                    && "region-target-current".equals(grpcRequest.getCurrentTargetRuntimeRegionId())
+                    && grpcRequest.getCurrentTargetRuntimeRegionEpoch() == 14L
+                    && "9".equals(grpcRequest.getCurrentTargetRuntimeGameInstanceId())
+                    && "REMOTE_APPLIED".equals(grpcRequest.getOutcome())
+                    && "script-1".equals(grpcRequest.getScriptId())
+                    && "plugin-1".equals(grpcRequest.getPluginId())
+                    && "patch-1".equals(grpcRequest.getScriptPatchVersion())
+                    && "plugin-v1".equals(grpcRequest.getPluginVersionId())
+                    && grpcRequest.getPlayableStateScope()
+                        == PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED
+                    && "demo".equals(grpcRequest.getWorldSlug())
+                    && "production".equals(grpcRequest.getRealmSlug())
+                    && grpcRequest.getPointerVersion() == 17L
+                    && "RATE_LIMIT".equals(grpcRequest.getResultErrorCode())
+                    && "work-1".equals(grpcRequest.getAutomationWorkItemId())
+                    && "auto-1".equals(grpcRequest.getResultCommandId())
+                    && "APPLIED".equals(grpcRequest.getResultCommandExecutionOutcome())
+                    && "SUCCESS".equals(grpcRequest.getResultCommandGameplayResult())
+                    && "npc-7".equals(grpcRequest.getTargetEntityId())
+                    && "entity:npc-7".equals(grpcRequest.getClaimTargetAggregate())
+                    && "remote-followup:dispatch-1".equals(grpcRequest.getEffectKey())
+                    && "REMOTE_REJECTED".equals(grpcRequest.getFailureCode())
+                    && "trigger_script_event".equals(grpcRequest.getPayloadKind())
+                    && "REMOTE_FOLLOWUP".equals(grpcRequest.getOriginSourceKind())
+                    && "SCHEDULED".equals(grpcRequest.getOriginSourceState())
+                    && "onEnterRegion".equals(grpcRequest.getEventType())
+                    && "remote-enter-1".equals(grpcRequest.getScriptEventId())
+                    && "Target region rejected the remote gameplay command"
+                        .equals(grpcRequest.getResultMessage())
+                    && grpcRequest.getRequiresSoloTick()
+                    && "REMOTE_FOLLOWUP".equals(grpcRequest.getQueueSourceKind())
+                    && "TARGET_REGION_CLAIMED".equals(grpcRequest.getQueueSourceState())
+                    && grpcRequest.getQueueSourceOrdinal() == 3L
+                    && grpcRequest.getQueueSourceDueTickId() == 55L
+                    && grpcRequest.getQueueSourceDueAtMs() == 1700L
+                    && "late_result_safe_to_ignore".equals(grpcRequest.getLateResultPolicy())
+                    && "tick-batch-7".equals(grpcRequest.getClaimedTickBatchId())
+                    && "dispatch-1".equals(grpcRequest.getAutomationDispatchId())
+                    && "cmd-1".equals(grpcRequest.getCommandId())
+                    && grpcRequest.getLimit() == 25)))
         .thenReturn(
             ListRemoteFollowupResultsResponse.newBuilder().addResults(remoteResult("2")).build());
 

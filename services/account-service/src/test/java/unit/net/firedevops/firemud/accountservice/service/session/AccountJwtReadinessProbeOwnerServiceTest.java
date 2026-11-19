@@ -69,29 +69,26 @@ class AccountJwtReadinessProbeOwnerServiceTest {
             ObservationPurpose.STRICT_READY, selector.rotationOperationId(), "9".repeat(64));
     when(repository.readCurrentInventoryObservationContext(
             eq(BINDING), eq(TRUST), eq(selector.rotationOperationId())))
-        .thenAnswer(
-            ignored -> {
-              order.add("context");
-              return context;
-            });
+        .thenAnswer(ignored -> {
+          order.add("context");
+          return context;
+        });
     when(inventorySource.observe(context))
-        .thenAnswer(
-            ignored -> {
-              assertThat(order).containsExactly("transaction", "context", "commit");
-              order.add("inventory");
-              return snapshot;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(order).containsExactly("transaction", "context", "commit");
+          order.add("inventory");
+          return snapshot;
+        });
     OwnerProbeEvidence evidence = mock(OwnerProbeEvidence.class);
     when(repository.readCurrentProbeOwner(
             eq(BINDING), eq(TRUST), eq(selector), eq(snapshot), eq(BINDING.namespace())))
-        .thenAnswer(
-            ignored -> {
-              order.add("repository");
-              assertThat(order)
-                  .containsExactly(
-                      "transaction", "context", "commit", "inventory", "transaction", "repository");
-              return evidence;
-            });
+        .thenAnswer(ignored -> {
+          order.add("repository");
+          assertThat(order)
+              .containsExactly(
+                  "transaction", "context", "commit", "inventory", "transaction", "repository");
+          return evidence;
+        });
     TransactionTemplate transaction =
         new TransactionTemplate(new RecordingTransactionManager(order));
     AccountJwtReadinessProbeService service =

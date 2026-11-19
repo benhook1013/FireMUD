@@ -101,20 +101,18 @@ class WorldPrivatePreparationSourceClientMtlsTest {
                       WorldPrivatePreparationBuildAssembly.capture(world.request())),
                   org.mockito.ArgumentMatchers.any(Deadline.class)))
           .thenReturn(java.util.Optional.empty());
-      assertThatThrownBy(
-              () ->
-                  new WorldPrivatePreparationBuildAssembly(h.client, topology, CLOCK)
-                      .assemble(scope, facts.preparation().requestId()))
+      assertThatThrownBy(() ->
+              new WorldPrivatePreparationBuildAssembly(h.client, topology, CLOCK)
+                  .assemble(scope, facts.preparation().requestId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("frozen graph is absent");
       org.mockito.Mockito.verify(topology)
           .readCommitted(
               org.mockito.ArgumentMatchers.eq(
                   WorldPrivatePreparationBuildAssembly.capture(world.request())),
-              org.mockito.ArgumentMatchers.argThat(
-                  deadline ->
-                      deadline.timeRemaining(TimeUnit.NANOSECONDS) > 0
-                          && deadline.timeRemaining(TimeUnit.SECONDS) <= 5));
+              org.mockito.ArgumentMatchers.argThat(deadline ->
+                  deadline.timeRemaining(TimeUnit.NANOSECONDS) > 0
+                      && deadline.timeRemaining(TimeUnit.SECONDS) <= 5));
       assertThat(h.requests).hasSize(2);
     }
   }
@@ -194,11 +192,10 @@ class WorldPrivatePreparationSourceClientMtlsTest {
             "gs",
             CLOCK,
             (request, index) -> PrivateWorldPreparationReadGrpcCodec.toResponse(request, facts))) {
-      assertThatThrownBy(
-              () ->
-                  f.client.read(
-                      new Scope("other", facts.scope().tenantId(), "world", "private"),
-                      facts.preparation().requestId()))
+      assertThatThrownBy(() ->
+              f.client.read(
+                  new Scope("other", facts.scope().tenantId(), "world", "private"),
+                  facts.preparation().requestId()))
           .isInstanceOf(IllegalArgumentException.class);
       try {
         TransactionSynchronizationManager.setActualTransactionActive(true);
@@ -209,18 +206,15 @@ class WorldPrivatePreparationSourceClientMtlsTest {
       }
       try (var cancelled = Context.current().withCancellation()) {
         cancelled.cancel(null);
-        cancelled.run(
-            () ->
-                assertThatThrownBy(
-                        () -> f.client.read(facts.scope(), facts.preparation().requestId()))
-                    .isInstanceOf(StatusRuntimeException.class));
+        cancelled.run(() ->
+            assertThatThrownBy(() -> f.client.read(facts.scope(), facts.preparation().requestId()))
+                .isInstanceOf(StatusRuntimeException.class));
       }
-      assertThatThrownBy(
-              () ->
-                  f.client.read(
-                      facts.scope(),
-                      facts.preparation().requestId(),
-                      Deadline.after(-1, TimeUnit.SECONDS)))
+      assertThatThrownBy(() ->
+              f.client.read(
+                  facts.scope(),
+                  facts.preparation().requestId(),
+                  Deadline.after(-1, TimeUnit.SECONDS)))
           .isInstanceOf(StatusRuntimeException.class);
       assertThat(f.requests).isEmpty();
     }
@@ -347,9 +341,9 @@ class WorldPrivatePreparationSourceClientMtlsTest {
     var policy =
         RealmEntryPolicy.parse(
             """
-        {"schemaVersion":1,"worldSlug":"world","worldDisplayName":"World","realmSlug":"private",
-         "realmDisplayName":"Private","visible":true,"publicProduction":false,"stateScope":"ISOLATED","entryPolicy":"PRESEEDED_ONLY"}
-        """,
+            {"schemaVersion":1,"worldSlug":"world","worldDisplayName":"World","realmSlug":"private",
+             "realmDisplayName":"Private","visible":true,"publicProduction":false,"stateScope":"ISOLATED","entryPolicy":"PRESEEDED_ONLY"}
+            """,
             JsonMapper.builder().build());
     var source =
         new Source(

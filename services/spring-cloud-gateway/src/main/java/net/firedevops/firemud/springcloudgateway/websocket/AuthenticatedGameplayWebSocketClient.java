@@ -109,24 +109,21 @@ public final class AuthenticatedGameplayWebSocketClient implements AutoCloseable
             .build();
     HttpClient http =
         HttpClient.newConnection()
-            .secure(
-                spec ->
-                    spec.sslContext(context)
-                        .handlerConfigurator(
-                            handler -> {
-                              SSLParameters parameters = handler.engine().getSSLParameters();
-                              parameters.setEndpointIdentificationAlgorithm("HTTPS");
-                              handler.engine().setSSLParameters(parameters);
-                            }))
-            .doOnRequest(
-                (request, connection) -> {
-                  SslHandler handler = connection.channel().pipeline().get(SslHandler.class);
-                  if (handler == null
-                      || GrpcPeerIdentity.fromSslSession(handler.engine().getSession())
-                          .filter(identity -> expectedPeer.equals(identity.uri()))
-                          .isEmpty())
-                    throw new IllegalStateException("Authenticated Game Session peer required");
-                });
+            .secure(spec ->
+                spec.sslContext(context)
+                    .handlerConfigurator(handler -> {
+                      SSLParameters parameters = handler.engine().getSSLParameters();
+                      parameters.setEndpointIdentificationAlgorithm("HTTPS");
+                      handler.engine().setSSLParameters(parameters);
+                    }))
+            .doOnRequest((request, connection) -> {
+              SslHandler handler = connection.channel().pipeline().get(SslHandler.class);
+              if (handler == null
+                  || GrpcPeerIdentity.fromSslSession(handler.engine().getSession())
+                      .filter(identity -> expectedPeer.equals(identity.uri()))
+                      .isEmpty())
+                throw new IllegalStateException("Authenticated Game Session peer required");
+            });
     ReactorNettyWebSocketClient newClient = new ReactorNettyWebSocketClient(http);
     beforePublish.run();
     synchronized (publicationLock) {
@@ -141,15 +138,13 @@ public final class AuthenticatedGameplayWebSocketClient implements AutoCloseable
   }
 
   public Mono<Void> execute(HttpHeaders headers, WebSocketHandler handler) {
-    return Mono.defer(
-        () -> {
-          ReactorNettyWebSocketClient current = client;
-          if (current == null) {
-            return Mono.error(
-                new IllegalStateException("Authenticated gameplay client unavailable"));
-          }
-          return current.execute(upstream, headers, handler);
-        });
+    return Mono.defer(() -> {
+      ReactorNettyWebSocketClient current = client;
+      if (current == null) {
+        return Mono.error(new IllegalStateException("Authenticated gameplay client unavailable"));
+      }
+      return current.execute(upstream, headers, handler);
+    });
   }
 
   public URI upstream() {

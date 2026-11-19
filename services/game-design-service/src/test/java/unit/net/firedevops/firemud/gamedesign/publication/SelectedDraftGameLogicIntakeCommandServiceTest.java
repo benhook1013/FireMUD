@@ -38,15 +38,14 @@ class SelectedDraftGameLogicIntakeCommandServiceTest {
     var account = mock(GameLogicIntakeAuthorizationClient.class);
     var events = new ArrayList<String>();
     when(account.authorize(any(), anyString()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(call.getArgument(0, GameLogicIntakeAuthorizationEvidence.Request.class))
-                  .isSameAs(request);
-              assertThat(call.getArgument(1, String.class)).isEqualTo(CREDENTIAL);
-              events.add("account.authorize");
-              return GameLogicIntakeAuthorizationEvidence.Result.authorized(request, authorization);
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(call.getArgument(0, GameLogicIntakeAuthorizationEvidence.Request.class))
+              .isSameAs(request);
+          assertThat(call.getArgument(1, String.class)).isEqualTo(CREDENTIAL);
+          events.add("account.authorize");
+          return GameLogicIntakeAuthorizationEvidence.Result.authorized(request, authorization);
+        });
     var service =
         new SelectedDraftGameLogicIntakeCommandService(
             selected -> {
@@ -126,10 +125,9 @@ class SelectedDraftGameLogicIntakeCommandServiceTest {
               return value;
             },
             "test");
-    assertThatThrownBy(
-            () ->
-                changedSelectionService.authorizeAndRetain(
-                    value.selection(), request(value.selection()), CREDENTIAL))
+    assertThatThrownBy(() ->
+            changedSelectionService.authorizeAndRetain(
+                value.selection(), request(value.selection()), CREDENTIAL))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("immutable selection");
 
@@ -285,13 +283,12 @@ class SelectedDraftGameLogicIntakeCommandServiceTest {
     var expectedReceipt = receiptFor(value.selection(), authorization);
     var account = mock(GameLogicIntakeAuthorizationClient.class);
     when(account.recover(any(), anyString()))
-        .thenAnswer(
-            call -> {
-              assertThat(call.getArgument(0, GameLogicIntakeAuthorizationEvidence.Request.class))
-                  .isSameAs(request);
-              assertThat(call.getArgument(1, String.class)).isEqualTo(CREDENTIAL);
-              return GameLogicIntakeAuthorizationEvidence.Result.authorized(request, authorization);
-            });
+        .thenAnswer(call -> {
+          assertThat(call.getArgument(0, GameLogicIntakeAuthorizationEvidence.Request.class))
+              .isSameAs(request);
+          assertThat(call.getArgument(1, String.class)).isEqualTo(CREDENTIAL);
+          return GameLogicIntakeAuthorizationEvidence.Result.authorized(request, authorization);
+        });
     var service =
         new SelectedDraftGameLogicIntakeCommandService(
             ignored -> Optional.of(value.selection()),

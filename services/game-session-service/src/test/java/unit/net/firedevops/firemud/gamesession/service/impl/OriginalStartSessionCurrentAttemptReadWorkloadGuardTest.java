@@ -23,41 +23,37 @@ class OriginalStartSessionCurrentAttemptReadWorkloadGuardTest {
 
   @Test
   void allowsOnlyExactSameNamespaceAccountWorkloadWithoutEndUserContext() {
-    assertThatCode(
-            () ->
-                withPeer(
-                    "account-service",
-                    NAMESPACE,
-                    () -> {
-                      guard.requireAccountCurrentAttemptReadCaller();
-                      guard.requireConfiguredTargetNamespace(NAMESPACE);
-                    }))
+    assertThatCode(() ->
+            withPeer(
+                "account-service",
+                NAMESPACE,
+                () -> {
+                  guard.requireAccountCurrentAttemptReadCaller();
+                  guard.requireConfiguredTargetNamespace(NAMESPACE);
+                }))
         .doesNotThrowAnyException();
   }
 
   @Test
   void refusesWrongNamespaceWrongServiceEndUserContextAndTargetNamespace() {
-    assertThatThrownBy(
-            () ->
-                withPeer("account-service", "other", guard::requireAccountCurrentAttemptReadCaller))
+    assertThatThrownBy(() ->
+            withPeer("account-service", "other", guard::requireAccountCurrentAttemptReadCaller))
         .isInstanceOf(AdminAuthorizationException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    "world-management-service",
-                    NAMESPACE,
-                    guard::requireAccountCurrentAttemptReadCaller))
+    assertThatThrownBy(() ->
+            withPeer(
+                "world-management-service",
+                NAMESPACE,
+                guard::requireAccountCurrentAttemptReadCaller))
         .isInstanceOf(AdminAuthorizationException.class);
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    "account-service",
-                    NAMESPACE,
-                    () -> {
-                      SessionContext.setContext(
-                          "42", java.util.List.of("tenantAdmin"), java.util.Map.of());
-                      guard.requireAccountCurrentAttemptReadCaller();
-                    }))
+    assertThatThrownBy(() ->
+            withPeer(
+                "account-service",
+                NAMESPACE,
+                () -> {
+                  SessionContext.setContext(
+                      "42", java.util.List.of("tenantAdmin"), java.util.Map.of());
+                  guard.requireAccountCurrentAttemptReadCaller();
+                }))
         .isInstanceOf(AdminAuthorizationException.class);
     assertThatThrownBy(() -> guard.requireConfiguredTargetNamespace("other"))
         .isInstanceOf(AdminAuthorizationException.class);

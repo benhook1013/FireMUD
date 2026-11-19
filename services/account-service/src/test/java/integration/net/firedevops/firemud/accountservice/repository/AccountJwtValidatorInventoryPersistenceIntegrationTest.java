@@ -91,23 +91,21 @@ class AccountJwtValidatorInventoryPersistenceIntegrationTest {
     assertThat(retry.canonicalBytes()).isEqualTo(candidate.canonicalBytes());
     assertThat(new String(retry.canonicalBytes(), StandardCharsets.UTF_8))
         .doesNotContain("privateKey");
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute(
-                        "UPDATE account_jwt_validator_inventory_snapshots "
-                            + "SET canonical_snapshot = ? WHERE snapshot_digest = ?",
-                        "{}".getBytes(StandardCharsets.UTF_8),
-                        retry.digest()))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute(
+                    "UPDATE account_jwt_validator_inventory_snapshots "
+                        + "SET canonical_snapshot = ? WHERE snapshot_digest = ?",
+                    "{}".getBytes(StandardCharsets.UTF_8),
+                    retry.digest()))
         .isInstanceOf(DataAccessException.class);
 
     long plansBeforeTruncate = count(context, "account_jwt_readiness_probe_plans");
-    assertThatThrownBy(
-            () ->
-                context
-                    .dsl()
-                    .execute("TRUNCATE TABLE account_jwt_validator_inventory_snapshots CASCADE"))
+    assertThatThrownBy(() ->
+            context
+                .dsl()
+                .execute("TRUNCATE TABLE account_jwt_validator_inventory_snapshots CASCADE"))
         .isInstanceOf(DataAccessException.class);
     assertThat(count(context, "account_jwt_validator_inventory_snapshots")).isEqualTo(1L);
     assertThat(count(context, "account_jwt_readiness_probe_plans")).isEqualTo(plansBeforeTruncate);
@@ -144,10 +142,9 @@ class AccountJwtValidatorInventoryPersistenceIntegrationTest {
     when(wrongIdentity.digest()).thenReturn(digest);
     when(wrongIdentity.canonicalBytes()).thenReturn(canonicalBytes);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context, () -> repository.persistOrReadback(wrongIdentity, BINDING, trust())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context, () -> repository.persistOrReadback(wrongIdentity, BINDING, trust())))
         .isInstanceOf(
             AccountJwtValidatorInventoryRepository.InventorySnapshotUnavailableException.class)
         .hasNoCause();
@@ -167,13 +164,11 @@ class AccountJwtValidatorInventoryPersistenceIntegrationTest {
     when(conflictingApiBindingRevision.digest()).thenReturn(digest);
     when(conflictingApiBindingRevision.canonicalBytes()).thenReturn(canonicalBytes);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        repository.persistOrReadback(
-                            conflictingApiBindingRevision, BINDING, trust())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    repository.persistOrReadback(conflictingApiBindingRevision, BINDING, trust())))
         .isInstanceOf(
             AccountJwtValidatorInventoryRepository.InventorySnapshotUnavailableException.class)
         .hasNoCause();

@@ -87,27 +87,24 @@ class StartSessionLaunchDescriptorGrpcCodecTest {
     var complete =
         StartSessionLaunchDescriptorGrpcCodec.toDescriptorResponse(
             fixture.request(), fixture.associationRead(), fixture.descriptor());
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorGrpcCodec.fromResponse(
-                    fixture.request(), complete.toBuilder().clearLaunchDescriptor().build()))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorGrpcCodec.fromResponse(
+                fixture.request(), complete.toBuilder().clearLaunchDescriptor().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorGrpcCodec.fromResponse(
-                    fixture.request(),
-                    complete.toBuilder()
-                        .setApplicationFailure(
-                            StartSessionLaunchDescriptorApplicationFailure.newBuilder()
-                                .setCode("INVALID_TEMPLATE_CONFIGURATION")
-                                .setMessage(
-                                    "INVALID_TEMPLATE_CONFIGURATION: captured source unavailable"))
-                        .build()))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorGrpcCodec.fromResponse(
+                fixture.request(),
+                complete.toBuilder()
+                    .setApplicationFailure(
+                        StartSessionLaunchDescriptorApplicationFailure.newBuilder()
+                            .setCode("INVALID_TEMPLATE_CONFIGURATION")
+                            .setMessage(
+                                "INVALID_TEMPLATE_CONFIGURATION: captured source unavailable"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorGrpcCodec.fromResponse(
-                    fixture.request(), complete.toBuilder().setSchemaVersion(2).build()))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorGrpcCodec.fromResponse(
+                fixture.request(), complete.toBuilder().setSchemaVersion(2).build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var unknown =
@@ -145,10 +142,9 @@ class StartSessionLaunchDescriptorGrpcCodecTest {
                             .build())
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorGrpcCodec.fromResponse(
-                    fixture.request(), unknownDescriptorBinding))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorGrpcCodec.fromResponse(
+                fixture.request(), unknownDescriptorBinding))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
   }
@@ -168,10 +164,9 @@ class StartSessionLaunchDescriptorGrpcCodecTest {
     assertThat(decoded.associationRead().request()).isEqualTo(fixture.request());
     assertThat(decoded.outcome())
         .isEqualTo(new StartSessionLaunchDescriptorGrpcCodec.ApplicationFailure(code, message));
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorGrpcCodec.toFailureResponse(
-                    fixture.request(), fixture.associationRead(), "UNAVAILABLE", "unavailable"))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorGrpcCodec.toFailureResponse(
+                fixture.request(), fixture.associationRead(), "UNAVAILABLE", "unavailable"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -210,10 +205,9 @@ class StartSessionLaunchDescriptorGrpcCodecTest {
             original.publishedReleaseBundleRef(),
             false,
             null);
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorGrpcCodec.toDescriptorResponse(
-                    fixture.request(), fixture.associationRead(), substituted))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorGrpcCodec.toDescriptorResponse(
+                fixture.request(), fixture.associationRead(), substituted))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("original StartSession tuple and association");
 
@@ -231,10 +225,9 @@ class StartSessionLaunchDescriptorGrpcCodecTest {
             original.publishedReleaseBundleRef(),
             false,
             null);
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorGrpcCodec.toDescriptorResponse(
-                    fixture.request(), fixture.associationRead(), substitutedVersion))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorGrpcCodec.toDescriptorResponse(
+                fixture.request(), fixture.associationRead(), substitutedVersion))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("version or release");
 
@@ -252,10 +245,9 @@ class StartSessionLaunchDescriptorGrpcCodecTest {
             original.publishedReleaseBundleRef(),
             false,
             null);
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorGrpcCodec.toDescriptorResponse(
-                    fixture.request(), fixture.associationRead(), changedRuntimeFlags))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorGrpcCodec.toDescriptorResponse(
+                fixture.request(), fixture.associationRead(), changedRuntimeFlags))
         .isInstanceOf(IllegalArgumentException.class);
 
     var response =
@@ -268,10 +260,9 @@ class StartSessionLaunchDescriptorGrpcCodecTest {
                     .setVersionId(response.getLaunchDescriptor().getVersionId() + 1L)
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                StartSessionLaunchDescriptorGrpcCodec.fromResponse(
-                    fixture.request(), changedFlatVersion))
+    assertThatThrownBy(() ->
+            StartSessionLaunchDescriptorGrpcCodec.fromResponse(
+                fixture.request(), changedFlatVersion))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

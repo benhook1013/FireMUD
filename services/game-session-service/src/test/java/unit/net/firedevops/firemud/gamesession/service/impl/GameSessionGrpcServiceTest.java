@@ -1567,12 +1567,11 @@ class GameSessionGrpcServiceTest {
     Mockito.verify(ipLimiter).tryRegister("127.0.0.1", 1L);
     Mockito.verify(gameInstanceService)
         .startSession(
-            Mockito.argThat(
-                request ->
-                    request.tenantId().equals(1L)
-                        && request.gameTemplateId().equals(7L)
-                        && request.controlPlaneRequestId().equals("cp-1")
-                        && request.ownerAccountId().equals(42L)),
+            Mockito.argThat(request ->
+                request.tenantId().equals(1L)
+                    && request.gameTemplateId().equals(7L)
+                    && request.controlPlaneRequestId().equals("cp-1")
+                    && request.ownerAccountId().equals(42L)),
             Mockito.eq(false));
   }
 
@@ -3569,24 +3568,23 @@ class GameSessionGrpcServiceTest {
     AtomicReference<AuthorizeStartSessionResponse> response = new AtomicReference<>();
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-        .run(
-            () ->
-                service.authorizeStartSession(
-                    request,
-                    new StreamObserver<>() {
-                      @Override
-                      public void onNext(AuthorizeStartSessionResponse value) {
-                        response.set(value);
-                      }
+        .run(() ->
+            service.authorizeStartSession(
+                request,
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(AuthorizeStartSessionResponse value) {
+                    response.set(value);
+                  }
 
-                      @Override
-                      public void onError(Throwable error) {
-                        fail(error);
-                      }
+                  @Override
+                  public void onError(Throwable error) {
+                    fail(error);
+                  }
 
-                      @Override
-                      public void onCompleted() {}
-                    }));
+                  @Override
+                  public void onCompleted() {}
+                }));
     return response.get();
   }
 

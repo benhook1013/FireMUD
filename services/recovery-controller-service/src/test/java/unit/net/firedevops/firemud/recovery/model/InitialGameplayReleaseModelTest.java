@@ -38,15 +38,14 @@ class InitialGameplayReleaseModelTest {
 
     assertThat(scope.targetNamespace()).isEqualTo("release-target");
     assertThat(scope.playableStateNamespaceId()).isEqualTo(playableNamespace);
-    assertThatThrownBy(
-            () ->
-                new Scope(
-                    scope.operationId(),
-                    scope.canonicalTenantId(),
-                    "another-target",
-                    playableNamespace,
-                    scope.peerStorageBinding(),
-                    scope.evidenceRef()))
+    assertThatThrownBy(() ->
+            new Scope(
+                scope.operationId(),
+                scope.canonicalTenantId(),
+                "another-target",
+                playableNamespace,
+                scope.peerStorageBinding(),
+                scope.evidenceRef()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("targetNamespace");
   }
@@ -55,26 +54,24 @@ class InitialGameplayReleaseModelTest {
   void scopeAndPeerBindingRequireExactKubernetesNamespaceSyntax() {
     Scope validScope = scope(UUID.randomUUID());
     for (String invalidNamespace : List.of("Release-target", "release target", "a".repeat(64))) {
-      assertThatThrownBy(
-              () ->
-                  new PeerStorageBinding(
-                      invalidNamespace,
-                      "cluster-peer",
-                      "peer-workload",
-                      "storage-uid",
-                      "storage-r7",
-                      DIGEST))
+      assertThatThrownBy(() ->
+              new PeerStorageBinding(
+                  invalidNamespace,
+                  "cluster-peer",
+                  "peer-workload",
+                  "storage-uid",
+                  "storage-r7",
+                  DIGEST))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("valid Kubernetes namespace");
-      assertThatThrownBy(
-              () ->
-                  new Scope(
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      invalidNamespace,
-                      UUID.randomUUID(),
-                      validScope.peerStorageBinding(),
-                      validScope.evidenceRef()))
+      assertThatThrownBy(() ->
+              new Scope(
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  invalidNamespace,
+                  UUID.randomUUID(),
+                  validScope.peerStorageBinding(),
+                  validScope.evidenceRef()))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("valid Kubernetes namespace");
     }
@@ -85,60 +82,55 @@ class InitialGameplayReleaseModelTest {
     Scope validScope = scope(UUID.randomUUID());
     InitialGameplayReleaseEvidence validEvidence = evidence(validScope);
 
-    assertThatThrownBy(
-            () ->
-                new Scope(
-                    NIL_UUID,
-                    validScope.canonicalTenantId(),
-                    validScope.targetNamespace(),
-                    validScope.playableStateNamespaceId(),
-                    validScope.peerStorageBinding(),
-                    validScope.evidenceRef()))
+    assertThatThrownBy(() ->
+            new Scope(
+                NIL_UUID,
+                validScope.canonicalTenantId(),
+                validScope.targetNamespace(),
+                validScope.playableStateNamespaceId(),
+                validScope.peerStorageBinding(),
+                validScope.evidenceRef()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nil UUID");
-    assertThatThrownBy(
-            () ->
-                new Scope(
-                    UUID.randomUUID(),
-                    NIL_UUID,
-                    validScope.targetNamespace(),
-                    validScope.playableStateNamespaceId(),
-                    validScope.peerStorageBinding(),
-                    validScope.evidenceRef()))
+    assertThatThrownBy(() ->
+            new Scope(
+                UUID.randomUUID(),
+                NIL_UUID,
+                validScope.targetNamespace(),
+                validScope.playableStateNamespaceId(),
+                validScope.peerStorageBinding(),
+                validScope.evidenceRef()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nil UUID");
-    assertThatThrownBy(
-            () ->
-                new Scope(
-                    UUID.randomUUID(),
-                    validScope.canonicalTenantId(),
-                    validScope.targetNamespace(),
-                    NIL_UUID,
-                    validScope.peerStorageBinding(),
-                    validScope.evidenceRef()))
+    assertThatThrownBy(() ->
+            new Scope(
+                UUID.randomUUID(),
+                validScope.canonicalTenantId(),
+                validScope.targetNamespace(),
+                NIL_UUID,
+                validScope.peerStorageBinding(),
+                validScope.evidenceRef()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nil UUID");
-    assertThatThrownBy(
-            () ->
-                new InitialGameplayReleaseModel.Operation(
-                    validScope,
-                    NIL_UUID,
-                    Phase.COLLECTING,
-                    1,
-                    null,
-                    java.time.Instant.EPOCH,
-                    java.time.Instant.EPOCH,
-                    null))
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.Operation(
+                validScope,
+                NIL_UUID,
+                Phase.COLLECTING,
+                1,
+                null,
+                java.time.Instant.EPOCH,
+                java.time.Instant.EPOCH,
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nil UUID");
-    assertThatThrownBy(
-            () ->
-                new MigrationProof(
-                    NIL_UUID,
-                    ProofDisposition.VERIFIED,
-                    validScope.peerStorageBinding().storageIdentity(),
-                    "inventory-r3",
-                    DIGEST))
+    assertThatThrownBy(() ->
+            new MigrationProof(
+                NIL_UUID,
+                ProofDisposition.VERIFIED,
+                validScope.peerStorageBinding().storageIdentity(),
+                "inventory-r3",
+                DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nil UUID");
     assertThatThrownBy(() -> MaintenanceLockCredential.issue(NIL_UUID))
@@ -147,54 +139,50 @@ class InitialGameplayReleaseModelTest {
     assertThatThrownBy(() -> MaintenanceLockCredential.fromProtectedTransport(NIL_UUID.toString()))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                new IssuerLayoutProof(
-                    NIL_UUID,
-                    validEvidence.issuerLayout().descriptor(),
-                    validEvidence.issuerLayout().accountIssuerSourceIdentity(),
-                    validEvidence.issuerLayout().operationFence(),
-                    UUID.randomUUID(),
-                    validEvidence.issuerLayout().inventoryRevision(),
-                    validEvidence.issuerLayout().inventoryDigest(),
-                    validEvidence.issuerLayout().acknowledgements(),
-                    validEvidence.issuerLayout().capacityVector()))
+    assertThatThrownBy(() ->
+            new IssuerLayoutProof(
+                NIL_UUID,
+                validEvidence.issuerLayout().descriptor(),
+                validEvidence.issuerLayout().accountIssuerSourceIdentity(),
+                validEvidence.issuerLayout().operationFence(),
+                UUID.randomUUID(),
+                validEvidence.issuerLayout().inventoryRevision(),
+                validEvidence.issuerLayout().inventoryDigest(),
+                validEvidence.issuerLayout().acknowledgements(),
+                validEvidence.issuerLayout().capacityVector()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nil UUID");
-    assertThatThrownBy(
-            () ->
-                new IssuerLayoutProof(
-                    UUID.randomUUID(),
-                    validEvidence.issuerLayout().descriptor(),
-                    validEvidence.issuerLayout().accountIssuerSourceIdentity(),
-                    validEvidence.issuerLayout().operationFence(),
-                    NIL_UUID,
-                    validEvidence.issuerLayout().inventoryRevision(),
-                    validEvidence.issuerLayout().inventoryDigest(),
-                    validEvidence.issuerLayout().acknowledgements(),
-                    validEvidence.issuerLayout().capacityVector()))
+    assertThatThrownBy(() ->
+            new IssuerLayoutProof(
+                UUID.randomUUID(),
+                validEvidence.issuerLayout().descriptor(),
+                validEvidence.issuerLayout().accountIssuerSourceIdentity(),
+                validEvidence.issuerLayout().operationFence(),
+                NIL_UUID,
+                validEvidence.issuerLayout().inventoryRevision(),
+                validEvidence.issuerLayout().inventoryDigest(),
+                validEvidence.issuerLayout().acknowledgements(),
+                validEvidence.issuerLayout().capacityVector()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nil UUID");
-    assertThatThrownBy(
-            () ->
-                new OwnerInitializationProof(
-                    OwnerService.WORLD_MANAGEMENT,
-                    NIL_UUID,
-                    validScope.playableStateNamespaceId(),
-                    ProofDisposition.VERIFIED,
-                    "world-source",
-                    DIGEST))
+    assertThatThrownBy(() ->
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                NIL_UUID,
+                validScope.playableStateNamespaceId(),
+                ProofDisposition.VERIFIED,
+                "world-source",
+                DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nil UUID");
-    assertThatThrownBy(
-            () ->
-                new OwnerInitializationProof(
-                    OwnerService.WORLD_MANAGEMENT,
-                    UUID.randomUUID(),
-                    NIL_UUID,
-                    ProofDisposition.VERIFIED,
-                    "world-source",
-                    DIGEST))
+    assertThatThrownBy(() ->
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                UUID.randomUUID(),
+                NIL_UUID,
+                ProofDisposition.VERIFIED,
+                "world-source",
+                DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("nil UUID");
   }
@@ -379,23 +367,21 @@ class InitialGameplayReleaseModelTest {
 
   @Test
   void continuationAndResumePhasesAreNotInterchangeable() {
-    assertThatThrownBy(
-            () ->
-                new net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands
-                    .ContinueRecovery(
-                    UUID.randomUUID(),
-                    Phase.AWAITING_RESUME,
-                    MaintenanceLockCredential.issue(UUID.randomUUID()),
-                    "evidence-ref"))
+    assertThatThrownBy(() ->
+            new net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands
+                .ContinueRecovery(
+                UUID.randomUUID(),
+                Phase.AWAITING_RESUME,
+                MaintenanceLockCredential.issue(UUID.randomUUID()),
+                "evidence-ref"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("ready_to_reopen");
-    assertThatThrownBy(
-            () ->
-                new net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume(
-                    UUID.randomUUID(),
-                    Phase.READY_TO_REOPEN,
-                    MaintenanceLockCredential.issue(UUID.randomUUID()),
-                    "evidence-ref"))
+    assertThatThrownBy(() ->
+            new net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume(
+                UUID.randomUUID(),
+                Phase.READY_TO_REOPEN,
+                MaintenanceLockCredential.issue(UUID.randomUUID()),
+                "evidence-ref"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("awaiting_resume");
   }
@@ -446,20 +432,19 @@ class InitialGameplayReleaseModelTest {
 
   @Test
   void noEffectReadbackRequiresClosedAttemptRatherThanObservedAbsence() {
-    assertThatThrownBy(
-            () ->
-                new InitialGameplayReleaseModel.EffectReadback(
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
-                    DIGEST,
-                    DIGEST,
-                    InitialGameplayReleaseModel.EffectReadbackState.PROVEN_NO_EFFECT,
-                    InitialGameplayReleaseModel.EffectReadbackAuthority
-                        .GAME_SESSION_DURABLE_CURRENT_STATE,
-                    "absence-only",
-                    java.time.Instant.EPOCH))
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.EffectReadback(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+                DIGEST,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectReadbackState.PROVEN_NO_EFFECT,
+                InitialGameplayReleaseModel.EffectReadbackAuthority
+                    .GAME_SESSION_DURABLE_CURRENT_STATE,
+                "absence-only",
+                java.time.Instant.EPOCH))
         .isInstanceOf(IllegalArgumentException.class);
     var closed =
         new InitialGameplayReleaseModel.EffectReadback(
@@ -514,20 +499,19 @@ class InitialGameplayReleaseModelTest {
 
   @Test
   void journalReadbackRejectsNulInIdentityBeforePersistence() {
-    assertThatThrownBy(
-            () ->
-                new InitialGameplayReleaseModel.EffectReadback(
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
-                    DIGEST,
-                    DIGEST,
-                    InitialGameplayReleaseModel.EffectReadbackState.PREPARED_FENCED,
-                    InitialGameplayReleaseModel.EffectReadbackAuthority
-                        .GAME_SESSION_DURABLE_CURRENT_STATE,
-                    "readback" + Character.toString(0) + "identity",
-                    java.time.Instant.EPOCH))
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.EffectReadback(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+                DIGEST,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectReadbackState.PREPARED_FENCED,
+                InitialGameplayReleaseModel.EffectReadbackAuthority
+                    .GAME_SESSION_DURABLE_CURRENT_STATE,
+                "readback" + Character.toString(0) + "identity",
+                java.time.Instant.EPOCH))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("readbackIdentity")
         .hasMessageContaining("NUL");

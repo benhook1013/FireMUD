@@ -92,44 +92,40 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
 
   @Test
   void productionAutoConfigurationDiscoversRegistersAndCallsRealServiceWithOrderedInterceptors() {
-    runner.run(
-        context -> {
-          assertThat(context)
-              .hasNotFailed()
-              .hasSingleBean(GrpcServerFactory.class)
-              .hasSingleBean(GrpcServerLifecycle.class);
-          assertThat(context.getBean(GrpcServiceDiscoverer.class))
-              .isExactlyInstanceOf(DefaultGrpcServiceDiscoverer.class);
-          assertThat(context.getBean(GrpcServiceConfigurer.class))
-              .isExactlyInstanceOf(DefaultGrpcServiceConfigurer.class);
-          assertThat(context.getBean(GrpcServerFactory.class))
-              .isExactlyInstanceOf(BoundedGrpcServerFactory.class);
-          var lifecycle = context.getBean(GrpcServerLifecycle.class);
-          assertThat(lifecycle.getFactory())
-              .isSameAs(context.getBean(BoundedGrpcServerFactory.class));
-          assertThat(lifecycle.isRunning()).isTrue();
-          var state = context.getBean(DiscoveryState.class);
-          assertThat(state.filtered).hasValue(1);
-          ManagedChannel channel =
-              NettyChannelBuilder.forAddress("127.0.0.1", lifecycle.getPort())
-                  .usePlaintext()
-                  .build();
-          try {
-            assertThat(
-                    ClientCalls.blockingUnaryCall(
-                        channel,
-                        READ,
-                        CallOptions.DEFAULT
-                            .withDeadlineAfter(5, TimeUnit.SECONDS)
-                            .withCompression("gzip"),
-                        Empty.getDefaultInstance()))
-                .isEqualTo(Empty.getDefaultInstance());
-            assertThat(state.events).containsExactly("first", "second", "handler");
-          } finally {
-            channel.shutdownNow();
-            assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
-          }
-        });
+    runner.run(context -> {
+      assertThat(context)
+          .hasNotFailed()
+          .hasSingleBean(GrpcServerFactory.class)
+          .hasSingleBean(GrpcServerLifecycle.class);
+      assertThat(context.getBean(GrpcServiceDiscoverer.class))
+          .isExactlyInstanceOf(DefaultGrpcServiceDiscoverer.class);
+      assertThat(context.getBean(GrpcServiceConfigurer.class))
+          .isExactlyInstanceOf(DefaultGrpcServiceConfigurer.class);
+      assertThat(context.getBean(GrpcServerFactory.class))
+          .isExactlyInstanceOf(BoundedGrpcServerFactory.class);
+      var lifecycle = context.getBean(GrpcServerLifecycle.class);
+      assertThat(lifecycle.getFactory()).isSameAs(context.getBean(BoundedGrpcServerFactory.class));
+      assertThat(lifecycle.isRunning()).isTrue();
+      var state = context.getBean(DiscoveryState.class);
+      assertThat(state.filtered).hasValue(1);
+      ManagedChannel channel =
+          NettyChannelBuilder.forAddress("127.0.0.1", lifecycle.getPort()).usePlaintext().build();
+      try {
+        assertThat(
+                ClientCalls.blockingUnaryCall(
+                    channel,
+                    READ,
+                    CallOptions.DEFAULT
+                        .withDeadlineAfter(5, TimeUnit.SECONDS)
+                        .withCompression("gzip"),
+                    Empty.getDefaultInstance()))
+            .isEqualTo(Empty.getDefaultInstance());
+        assertThat(state.events).containsExactly("first", "second", "handler");
+      } finally {
+        channel.shutdownNow();
+        assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+      }
+    });
   }
 
   @Test
@@ -185,22 +181,21 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
     runner
         .withUserConfiguration(NoGrpcServerTestConfiguration.class)
         .withBean(GrpcRequestBytePolicy.class, GrpcRequestBytePolicy::createdRosterRetirement)
-        .run(
-            context -> {
-              assertThat(context)
-                  .hasNotFailed()
-                  .hasSingleBean(GrpcServerLifecycle.class)
-                  .hasSingleBean(GrpcServerFactory.class)
-                  .doesNotHaveBean("boundedGrpcServerLifecycle");
-              var lifecycle = context.getBean(GrpcServerLifecycle.class);
-              assertThat(lifecycle).isSameAs(context.getBean("grpcServerLifecycle"));
-              verify(lifecycle, never()).start();
-              var factory = context.getBean(GrpcServerFactory.class);
-              assertThat(factory).isExactlyInstanceOf(BoundedGrpcServerFactory.class);
-              assertThatThrownBy(factory::createServer)
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("no exact registered descriptor");
-            });
+        .run(context -> {
+          assertThat(context)
+              .hasNotFailed()
+              .hasSingleBean(GrpcServerLifecycle.class)
+              .hasSingleBean(GrpcServerFactory.class)
+              .doesNotHaveBean("boundedGrpcServerLifecycle");
+          var lifecycle = context.getBean(GrpcServerLifecycle.class);
+          assertThat(lifecycle).isSameAs(context.getBean("grpcServerLifecycle"));
+          verify(lifecycle, never()).start();
+          var factory = context.getBean(GrpcServerFactory.class);
+          assertThat(factory).isExactlyInstanceOf(BoundedGrpcServerFactory.class);
+          assertThatThrownBy(factory::createServer)
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("no exact registered descriptor");
+        });
   }
 
   @Test
@@ -214,24 +209,23 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
             DiscoveredServiceConfiguration.class, NoGrpcServerTestConfiguration.class)
         .withPropertyValues("spring.grpc.server.port=0", "spring.grpc.server.ssl.enabled=false")
         .withBean(GrpcRequestBytePolicy.class, GrpcRequestBytePolicy::createdRosterRetirement)
-        .run(
-            context -> {
-              assertThat(context)
-                  .hasNotFailed()
-                  .hasSingleBean(GrpcServerLifecycle.class)
-                  .hasSingleBean(GrpcServerFactory.class)
-                  .hasSingleBean(GrpcServiceConfigurer.class)
-                  .doesNotHaveBean("boundedGrpcServerLifecycle");
-              var lifecycle = context.getBean(GrpcServerLifecycle.class);
-              assertThat(lifecycle).isSameAs(context.getBean("grpcServerLifecycle"));
-              verify(lifecycle, never()).start();
-              verifyNoInteractions(context.getBean(GrpcServiceConfigurer.class));
-              var factory = context.getBean(GrpcServerFactory.class);
-              assertThat(factory).isExactlyInstanceOf(BoundedGrpcServerFactory.class);
-              assertThatThrownBy(factory::createServer)
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("no exact registered descriptor");
-            });
+        .run(context -> {
+          assertThat(context)
+              .hasNotFailed()
+              .hasSingleBean(GrpcServerLifecycle.class)
+              .hasSingleBean(GrpcServerFactory.class)
+              .hasSingleBean(GrpcServiceConfigurer.class)
+              .doesNotHaveBean("boundedGrpcServerLifecycle");
+          var lifecycle = context.getBean(GrpcServerLifecycle.class);
+          assertThat(lifecycle).isSameAs(context.getBean("grpcServerLifecycle"));
+          verify(lifecycle, never()).start();
+          verifyNoInteractions(context.getBean(GrpcServiceConfigurer.class));
+          var factory = context.getBean(GrpcServerFactory.class);
+          assertThat(factory).isExactlyInstanceOf(BoundedGrpcServerFactory.class);
+          assertThatThrownBy(factory::createServer)
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("no exact registered descriptor");
+        });
   }
 
   @Test
@@ -240,38 +234,31 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
         runner
             .withBean(GrpcRequestBytePolicy.class, GrpcRequestBytePolicy::createdRosterRetirement)
             .withBean(CreatedRosterService.class, CreatedRosterService::new);
-    createdRunner.run(
-        context -> {
-          assertThat(context).hasNotFailed();
-          assertThat(
-                  context.getBean(GrpcServerProperties.class).getMaxInboundMessageSize().toBytes())
-              .isEqualTo(GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES);
-          assertPurposeAndOrdinaryAdmission(
-              context.getBean(GrpcServerLifecycle.class).getPort(), Status.Code.RESOURCE_EXHAUSTED);
-          assertThat(context.getBean(DiscoveryState.class).events).doesNotContain("handler");
-        });
+    createdRunner.run(context -> {
+      assertThat(context).hasNotFailed();
+      assertThat(context.getBean(GrpcServerProperties.class).getMaxInboundMessageSize().toBytes())
+          .isEqualTo(GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES);
+      assertPurposeAndOrdinaryAdmission(
+          context.getBean(GrpcServerLifecycle.class).getPort(), Status.Code.RESOURCE_EXHAUSTED);
+      assertThat(context.getBean(DiscoveryState.class).events).doesNotContain("handler");
+    });
     createdRunner
         .withPropertyValues(
             "spring.grpc.server.max-inbound-message-size="
                 + CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES
                 + "B")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(
-                      context
-                          .getBean(GrpcServerProperties.class)
-                          .getMaxInboundMessageSize()
-                          .toBytes())
-                  .isEqualTo(
-                      CanonicalGameplayRosterRetirementEvidence
-                          .MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
-              // UNIMPLEMENTED comes from the generated base only after the actual eligible request
-              // parses.
-              assertPurposeAndOrdinaryAdmission(
-                  context.getBean(GrpcServerLifecycle.class).getPort(), Status.Code.UNIMPLEMENTED);
-              assertThat(context.getBean(DiscoveryState.class).events).doesNotContain("handler");
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(
+                  context.getBean(GrpcServerProperties.class).getMaxInboundMessageSize().toBytes())
+              .isEqualTo(
+                  CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
+          // UNIMPLEMENTED comes from the generated base only after the actual eligible request
+          // parses.
+          assertPurposeAndOrdinaryAdmission(
+              context.getBean(GrpcServerLifecycle.class).getPort(), Status.Code.UNIMPLEMENTED);
+          assertThat(context.getBean(DiscoveryState.class).events).doesNotContain("handler");
+        });
     createdRunner
         .withPropertyValues("spring.grpc.server.max-inbound-message-size=0B")
         .run(context -> assertThat(context).hasFailed());
@@ -308,25 +295,21 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
     try {
       var options =
           CallOptions.DEFAULT.withDeadlineAfter(5, TimeUnit.SECONDS).withCompression("gzip");
-      assertThatThrownBy(
-              () ->
-                  ClientCalls.blockingUnaryCall(
-                      channel,
-                      CanonicalGameplayRosterOwnerReadServiceGrpc
-                          .getAcknowledgeCanonicalGameplayRosterRetirementMethod(),
-                      options,
-                      request))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(purposeStatus));
-      assertThatThrownBy(
-              () ->
-                  ClientCalls.blockingUnaryCall(
-                      channel, READ, options, Empty.newBuilder().setUnknownFields(unknown).build()))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+      assertThatThrownBy(() ->
+              ClientCalls.blockingUnaryCall(
+                  channel,
+                  CanonicalGameplayRosterOwnerReadServiceGrpc
+                      .getAcknowledgeCanonicalGameplayRosterRetirementMethod(),
+                  options,
+                  request))
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(purposeStatus));
+      assertThatThrownBy(() ->
+              ClientCalls.blockingUnaryCall(
+                  channel, READ, options, Empty.newBuilder().setUnknownFields(unknown).build()))
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
     } finally {
       channel.shutdownNow();
       assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
@@ -346,10 +329,9 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
 
   @Test
   void missingExceptionsUseOrdinaryCeilingAndUnknownOrUnboundedTransportCannotWidenIt() {
-    runner.run(
-        context ->
-            assertThat(context.getBean(GrpcRequestBytePolicy.class).transportMaximumBytes())
-                .isEqualTo(GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES));
+    runner.run(context ->
+        assertThat(context.getBean(GrpcRequestBytePolicy.class).transportMaximumBytes())
+            .isEqualTo(GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES));
     runner
         .withPropertyValues("spring.grpc.server.max-inbound-message-size=5MB")
         .run(context -> assertThat(context).hasFailed());
@@ -387,11 +369,10 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
     GrpcServerFactoryCustomizer serviceFilter(DiscoveryState state) {
       return factory ->
           ((DefaultGrpcServerFactory<?>) factory)
-              .setServiceFilter(
-                  (service, ignored) -> {
-                    state.filtered.incrementAndGet();
-                    return true;
-                  });
+              .setServiceFilter((service, ignored) -> {
+                state.filtered.incrementAndGet();
+                return true;
+              });
     }
 
     @Bean
@@ -427,12 +408,11 @@ class CommonGrpcRequestBoundsAutoConfigurationTest {
       return ServerServiceDefinition.builder("test.Discovered")
           .addMethod(
               READ,
-              ServerCalls.asyncUnaryCall(
-                  (request, observer) -> {
-                    state.events.add("handler");
-                    observer.onNext(Empty.getDefaultInstance());
-                    observer.onCompleted();
-                  }))
+              ServerCalls.asyncUnaryCall((request, observer) -> {
+                state.events.add("handler");
+                observer.onNext(Empty.getDefaultInstance());
+                observer.onCompleted();
+              }))
           .build();
     }
   }

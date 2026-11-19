@@ -263,11 +263,10 @@ public final class RuntimeTenantOperationEntitlementEvidence {
   private static Map<String, Object> object(Object value, String field) {
     if (!(value instanceof Map<?, ?> supplied)) throw invalid(field + " must be an object");
     Map<String, Object> result = new LinkedHashMap<>();
-    supplied.forEach(
-        (key, item) -> {
-          if (!(key instanceof String name)) throw invalid(field + " contains a non-text key");
-          result.put(name, item);
-        });
+    supplied.forEach((key, item) -> {
+      if (!(key instanceof String name)) throw invalid(field + " contains a non-text key");
+      result.put(name, item);
+    });
     return result;
   }
 

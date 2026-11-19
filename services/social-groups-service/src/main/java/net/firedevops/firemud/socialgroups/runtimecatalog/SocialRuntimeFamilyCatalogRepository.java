@@ -46,29 +46,28 @@ public final class SocialRuntimeFamilyCatalogRepository {
   public Evidence read(Request request) {
     requireIndependent(request);
     byte[] committed =
-        capture.execute(
-            status -> {
-              SocialRuntimeFamilyCatalog catalog = currentCatalog();
-              byte[] requestBytes = SocialRuntimeFamilyCatalogCodec.requestBytes(request);
-              Evidence proposed = new Evidence(request, UUID.randomUUID(), catalog);
-              byte[] evidenceBytes = SocialRuntimeFamilyCatalogCodec.evidenceBytes(proposed);
-              dsl.execute(
-                  "INSERT INTO "
-                      + table("social_runtime_family_catalog_snapshot")
-                      + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
-                      + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)"
-                      + " ON CONFLICT (read_request_id) DO NOTHING",
-                  request.readRequestId(),
-                  request.targetNamespace(),
-                  requestBytes,
-                  SocialRuntimeFamilyCatalog.sha256(requestBytes),
-                  proposed.snapshotId(),
-                  catalog.catalogEpoch(),
-                  catalog.digest(),
-                  evidenceBytes,
-                  proposed.digest());
-              return retained(request, catalog);
-            });
+        capture.execute(status -> {
+          SocialRuntimeFamilyCatalog catalog = currentCatalog();
+          byte[] requestBytes = SocialRuntimeFamilyCatalogCodec.requestBytes(request);
+          Evidence proposed = new Evidence(request, UUID.randomUUID(), catalog);
+          byte[] evidenceBytes = SocialRuntimeFamilyCatalogCodec.evidenceBytes(proposed);
+          dsl.execute(
+              "INSERT INTO "
+                  + table("social_runtime_family_catalog_snapshot")
+                  + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
+                  + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)"
+                  + " ON CONFLICT (read_request_id) DO NOTHING",
+              request.readRequestId(),
+              request.targetNamespace(),
+              requestBytes,
+              SocialRuntimeFamilyCatalog.sha256(requestBytes),
+              proposed.snapshotId(),
+              catalog.catalogEpoch(),
+              catalog.digest(),
+              evidenceBytes,
+              proposed.digest());
+          return retained(request, catalog);
+        });
     Evidence result = readExact(request);
     if (!Arrays.equals(committed, SocialRuntimeFamilyCatalogCodec.evidenceBytes(result))) {
       throw new CatalogConflictException("Committed Social catalog readback changed");
@@ -79,10 +78,8 @@ public final class SocialRuntimeFamilyCatalogRepository {
   /** Reads existing exact evidence only; drift or missing evidence is never empty success. */
   public Evidence readExact(Request request) {
     requireIndependent(request);
-    return readback.execute(
-        status ->
-            SocialRuntimeFamilyCatalogCodec.evidenceFromStored(
-                retained(request, currentCatalog())));
+    return readback.execute(status ->
+        SocialRuntimeFamilyCatalogCodec.evidenceFromStored(retained(request, currentCatalog())));
   }
 
   private SocialRuntimeFamilyCatalog currentCatalog() {

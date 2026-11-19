@@ -80,13 +80,12 @@ class CanonicalGameplayMigrationDriverMainTest {
 
   @Test
   void migrationSourceInventoryRejectsMultipleFlywaySchemaMarkers() {
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayMigrationDriverMain.migrationSourceInventory(
-                    new MigrationInfo[] {
-                      migration(CoreMigrationType.SCHEMA, null, null, null),
-                      migration(CoreMigrationType.SCHEMA, null, null, null)
-                    }))
+    assertThatThrownBy(() ->
+            CanonicalGameplayMigrationDriverMain.migrationSourceInventory(
+                new MigrationInfo[] {
+                  migration(CoreMigrationType.SCHEMA, null, null, null),
+                  migration(CoreMigrationType.SCHEMA, null, null, null)
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("schema marker was ambiguous");
   }
@@ -95,27 +94,24 @@ class CanonicalGameplayMigrationDriverMainTest {
   void migrationSourceInventoryRetainsDuplicateAndMalformedNormalMigrationRejection() {
     MigrationInfo firstVersionOne = migration(CoreMigrationType.SQL, "1", "V1__first.sql", 11);
     MigrationInfo duplicateVersionOne = migration(CoreMigrationType.SQL, "1", "V1__second.sql", 12);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayMigrationDriverMain.migrationSourceInventory(
-                    new MigrationInfo[] {firstVersionOne, duplicateVersionOne}))
+    assertThatThrownBy(() ->
+            CanonicalGameplayMigrationDriverMain.migrationSourceInventory(
+                new MigrationInfo[] {firstVersionOne, duplicateVersionOne}))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("versions were ambiguous");
 
     MigrationInfo missingVersion =
         migration(CoreMigrationType.SQL, null, "V1__missing_version.sql", 11);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayMigrationDriverMain.migrationSourceInventory(
-                    new MigrationInfo[] {missingVersion}))
+    assertThatThrownBy(() ->
+            CanonicalGameplayMigrationDriverMain.migrationSourceInventory(
+                new MigrationInfo[] {missingVersion}))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("identity was incomplete");
 
     MigrationInfo missingScript = migration(CoreMigrationType.SQL, "1", null, 11);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayMigrationDriverMain.migrationSourceInventory(
-                    new MigrationInfo[] {missingScript}))
+    assertThatThrownBy(() ->
+            CanonicalGameplayMigrationDriverMain.migrationSourceInventory(
+                new MigrationInfo[] {missingScript}))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("identity was incomplete");
   }
@@ -132,25 +128,21 @@ class CanonicalGameplayMigrationDriverMainTest {
     assertThat(observation)
         .containsExactlyInAnyOrderEntriesOf(
             Map.of("runId", runId, "tlsEnabled", true, "tlsPort", 6380, "trustCaSha256", caDigest));
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayMigrationDriverMain.validatedRedisObservation(
-                    runId, null, "6380", caDigest))
+    assertThatThrownBy(() ->
+            CanonicalGameplayMigrationDriverMain.validatedRedisObservation(
+                runId, null, "6380", caDigest))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayMigrationDriverMain.validatedRedisObservation(
-                    runId, "6379", "6380", caDigest))
+    assertThatThrownBy(() ->
+            CanonicalGameplayMigrationDriverMain.validatedRedisObservation(
+                runId, "6379", "6380", caDigest))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayMigrationDriverMain.validatedRedisObservation(
-                    runId, "0", "6379", caDigest))
+    assertThatThrownBy(() ->
+            CanonicalGameplayMigrationDriverMain.validatedRedisObservation(
+                runId, "0", "6379", caDigest))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayMigrationDriverMain.validatedRedisObservation(
-                    runId, "0", "6380", null))
+    assertThatThrownBy(() ->
+            CanonicalGameplayMigrationDriverMain.validatedRedisObservation(
+                runId, "0", "6380", null))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -164,10 +156,8 @@ class CanonicalGameplayMigrationDriverMainTest {
             () -> CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("topology");
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(
-                    new Properties()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayMigrationDriverMain.requireStandaloneRedisTopology(new Properties()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("topology");
 

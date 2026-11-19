@@ -225,28 +225,26 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
   void directSqlCannotFreezeACallerSelectedSubsetOrForeignRevision() {
     try (Fixture f = fixture(null)) {
       var registration = f.registry(new ControlledInstallationSource(artifact())).register();
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO world_runtime_required_owner_snapshot"
-                          + "(canonical_game_instance_id,target_namespace,registry_revision,artifact_digest,required_owners)"
-                          + " SELECT ?,target_namespace,revision,artifact_digest,"
-                          + " jsonb_build_array(world_runtime_required_owners(artifact_bytes)->0)"
-                          + " FROM world_runtime_installation_registration WHERE revision=?",
-                      UUID.randomUUID(),
-                      registration.revision()))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO world_runtime_required_owner_snapshot"
+                      + "(canonical_game_instance_id,target_namespace,registry_revision,artifact_digest,required_owners)"
+                      + " SELECT ?,target_namespace,revision,artifact_digest,"
+                      + " jsonb_build_array(world_runtime_required_owners(artifact_bytes)->0)"
+                      + " FROM world_runtime_installation_registration WHERE revision=?",
+                  UUID.randomUUID(),
+                  registration.revision()))
           .hasMessageContaining("complete current installation");
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO world_runtime_required_owner_snapshot"
-                          + "(canonical_game_instance_id,target_namespace,registry_revision,artifact_digest,required_owners)"
-                          + " VALUES (?,?,?,?,world_runtime_required_owners(?))",
-                      UUID.randomUUID(),
-                      NAMESPACE,
-                      registration.revision() + 1,
-                      registration.artifact().digest(),
-                      registration.artifact().exactBytes()))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO world_runtime_required_owner_snapshot"
+                      + "(canonical_game_instance_id,target_namespace,registry_revision,artifact_digest,required_owners)"
+                      + " VALUES (?,?,?,?,world_runtime_required_owners(?))",
+                  UUID.randomUUID(),
+                  NAMESPACE,
+                  registration.revision() + 1,
+                  registration.artifact().digest(),
+                  registration.artifact().exactBytes()))
           .hasMessageContaining("Frozen owners must match the complete current installation")
           .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
       assertThat(f.count("world_runtime_required_owner_snapshot")).isZero();
@@ -297,15 +295,14 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
       var second = registry.register();
       var pointer = f.retainedRows("world_runtime_installation_current");
       for (long revision : List.of(first.revision(), second.revision())) {
-        assertThatThrownBy(
-                () ->
-                    f.dsl.execute(
-                        "UPDATE world_runtime_installation_current SET revision=?,artifact_digest=? WHERE target_namespace=?",
-                        revision,
-                        revision == first.revision()
-                            ? first.artifact().digest()
-                            : second.artifact().digest(),
-                        NAMESPACE))
+        assertThatThrownBy(() ->
+                f.dsl.execute(
+                    "UPDATE world_runtime_installation_current SET revision=?,artifact_digest=? WHERE target_namespace=?",
+                    revision,
+                    revision == first.revision()
+                        ? first.artifact().digest()
+                        : second.artifact().digest(),
+                    NAMESPACE))
             .hasMessageContaining("monotonically");
       }
       for (String statement :
@@ -357,12 +354,9 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
       var registry = f.registry(source);
       registry.register();
       UUID instanceId = UUID.randomUUID();
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "INSERT INTO " + receiver + " VALUES (?,?,'PREPARING')",
-                      instanceId,
-                      NAMESPACE))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "INSERT INTO " + receiver + " VALUES (?,?,'PREPARING')", instanceId, NAMESPACE))
           .hasMessageContaining("complete current frozen runtime owners");
       registry.withLaunchOwners(
           instanceId,
@@ -371,13 +365,10 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
                   "INSERT INTO " + receiver + " VALUES (?,?,'PREPARING')", instanceId, NAMESPACE));
       source.replace(artifact());
       registry.register();
-      assertThatThrownBy(
-              () ->
-                  f.dsl.execute(
-                      "UPDATE "
-                          + receiver
-                          + " SET status='ACTIVE' WHERE canonical_game_instance_id=?",
-                      instanceId))
+      assertThatThrownBy(() ->
+              f.dsl.execute(
+                  "UPDATE " + receiver + " SET status='ACTIVE' WHERE canonical_game_instance_id=?",
+                  instanceId))
           .hasMessageContaining("complete current frozen runtime owners");
       assertThat(f.dsl.fetchSingle("SELECT status FROM " + receiver).get(0, String.class))
           .isEqualTo("PREPARING");

@@ -4333,26 +4333,24 @@ class ScriptEventIngressServiceImplTest {
     AtomicReference<ScriptEventIngressAudit> row = new AtomicReference<>();
     Object claimLock = new Object();
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptEventIngressAudit candidate = invocation.getArgument(0);
-              boolean inserted;
-              synchronized (claimLock) {
-                inserted = row.compareAndSet(null, candidate);
-                if (inserted) {
-                  candidate.setId(1L);
-                }
-              }
-              if (inserted) {
-                claimInserted.countDown();
-                if (!allowWinnerToContinue.await(5, TimeUnit.SECONDS)) {
-                  throw new AssertionError("timed out waiting for winner admission release");
-                }
-                return new ScriptEventIngressAuditRepository.IdempotentInsertResult(
-                    candidate, true);
-              }
-              return new ScriptEventIngressAuditRepository.IdempotentInsertResult(row.get(), false);
-            });
+        .thenAnswer(invocation -> {
+          ScriptEventIngressAudit candidate = invocation.getArgument(0);
+          boolean inserted;
+          synchronized (claimLock) {
+            inserted = row.compareAndSet(null, candidate);
+            if (inserted) {
+              candidate.setId(1L);
+            }
+          }
+          if (inserted) {
+            claimInserted.countDown();
+            if (!allowWinnerToContinue.await(5, TimeUnit.SECONDS)) {
+              throw new AssertionError("timed out waiting for winner admission release");
+            }
+            return new ScriptEventIngressAuditRepository.IdempotentInsertResult(candidate, true);
+          }
+          return new ScriptEventIngressAuditRepository.IdempotentInsertResult(row.get(), false);
+        });
     when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any())).thenReturn(true);
     when(repository.save(Mockito.any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -4540,30 +4538,26 @@ class ScriptEventIngressServiceImplTest {
     CountDownLatch releaseOldOwner = new CountDownLatch(1);
     AtomicInteger bindingCalls = new AtomicInteger();
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptEventIngressAudit candidate = invocation.getArgument(0);
-              if (row.compareAndSet(null, candidate)) {
-                candidate.setId(11L);
-                candidate.setClaimStartedAt(java.time.Instant.now().minusSeconds(60));
-                return new ScriptEventIngressAuditRepository.IdempotentInsertResult(
-                    candidate, true);
-              }
-              return new ScriptEventIngressAuditRepository.IdempotentInsertResult(row.get(), false);
-            });
+        .thenAnswer(invocation -> {
+          ScriptEventIngressAudit candidate = invocation.getArgument(0);
+          if (row.compareAndSet(null, candidate)) {
+            candidate.setId(11L);
+            candidate.setClaimStartedAt(java.time.Instant.now().minusSeconds(60));
+            return new ScriptEventIngressAuditRepository.IdempotentInsertResult(candidate, true);
+          }
+          return new ScriptEventIngressAuditRepository.IdempotentInsertResult(row.get(), false);
+        });
     when(repository.reclaimStaleInProgress(Mockito.any(), Mockito.any(), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              row.get().setRowVersion(1);
-              return Optional.of(reclaimed);
-            });
+        .thenAnswer(invocation -> {
+          row.get().setRowVersion(1);
+          return Optional.of(reclaimed);
+        });
     when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptEventIngressAudit claim = invocation.getArgument(0);
-              return (claim == row.get() && claim.getRowVersion() == 0)
-                  || (claim == reclaimed && claim.getRowVersion() == 1);
-            });
+        .thenAnswer(invocation -> {
+          ScriptEventIngressAudit claim = invocation.getArgument(0);
+          return (claim == row.get() && claim.getRowVersion() == 0)
+              || (claim == reclaimed && claim.getRowVersion() == 1);
+        });
     when(repository.save(Mockito.any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
@@ -4572,17 +4566,16 @@ class ScriptEventIngressServiceImplTest {
                 Mockito.anyLong(),
                 Mockito.anyString(),
                 Mockito.anyString()))
-        .thenAnswer(
-            invocation -> {
-              if (bindingCalls.getAndIncrement() == 0) {
-                oldOwnerEnteredResolution.countDown();
-                if (!releaseOldOwner.await(5, TimeUnit.SECONDS)) {
-                  throw new AssertionError("timed out waiting for claim reclaim");
-                }
-                return List.of(binding("script-1", "ENTITY", "entity-1", "normal"));
-              }
-              return List.of();
-            });
+        .thenAnswer(invocation -> {
+          if (bindingCalls.getAndIncrement() == 0) {
+            oldOwnerEnteredResolution.countDown();
+            if (!releaseOldOwner.await(5, TimeUnit.SECONDS)) {
+              throw new AssertionError("timed out waiting for claim reclaim");
+            }
+            return List.of(binding("script-1", "ENTITY", "entity-1", "normal"));
+          }
+          return List.of();
+        });
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -4803,14 +4796,13 @@ class ScriptEventIngressServiceImplTest {
     AtomicReference<Long> claimedActivationEpoch = new AtomicReference<>();
     AtomicReference<Long> claimedLifecycleRevision = new AtomicReference<>();
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptEventIngressAudit claim = invocation.getArgument(0);
-              claimedActivationEpoch.set(claim.getPluginActivationEpoch());
-              claimedLifecycleRevision.set(claim.getLifecycleRevision());
-              claim.setId(9L);
-              return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
-            });
+        .thenAnswer(invocation -> {
+          ScriptEventIngressAudit claim = invocation.getArgument(0);
+          claimedActivationEpoch.set(claim.getPluginActivationEpoch());
+          claimedLifecycleRevision.set(claim.getLifecycleRevision());
+          claim.setId(9L);
+          return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
+        });
     when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any())).thenReturn(true);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
@@ -5002,12 +4994,11 @@ class ScriptEventIngressServiceImplTest {
     ArgumentCaptor<ScriptEventIngressAudit> claimCaptor =
         ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptEventIngressAudit claim = invocation.getArgument(0);
-              claim.setId(8L);
-              return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
-            });
+        .thenAnswer(invocation -> {
+          ScriptEventIngressAudit claim = invocation.getArgument(0);
+          claim.setId(8L);
+          return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
+        });
     when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any())).thenReturn(true);
     when(bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
@@ -5078,10 +5069,9 @@ class ScriptEventIngressServiceImplTest {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
-        .thenAnswer(
-            invocation ->
-                new ScriptEventIngressAuditRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new ScriptEventIngressAuditRepository.IdempotentInsertResult(
+                invocation.getArgument(0), true));
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -5156,12 +5146,11 @@ class ScriptEventIngressServiceImplTest {
 
   private static void stubClaimRepository(ScriptEventIngressAuditRepository repository) {
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptEventIngressAudit claim = invocation.getArgument(0);
-              claim.setId(1L);
-              return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
-            });
+        .thenAnswer(invocation -> {
+          ScriptEventIngressAudit claim = invocation.getArgument(0);
+          claim.setId(1L);
+          return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
+        });
     when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any())).thenReturn(true);
   }
 

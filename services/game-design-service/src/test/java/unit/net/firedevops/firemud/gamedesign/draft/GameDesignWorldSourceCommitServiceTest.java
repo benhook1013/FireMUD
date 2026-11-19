@@ -166,11 +166,10 @@ class GameDesignWorldSourceCommitServiceTest {
     var original = original();
     var state = arrange(original, false);
     when(world.apply(any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
+        });
     for (int retry = 0; retry < 2; retry++) {
       assertThatThrownBy(() -> service.commit(original, "creator.credential"))
           .isInstanceOf(io.grpc.StatusRuntimeException.class);
@@ -348,18 +347,16 @@ class GameDesignWorldSourceCommitServiceTest {
         new java.util.concurrent.atomic.AtomicReference<
             WorldOriginalDraftGraphApplyEvidence.Result>();
     when(world.apply(any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  (WorldOriginalDraftGraphApplyEvidence.Request) invocation.getArgument(0);
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              if (retained.get() == null) {
-                retained.set(successfulWorld(request));
-                throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
-              }
-              assertThat(request).isEqualTo(retained.get().request());
-              return retained.get();
-            });
+        .thenAnswer(invocation -> {
+          var request = (WorldOriginalDraftGraphApplyEvidence.Request) invocation.getArgument(0);
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          if (retained.get() == null) {
+            retained.set(successfulWorld(request));
+            throw io.grpc.Status.UNAVAILABLE.asRuntimeException();
+          }
+          assertThat(request).isEqualTo(retained.get().request());
+          return retained.get();
+        });
     assertThatThrownBy(() -> service.commit(original, "creator.credential"))
         .isInstanceOf(io.grpc.StatusRuntimeException.class);
     assertThat(service.commit(original, "creator.credential").result())
@@ -398,16 +395,15 @@ class GameDesignWorldSourceCommitServiceTest {
   @Test
   void emptyAppliedEpochVectorIsRejectedByCanonicalOutcomeConstructor() {
     var binding = new GameDesignDraftTerminalOperation(original()).gameDesignBinding();
-    assertThatThrownBy(
-            () ->
-                new OwnerOutcome(
-                    Owner.GAME_DESIGN_CONTROL_PLANE,
-                    OwnerStatus.APPLIED,
-                    binding.commitId(),
-                    binding.digest(),
-                    "mock",
-                    new byte[] {1},
-                    List.of()))
+    assertThatThrownBy(() ->
+            new OwnerOutcome(
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                OwnerStatus.APPLIED,
+                binding.commitId(),
+                binding.digest(),
+                "mock",
+                new byte[] {1},
+                List.of()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete tuple vector");
     verifyNoInteractions(account, world, coordinator, terminals, sources, transactions);
@@ -562,39 +558,34 @@ class GameDesignWorldSourceCommitServiceTest {
     when(coordinator.read(any(), any()))
         .thenAnswer(ignored -> Optional.of(snapshot(binding, states)));
     when(coordinator.markOwnerInProgress(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              Owner owner = invocation.getArgument(1);
-              var updated = state(owner, OwnerStatus.IN_PROGRESS, null);
-              states.put(owner, updated);
-              return updated;
-            });
+        .thenAnswer(invocation -> {
+          Owner owner = invocation.getArgument(1);
+          var updated = state(owner, OwnerStatus.IN_PROGRESS, null);
+          states.put(owner, updated);
+          return updated;
+        });
     when(sources.apply(any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              var local = outcome(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
-              states.put(
-                  Owner.GAME_DESIGN_CONTROL_PLANE, state(local.owner(), local.status(), local));
-              var applied = mock(GameDesignSourceRepository.Application.class);
-              when(applied.ownerOutcome()).thenReturn(local);
-              return applied;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          var local = outcome(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+          states.put(Owner.GAME_DESIGN_CONTROL_PLANE, state(local.owner(), local.status(), local));
+          var applied = mock(GameDesignSourceRepository.Application.class);
+          when(applied.ownerOutcome()).thenReturn(local);
+          return applied;
+        });
     when(coordinator.recordOwnerOutcome(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              OwnerOutcome actual = invocation.getArgument(1);
-              var retained = state(actual.owner(), actual.status(), actual);
-              states.put(actual.owner(), retained);
-              return retained;
-            });
+        .thenAnswer(invocation -> {
+          OwnerOutcome actual = invocation.getArgument(1);
+          var retained = state(actual.owner(), actual.status(), actual);
+          states.put(actual.owner(), retained);
+          return retained;
+        });
     when(coordinator.advanceSourceVisibilityFence(any(), any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(states.values()).allMatch(value -> value.status() == OwnerStatus.APPLIED);
-              completed.set(true);
-              return null;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(states.values()).allMatch(value -> value.status() == OwnerStatus.APPLIED);
+          completed.set(true);
+          return null;
+        });
     var synchronizedSources = mock(GameDesignSourceRepository.SynchronizedSources.class);
     var command = mock(CommandSnapshot.class);
     when(command.binding()).thenReturn(binding);
@@ -609,17 +600,15 @@ class GameDesignWorldSourceCommitServiceTest {
     var order = mock(AccountOriginalDraftOrderEvidence.class);
     when(order.matches(any())).thenReturn(true);
     when(account.claim(any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return order;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return order;
+        });
     when(transactions.getTransaction(any()))
-        .thenAnswer(
-            ignored -> {
-              TransactionSynchronizationManager.setActualTransactionActive(true);
-              return mock(TransactionStatus.class);
-            });
+        .thenAnswer(ignored -> {
+          TransactionSynchronizationManager.setActualTransactionActive(true);
+          return mock(TransactionStatus.class);
+        });
     doAnswer(
             ignored -> {
               TransactionSynchronizationManager.setActualTransactionActive(false);
@@ -699,15 +688,14 @@ class GameDesignWorldSourceCommitServiceTest {
         "mock-owner-result",
         new byte[] {1},
         binding.affectedUnits(owner).stream()
-            .map(
-                unit ->
-                    new AppliedEpoch(
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch(),
-                        "1"))
+            .map(unit ->
+                new AppliedEpoch(
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch(),
+                    "1"))
             .toList());
   }
 

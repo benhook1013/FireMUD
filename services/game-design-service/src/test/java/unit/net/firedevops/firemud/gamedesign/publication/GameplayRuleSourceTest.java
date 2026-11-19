@@ -119,13 +119,11 @@ class GameplayRuleSourceTest {
         .containsExactly("second", "third");
     assertThat(replayed.getFirst().sourceBinding()).isEqualTo(initial);
     assertThat(replayed.getLast().sourceBinding()).isEqualTo(changed);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleSource.replay(
-                    replayed,
-                    binding(
-                        List.of(
-                            GameplayRuleSource.deletePayload(Family.ADMISSION_TAGS, "missing")))))
+    assertThatThrownBy(() ->
+            GameplayRuleSource.replay(
+                replayed,
+                binding(
+                    List.of(GameplayRuleSource.deletePayload(Family.ADMISSION_TAGS, "missing")))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -171,20 +169,18 @@ class GameplayRuleSourceTest {
     families.remove(Family.FEEDBACK);
     assertThatThrownBy(() -> new GameplayRuleManifest(families))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleSource.replay(
-                    List.of(),
-                    binding(
-                        List.of(
-                            GameplayRuleSource.upsertPayload(
-                                new Ability("ability", "Ability", "missingAction"))))))
+    assertThatThrownBy(() ->
+            GameplayRuleSource.replay(
+                List.of(),
+                binding(
+                    List.of(
+                        GameplayRuleSource.upsertPayload(
+                            new Ability("ability", "Ability", "missingAction"))))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unresolved ACTIONS");
-    assertThatThrownBy(
-            () ->
-                GameplayRuleManifest.fromStored(
-                    "{\"schema\":\"gameplay-rule-manifest/v1\",\"families\":{}}"))
+    assertThatThrownBy(() ->
+            GameplayRuleManifest.fromStored(
+                "{\"schema\":\"gameplay-rule-manifest/v1\",\"families\":{}}"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -193,30 +189,25 @@ class GameplayRuleSourceTest {
     String command =
         GameplayRuleManifest.canonical(
             exampleManifest().families().get(Family.COMMANDS).getFirst());
-    assertThatThrownBy(
-            () ->
-                GameplayRuleManifest.definition(
-                    Family.COMMANDS,
-                    command.replace("\"admissionTags\":[\"gameplay\",\"canFocus\"],", "")))
+    assertThatThrownBy(() ->
+            GameplayRuleManifest.definition(
+                Family.COMMANDS,
+                command.replace("\"admissionTags\":[\"gameplay\",\"canFocus\"],", "")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleManifest.definition(
-                    Family.ADMISSION_TAGS, "{\"tagKey\":\"tag\",\"unknownPolicy\":true}"))
+    assertThatThrownBy(() ->
+            GameplayRuleManifest.definition(
+                Family.ADMISSION_TAGS, "{\"tagKey\":\"tag\",\"unknownPolicy\":true}"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleManifest.definition(
-                    Family.ADMISSION_TAGS, "{\"tagKey\":\"first\",\"tagKey\":\"second\"}"))
+    assertThatThrownBy(() ->
+            GameplayRuleManifest.definition(
+                Family.ADMISSION_TAGS, "{\"tagKey\":\"first\",\"tagKey\":\"second\"}"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleManifest.definition(Family.ADMISSION_TAGS, "{\"tagKey\":\"first\"} {}"))
+    assertThatThrownBy(() ->
+            GameplayRuleManifest.definition(Family.ADMISSION_TAGS, "{\"tagKey\":\"first\"} {}"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleSource.mutations(
-                    binding(List.of("{\"revisionKind\":\"UNKNOWN_RULE_FAMILY\"}"))))
+    assertThatThrownBy(() ->
+            GameplayRuleSource.mutations(
+                binding(List.of("{\"revisionKind\":\"UNKNOWN_RULE_FAMILY\"}"))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -239,22 +230,21 @@ class GameplayRuleSourceTest {
                 action.feedbackKeys())));
     assertThatThrownBy(() -> new GameplayRuleManifest(families))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameplayRuleManifest.definition(
-                    Family.CONTINUOUS_OVERLAYS,
-                    GameplayRuleManifest.canonical(
-                        Map.of(
-                            "overlayKey",
-                            "overlay",
-                            "eligibleWhen",
-                            truth(),
-                            "deniedAdmissionTags",
-                            List.of(),
-                            "effectKeys",
-                            List.of(),
-                            "grantedAdmissionTags",
-                            List.of("gameplay")))))
+    assertThatThrownBy(() ->
+            GameplayRuleManifest.definition(
+                Family.CONTINUOUS_OVERLAYS,
+                GameplayRuleManifest.canonical(
+                    Map.of(
+                        "overlayKey",
+                        "overlay",
+                        "eligibleWhen",
+                        truth(),
+                        "deniedAdmissionTags",
+                        List.of(),
+                        "effectKeys",
+                        List.of(),
+                        "grantedAdmissionTags",
+                        List.of("gameplay")))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

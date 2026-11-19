@@ -62,12 +62,11 @@ class OriginalStartSessionCurrentAttemptEvidenceTest {
     assertThatThrownBy(() -> new Request(READ_ID, "world-runtime", tuple, ATTEMPT, MUTATION, 0L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("positive");
-    assertThatThrownBy(
-            () ->
-                new Result(
-                    new Request(READ_ID, "world-runtime", tuple, ATTEMPT, MUTATION, 8L),
-                    java.time.Instant.EPOCH,
-                    new byte[0]))
+    assertThatThrownBy(() ->
+            new Result(
+                new Request(READ_ID, "world-runtime", tuple, ATTEMPT, MUTATION, 8L),
+                java.time.Instant.EPOCH,
+                new byte[0]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("projection");
   }

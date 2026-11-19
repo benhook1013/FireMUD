@@ -47,9 +47,8 @@ public final class AccountInitialAdmissionSettlementReadService {
     var retained =
         bindings
             .read(namespace, hold.request().initialAdmissionRequestId())
-            .orElseThrow(
-                () ->
-                    new SettlementUnavailableException("Exact protected admission is unavailable"));
+            .orElseThrow(() ->
+                new SettlementUnavailableException("Exact protected admission is unavailable"));
     var protection = retained.protection();
     if (!Arrays.equals(protection.canonicalBytes(), expected.canonicalBytes())) {
       throw new SettlementUnavailableException(
@@ -62,10 +61,8 @@ public final class AccountInitialAdmissionSettlementReadService {
                 protection.request().originalTuple(),
                 request.gameSessionOwnerAttemptId(),
                 request.gameSessionOwnerFence())
-            .orElseThrow(
-                () ->
-                    new SettlementUnavailableException(
-                        "Original StartSession owner is unavailable"));
+            .orElseThrow(() ->
+                new SettlementUnavailableException("Original StartSession owner is unavailable"));
     if (!original.ownerMutationId().equals(request.gameSessionOwnerMutationId())
         || !original.leaseExpiresAt().equals(request.originalLeaseExpiresAt())
         || !Arrays.equals(

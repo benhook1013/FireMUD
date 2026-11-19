@@ -50,33 +50,31 @@ class CommandSourceTest {
             "0", id("delete-revision"), commit, CommandSource.OperationKind.DELETE, "look", null);
 
     assertThat(CommandSource.replay(inherited, List.of(delete))).isEmpty();
-    assertThatThrownBy(
-            () ->
-                CommandSource.replay(
-                    inherited,
-                    List.of(
-                        delete,
-                        new CommandSource.Mutation(
-                            "1",
-                            id("second-delete-revision"),
-                            commit,
-                            CommandSource.OperationKind.DELETE,
-                            "LOOK",
-                            null))))
+    assertThatThrownBy(() ->
+            CommandSource.replay(
+                inherited,
+                List.of(
+                    delete,
+                    new CommandSource.Mutation(
+                        "1",
+                        id("second-delete-revision"),
+                        commit,
+                        CommandSource.OperationKind.DELETE,
+                        "LOOK",
+                        null))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Cannot delete an absent command definition key");
-    assertThatThrownBy(
-            () ->
-                CommandSource.replay(
-                    List.of(),
-                    List.of(
-                        new CommandSource.Mutation(
-                            "0",
-                            id("absent-delete-revision"),
-                            commit,
-                            CommandSource.OperationKind.DELETE,
-                            "absent",
-                            null))))
+    assertThatThrownBy(() ->
+            CommandSource.replay(
+                List.of(),
+                List.of(
+                    new CommandSource.Mutation(
+                        "0",
+                        id("absent-delete-revision"),
+                        commit,
+                        CommandSource.OperationKind.DELETE,
+                        "absent",
+                        null))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Cannot delete an absent command definition key");
   }

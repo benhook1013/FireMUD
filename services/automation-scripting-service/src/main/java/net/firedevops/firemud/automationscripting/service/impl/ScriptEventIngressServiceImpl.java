@@ -761,11 +761,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return true;
     }
     return resolvePluginStatus(authority, request, handler.pluginOwner().pluginId())
-        .filter(
-            status ->
-                status.pluginState() == PluginState.PLUGIN_STATE_ENABLED
-                    && normalize(handler.pluginOwner().pluginVersionId())
-                        .equals(normalize(status.activePluginVersionId())))
+        .filter(status ->
+            status.pluginState() == PluginState.PLUGIN_STATE_ENABLED
+                && normalize(handler.pluginOwner().pluginVersionId())
+                    .equals(normalize(status.activePluginVersionId())))
         .filter(status -> status.pluginActivationEpoch() > 0 && status.lifecycleRevision() > 0)
         .isPresent();
   }
@@ -848,10 +847,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                 request.getEventType(),
                 schemaVersion)
             .stream()
-            .filter(
-                binding ->
-                    request.getScriptId().isBlank()
-                        || binding.getScriptId().equals(request.getScriptId()))
+            .filter(binding ->
+                request.getScriptId().isBlank()
+                    || binding.getScriptId().equals(request.getScriptId()))
             .filter(binding -> matchesScope(binding, request, payload))
             .toList();
     PluginOwnerResolution ownerResolution =
@@ -880,22 +878,18 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                 request.getRegionEpoch());
     List<ResolvedHandler> handlers =
         scopedBindings.stream()
-            .map(
-                binding ->
-                    new ResolvedHandler(binding, ownersByScriptId.get(binding.getScriptId())))
-            .filter(
-                handler ->
-                    participatesInResolvedHandlerSet(handler.pluginOwner(), activePluginVersions))
-            .filter(
-                handler ->
-                    !filterByRequestPluginOwnership
-                        || hasMatchingPluginOwner(handler.pluginOwner(), request))
+            .map(binding ->
+                new ResolvedHandler(binding, ownersByScriptId.get(binding.getScriptId())))
+            .filter(handler ->
+                participatesInResolvedHandlerSet(handler.pluginOwner(), activePluginVersions))
+            .filter(handler ->
+                !filterByRequestPluginOwnership
+                    || hasMatchingPluginOwner(handler.pluginOwner(), request))
             .toList();
     if (handlers.stream()
-        .anyMatch(
-            handler ->
-                handler.pluginOwner() != null
-                    && normalize(handler.binding().getBindingId()).isBlank())) {
+        .anyMatch(handler ->
+            handler.pluginOwner() != null
+                && normalize(handler.binding().getBindingId()).isBlank())) {
       return new TriggerAdmission(
           false, OUTCOME_VERSION_UNAVAILABLE, "plugin_binding_unresolved", 0);
     }
@@ -910,18 +904,17 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return new TriggerAdmission(
           false, OUTCOME_VERSION_UNAVAILABLE, "plugin_binding_unresolved", 0);
     }
-    handlers.forEach(
-        handler ->
-            admitHandler(
-                request,
-                schemaVersion,
-                definition,
-                handler,
-                sourceService,
-                admissionState,
-                scriptPinEpoch,
-                claim,
-                authority));
+    handlers.forEach(handler ->
+        admitHandler(
+            request,
+            schemaVersion,
+            definition,
+            handler,
+            sourceService,
+            admissionState,
+            scriptPinEpoch,
+            claim,
+            authority));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
   }

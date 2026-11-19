@@ -185,31 +185,27 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
   void databaseEnforcesIngressPinTupleForPreInstanceAndInstanceRows() {
     DSLContext dsl = migrateToLatest();
 
-    assertThatThrownBy(
-            () ->
-                insertIngressAudit(
-                    dsl, "instance-null-epoch", null, "owner-null-epoch", "event-rejected"))
+    assertThatThrownBy(() ->
+            insertIngressAudit(
+                dsl, "instance-null-epoch", null, "owner-null-epoch", "event-rejected"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
 
-    assertThatThrownBy(
-            () ->
-                insertIngressAudit(
-                    dsl, null, 6L, "owner-null-instance", "event-rejected-null-instance"))
+    assertThatThrownBy(() ->
+            insertIngressAudit(
+                dsl, null, 6L, "owner-null-instance", "event-rejected-null-instance"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
 
-    assertThatThrownBy(
-            () ->
-                insertIngressAudit(
-                    dsl, "instance-positive-null-owner", 7L, null, "event-rejected-null-owner"))
+    assertThatThrownBy(() ->
+            insertIngressAudit(
+                dsl, "instance-positive-null-owner", 7L, null, "event-rejected-null-owner"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
 
-    assertThatThrownBy(
-            () ->
-                insertIngressAudit(
-                    dsl, "instance-positive-blank-owner", 8L, "   ", "event-rejected-blank-owner"))
+    assertThatThrownBy(() ->
+            insertIngressAudit(
+                dsl, "instance-positive-blank-owner", 8L, "   ", "event-rejected-blank-owner"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
 

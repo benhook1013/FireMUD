@@ -89,10 +89,9 @@ class InitialAdmissionBindHoldReconcilerTest {
 
     assertThat(counter(meterRegistry, "GS_OWNER_PENDING")).isEqualTo(1.0);
     assertThat(meterRegistry.getMeters())
-        .allSatisfy(
-            meter ->
-                assertThat(meter.getId().getTags())
-                    .containsExactly(Tag.of("error_code", "GS_OWNER_PENDING")));
+        .allSatisfy(meter ->
+            assertThat(meter.getId().getTags())
+                .containsExactly(Tag.of("error_code", "GS_OWNER_PENDING")));
     verify(service).reconcileOwnerProof(hold.holdId(), ownerProof);
   }
 

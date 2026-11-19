@@ -68,12 +68,11 @@ class WorldStartSessionExecutionTerminalReadClientTest {
       GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
       when(channelFactory.buildChannel(
               eq("world.internal:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
-          .thenAnswer(
-              invocation -> {
-                ManagedChannel channel = mock(ManagedChannel.class);
-                channels.add(channel);
-                return channel;
-              });
+          .thenAnswer(invocation -> {
+            ManagedChannel channel = mock(ManagedChannel.class);
+            channels.add(channel);
+            return channel;
+          });
       client =
           new WorldStartSessionExecutionTerminalReadClient(
               endpoints, tls, channelFactory, "world-runtime");
@@ -235,25 +234,23 @@ class WorldStartSessionExecutionTerminalReadClientTest {
       @TempDir Path directory) throws Exception {
     var plaintext = fileBacked(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldStartSessionExecutionTerminalReadClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    new GrpcChannelFactory(),
-                    "world-runtime"))
+    assertThatThrownBy(() ->
+            new WorldStartSessionExecutionTerminalReadClient(
+                new ServiceEndpointsProperties(),
+                plaintext,
+                new GrpcChannelFactory(),
+                "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
 
     var classpath = fileBacked(directory);
     classpath.setCaCert("classpath:ca.crt");
-    assertThatThrownBy(
-            () ->
-                new WorldStartSessionExecutionTerminalReadClient(
-                    new ServiceEndpointsProperties(),
-                    classpath,
-                    new GrpcChannelFactory(),
-                    "world-runtime"))
+    assertThatThrownBy(() ->
+            new WorldStartSessionExecutionTerminalReadClient(
+                new ServiceEndpointsProperties(),
+                classpath,
+                new GrpcChannelFactory(),
+                "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("file-backed");
 

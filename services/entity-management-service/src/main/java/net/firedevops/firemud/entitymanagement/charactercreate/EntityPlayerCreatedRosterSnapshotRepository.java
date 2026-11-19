@@ -86,76 +86,72 @@ public final class EntityPlayerCreatedRosterSnapshotRepository {
         new EntityPlayerCreatedRosterReadService.AuthenticatedAccountSelector(
             UUID.fromString(request.getCanonicalAccountUuid()));
     return Objects.requireNonNull(
-        transaction.execute(
-            ignored -> {
-              DSLContext tx = dsl;
-              var retention = new CanonicalGameplayRosterRetentionRepository(tx);
+        transaction.execute(ignored -> {
+          DSLContext tx = dsl;
+          var retention = new CanonicalGameplayRosterRetentionRepository(tx);
 
-              // Keep the retention family's established admission-before-snapshot lock order.
-              retention.requireAdmission(request, localAdmission);
-              Optional<CanonicalPlayerCreatedRosterResponse> retained =
-                  retention.originalPlayerCreatedReceipt(checkedOriginal);
-              if (retained.isPresent()) {
-                Record boundAdmission =
-                    tx.fetchOne(
-                        "SELECT snapshot_uuid FROM entity_canonical_roster_admissions WHERE operation_uuid = ? AND admission_uuid = ? AND admission_state = 'OPEN' FOR UPDATE",
-                        UUID.fromString(request.getRequestUuid()),
-                        localAdmission);
-                if (boundAdmission == null
-                    || !UUID.fromString(retained.orElseThrow().getRoster().getSnapshotUuid())
-                        .equals(boundAdmission.get("snapshot_uuid", UUID.class))) {
-                  throw new IllegalStateException("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
-                }
-                if (!checkedOriginal.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
-                    && !checkedOriginal
-                        .getCanonicalPlayerCreatedRosterReceipt()
-                        .equals(retained.get().toByteString())) {
-                  throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT");
-                }
-                return CanonicalPlayerCreatedRosterEvidence.requireResponse(
-                    request, retained.orElseThrow());
-              }
-              if (!checkedOriginal.getCanonicalPlayerCreatedRosterReceipt().isEmpty()) {
-                throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_UNRETAINED");
-              }
+          // Keep the retention family's established admission-before-snapshot lock order.
+          retention.requireAdmission(request, localAdmission);
+          Optional<CanonicalPlayerCreatedRosterResponse> retained =
+              retention.originalPlayerCreatedReceipt(checkedOriginal);
+          if (retained.isPresent()) {
+            Record boundAdmission =
+                tx.fetchOne(
+                    "SELECT snapshot_uuid FROM entity_canonical_roster_admissions WHERE operation_uuid = ? AND admission_uuid = ? AND admission_state = 'OPEN' FOR UPDATE",
+                    UUID.fromString(request.getRequestUuid()),
+                    localAdmission);
+            if (boundAdmission == null
+                || !UUID.fromString(retained.orElseThrow().getRoster().getSnapshotUuid())
+                    .equals(boundAdmission.get("snapshot_uuid", UUID.class))) {
+              throw new IllegalStateException("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+            }
+            if (!checkedOriginal.getCanonicalPlayerCreatedRosterReceipt().isEmpty()
+                && !checkedOriginal
+                    .getCanonicalPlayerCreatedRosterReceipt()
+                    .equals(retained.get().toByteString())) {
+              throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT");
+            }
+            return CanonicalPlayerCreatedRosterEvidence.requireResponse(
+                request, retained.orElseThrow());
+          }
+          if (!checkedOriginal.getCanonicalPlayerCreatedRosterReceipt().isEmpty()) {
+            throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_UNRETAINED");
+          }
 
-              CanonicalGameplayRosterTarget currentTarget =
-                  CanonicalGameplayRosterTarget.fromWire(target);
-              lockCreationRoster(tx, currentTarget, account.accountId());
+          CanonicalGameplayRosterTarget currentTarget =
+              CanonicalGameplayRosterTarget.fromWire(target);
+          lockCreationRoster(tx, currentTarget, account.accountId());
 
-              List<CanonicalGameplayRosterActor> actors =
-                  EntityCharacterCreateRepository
-                      .readFreshPlayerCreatedRosterWithinOwnerTransaction(tx, account, published);
-              List<net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor>
-                  wireActors =
-                      actors.stream()
-                          .map(EntityPlayerCreatedRosterSnapshotRepository::wireActor)
-                          .toList();
-              String snapshotDigest =
-                  CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
-                      request.getCanonicalAccountUuid(), target, sourceIdentity, wireActors);
+          List<CanonicalGameplayRosterActor> actors =
+              EntityCharacterCreateRepository.readFreshPlayerCreatedRosterWithinOwnerTransaction(
+                  tx, account, published);
+          List<net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor> wireActors =
+              actors.stream().map(EntityPlayerCreatedRosterSnapshotRepository::wireActor).toList();
+          String snapshotDigest =
+              CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
+                  request.getCanonicalAccountUuid(), target, sourceIdentity, wireActors);
 
-              CanonicalPlayerCreatedRosterResponse receipt =
-                  persistOrReuseSnapshot(
-                      tx,
-                      request,
-                      currentTarget,
-                      sourceIdentity,
-                      sourceIdentity.toByteArray(),
-                      wireActors,
-                      snapshotDigest);
+          CanonicalPlayerCreatedRosterResponse receipt =
+              persistOrReuseSnapshot(
+                  tx,
+                  request,
+                  currentTarget,
+                  sourceIdentity,
+                  sourceIdentity.toByteArray(),
+                  wireActors,
+                  snapshotDigest);
 
-              UUID snapshotUuid = UUID.fromString(receipt.getRoster().getSnapshotUuid());
-              retention.bindAdmission(
-                  UUID.fromString(request.getRequestUuid()), localAdmission, snapshotUuid);
-              retention.bindPlayerCreatedOriginal(checkedOriginal, receipt);
-              CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
-                  checkedOriginal.getRequest(),
-                  checkedOriginal.getOwnerFence(),
-                  UUID.fromString(checkedOriginal.getTargetFenceUuid()),
-                  receipt);
-              return CanonicalPlayerCreatedRosterEvidence.requireResponse(request, receipt);
-            }),
+          UUID snapshotUuid = UUID.fromString(receipt.getRoster().getSnapshotUuid());
+          retention.bindAdmission(
+              UUID.fromString(request.getRequestUuid()), localAdmission, snapshotUuid);
+          retention.bindPlayerCreatedOriginal(checkedOriginal, receipt);
+          CanonicalGameplayRosterReferenceEvidence.playerCreatedResponse(
+              checkedOriginal.getRequest(),
+              checkedOriginal.getOwnerFence(),
+              UUID.fromString(checkedOriginal.getTargetFenceUuid()),
+              receipt);
+          return CanonicalPlayerCreatedRosterEvidence.requireResponse(request, receipt);
+        }),
         "PLAYER_CREATED capture transaction returned no receipt");
   }
 
@@ -226,108 +222,95 @@ public final class EntityPlayerCreatedRosterSnapshotRepository {
         new EntityPlayerCreatedRosterReadService.AuthenticatedAccountSelector(
             UUID.fromString(request.getCanonicalAccountUuid()));
     return Objects.requireNonNull(
-        transaction.execute(
-            ignored -> {
-              DSLContext tx = dsl;
-              var retention = new CanonicalGameplayRosterRetentionRepository(tx);
-              UUID operation = UUID.fromString(request.getRequestUuid());
-              Record admission =
-                  tx.fetchOne(
-                      "SELECT admission_uuid, snapshot_uuid FROM entity_canonical_roster_admissions WHERE operation_uuid = ? FOR UPDATE",
-                      operation);
-              if (admission == null) {
-                throw new IllegalStateException("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
-              }
-              UUID nonce = admission.get("admission_uuid", UUID.class);
-              retention.requireAdmission(createdRequest, nonce);
-              if (!UUID.fromString(request.getExpectedSnapshot().getSnapshotUuid())
-                  .equals(admission.get("snapshot_uuid", UUID.class))) {
-                throw new IllegalStateException("CANONICAL_ROSTER_SNAPSHOT_STALE");
-              }
-              CanonicalPlayerCreatedRosterResponse retained =
-                  retention
-                      .originalPlayerCreatedReceipt(checkedOriginal)
-                      .orElseThrow(
-                          () ->
-                              new IllegalStateException(
-                                  "CANONICAL_ROSTER_ORIGINAL_RECEIPT_UNRETAINED"));
-              if (!retained.equals(originalRoster)) {
-                throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT");
-              }
+        transaction.execute(ignored -> {
+          DSLContext tx = dsl;
+          var retention = new CanonicalGameplayRosterRetentionRepository(tx);
+          UUID operation = UUID.fromString(request.getRequestUuid());
+          Record admission =
+              tx.fetchOne(
+                  "SELECT admission_uuid, snapshot_uuid FROM entity_canonical_roster_admissions WHERE operation_uuid = ? FOR UPDATE",
+                  operation);
+          if (admission == null) {
+            throw new IllegalStateException("CANONICAL_ROSTER_LOCAL_ADMISSION_FENCE_CLOSED");
+          }
+          UUID nonce = admission.get("admission_uuid", UUID.class);
+          retention.requireAdmission(createdRequest, nonce);
+          if (!UUID.fromString(request.getExpectedSnapshot().getSnapshotUuid())
+              .equals(admission.get("snapshot_uuid", UUID.class))) {
+            throw new IllegalStateException("CANONICAL_ROSTER_SNAPSHOT_STALE");
+          }
+          CanonicalPlayerCreatedRosterResponse retained =
+              retention
+                  .originalPlayerCreatedReceipt(checkedOriginal)
+                  .orElseThrow(() ->
+                      new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_UNRETAINED"));
+          if (!retained.equals(originalRoster)) {
+            throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT");
+          }
 
-              CanonicalGameplayRosterTarget currentTarget =
-                  CanonicalGameplayRosterTarget.fromWire(target);
-              lockCreationRoster(tx, currentTarget, account.accountId());
-              List<CanonicalGameplayRosterActor> actors =
-                  EntityCharacterCreateRepository.readPlayerCreatedRosterWithinOwnerTransaction(
-                      tx, account, published);
-              List<net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor>
-                  wireActors =
-                      actors.stream()
-                          .map(EntityPlayerCreatedRosterSnapshotRepository::wireActor)
-                          .toList();
-              String digest =
-                  CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
-                      request.getCanonicalAccountUuid(), target, sourceIdentity, wireActors);
-              if (!digest.equals(request.getExpectedSnapshot().getSnapshotDigest())) {
-                throw new IllegalStateException("CANONICAL_ROSTER_SNAPSHOT_STALE");
-              }
-              CanonicalPlayerCreatedRosterResponse readback =
-                  readBackSnapshot(
-                      tx,
-                      createdRequest,
-                      UUID.fromString(request.getExpectedSnapshot().getSnapshotUuid()),
-                      currentTarget,
-                      sourceIdentity,
-                      sourceIdentity.toByteArray(),
-                      wireActors,
-                      digest);
-              long selectedCount =
-                  actors.stream()
-                      .filter(
-                          actor ->
-                              actor
-                                  .characterUuid()
-                                  .toString()
-                                  .equals(request.getSelectedCharacterUuid()))
-                      .count();
-              if (selectedCount != 1L) {
-                throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SELECTION_CHANGED");
-              }
+          CanonicalGameplayRosterTarget currentTarget =
+              CanonicalGameplayRosterTarget.fromWire(target);
+          lockCreationRoster(tx, currentTarget, account.accountId());
+          List<CanonicalGameplayRosterActor> actors =
+              EntityCharacterCreateRepository.readPlayerCreatedRosterWithinOwnerTransaction(
+                  tx, account, published);
+          List<net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterActor> wireActors =
+              actors.stream().map(EntityPlayerCreatedRosterSnapshotRepository::wireActor).toList();
+          String digest =
+              CanonicalPlayerCreatedRosterEvidence.computeSnapshotDigest(
+                  request.getCanonicalAccountUuid(), target, sourceIdentity, wireActors);
+          if (!digest.equals(request.getExpectedSnapshot().getSnapshotDigest())) {
+            throw new IllegalStateException("CANONICAL_ROSTER_SNAPSHOT_STALE");
+          }
+          CanonicalPlayerCreatedRosterResponse readback =
+              readBackSnapshot(
+                  tx,
+                  createdRequest,
+                  UUID.fromString(request.getExpectedSnapshot().getSnapshotUuid()),
+                  currentTarget,
+                  sourceIdentity,
+                  sourceIdentity.toByteArray(),
+                  wireActors,
+                  digest);
+          long selectedCount =
+              actors.stream()
+                  .filter(actor ->
+                      actor.characterUuid().toString().equals(request.getSelectedCharacterUuid()))
+                  .count();
+          if (selectedCount != 1L) {
+            throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_SELECTION_CHANGED");
+          }
 
-              var terminal =
-                  EntityCharacterCreateRepository
-                      .readSelectedPlayerCreatedTerminalWithinOwnerTransaction(
-                          tx,
-                          account,
-                          published,
-                          UUID.fromString(request.getSelectedCharacterUuid()));
-              var originalCreateRequest = terminal.getOriginalRequest().getOriginal();
-              var result =
-                  CanonicalSelectedPlayerCreatedCharacterResponse.newBuilder()
-                      .setRequestUuid(request.getRequestUuid())
-                      .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
-                      .setSelectedCharacterUuid(request.getSelectedCharacterUuid())
-                      .setTarget(target)
-                      .setSnapshot(
-                          CanonicalGameplayRosterSnapshotReference.newBuilder()
-                              .setSnapshotUuid(readback.getRoster().getSnapshotUuid())
-                              .setSnapshotDigest(readback.getRoster().getSnapshotDigest()))
-                      .setSourceIdentity(sourceIdentity)
-                      .setCreationOperationUuid(originalCreateRequest.getOperationId())
-                      .setMutationDigest(originalCreateRequest.getMutationDigest())
-                      .setTerminal(terminal)
-                      .build();
-              var checkedResult =
-                  CanonicalPlayerCreatedRosterEvidence.requireSelectedResponse(request, result);
-              if (!checkedOriginal.getCanonicalSelectedPlayerCreatedCharacterReceipt().isEmpty()
-                  && !CanonicalGameplayRosterReferenceEvidence
-                      .selectedPlayerCreatedCharacterReceipt(checkedOriginal)
-                      .equals(checkedResult)) {
-                throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT");
-              }
-              return checkedResult;
-            }),
+          var terminal =
+              EntityCharacterCreateRepository
+                  .readSelectedPlayerCreatedTerminalWithinOwnerTransaction(
+                      tx, account, published, UUID.fromString(request.getSelectedCharacterUuid()));
+          var originalCreateRequest = terminal.getOriginalRequest().getOriginal();
+          var result =
+              CanonicalSelectedPlayerCreatedCharacterResponse.newBuilder()
+                  .setRequestUuid(request.getRequestUuid())
+                  .setCanonicalAccountUuid(request.getCanonicalAccountUuid())
+                  .setSelectedCharacterUuid(request.getSelectedCharacterUuid())
+                  .setTarget(target)
+                  .setSnapshot(
+                      CanonicalGameplayRosterSnapshotReference.newBuilder()
+                          .setSnapshotUuid(readback.getRoster().getSnapshotUuid())
+                          .setSnapshotDigest(readback.getRoster().getSnapshotDigest()))
+                  .setSourceIdentity(sourceIdentity)
+                  .setCreationOperationUuid(originalCreateRequest.getOperationId())
+                  .setMutationDigest(originalCreateRequest.getMutationDigest())
+                  .setTerminal(terminal)
+                  .build();
+          var checkedResult =
+              CanonicalPlayerCreatedRosterEvidence.requireSelectedResponse(request, result);
+          if (!checkedOriginal.getCanonicalSelectedPlayerCreatedCharacterReceipt().isEmpty()
+              && !CanonicalGameplayRosterReferenceEvidence.selectedPlayerCreatedCharacterReceipt(
+                      checkedOriginal)
+                  .equals(checkedResult)) {
+            throw new IllegalStateException("CANONICAL_ROSTER_ORIGINAL_RECEIPT_CONFLICT");
+          }
+          return checkedResult;
+        }),
         "PLAYER_CREATED selected read returned no terminal");
   }
 

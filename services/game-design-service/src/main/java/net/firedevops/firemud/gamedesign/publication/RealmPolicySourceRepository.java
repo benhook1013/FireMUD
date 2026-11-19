@@ -316,10 +316,9 @@ public final class RealmPolicySourceRepository {
     var applied = application(binding);
     RealmPolicySnapshot snapshot;
     if (binding.revisions().stream()
-        .anyMatch(
-            r ->
-                r.owner() == Owner.GAME_DESIGN_CONTROL_PLANE
-                    && RealmPolicySource.isPolicyRevision(r))) {
+        .anyMatch(r ->
+            r.owner() == Owner.GAME_DESIGN_CONTROL_PLANE
+                && RealmPolicySource.isPolicyRevision(r))) {
       var result =
           applied.orElseThrow(() -> new IllegalStateException("POLICY_OWNER_RESULT_UNAVAILABLE"));
       requireCoordinatorResult(result);

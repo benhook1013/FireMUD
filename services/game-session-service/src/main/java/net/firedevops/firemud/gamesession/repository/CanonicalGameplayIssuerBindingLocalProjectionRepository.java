@@ -80,42 +80,39 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     Objects.requireNonNull(target, "target");
     requireNoAmbientTransaction();
     boolean reconcileAdd =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-              lockInventoryClock(transaction);
-              var source =
-                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
-                      transaction, target.request().transitionId(), true);
-              if (!source.neverAdmitted())
-                throw unavailable("Capacity cleanup requires a negative terminal");
-              Record release =
-                  transaction.fetchOne(
-                      "SELECT * FROM "
-                          + ISSUER_LOCAL_RELEASE
-                          + " WHERE transition_id = ? FOR UPDATE",
-                      target.request().transitionId());
-              if (release != null) {
-                // An exact durable release has already taken over the original capacity intent.
-                // Replaying ADD would compare its old revision with a later release/retirement.
-                CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readOperation(
-                    transaction,
-                    release,
-                    source,
-                    CanonicalGameplayIssuerOriginalMemberSource.ordinary(target));
-                return false;
-              }
-              Record existing =
-                  transaction.fetchOne(
-                      "SELECT mutation_kind FROM game_session_canonical_issuer_partition_mutation"
-                          + " WHERE owner_operation_id = ? AND mutation_kind IN ('ADD_CAPACITY', 'ADD_BINDING')",
-                      target.operationId());
-              if (existing == null) return false;
-              if (!"ADD_CAPACITY".equals(existing.get("mutation_kind", String.class))) {
-                throw unavailable("Never-admitted cleanup cannot adopt an issued binding mutation");
-              }
-              return true;
-            });
+        dsl.transactionResult(configuration -> {
+          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          lockInventoryClock(transaction);
+          var source =
+              CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                  transaction, target.request().transitionId(), true);
+          if (!source.neverAdmitted())
+            throw unavailable("Capacity cleanup requires a negative terminal");
+          Record release =
+              transaction.fetchOne(
+                  "SELECT * FROM " + ISSUER_LOCAL_RELEASE + " WHERE transition_id = ? FOR UPDATE",
+                  target.request().transitionId());
+          if (release != null) {
+            // An exact durable release has already taken over the original capacity intent.
+            // Replaying ADD would compare its old revision with a later release/retirement.
+            CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readOperation(
+                transaction,
+                release,
+                source,
+                CanonicalGameplayIssuerOriginalMemberSource.ordinary(target));
+            return false;
+          }
+          Record existing =
+              transaction.fetchOne(
+                  "SELECT mutation_kind FROM game_session_canonical_issuer_partition_mutation"
+                      + " WHERE owner_operation_id = ? AND mutation_kind IN ('ADD_CAPACITY', 'ADD_BINDING')",
+                  target.operationId());
+          if (existing == null) return false;
+          if (!"ADD_CAPACITY".equals(existing.get("mutation_kind", String.class))) {
+            throw unavailable("Never-admitted cleanup cannot adopt an issued binding mutation");
+          }
+          return true;
+        });
     if (!reconcileAdd) return java.util.Optional.empty();
     return java.util.Optional.of(
         readPreparedPartitionWork(
@@ -136,22 +133,21 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     var before = readCurrentIssuerState();
     requireCurrentSourceMatches(target.anchor(), before);
     PreparedPartitionWork work =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-              lockInventoryClock(transaction);
-              CanonicalGameplayIssuerInstalledAnchor anchor =
-                  CanonicalGameplayIssuerBootstrapCoverageRepository
-                      .readInstalledAnchorForBindingPreparationInTransaction(transaction, before);
-              requireSameAnchor(target.anchor(), anchor);
-              return prepareInTransaction(
-                  transaction,
-                  target,
-                  anchor,
-                  before,
-                  prepareAddMutation,
-                  requireCurrentTargetAccountControl);
-            });
+        dsl.transactionResult(configuration -> {
+          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          lockInventoryClock(transaction);
+          CanonicalGameplayIssuerInstalledAnchor anchor =
+              CanonicalGameplayIssuerBootstrapCoverageRepository
+                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, before);
+          requireSameAnchor(target.anchor(), anchor);
+          return prepareInTransaction(
+              transaction,
+              target,
+              anchor,
+              before,
+              prepareAddMutation,
+              requireCurrentTargetAccountControl);
+        });
     var after = readCurrentIssuerState();
     requireSameCurrentIssuerState(before, after);
     requireCurrentSourceMatches(work.anchor(), after);
@@ -201,10 +197,9 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     Objects.requireNonNull(mutation, "mutation");
     Objects.requireNonNull(exactReadbackFieldSetBytes, "exactReadbackFieldSetBytes");
     requireNoAmbientTransaction();
-    dsl.transaction(
-        configuration ->
-            CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
-                org.jooq.impl.DSL.using(configuration), mutation, exactReadbackFieldSetBytes));
+    dsl.transaction(configuration ->
+        CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+            org.jooq.impl.DSL.using(configuration), mutation, exactReadbackFieldSetBytes));
   }
 
   private PreparedPartitionWork prepareInTransaction(
@@ -463,19 +458,17 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
   private static int countCapacity(Map<String, byte[]> fields) {
     return (int)
         fields.entrySet().stream()
-            .filter(
-                entry ->
-                    entry
-                        .getKey()
-                        .startsWith(
-                            CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec
-                                .RESERVATION_FIELD_PREFIX))
-            .filter(
-                entry ->
-                    CanonicalGameplayIssuerMemberV2Codec.decode(entry.getValue())
-                            .reservation()
-                            .lifecycle()
-                        != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED)
+            .filter(entry ->
+                entry
+                    .getKey()
+                    .startsWith(
+                        CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec
+                            .RESERVATION_FIELD_PREFIX))
+            .filter(entry ->
+                CanonicalGameplayIssuerMemberV2Codec.decode(entry.getValue())
+                        .reservation()
+                        .lifecycle()
+                    != CanonicalIssuerPartitionReservation.Lifecycle.RELEASED)
             .count();
   }
 
@@ -1825,11 +1818,10 @@ final class CanonicalGameplayIssuerBindingLocalProjectionRepository {
     int effectiveBaselineReservationCount() {
       return (int)
           baselineFields.keySet().stream()
-              .filter(
-                  field ->
-                      field.startsWith(
-                          CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec
-                              .RESERVATION_FIELD_PREFIX))
+              .filter(field ->
+                  field.startsWith(
+                      CanonicalGameplayIssuerBootstrapPartitionPhysicalCodec
+                          .RESERVATION_FIELD_PREFIX))
               .count();
     }
 

@@ -442,11 +442,10 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
             throw new AssertionError("completion must not follow failed onNext");
           }
         };
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    peer(NAMESPACE, "game-session-service"),
-                    () -> service.acquireGameplayAdmissionLease(request, observer)))
+    assertThatThrownBy(() ->
+            withPeer(
+                peer(NAMESPACE, "game-session-service"),
+                () -> service.acquireGameplayAdmissionLease(request, observer)))
         .isSameAs(callbackFailure);
   }
 
@@ -519,10 +518,9 @@ class AccountGameplayAdmissionLeaseGrpcServiceTest {
   }
 
   private List<ConfirmationCall> confirmationCallsWithDefaultRequests() {
-    return List.of(
-        observer ->
-            service.confirmOriginalNewGameplayAdmission(
-                ConfirmOriginalNewGameplayAdmissionRequest.getDefaultInstance(), observer));
+    return List.of(observer ->
+        service.confirmOriginalNewGameplayAdmission(
+            ConfirmOriginalNewGameplayAdmissionRequest.getDefaultInstance(), observer));
   }
 
   private void assertConfirmationCode(

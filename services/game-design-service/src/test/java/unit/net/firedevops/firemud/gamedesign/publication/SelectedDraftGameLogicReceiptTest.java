@@ -48,18 +48,16 @@ class SelectedDraftGameLogicReceiptTest {
     var abort =
         GameLogicGameplayRuleIntakeTerminal.aborted(
             new GameLogicGameplayRuleIntakeOperation("test", value.authorization()));
-    assertThatThrownBy(
-            () ->
-                new SelectedDraftGameLogicReceipt(
-                    value.selection(),
-                    value.authorization(),
-                    new AccountGameLogicIntakeSettlementEvidence(abort)))
+    assertThatThrownBy(() ->
+            new SelectedDraftGameLogicReceipt(
+                value.selection(),
+                value.authorization(),
+                new AccountGameLogicIntakeSettlementEvidence(abort)))
         .isInstanceOf(IllegalArgumentException.class);
     var other = fixture();
-    assertThatThrownBy(
-            () ->
-                SelectedDraftGameLogicReceipt.requireExactSelection(
-                    value.selection(), other.authorization()))
+    assertThatThrownBy(() ->
+            SelectedDraftGameLogicReceipt.requireExactSelection(
+                value.selection(), other.authorization()))
         .isInstanceOf(IllegalArgumentException.class);
     var changed =
         new GameLogicIntakeAuthorizationBinding(

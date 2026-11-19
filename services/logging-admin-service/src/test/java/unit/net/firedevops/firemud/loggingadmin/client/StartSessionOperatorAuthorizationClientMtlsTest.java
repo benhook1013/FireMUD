@@ -225,15 +225,14 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
       client = newClient(caller);
       client.initialize();
 
-      assertThatThrownBy(
-              () ->
-                  client.issueHuman(
-                      tuple("wrong-caller-" + caller.alias()),
-                      CONTROL_UI_JWT,
-                      RESERVATION_OWNER_ID,
-                      8L,
-                      CLAIM_OWNER_ID,
-                      9L))
+      assertThatThrownBy(() ->
+              client.issueHuman(
+                  tuple("wrong-caller-" + caller.alias()),
+                  CONTROL_UI_JWT,
+                  RESERVATION_OWNER_ID,
+                  8L,
+                  CLAIM_OWNER_ID,
+                  9L))
           .isInstanceOf(StatusRuntimeException.class)
           .hasMessageContaining("PERMISSION_DENIED");
       assertThat(rpcCalls).hasValue(1);
@@ -343,10 +342,8 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
     var tuple = tuple("pre-network-denial-01");
 
     TransactionSynchronizationManager.setActualTransactionActive(true);
-    assertThatThrownBy(
-            () ->
-                client.issueHuman(
-                    tuple, CONTROL_UI_JWT, RESERVATION_OWNER_ID, 1L, CLAIM_OWNER_ID, 2L))
+    assertThatThrownBy(() ->
+            client.issueHuman(tuple, CONTROL_UI_JWT, RESERVATION_OWNER_ID, 1L, CLAIM_OWNER_ID, 2L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no ambient SQL");
     TransactionSynchronizationManager.clear();
@@ -375,23 +372,20 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
     trustOnlyContext.init(null, trustManagers.getTrustManagers(), new SecureRandom());
 
     Throwable failure =
-        catchThrowable(
-            () -> {
-              try (SSLSocket socket =
-                  (SSLSocket)
-                      trustOnlyContext
-                          .getSocketFactory()
-                          .createSocket("127.0.0.1", server.getPort())) {
-                socket.setSoTimeout(2_000);
-                SSLParameters parameters = socket.getSSLParameters();
-                parameters.setEndpointIdentificationAlgorithm("HTTPS");
-                parameters.setProtocols(new String[] {"TLSv1.3"});
-                parameters.setApplicationProtocols(new String[] {"h2"});
-                socket.setSSLParameters(parameters);
-                socket.startHandshake();
-                socket.getInputStream().read();
-              }
-            });
+        catchThrowable(() -> {
+          try (SSLSocket socket =
+              (SSLSocket)
+                  trustOnlyContext.getSocketFactory().createSocket("127.0.0.1", server.getPort())) {
+            socket.setSoTimeout(2_000);
+            SSLParameters parameters = socket.getSSLParameters();
+            parameters.setEndpointIdentificationAlgorithm("HTTPS");
+            parameters.setProtocols(new String[] {"TLSv1.3"});
+            parameters.setApplicationProtocols(new String[] {"h2"});
+            socket.setSSLParameters(parameters);
+            socket.startHandshake();
+            socket.getInputStream().read();
+          }
+        });
 
     assertThat(failure).isInstanceOf(SSLHandshakeException.class);
     assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue();
@@ -402,15 +396,14 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
     startServer(serverIdentity, UnaryOperator.identity(), UnaryOperator.identity());
     client = newClient(pki.loggingClient());
     client.initialize();
-    assertThatThrownBy(
-            () ->
-                client.issueHuman(
-                    tuple("wrong-server-" + serverIdentity.alias()),
-                    CONTROL_UI_JWT,
-                    RESERVATION_OWNER_ID,
-                    10L,
-                    CLAIM_OWNER_ID,
-                    11L))
+    assertThatThrownBy(() ->
+            client.issueHuman(
+                tuple("wrong-server-" + serverIdentity.alias()),
+                CONTROL_UI_JWT,
+                RESERVATION_OWNER_ID,
+                10L,
+                CLAIM_OWNER_ID,
+                11L))
         .isInstanceOf(StatusRuntimeException.class)
         .hasMessageContaining("UNAUTHENTICATED");
     assertThat(rpcCalls).hasValue(0);
@@ -418,15 +411,14 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
   }
 
   private void assertInvalidResponse() {
-    assertThatThrownBy(
-            () ->
-                client.issueHuman(
-                    tuple("invalid-account-result-01"),
-                    CONTROL_UI_JWT,
-                    RESERVATION_OWNER_ID,
-                    12L,
-                    CLAIM_OWNER_ID,
-                    13L))
+    assertThatThrownBy(() ->
+            client.issueHuman(
+                tuple("invalid-account-result-01"),
+                CONTROL_UI_JWT,
+                RESERVATION_OWNER_ID,
+                12L,
+                CLAIM_OWNER_ID,
+                13L))
         .isInstanceOf(IllegalStateException.class);
     assertThat(rpcCalls).hasValue(1);
   }

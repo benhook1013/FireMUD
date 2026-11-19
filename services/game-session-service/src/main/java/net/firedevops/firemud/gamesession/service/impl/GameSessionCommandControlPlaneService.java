@@ -174,12 +174,11 @@ public final class GameSessionCommandControlPlaneService {
     }
     return builtInTextCommandAliasResolver
         .resolve(alias)
-        .map(
-            normalized ->
-                ValidateBuiltInCommandAliasResponse.newBuilder()
-                    .setSupported(true)
-                    .setNormalizedAlias(normalized)
-                    .build())
+        .map(normalized ->
+            ValidateBuiltInCommandAliasResponse.newBuilder()
+                .setSupported(true)
+                .setNormalizedAlias(normalized)
+                .build())
         .orElseGet(() -> ValidateBuiltInCommandAliasResponse.newBuilder().build());
   }
 
@@ -194,14 +193,13 @@ public final class GameSessionCommandControlPlaneService {
     AutomationGameplayCommandAdmissionSupport.AdmissionRequest admissionRequest =
         toAutomationAdmissionRequest(request);
     AutomationGameplayCommandAdmissionSupport.DurableAdmission durableAdmission =
-        transactionOperations.execute(
-            status ->
-                AutomationGameplayCommandAdmissionSupport.admitIfAbsentDurably(
-                    admissionRequest,
-                    gameInstanceRepository,
-                    gameplayCommandRepository,
-                    runtimeRegionStatusRepository,
-                    gameplayAdmissionPointerAuthorityService));
+        transactionOperations.execute(status ->
+            AutomationGameplayCommandAdmissionSupport.admitIfAbsentDurably(
+                admissionRequest,
+                gameInstanceRepository,
+                gameplayCommandRepository,
+                runtimeRegionStatusRepository,
+                gameplayAdmissionPointerAuthorityService));
     if (durableAdmission == null) {
       throw new IllegalStateException(
           "Gameplay command admission transaction returned no admission result");
@@ -603,16 +601,13 @@ public final class GameSessionCommandControlPlaneService {
           gameplayCommandRepository
               .findByTenantIdAndGameInstanceIdAndCommandId(
                   result.getTenantId(), result.getTargetGameInstanceId(), resultCommandId)
-              .filter(
-                  candidate ->
-                      Objects.equals(candidate.getTenantId(), result.getTenantId())
-                          && Objects.equals(
-                              candidate.getGameInstanceId(), result.getTargetGameInstanceId())
-                          && Objects.equals(candidate.getRegionId(), result.getTargetRegionId())
-                          && Objects.equals(
-                              candidate.getRegionEpoch(), result.getTargetRegionEpoch())
-                          && Objects.equals(
-                              candidate.getRemoteFollowupId(), result.getFollowupId()))
+              .filter(candidate ->
+                  Objects.equals(candidate.getTenantId(), result.getTenantId())
+                      && Objects.equals(
+                          candidate.getGameInstanceId(), result.getTargetGameInstanceId())
+                      && Objects.equals(candidate.getRegionId(), result.getTargetRegionId())
+                      && Objects.equals(candidate.getRegionEpoch(), result.getTargetRegionEpoch())
+                      && Objects.equals(candidate.getRemoteFollowupId(), result.getFollowupId()))
               .orElse(null);
     }
     if (targetCommand != null && targetCommand.getCommandId() != null) {
@@ -660,19 +655,18 @@ public final class GameSessionCommandControlPlaneService {
       long gameInstanceId,
       boolean originScope) {
     currentRuntimeBoundary(tenantId, gameInstanceId)
-        .ifPresent(
-            currentBoundary -> {
-              CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
-                  currentBoundary.gameInstanceId(),
-                  currentBoundary.regionId(),
-                  currentBoundary.regionEpoch(),
-                  currentBoundary.playableStateScope(),
-                  currentBoundary.worldSlug(),
-                  currentBoundary.realmSlug(),
-                  currentBoundary.pointerVersion(),
-                  originScope,
-                  CurrentRuntimeScopeFieldEmitter.writerFor(builder));
-            });
+        .ifPresent(currentBoundary -> {
+          CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
+              currentBoundary.gameInstanceId(),
+              currentBoundary.regionId(),
+              currentBoundary.regionEpoch(),
+              currentBoundary.playableStateScope(),
+              currentBoundary.worldSlug(),
+              currentBoundary.realmSlug(),
+              currentBoundary.pointerVersion(),
+              originScope,
+              CurrentRuntimeScopeFieldEmitter.writerFor(builder));
+        });
   }
 
   private void applyCurrentRuntimeScope(
@@ -681,19 +675,18 @@ public final class GameSessionCommandControlPlaneService {
       long gameInstanceId,
       boolean originScope) {
     currentRuntimeBoundary(tenantId, gameInstanceId)
-        .ifPresent(
-            currentBoundary -> {
-              CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
-                  currentBoundary.gameInstanceId(),
-                  currentBoundary.regionId(),
-                  currentBoundary.regionEpoch(),
-                  currentBoundary.playableStateScope(),
-                  currentBoundary.worldSlug(),
-                  currentBoundary.realmSlug(),
-                  currentBoundary.pointerVersion(),
-                  originScope,
-                  CurrentRuntimeScopeFieldEmitter.writerFor(builder));
-            });
+        .ifPresent(currentBoundary -> {
+          CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
+              currentBoundary.gameInstanceId(),
+              currentBoundary.regionId(),
+              currentBoundary.regionEpoch(),
+              currentBoundary.playableStateScope(),
+              currentBoundary.worldSlug(),
+              currentBoundary.realmSlug(),
+              currentBoundary.pointerVersion(),
+              originScope,
+              CurrentRuntimeScopeFieldEmitter.writerFor(builder));
+        });
   }
 
   private void applyCurrentRuntimeScope(
@@ -702,48 +695,44 @@ public final class GameSessionCommandControlPlaneService {
       long gameInstanceId,
       boolean originScope) {
     currentRuntimeBoundary(tenantId, gameInstanceId)
-        .ifPresent(
-            currentBoundary -> {
-              CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
-                  currentBoundary.gameInstanceId(),
-                  currentBoundary.regionId(),
-                  currentBoundary.regionEpoch(),
-                  currentBoundary.playableStateScope(),
-                  currentBoundary.worldSlug(),
-                  currentBoundary.realmSlug(),
-                  currentBoundary.pointerVersion(),
-                  originScope,
-                  CurrentRuntimeScopeFieldEmitter.writerFor(builder));
-            });
+        .ifPresent(currentBoundary -> {
+          CurrentRuntimeScopeFieldEmitter.applyCurrentRuntimeScopeFields(
+              currentBoundary.gameInstanceId(),
+              currentBoundary.regionId(),
+              currentBoundary.regionEpoch(),
+              currentBoundary.playableStateScope(),
+              currentBoundary.worldSlug(),
+              currentBoundary.realmSlug(),
+              currentBoundary.pointerVersion(),
+              originScope,
+              CurrentRuntimeScopeFieldEmitter.writerFor(builder));
+        });
   }
 
   private Optional<CurrentRuntimeBoundary> currentRuntimeBoundary(
       long tenantId, long gameInstanceId) {
     return currentRuntimeOwnership(tenantId, gameInstanceId)
-        .map(
-            ownership -> {
-              GameInstance instance = getInstanceOrThrow(ownership.getGameInstanceId());
-              CurrentRoutingAuthority authority = resolveCurrentRoutingAuthority(instance);
-              GameplayRoutingBundle routingBundle = authority.routingBundle();
-              GameplayAdmissionPointerSnapshots.RoutingBundle normalizedRoutingBundle =
-                  GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
-                      routingBundle.worldSlug(),
-                      routingBundle.realmSlug(),
-                      routingBundle.pointerVersion());
-              boolean singularRoutingAuthority =
-                  authority.singularRoutingAuthority() && normalizedRoutingBundle != null;
-              return new CurrentRuntimeBoundary(
-                  ownership.getGameInstanceId(),
-                  ownership.getRegionId(),
-                  ownership.getRegionEpoch(),
-                  routingBundle.playableStateScope(),
-                  singularRoutingAuthority,
-                  normalizedRoutingBundle == null ? "" : normalizedRoutingBundle.worldSlug(),
-                  normalizedRoutingBundle == null ? "" : normalizedRoutingBundle.realmSlug(),
-                  normalizedRoutingBundle == null
-                      ? null
-                      : normalizedRoutingBundle.pointerVersion());
-            });
+        .map(ownership -> {
+          GameInstance instance = getInstanceOrThrow(ownership.getGameInstanceId());
+          CurrentRoutingAuthority authority = resolveCurrentRoutingAuthority(instance);
+          GameplayRoutingBundle routingBundle = authority.routingBundle();
+          GameplayAdmissionPointerSnapshots.RoutingBundle normalizedRoutingBundle =
+              GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+                  routingBundle.worldSlug(),
+                  routingBundle.realmSlug(),
+                  routingBundle.pointerVersion());
+          boolean singularRoutingAuthority =
+              authority.singularRoutingAuthority() && normalizedRoutingBundle != null;
+          return new CurrentRuntimeBoundary(
+              ownership.getGameInstanceId(),
+              ownership.getRegionId(),
+              ownership.getRegionEpoch(),
+              routingBundle.playableStateScope(),
+              singularRoutingAuthority,
+              normalizedRoutingBundle == null ? "" : normalizedRoutingBundle.worldSlug(),
+              normalizedRoutingBundle == null ? "" : normalizedRoutingBundle.realmSlug(),
+              normalizedRoutingBundle == null ? null : normalizedRoutingBundle.pointerVersion());
+        });
   }
 
   private boolean isCurrentRoutingBundleStale(
@@ -754,29 +743,27 @@ public final class GameSessionCommandControlPlaneService {
       String persistedRealmSlug,
       Long persistedPointerVersion) {
     return currentRuntimeBoundary(tenantId, gameInstanceId)
-        .map(
-            currentBoundary -> {
-              if (!currentBoundary.singularRoutingAuthority()) {
-                return hasPersistedRoutingBundleClaim(
-                    persistedPlayableStateScope,
-                    persistedWorldSlug,
-                    persistedRealmSlug,
-                    persistedPointerVersion);
-              }
-              return isRoutingBundleStale(
-                  persistedPlayableStateScope,
-                  persistedWorldSlug,
-                  persistedRealmSlug,
-                  persistedPointerVersion,
-                  currentBoundary);
-            })
-        .orElseGet(
-            () ->
-                hasPersistedRoutingBundleClaim(
-                    persistedPlayableStateScope,
-                    persistedWorldSlug,
-                    persistedRealmSlug,
-                    persistedPointerVersion));
+        .map(currentBoundary -> {
+          if (!currentBoundary.singularRoutingAuthority()) {
+            return hasPersistedRoutingBundleClaim(
+                persistedPlayableStateScope,
+                persistedWorldSlug,
+                persistedRealmSlug,
+                persistedPointerVersion);
+          }
+          return isRoutingBundleStale(
+              persistedPlayableStateScope,
+              persistedWorldSlug,
+              persistedRealmSlug,
+              persistedPointerVersion,
+              currentBoundary);
+        })
+        .orElseGet(() ->
+            hasPersistedRoutingBundleClaim(
+                persistedPlayableStateScope,
+                persistedWorldSlug,
+                persistedRealmSlug,
+                persistedPointerVersion));
   }
 
   private static boolean hasPersistedRoutingBundleClaim(
@@ -1646,30 +1633,28 @@ public final class GameSessionCommandControlPlaneService {
       builder.setQueueSourceDueAtMs(command.getQueueSourceDueAtMs());
     }
     currentRuntimeBoundary(command.getTenantId(), command.getGameInstanceId())
-        .ifPresent(
-            currentBoundary -> {
-              if (currentBoundary.gameInstanceId() > 0) {
-                builder.setCurrentRuntimeGameInstanceId(
-                    Long.toString(currentBoundary.gameInstanceId()));
-              }
-              if (currentBoundary.regionId() != null && !currentBoundary.regionId().isBlank()) {
-                builder.setCurrentRuntimeRegionId(currentBoundary.regionId());
-              }
-              builder.setCurrentRuntimeRegionEpoch(currentBoundary.regionEpoch());
-              if (currentBoundary.playableStateScope() != null) {
-                builder.setCurrentRuntimePlayableStateScope(currentBoundary.playableStateScope());
-              }
-              if (currentBoundary.worldSlug() != null && !currentBoundary.worldSlug().isBlank()) {
-                builder.setCurrentRuntimeWorldSlug(currentBoundary.worldSlug());
-              }
-              if (currentBoundary.realmSlug() != null && !currentBoundary.realmSlug().isBlank()) {
-                builder.setCurrentRuntimeRealmSlug(currentBoundary.realmSlug());
-              }
-              if (currentBoundary.pointerVersion() != null
-                  && currentBoundary.pointerVersion() > 0) {
-                builder.setCurrentRuntimePointerVersion(currentBoundary.pointerVersion());
-              }
-            });
+        .ifPresent(currentBoundary -> {
+          if (currentBoundary.gameInstanceId() > 0) {
+            builder.setCurrentRuntimeGameInstanceId(
+                Long.toString(currentBoundary.gameInstanceId()));
+          }
+          if (currentBoundary.regionId() != null && !currentBoundary.regionId().isBlank()) {
+            builder.setCurrentRuntimeRegionId(currentBoundary.regionId());
+          }
+          builder.setCurrentRuntimeRegionEpoch(currentBoundary.regionEpoch());
+          if (currentBoundary.playableStateScope() != null) {
+            builder.setCurrentRuntimePlayableStateScope(currentBoundary.playableStateScope());
+          }
+          if (currentBoundary.worldSlug() != null && !currentBoundary.worldSlug().isBlank()) {
+            builder.setCurrentRuntimeWorldSlug(currentBoundary.worldSlug());
+          }
+          if (currentBoundary.realmSlug() != null && !currentBoundary.realmSlug().isBlank()) {
+            builder.setCurrentRuntimeRealmSlug(currentBoundary.realmSlug());
+          }
+          if (currentBoundary.pointerVersion() != null && currentBoundary.pointerVersion() > 0) {
+            builder.setCurrentRuntimePointerVersion(currentBoundary.pointerVersion());
+          }
+        });
     builder.setIsCurrentRuntimeRoutingBundleStale(
         isCurrentRoutingBundleStale(
             command.getTenantId(),
@@ -1841,10 +1826,9 @@ public final class GameSessionCommandControlPlaneService {
     }
     return remoteFollowupRepository
         .findByTenantIdAndFollowupId(command.getTenantId(), followupId)
-        .filter(
-            followup ->
-                matchesFollowupCoordinator(followup, remoteCoordinator)
-                    && Objects.equals(followup.getFollowupId(), followupId))
+        .filter(followup ->
+            matchesFollowupCoordinator(followup, remoteCoordinator)
+                && Objects.equals(followup.getFollowupId(), followupId))
         .orElse(null);
   }
 
@@ -1876,10 +1860,9 @@ public final class GameSessionCommandControlPlaneService {
     return gameplayCommandRepository
         .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
             tenantId, targetGameInstanceId, targetRegionId, targetRegionEpoch, followupId)
-        .filter(
-            candidate ->
-                matchesTargetScope(
-                    candidate, tenantId, targetGameInstanceId, targetRegionId, targetRegionEpoch))
+        .filter(candidate ->
+            matchesTargetScope(
+                candidate, tenantId, targetGameInstanceId, targetRegionId, targetRegionEpoch))
         .orElse(null);
   }
 

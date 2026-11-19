@@ -54,9 +54,8 @@ class AccountRealmAccessGrantRepositoryTest {
     DSLContext dsl = DSL.using(new MockConnection(provider), SQLDialect.POSTGRES);
     UUID observedGeneration = UUID.fromString("f8a89f86-3319-4f1d-9a59-58ec18fb5f54");
 
-    assertThatThrownBy(
-            () ->
-                new AccountRealmAccessGrantRepository(dsl).save(existingGrant(observedGeneration)))
+    assertThatThrownBy(() ->
+            new AccountRealmAccessGrantRepository(dsl).save(existingGrant(observedGeneration)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Failed to update account_realm_access_grant id=41");
 

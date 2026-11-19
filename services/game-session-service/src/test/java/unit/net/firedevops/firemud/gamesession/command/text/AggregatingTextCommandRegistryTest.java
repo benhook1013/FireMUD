@@ -169,19 +169,18 @@ class AggregatingTextCommandRegistryTest {
   void registryFindsDefinitionsByCommandIdCaseInsensitively() {
     AggregatingTextCommandRegistry commandIdRegistry =
         new AggregatingTextCommandRegistry(
-            List.of(
-                () ->
-                    List.of(
-                        new TextCommandDefinition(
-                            "wave-salute",
-                            TextCommandType.AUTHORED,
-                            List.of(),
-                            TextCommandDispatchGroup.AUTHORED,
-                            TextCommandStageRequirement.GAMEPLAY,
-                            TextCommandPromptPolicy.WHEN_GAMEPLAY,
-                            TextCommandActionCategory.GAMEPLAY,
-                            List.of(),
-                            TextCommandSource.GAME_AUTHORED))));
+            List.of(() ->
+                List.of(
+                    new TextCommandDefinition(
+                        "wave-salute",
+                        TextCommandType.AUTHORED,
+                        List.of(),
+                        TextCommandDispatchGroup.AUTHORED,
+                        TextCommandStageRequirement.GAMEPLAY,
+                        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+                        TextCommandActionCategory.GAMEPLAY,
+                        List.of(),
+                        TextCommandSource.GAME_AUTHORED))));
 
     TextCommandDefinition definition =
         commandIdRegistry.findDefinition("WAVE-SALUTE").orElseThrow();

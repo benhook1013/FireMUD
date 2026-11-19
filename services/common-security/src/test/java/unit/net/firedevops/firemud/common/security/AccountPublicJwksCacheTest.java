@@ -126,12 +126,11 @@ class AccountPublicJwksCacheTest {
         epoch.incrementAndGet();
         denied.set(true);
         var invalidate =
-            executor.submit(
-                () -> {
-                  assertThatThrownBy(() -> cache.keyFor("known"))
-                      .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
-                  cache.invalidateKid("cut");
-                });
+            executor.submit(() -> {
+              assertThatThrownBy(() -> cache.keyFor("known"))
+                  .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+              cache.invalidateKid("cut");
+            });
         invalidate.get(5, TimeUnit.SECONDS);
         // A full source recovery cannot authorize the older cache flight's pre-deny bytes.
         denied.set(false);
@@ -241,16 +240,15 @@ class AccountPublicJwksCacheTest {
       try {
         assertThat(source.entered.await(5, TimeUnit.SECONDS)).isTrue();
         var readAndInvalidate =
-            executor.submit(
-                () -> {
-                  assertThat(cache.keyFor("known", PIN, sha256(first))).isEqualTo(key.getPublic());
-                  assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(second)))
-                      .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
-                  cache.invalidateKid("known");
-                  assertThatThrownBy(() -> cache.keyFor("known"))
-                      .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
-                  return null;
-                });
+            executor.submit(() -> {
+              assertThat(cache.keyFor("known", PIN, sha256(first))).isEqualTo(key.getPublic());
+              assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(second)))
+                  .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+              cache.invalidateKid("known");
+              assertThatThrownBy(() -> cache.keyFor("known"))
+                  .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+              return null;
+            });
         readAndInvalidate.get(5, TimeUnit.SECONDS);
       } finally {
         source.release.countDown();
@@ -278,34 +276,30 @@ class AccountPublicJwksCacheTest {
       cache.refresh();
       try (var executor = Executors.newFixedThreadPool(3)) {
         var firstRequest =
-            executor.submit(
-                () -> {
-                  if (demandFirst) {
-                    assertThat(cache.keyFor("rotated", PIN, sha256(second)))
-                        .isEqualTo(key.getPublic());
-                  } else {
-                    cache.refresh();
-                  }
-                  return null;
-                });
+            executor.submit(() -> {
+              if (demandFirst) {
+                assertThat(cache.keyFor("rotated", PIN, sha256(second))).isEqualTo(key.getPublic());
+              } else {
+                cache.refresh();
+              }
+              return null;
+            });
         try {
           assertThat(source.entered.await(5, TimeUnit.SECONDS)).isTrue();
           AtomicReference<Thread> proactiveThread = new AtomicReference<>();
           var proactive =
-              executor.submit(
-                  () -> {
-                    proactiveThread.set(Thread.currentThread());
-                    cache.refresh();
-                  });
+              executor.submit(() -> {
+                proactiveThread.set(Thread.currentThread());
+                cache.refresh();
+              });
           awaitWaiting(proactiveThread);
           clock.advance(Duration.ofSeconds(11));
           AtomicReference<Thread> staleThread = new AtomicReference<>();
           var stale =
-              executor.submit(
-                  () -> {
-                    staleThread.set(Thread.currentThread());
-                    return cache.keyFor("known", PIN, sha256(second));
-                  });
+              executor.submit(() -> {
+                staleThread.set(Thread.currentThread());
+                return cache.keyFor("known", PIN, sha256(second));
+              });
           awaitWaiting(staleThread);
           assertThat(source.loads).hasValue(2);
           source.release.countDown();
@@ -332,20 +326,18 @@ class AccountPublicJwksCacheTest {
     cache.refresh();
     try (var executor = Executors.newFixedThreadPool(2)) {
       var demand =
-          executor.submit(
-              () ->
-                  assertThatThrownBy(() -> cache.keyFor("unknown"))
-                      .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class));
+          executor.submit(() ->
+              assertThatThrownBy(() -> cache.keyFor("unknown"))
+                  .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class));
       try {
         assertThat(source.entered.await(5, TimeUnit.SECONDS)).isTrue();
         AtomicReference<Thread> proactiveThread = new AtomicReference<>();
         var proactive =
-            executor.submit(
-                () -> {
-                  proactiveThread.set(Thread.currentThread());
-                  assertThatThrownBy(cache::refresh)
-                      .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
-                });
+            executor.submit(() -> {
+              proactiveThread.set(Thread.currentThread());
+              assertThatThrownBy(cache::refresh)
+                  .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+            });
         awaitWaiting(proactiveThread);
         source.release.countDown();
         demand.get(5, TimeUnit.SECONDS);
@@ -376,10 +368,9 @@ class AccountPublicJwksCacheTest {
     cache.refresh();
     try (var executor = Executors.newSingleThreadExecutor()) {
       var refresh =
-          executor.submit(
-              () ->
-                  assertThatThrownBy(cache::refresh)
-                      .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class));
+          executor.submit(() ->
+              assertThatThrownBy(cache::refresh)
+                  .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class));
       try {
         assertThat(source.entered.await(5, TimeUnit.SECONDS)).isTrue();
         assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
@@ -475,20 +466,18 @@ class AccountPublicJwksCacheTest {
     KeyPair key = rsa3072();
     MutableClock clock = new MutableClock(INITIAL);
     AtomicReference<AccountPublicJwksCache.TrustedPublicJwksSource> current =
-        new AtomicReference<>(
-            () ->
-                snapshot(
-                    jwks(
-                        jwk("known", (RSAPublicKey) key.getPublic())
-                            + ","
-                            + jwk("denied", (RSAPublicKey) key.getPublic()))));
+        new AtomicReference<>(() ->
+            snapshot(
+                jwks(
+                    jwk("known", (RSAPublicKey) key.getPublic())
+                        + ","
+                        + jwk("denied", (RSAPublicKey) key.getPublic()))));
     var cache = cache(clock, () -> current.get().load());
     cache.refresh();
     cache.invalidateKid("denied");
-    current.set(
-        () -> {
-          throw new AccountPublicJwksCache.SourceUnavailableException();
-        });
+    current.set(() -> {
+      throw new AccountPublicJwksCache.SourceUnavailableException();
+    });
     clock.advance(Duration.ofSeconds(3));
     cache.refresh();
     clock.advance(Duration.ofSeconds(3));
@@ -611,11 +600,10 @@ class AccountPublicJwksCacheTest {
     clock.advance(Duration.ofSeconds(11));
     try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
       var oldBinding =
-          executor.submit(
-              () -> {
-                assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(first)))
-                    .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
-              });
+          executor.submit(() -> {
+            assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(first)))
+                .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+          });
       try {
         assertThat(refreshEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         var newBinding = executor.submit(() -> cache.keyFor("known", PIN, sha256(second)));

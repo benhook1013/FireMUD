@@ -31,16 +31,15 @@ public final class AuthoredWorldVersionStateService {
   public AuthoredWorldVersionStateEvidence read(AuthoredWorldVersionStateEvidence.Request request) {
     Objects.requireNonNull(request, "request");
     Optional<AuthoredWorldVersionStateSnapshot> snapshot =
-        ownerSnapshot.execute(
-            status ->
-                sourceRepository.readVersionStateSnapshot(
-                    request.targetNamespace(),
-                    request.readRequestId(),
-                    request.canonicalTenantId(),
-                    request.worldSlug(),
-                    request.sourceOperationId(),
-                    request.expectedSourceEvidenceDigest(),
-                    request.versionId()));
+        ownerSnapshot.execute(status ->
+            sourceRepository.readVersionStateSnapshot(
+                request.targetNamespace(),
+                request.readRequestId(),
+                request.canonicalTenantId(),
+                request.worldSlug(),
+                request.sourceOperationId(),
+                request.expectedSourceEvidenceDigest(),
+                request.versionId()));
     if (snapshot == null || snapshot.isEmpty()) {
       throw new NotFoundException(
           "No authored-world source or version exists for the exact requested owner tuple");

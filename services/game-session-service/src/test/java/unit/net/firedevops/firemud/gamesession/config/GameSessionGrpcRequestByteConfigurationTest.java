@@ -87,11 +87,10 @@ class GameSessionGrpcRequestByteConfigurationTest {
             ServerServiceDefinition.builder("test.Unrelated")
                 .addMethod(
                     ordinary,
-                    io.grpc.stub.ServerCalls.asyncUnaryCall(
-                        (request, response) -> {
-                          response.onNext(Empty.getDefaultInstance());
-                          response.onCompleted();
-                        }))
+                    io.grpc.stub.ServerCalls.asyncUnaryCall((request, response) -> {
+                      response.onNext(Empty.getDefaultInstance());
+                      response.onCompleted();
+                    }))
                 .build(),
             parsedMessages));
     Server server = factory.createServer();
@@ -146,42 +145,38 @@ class GameSessionGrpcRequestByteConfigurationTest {
   @Test
   void activeGameSessionPolicyFailsStartupWithoutSharedGuardOrWithPlainFactory() {
     var runner = productionRunner(false);
-    runner.run(
-        context -> {
-          assertThat(context).hasFailed();
-          assertThat(context.getStartupFailure())
-              .hasRootCauseInstanceOf(
-                  org.springframework.beans.factory.NoSuchBeanDefinitionException.class);
-        });
+    runner.run(context -> {
+      assertThat(context).hasFailed();
+      assertThat(context.getStartupFailure())
+          .hasRootCauseInstanceOf(
+              org.springframework.beans.factory.NoSuchBeanDefinitionException.class);
+    });
     runner
         .withBean(
             GrpcServerFactory.class,
             () ->
                 new ShadedNettyGrpcServerFactory(
                     "127.0.0.1:0", List.of(), null, null, TlsServerCredentials.ClientAuth.NONE))
-        .run(
-            context -> {
-              assertThat(context).hasFailed();
-              assertThat(context.getStartupFailure())
-                  .hasRootCauseInstanceOf(
-                      org.springframework.beans.factory.NoSuchBeanDefinitionException.class);
-            });
+        .run(context -> {
+          assertThat(context).hasFailed();
+          assertThat(context.getStartupFailure())
+              .hasRootCauseInstanceOf(
+                  org.springframework.beans.factory.NoSuchBeanDefinitionException.class);
+        });
   }
 
   @Test
   void realProductionDiscoverySatisfiesRequiredGameSessionGuardAndClosedPolicy() {
     productionRunner(true)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed().hasSingleBean(GrpcServerFactory.class);
-              assertThat(context.getBean(GrpcServerFactory.class))
-                  .isExactlyInstanceOf(BoundedGrpcServerFactory.class);
-              assertThat(context.getBean(GrpcServerLifecycle.class).isRunning()).isTrue();
-              assertThat(context.getBean(GrpcRequestBytePolicy.class).transportMaximumBytes())
-                  .isEqualTo(
-                      CanonicalGameplayRosterRetirementEvidence
-                          .MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed().hasSingleBean(GrpcServerFactory.class);
+          assertThat(context.getBean(GrpcServerFactory.class))
+              .isExactlyInstanceOf(BoundedGrpcServerFactory.class);
+          assertThat(context.getBean(GrpcServerLifecycle.class).isRunning()).isTrue();
+          assertThat(context.getBean(GrpcRequestBytePolicy.class).transportMaximumBytes())
+              .isEqualTo(
+                  CanonicalGameplayRosterRetirementEvidence.MAX_PLAYER_CREATED_CONFIRMATION_BYTES);
+        });
   }
 
   private static byte[] rawRequest(int size) {

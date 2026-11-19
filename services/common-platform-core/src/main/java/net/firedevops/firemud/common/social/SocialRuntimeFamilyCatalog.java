@@ -276,10 +276,9 @@ public final class SocialRuntimeFamilyCatalog {
     }
     RuntimeFamilyCatalogValidation.requireComplete(
         families.stream()
-            .map(
-                family ->
-                    new RuntimeFamilyCatalogValidation.FamilyComponent(
-                        family.relation(), family.component()))
+            .map(family ->
+                new RuntimeFamilyCatalogValidation.FamilyComponent(
+                    family.relation(), family.component()))
             .toList(),
         structuralFacts);
     array(root.get("unimplementedContracts"), ContractGap.values().length);

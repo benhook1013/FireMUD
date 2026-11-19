@@ -46,9 +46,8 @@ public final class GameplayAbilitySchemaProjection {
     Map<Key, Definition> definitions = new HashMap<>();
     complete
         .families()
-        .forEach(
-            (family, values) ->
-                values.forEach(value -> definitions.put(new Key(family, value.key()), value)));
+        .forEach((family, values) ->
+            values.forEach(value -> definitions.put(new Key(family, value.key()), value)));
     var pending = new ArrayDeque<Key>();
     for (Family root : List.of(Family.ABILITIES, Family.ACTIONS))
       complete.families().get(root).forEach(value -> pending.add(new Key(root, value.key())));
@@ -63,13 +62,12 @@ public final class GameplayAbilitySchemaProjection {
     Map<Family, List<Definition>> retained = new EnumMap<>(Family.class);
     complete
         .families()
-        .forEach(
-            (family, values) ->
-                retained.put(
-                    family,
-                    values.stream()
-                        .filter(value -> visited.contains(new Key(family, value.key())))
-                        .toList()));
+        .forEach((family, values) ->
+            retained.put(
+                family,
+                values.stream()
+                    .filter(value -> visited.contains(new Key(family, value.key())))
+                    .toList()));
     // Closure must itself remain a complete, valid inventory; do not repair missing edges with
     // defaults.
     var projection = new GameplayRuleManifest(retained);
@@ -173,12 +171,11 @@ public final class GameplayAbilitySchemaProjection {
       case SelectionPolicy value ->
           value
               .comparators()
-              .forEach(
-                  comparator -> {
-                    if (comparator.statField() == StatField.MAXIMUM)
-                      add(pending, Family.RESOURCES, comparator.statKey());
-                    else numeric(pending, definitions, comparator.statKey());
-                  });
+              .forEach(comparator -> {
+                if (comparator.statField() == StatField.MAXIMUM)
+                  add(pending, Family.RESOURCES, comparator.statKey());
+                else numeric(pending, definitions, comparator.statKey());
+              });
       case DefaultBinding value -> targets(pending, value.targetSets());
     }
   }

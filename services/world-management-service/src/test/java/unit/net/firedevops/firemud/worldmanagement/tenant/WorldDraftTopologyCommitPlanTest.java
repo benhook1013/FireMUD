@@ -78,11 +78,8 @@ class WorldDraftTopologyCommitPlanTest {
         .isEqualTo("other-owner-byte-string");
     assertThatThrownBy(() -> plan.graph().nodes().clear())
         .isInstanceOf(UnsupportedOperationException.class);
-    assertThatThrownBy(
-            () ->
-                plan.graph()
-                    .family(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
-                    .clear())
+    assertThatThrownBy(() ->
+            plan.graph().family(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM).clear())
         .isInstanceOf(UnsupportedOperationException.class);
   }
 
@@ -691,15 +688,14 @@ class WorldDraftTopologyCommitPlanTest {
         new DraftCommitBinding.RevisionPayload(
             prior.revisionOrder(), revisions.get(1).revisionId(), prior.owner(), prior.payload()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                DraftCommitBinding.create(
-                    good.target(),
-                    good.requestId(),
-                    good.commitId(),
-                    good.baseCommitId(),
-                    revisions,
-                    good.affectedUnits()));
+        .isThrownBy(() ->
+            DraftCommitBinding.create(
+                good.target(),
+                good.requestId(),
+                good.commitId(),
+                good.baseCommitId(),
+                revisions,
+                good.affectedUnits()));
   }
 
   static WorldDraftTopologyCommitPlan selectedPlanWithAllFamilies() {

@@ -267,10 +267,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         .thenReturn(Optional.empty());
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -442,19 +440,17 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
                 "targetRegionEpoch.zero",
                 followup -> followup.setTargetRegionEpoch(0L),
                 coordinator -> coordinator.setTargetRegionEpoch(0L)))
-        .flatMap(
-            mutation ->
-                Stream.of(
-                    Arguments.of(
-                        "followup." + mutation.name(),
-                        (ScopeMutator)
-                            (followup, coordinator) ->
-                                mutation.followupMutation().accept(followup)),
-                    Arguments.of(
-                        "coordinator." + mutation.name(),
-                        (ScopeMutator)
-                            (followup, coordinator) ->
-                                mutation.coordinatorMutation().accept(coordinator))));
+        .flatMap(mutation ->
+            Stream.of(
+                Arguments.of(
+                    "followup." + mutation.name(),
+                    (ScopeMutator)
+                        (followup, coordinator) -> mutation.followupMutation().accept(followup)),
+                Arguments.of(
+                    "coordinator." + mutation.name(),
+                    (ScopeMutator)
+                        (followup, coordinator) ->
+                            mutation.coordinatorMutation().accept(coordinator))));
   }
 
   private static ScopeMutation scopeMutation(
@@ -537,10 +533,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         .thenReturn(Optional.empty());
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -982,10 +976,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         .thenReturn(Optional.empty());
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -1211,10 +1203,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         .thenReturn(Optional.empty());
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
@@ -1287,10 +1277,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         .thenReturn(Optional.empty());
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(
             org.mockito.ArgumentMatchers.any()))
-        .thenAnswer(
-            invocation ->
-                new GameplayCommandRepository.IdempotentInsertResult(
-                    invocation.getArgument(0), true));
+        .thenAnswer(invocation ->
+            new GameplayCommandRepository.IdempotentInsertResult(invocation.getArgument(0), true));
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);

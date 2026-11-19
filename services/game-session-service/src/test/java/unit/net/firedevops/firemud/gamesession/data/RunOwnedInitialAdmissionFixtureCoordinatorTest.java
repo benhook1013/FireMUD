@@ -158,16 +158,14 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   void rejectsMismatchedWorldHoldBeforeAttachingOrCommitting() {
     Fixture fixture =
         fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
-    doAnswer(
-            invocation ->
-                AcquireInitialAdmissionBindHoldResponse.newBuilder()
-                    .setHold(
-                        hold(
-                            InitialAdmissionBindHoldStatus
-                                .INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING,
-                            UUID.fromString("49de9f26-f314-40e1-96a7-5655c5e5b16e"),
-                            fixture.request.get().requestDigest()))
-                    .build())
+    doAnswer(invocation ->
+            AcquireInitialAdmissionBindHoldResponse.newBuilder()
+                .setHold(
+                    hold(
+                        InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING,
+                        UUID.fromString("49de9f26-f314-40e1-96a7-5655c5e5b16e"),
+                        fixture.request.get().requestDigest()))
+                .build())
         .when(fixture.worldClient)
         .acquireInitialAdmissionBindHold(
             anyLong(),
@@ -263,11 +261,10 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     Fixture fixture =
         fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_ABORTED);
     when(fixture.ownerService.read(any()))
-        .thenAnswer(
-            invocation -> {
-              InitialAdmissionBindHoldBinding binding = invocation.getArgument(0);
-              return proof(binding, Outcome.ABORTED, ATTEMPT_ID, null, 0L, null, true);
-            });
+        .thenAnswer(invocation -> {
+          InitialAdmissionBindHoldBinding binding = invocation.getArgument(0);
+          return proof(binding, Outcome.ABORTED, ATTEMPT_ID, null, 0L, null, true);
+        });
 
     assertThat(fixture.coordinator.coordinate(fixture.capability, fixture.sourceReceipt))
         .isEqualTo(RunOwnedInitialAdmissionFixtureCoordinator.BootstrapResult.ABORTED);
@@ -308,20 +305,18 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
         mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.load(
-                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.load(
+                  any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
           .thenReturn(fixture.capability);
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
-                      any(Path.class),
-                      eq(RUN_ID),
-                      eq(PROJECT_NAME),
-                      same(fixture.capability),
-                      same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                  any(Path.class),
+                  eq(RUN_ID),
+                  eq(PROJECT_NAME),
+                  same(fixture.capability),
+                  same(fixture.grpcProperties)))
           .thenThrow(RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
 
       fixture.coordinator.retryRunOwnedFixtureBootstrap();
@@ -343,20 +338,18 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
         mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.load(
-                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.load(
+                  any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
           .thenReturn(fixture.capability);
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
-                      any(Path.class),
-                      eq(RUN_ID),
-                      eq(PROJECT_NAME),
-                      same(fixture.capability),
-                      same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                  any(Path.class),
+                  eq(RUN_ID),
+                  eq(PROJECT_NAME),
+                  same(fixture.capability),
+                  same(fixture.grpcProperties)))
           .thenReturn(fixture.sourceReceipt, changedReceipt);
 
       fixture.coordinator.retryRunOwnedFixtureBootstrap();
@@ -383,20 +376,18 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
         mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.load(
-                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.load(
+                  any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
           .thenReturn(fixture.capability);
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
-                      any(Path.class),
-                      eq(RUN_ID),
-                      eq(PROJECT_NAME),
-                      same(fixture.capability),
-                      same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                  any(Path.class),
+                  eq(RUN_ID),
+                  eq(PROJECT_NAME),
+                  same(fixture.capability),
+                  same(fixture.grpcProperties)))
           .thenReturn(fixture.sourceReceipt, changedReceipt);
 
       fixture.coordinator.retryRunOwnedFixtureBootstrap();
@@ -424,20 +415,18 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
         mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.load(
-                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.load(
+                  any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
           .thenReturn(fixture.capability);
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
-                      any(Path.class),
-                      eq(RUN_ID),
-                      eq(PROJECT_NAME),
-                      same(fixture.capability),
-                      same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                  any(Path.class),
+                  eq(RUN_ID),
+                  eq(PROJECT_NAME),
+                  same(fixture.capability),
+                  same(fixture.grpcProperties)))
           .thenReturn(fixture.sourceReceipt);
 
       fixture.coordinator.retryRunOwnedFixtureBootstrap();
@@ -463,20 +452,18 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
         mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.load(
-                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.load(
+                  any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
           .thenReturn(fixture.capability);
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
-                      any(Path.class),
-                      eq(RUN_ID),
-                      eq(PROJECT_NAME),
-                      same(fixture.capability),
-                      same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                  any(Path.class),
+                  eq(RUN_ID),
+                  eq(PROJECT_NAME),
+                  same(fixture.capability),
+                  same(fixture.grpcProperties)))
           .thenReturn(fixture.sourceReceipt);
 
       for (int attempt = 0; attempt < 12; attempt++) {
@@ -528,20 +515,18 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
         mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.load(
-                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.load(
+                  any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
           .thenReturn(fixture.capability);
       capabilityLoader
-          .when(
-              () ->
-                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
-                      any(Path.class),
-                      eq(RUN_ID),
-                      eq(PROJECT_NAME),
-                      same(fixture.capability),
-                      same(fixture.grpcProperties)))
+          .when(() ->
+              RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                  any(Path.class),
+                  eq(RUN_ID),
+                  eq(PROJECT_NAME),
+                  same(fixture.capability),
+                  same(fixture.grpcProperties)))
           .thenReturn(fixture.sourceReceipt);
 
       // Orchestration unit proof only; capability TLS and durable cross-service behavior have
@@ -604,13 +589,12 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
           .startRunOwnedInitialLaunch(
               launchRequests.capture(), any(RunOwnedInitialAdmissionLaunchEvidence.class));
       assertThat(launchRequests.getAllValues())
-          .allSatisfy(
-              request -> {
-                assertThat(request.tenantId()).isEqualTo(fixture.capability.tenantId());
-                assertThat(request.gameTemplateId()).isEqualTo(fixture.capability.gameTemplateId());
-                assertThat(request.ownerAccountId()).isEqualTo(fixture.capability.ownerAccountId());
-                assertThat(request.controlPlaneRequestId()).isEqualTo(OPERATION_ID);
-              });
+          .allSatisfy(request -> {
+            assertThat(request.tenantId()).isEqualTo(fixture.capability.tenantId());
+            assertThat(request.gameTemplateId()).isEqualTo(fixture.capability.gameTemplateId());
+            assertThat(request.ownerAccountId()).isEqualTo(fixture.capability.ownerAccountId());
+            assertThat(request.controlPlaneRequestId()).isEqualTo(OPERATION_ID);
+          });
       ArgumentCaptor<InitialAdmissionBindRequest> ownerRequests =
           ArgumentCaptor.forClass(InitialAdmissionBindRequest.class);
       verify(fixture.worldClient, times(13))
@@ -727,12 +711,11 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
 
     AtomicReference<InitialAdmissionBindRequest> request = new AtomicReference<>();
     when(ownerService.beginIntent(any()))
-        .thenAnswer(
-            invocation -> {
-              InitialAdmissionBindRequest received = invocation.getArgument(0);
-              request.set(received);
-              return attempt(received, catalog, null, null, Status.PENDING);
-            });
+        .thenAnswer(invocation -> {
+          InitialAdmissionBindRequest received = invocation.getArgument(0);
+          request.set(received);
+          return attempt(received, catalog, null, null, Status.PENDING);
+        });
     when(worldClient.acquireInitialAdmissionBindHold(
             anyLong(),
             anyLong(),
@@ -744,33 +727,30 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             any(UUID.class),
             any(PlayableStateScope.class),
             anyLong()))
-        .thenAnswer(
-            invocation -> {
-              InitialAdmissionBindHoldStatus selectedStatus = holdStatus;
-              UUID namespaceId = invocation.getArgument(7);
-              String requestDigest = invocation.getArgument(5);
-              return AcquireInitialAdmissionBindHoldResponse.newBuilder()
-                  .setHold(hold(selectedStatus, namespaceId, requestDigest))
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          InitialAdmissionBindHoldStatus selectedStatus = holdStatus;
+          UUID namespaceId = invocation.getArgument(7);
+          String requestDigest = invocation.getArgument(5);
+          return AcquireInitialAdmissionBindHoldResponse.newBuilder()
+              .setHold(hold(selectedStatus, namespaceId, requestDigest))
+              .build();
+        });
     when(ownerService.attachHold(any()))
-        .thenAnswer(
-            invocation -> {
-              InitialAdmissionBindHoldBinding binding = invocation.getArgument(0);
-              return attempt(
-                  request.get(),
-                  catalog,
-                  UUID.fromString(binding.holdId()),
-                  UUID.fromString(binding.holdFence()),
-                  Status.PENDING);
-            });
+        .thenAnswer(invocation -> {
+          InitialAdmissionBindHoldBinding binding = invocation.getArgument(0);
+          return attempt(
+              request.get(),
+              catalog,
+              UUID.fromString(binding.holdId()),
+              UUID.fromString(binding.holdFence()),
+              Status.PENDING);
+        });
     when(ownerService.commit(any()))
-        .thenAnswer(
-            invocation -> {
-              InitialAdmissionBindHoldBinding binding = invocation.getArgument(0);
-              return proof(
-                  binding, Outcome.COMMITTED, ATTEMPT_ID, "31", 1L, binding.requestDigest(), false);
-            });
+        .thenAnswer(invocation -> {
+          InitialAdmissionBindHoldBinding binding = invocation.getArgument(0);
+          return proof(
+              binding, Outcome.COMMITTED, ATTEMPT_ID, "31", 1L, binding.requestDigest(), false);
+        });
     RunOwnedInitialAdmissionFixtureCoordinator coordinator =
         new RunOwnedInitialAdmissionFixtureCoordinator(
             true,

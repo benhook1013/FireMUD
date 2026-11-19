@@ -415,15 +415,13 @@ class GameplayHandshakeFilterTest {
       ServerWebExchange exchange, String headerName, String headerValue) {
     return exchange
         .mutate()
-        .request(
-            request ->
-                request.headers(
-                    headers -> {
-                      headers.remove(headerName);
-                      if (headerValue != null) {
-                        headers.set(headerName, headerValue);
-                      }
-                    }))
+        .request(request ->
+            request.headers(headers -> {
+              headers.remove(headerName);
+              if (headerValue != null) {
+                headers.set(headerName, headerValue);
+              }
+            }))
         .build();
   }
 }

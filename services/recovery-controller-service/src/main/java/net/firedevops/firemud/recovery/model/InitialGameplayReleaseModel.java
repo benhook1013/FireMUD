@@ -841,13 +841,12 @@ public final class InitialGameplayReleaseModel {
   private static Map<Integer, Integer> positiveCapacityVector(Map<Integer, Integer> values) {
     Objects.requireNonNull(values, "capacityVector must not be null");
     TreeMap<Integer, Integer> sorted = new TreeMap<>();
-    values.forEach(
-        (partitionId, capacity) -> {
-          if (partitionId == null || partitionId < 0 || capacity == null || capacity <= 0) {
-            throw new IllegalArgumentException("capacityVector contains an invalid entry");
-          }
-          sorted.put(partitionId, capacity);
-        });
+    values.forEach((partitionId, capacity) -> {
+      if (partitionId == null || partitionId < 0 || capacity == null || capacity <= 0) {
+        throw new IllegalArgumentException("capacityVector contains an invalid entry");
+      }
+      sorted.put(partitionId, capacity);
+    });
     if (sorted.isEmpty()) {
       throw new IllegalArgumentException("capacityVector must not be empty");
     }

@@ -40,10 +40,9 @@ class AuthoredInitialActorCoreReadGrpcCodecTest {
   void rejectsMissingInitialUnknownAndChangedExactRequestSelectors() throws Exception {
     var fixture = AuthoredInitialActorCoreReadTestFixture.create();
     var wire = AuthoredInitialActorCoreReadGrpcCodec.toRequest(new ReadRequest(fixture.request()));
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreReadGrpcCodec.fromRequest(
-                    wire.toBuilder().clearAssociationRequest().build()))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreReadGrpcCodec.fromRequest(
+                wire.toBuilder().clearAssociationRequest().build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var noSelection =
@@ -85,26 +84,23 @@ class AuthoredInitialActorCoreReadGrpcCodecTest {
     ReadAuthoredInitialActorCoreResponse response =
         AuthoredInitialActorCoreReadGrpcCodec.toResponse(fixture.result());
 
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
-                    changedRequest(fixture.request()), response))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
+                changedRequest(fixture.request()), response))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact request echo");
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
-                    fixture.request(),
-                    response.toBuilder()
-                        .setCanonicalResultBytes(com.google.protobuf.ByteString.copyFromUtf8("{}"))
-                        .build()))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
+                fixture.request(),
+                response.toBuilder()
+                    .setCanonicalResultBytes(com.google.protobuf.ByteString.copyFromUtf8("{}"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical complete content");
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
-                    fixture.request(),
-                    response.toBuilder().setResultDigest("sha256:" + "0".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
+                fixture.request(),
+                response.toBuilder().setResultDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical complete content");
 
@@ -118,10 +114,8 @@ class AuthoredInitialActorCoreReadGrpcCodecTest {
                             .build())
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
-                    fixture.request(), unknownNested))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreReadGrpcCodec.fromResponse(fixture.request(), unknownNested))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
   }

@@ -169,10 +169,9 @@ class RunOwnedCanonicalLaunchPreparationOwnerTest {
     when(changedIdentity.launchOwner.readVerifiedFixtureLaunch(any()))
         .thenReturn(differentIdentity);
 
-    assertThatThrownBy(
-            () ->
-                changedIdentity.coordinator.prepareVerifiedFixtureLaunch(
-                    changedIdentity.capability, changedIdentity.sourceReceipt))
+    assertThatThrownBy(() ->
+            changedIdentity.coordinator.prepareVerifiedFixtureLaunch(
+                changedIdentity.capability, changedIdentity.sourceReceipt))
         .isInstanceOf(IllegalStateException.class);
 
     Fixture changedStatus = fixture(true);
@@ -185,10 +184,9 @@ class RunOwnedCanonicalLaunchPreparationOwnerTest {
             changedStatus.allocation.rowVersion());
     when(changedStatus.launchOwner.readVerifiedFixtureLaunch(any())).thenReturn(running);
 
-    assertThatThrownBy(
-            () ->
-                changedStatus.coordinator.prepareVerifiedFixtureLaunch(
-                    changedStatus.capability, changedStatus.sourceReceipt))
+    assertThatThrownBy(() ->
+            changedStatus.coordinator.prepareVerifiedFixtureLaunch(
+                changedStatus.capability, changedStatus.sourceReceipt))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -220,10 +218,8 @@ class RunOwnedCanonicalLaunchPreparationOwnerTest {
             fixture.sourceReceipt.creationEvidence(),
             changedSeal);
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.prepareVerifiedFixtureLaunch(
-                    fixture.capability, changedReceipt))
+    assertThatThrownBy(() ->
+            fixture.coordinator.prepareVerifiedFixtureLaunch(fixture.capability, changedReceipt))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(fixture.launchOwner);
   }
@@ -346,27 +342,24 @@ class RunOwnedCanonicalLaunchPreparationOwnerTest {
       Fixture fixture,
       RunOwnedInitialAdmissionFixtureCapability.SourceReceipt... receipts) {
     loader
-        .when(
-            () ->
-                RunOwnedInitialAdmissionFixtureCapability.load(
-                    any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+        .when(() ->
+            RunOwnedInitialAdmissionFixtureCapability.load(
+                any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
         .thenReturn(fixture.capability);
     AtomicInteger index = new AtomicInteger();
     loader
-        .when(
-            () ->
-                RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
-                    any(Path.class),
-                    eq(RUN_ID),
-                    eq(PROJECT_NAME),
-                    same(fixture.capability),
-                    same(fixture.grpcProperties)))
+        .when(() ->
+            RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                any(Path.class),
+                eq(RUN_ID),
+                eq(PROJECT_NAME),
+                same(fixture.capability),
+                same(fixture.grpcProperties)))
         .thenAnswer(invocation -> receipts[Math.min(index.getAndIncrement(), receipts.length - 1)]);
     loader
-        .when(
-            () ->
-                RunOwnedInitialAdmissionFixtureCapability.toWireCapability(
-                    any(RunOwnedInitialAdmissionFixtureCapability.class)))
+        .when(() ->
+            RunOwnedInitialAdmissionFixtureCapability.toWireCapability(
+                any(RunOwnedInitialAdmissionFixtureCapability.class)))
         .thenCallRealMethod();
   }
 

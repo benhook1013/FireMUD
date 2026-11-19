@@ -130,17 +130,14 @@ class CanonicalGameInstanceLaunchAssociationRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     var repository = new CanonicalGameInstanceLaunchAssociationRepository(dsl, NAMESPACE);
 
-    assertThatThrownBy(
-            () ->
-                repository.readHistoricalOriginalStartSessionOwnerEvidence(
-                    historicalRequest("other")))
+    assertThatThrownBy(() ->
+            repository.readHistoricalOriginalStartSessionOwnerEvidence(historicalRequest("other")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("another Game Session namespace");
     TransactionSynchronizationManager.setActualTransactionActive(true);
-    assertThatThrownBy(
-            () ->
-                repository.readHistoricalOriginalStartSessionOwnerEvidence(
-                    historicalRequest(NAMESPACE)))
+    assertThatThrownBy(() ->
+            repository.readHistoricalOriginalStartSessionOwnerEvidence(
+                historicalRequest(NAMESPACE)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("committed owner read");
 

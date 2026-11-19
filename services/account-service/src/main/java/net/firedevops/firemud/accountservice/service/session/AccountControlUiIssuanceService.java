@@ -131,60 +131,57 @@ public final class AccountControlUiIssuanceService {
     byte[] exactRequest = AccountControlUiAuthority.canonical(requestFields);
     try {
       InitialPreparation initial =
-          transaction.execute(
-              ignored -> {
-                var existing = operations.findRequest(request.requestId);
-                if (existing != null) {
-                  requireRequest(existing, request, peer.uri(), exactRequest);
-                  return new InitialPreparation(current(existing, environment), null);
-                }
-                // Preserve canonical tenant -> Account owner order before OTP/advisory
-                // authentication.
-                java.util.Optional<AccountControlUiAuthority.Snapshot> tenantSource =
-                    request.scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
-                        ? java.util.Optional.of(
-                            authority.captureInitial(
-                                request.tenantId.orElseThrow(), environment.orElseThrow()))
-                        : java.util.Optional.empty();
-                tenantSource.ifPresent(value -> fences.lockProducerSourcesNowait(value.sources()));
-                AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
-                try {
-                  authenticated =
-                      primaryAuthentication.authenticateControlUiPrimaryIdentity(
-                          email, request.secret);
-                } catch (AuthenticationException denial) {
-                  // Only primary denial commits attempt accounting. No signer/issuance work
-                  // follows.
-                  return new InitialPreparation(
-                      null, new PrimaryDenial(denial.getCode(), denial.getMessage()));
-                }
-                var source =
-                    tenantSource.orElseGet(
-                        () -> authority.captureAccount(authenticated.accountId()));
-                if (!source.actor().equals(authenticated.accountId())
-                    || source.scopeKind() != request.scopeKind) {
-                  throw denied();
-                }
-                if (source.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
-                  fences.lockProducerSourcesNowait(source.sources());
-                }
-                var signer = signers.captureCurrent();
-                String macKey = cryptography.currentKeyId();
-                String requestDigest = cryptography.requestDigest(macKey, exactRequest);
-                var stored =
-                    operations.prepare(
-                        request.requestId,
-                        peer.uri(),
-                        request.callerContextId,
-                        macKey,
-                        requestDigest,
-                        authenticated,
-                        source,
-                        signer,
-                        Instant.ofEpochSecond(clock.instant().getEpochSecond()),
-                        sessionSafetyMarginMillis);
-                return new InitialPreparation(new Prepared(stored, source, signer), null);
-              });
+          transaction.execute(ignored -> {
+            var existing = operations.findRequest(request.requestId);
+            if (existing != null) {
+              requireRequest(existing, request, peer.uri(), exactRequest);
+              return new InitialPreparation(current(existing, environment), null);
+            }
+            // Preserve canonical tenant -> Account owner order before OTP/advisory
+            // authentication.
+            java.util.Optional<AccountControlUiAuthority.Snapshot> tenantSource =
+                request.scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
+                    ? java.util.Optional.of(
+                        authority.captureInitial(
+                            request.tenantId.orElseThrow(), environment.orElseThrow()))
+                    : java.util.Optional.empty();
+            tenantSource.ifPresent(value -> fences.lockProducerSourcesNowait(value.sources()));
+            AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
+            try {
+              authenticated =
+                  primaryAuthentication.authenticateControlUiPrimaryIdentity(email, request.secret);
+            } catch (AuthenticationException denial) {
+              // Only primary denial commits attempt accounting. No signer/issuance work
+              // follows.
+              return new InitialPreparation(
+                  null, new PrimaryDenial(denial.getCode(), denial.getMessage()));
+            }
+            var source =
+                tenantSource.orElseGet(() -> authority.captureAccount(authenticated.accountId()));
+            if (!source.actor().equals(authenticated.accountId())
+                || source.scopeKind() != request.scopeKind) {
+              throw denied();
+            }
+            if (source.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+              fences.lockProducerSourcesNowait(source.sources());
+            }
+            var signer = signers.captureCurrent();
+            String macKey = cryptography.currentKeyId();
+            String requestDigest = cryptography.requestDigest(macKey, exactRequest);
+            var stored =
+                operations.prepare(
+                    request.requestId,
+                    peer.uri(),
+                    request.callerContextId,
+                    macKey,
+                    requestDigest,
+                    authenticated,
+                    source,
+                    signer,
+                    Instant.ofEpochSecond(clock.instant().getEpochSecond()),
+                    sessionSafetyMarginMillis);
+            return new InitialPreparation(new Prepared(stored, source, signer), null);
+          });
       if (initial == null) {
         throw denied();
       }
@@ -218,13 +215,12 @@ public final class AccountControlUiIssuanceService {
               }
               byte[] binding = envelopeBinding(original, tokenHash);
               byte[] encrypted = cryptography.seal(credential, binding, original.recoveryExpiry);
-              transaction.execute(
-                  ignored -> {
-                    var stillCurrent = current(original, environment);
-                    operations.bindCandidate(
-                        stillCurrent.stored, tokenHash, encrypted, binding, stillCurrent.signer);
-                    return null;
-                  });
+              transaction.execute(ignored -> {
+                var stillCurrent = current(original, environment);
+                operations.bindCandidate(
+                    stillCurrent.stored, tokenHash, encrypted, binding, stillCurrent.signer);
+                return null;
+              });
             });
       }
       var candidate = transaction.execute(ignored -> current(original, environment).stored);
@@ -237,18 +233,16 @@ public final class AccountControlUiIssuanceService {
             registry.registerPending(
                 candidate.tokenHash, candidate.pendingRegistry, candidate.expiryMillis());
         committed =
-            transaction.execute(
-                ignored -> {
-                  var observed = current(candidate, environment);
-                  return operations.commit(observed.stored, pending);
-                });
+            transaction.execute(ignored -> {
+              var observed = current(candidate, environment);
+              return operations.commit(observed.stored, pending);
+            });
       } else if ("COMMITTED".equals(candidate.status)) {
         committed =
-            transaction.execute(
-                ignored -> {
-                  current(candidate, environment);
-                  return operations.requireCommitted(candidate);
-                });
+            transaction.execute(ignored -> {
+              current(candidate, environment);
+              return operations.requireCommitted(candidate);
+            });
       } else {
         throw denied();
       }
@@ -257,11 +251,10 @@ public final class AccountControlUiIssuanceService {
       }
       registry.activate(committed);
       var envelope =
-          transaction.execute(
-              ignored -> {
-                current(committed.stored, environment);
-                return operations.envelope(committed.stored);
-              });
+          transaction.execute(ignored -> {
+            current(committed.stored, environment);
+            return operations.envelope(committed.stored);
+          });
       if (envelope == null
           || !Arrays.equals(
               envelope.binding(), envelopeBinding(committed.stored, committed.tokenHash()))) {
@@ -308,11 +301,10 @@ public final class AccountControlUiIssuanceService {
           transaction.execute(ignored -> operations.beginRecoveryFailure(permanent.original));
       if (failed != null && "REVOKING".equals(failed.status)) {
         var receipt = registry.revoke(failed);
-        transaction.execute(
-            ignored -> {
-              operations.finishRecoveryFailure(failed, receipt);
-              return null;
-            });
+        transaction.execute(ignored -> {
+          operations.finishRecoveryFailure(failed, receipt);
+          return null;
+        });
       }
       throw denied();
     } finally {

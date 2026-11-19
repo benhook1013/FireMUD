@@ -248,15 +248,14 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
       var source =
           Objects.requireNonNull(
               transaction(gd.store())
-                  .execute(
-                      ignored ->
-                          sourceRepository.register(
-                              NAMESPACE,
-                              UUID.randomUUID(),
-                              gd.target().canonicalTenantId(),
-                              "genuine-tenant",
-                              "genuine-world",
-                              "Genuine authored World")));
+                  .execute(ignored ->
+                      sourceRepository.register(
+                          NAMESPACE,
+                          UUID.randomUUID(),
+                          gd.target().canonicalTenantId(),
+                          "genuine-tenant",
+                          "genuine-world",
+                          "Genuine authored World")));
       var intakes = new WorldAuthoredSourceIntakeRepository(world.dsl());
       var identities = new WorldAuthoredVersionIdentityRepository(world.dsl());
       try (var sourceClient =
@@ -363,18 +362,16 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         // This controlled review retains exact current policy/command/asset genesis owner evidence;
         // it proves source lineage only, not reviewer identity or Account authorization.
         transaction(gd.store())
-            .execute(
-                ignored -> {
-                  var reviewedBase =
-                      reviewedBaseOwner.resolve(
-                          gd.target(), DraftBaseReference.parse(binding.baseCommitId()));
-                  draftSources.claimReviewed(binding, reviewedBase);
-                  var retained = reviewedBaseOwner.requireCurrentRetained(binding);
-                  assertThat(retained.canonicalBytes())
-                      .containsExactly(reviewedBase.canonicalBytes());
-                  assertThat(retained.digest()).isEqualTo(reviewedBase.digest());
-                  return null;
-                });
+            .execute(ignored -> {
+              var reviewedBase =
+                  reviewedBaseOwner.resolve(
+                      gd.target(), DraftBaseReference.parse(binding.baseCommitId()));
+              draftSources.claimReviewed(binding, reviewedBase);
+              var retained = reviewedBaseOwner.requireCurrentRetained(binding);
+              assertThat(retained.canonicalBytes()).containsExactly(reviewedBase.canonicalBytes());
+              assertThat(retained.digest()).isEqualTo(reviewedBase.digest());
+              return null;
+            });
         var request = account.prepareOriginalDraftOrder(binding, NAMESPACE);
         var original = request.original();
         register(
@@ -432,11 +429,10 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
           assertThatThrownBy(
                   () -> composer.commit(original, "invalid-test-only-creator-credential"))
               .isInstanceOf(io.grpc.StatusRuntimeException.class);
-          assertThatThrownBy(
-                  () ->
-                      heldClient.read(
-                          DraftCommitOrderReadEvidence.Request.create(
-                              NAMESPACE, original.canonicalBytes())))
+          assertThatThrownBy(() ->
+                  heldClient.read(
+                      DraftCommitOrderReadEvidence.Request.create(
+                          NAMESPACE, original.canonicalBytes())))
               .isInstanceOf(io.grpc.StatusRuntimeException.class);
           assertThat(coordinator.readApplicationSlot(gd.target())).isPresent();
           assertThat(coordinator.readVisibilityFence(gd.target())).isEmpty();
@@ -447,9 +443,8 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
               .isZero();
           var refused = coordinator.read(gd.target(), binding.requestId()).orElseThrow();
           assertThat(refused.ownerStates().values())
-              .allMatch(
-                  owner ->
-                      owner.status() == DraftCommitCoordinatorRepository.OwnerStatus.NOT_ATTEMPTED);
+              .allMatch(owner ->
+                  owner.status() == DraftCommitCoordinatorRepository.OwnerStatus.NOT_ATTEMPTED);
         } else if (failure != Failure.NONE) {
           assertThatThrownBy(() -> composer.commit(original, request.originalCreatorCredential()))
               .isInstanceOf(io.grpc.StatusRuntimeException.class);
@@ -578,15 +573,14 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         assertThat(worldOwner.appliedEpochs())
             .isEqualTo(
                 actualWorld.appliedEpochs().stream()
-                    .map(
-                        epoch ->
-                            new DraftCommitCoordinatorRepository.AppliedEpoch(
-                                epoch.aggregateType(),
-                                epoch.aggregateId(),
-                                epoch.scopeType(),
-                                epoch.scopeId(),
-                                epoch.expectedEpoch(),
-                                epoch.resultingEpoch()))
+                    .map(epoch ->
+                        new DraftCommitCoordinatorRepository.AppliedEpoch(
+                            epoch.aggregateType(),
+                            epoch.aggregateId(),
+                            epoch.scopeType(),
+                            epoch.scopeId(),
+                            epoch.expectedEpoch(),
+                            epoch.resultingEpoch()))
                     .toList());
       }
     } finally {

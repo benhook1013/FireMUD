@@ -130,10 +130,9 @@ class GameSessionOperatorControlPlaneServiceTest {
             .build();
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                newService(repository, tickService, gameDesign, automation)
-                    .setPinnedScriptPatchVersion(1L, 7L, request))
+        .isThrownBy(() ->
+            newService(repository, tickService, gameDesign, automation)
+                .setPinnedScriptPatchVersion(1L, 7L, request))
         .withMessage("expected_current_pin script_pin_epoch must be absent for EXPECT_UNPINNED");
     verifyNoInteractions(repository, gameDesign, automation);
   }
@@ -155,10 +154,9 @@ class GameSessionOperatorControlPlaneServiceTest {
             .build();
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                newService(repository, tickService, gameDesign, automation)
-                    .setPinnedScriptPatchVersion(1L, 7L, request))
+        .isThrownBy(() ->
+            newService(repository, tickService, gameDesign, automation)
+                .setPinnedScriptPatchVersion(1L, 7L, request))
         .withMessage("expected_current_pin script_pin_epoch must be absent for UNCONDITIONAL");
     verifyNoInteractions(repository, gameDesign, automation);
   }
@@ -181,10 +179,9 @@ class GameSessionOperatorControlPlaneServiceTest {
             .build();
 
     assertThatExceptionOfType(AdminAuthorizationException.class)
-        .isThrownBy(
-            () ->
-                newService(repository, tickService, gameDesign, automation)
-                    .setPinnedScriptPatchVersion(1L, 7L, request))
+        .isThrownBy(() ->
+            newService(repository, tickService, gameDesign, automation)
+                .setPinnedScriptPatchVersion(1L, 7L, request))
         .withMessage("UNCONDITIONAL requires platformAdmin");
     verifyNoInteractions(repository, gameDesign, automation);
   }
@@ -885,23 +882,21 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.setPinnedScriptPatchVersion(
-                    1L,
-                    7L,
-                    SetPinnedScriptPatchVersionRequest.newBuilder()
-                        .setTargetScriptPatchVersion("patch-new")
-                        .setControlPlaneRequestId("request-1")
-                        .setActorPrincipal("operator")
-                        .setReason("pin")
-                        .setExpectedCurrentPin(
-                            ExpectedCurrentPin.newBuilder()
-                                .setKind(
-                                    ExpectedCurrentPin.Kind
-                                        .EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
-                                .build())
-                        .build()))
+        .isThrownBy(() ->
+            service.setPinnedScriptPatchVersion(
+                1L,
+                7L,
+                SetPinnedScriptPatchVersionRequest.newBuilder()
+                    .setTargetScriptPatchVersion("patch-new")
+                    .setControlPlaneRequestId("request-1")
+                    .setActorPrincipal("operator")
+                    .setReason("pin")
+                    .setExpectedCurrentPin(
+                        ExpectedCurrentPin.newBuilder()
+                            .setKind(
+                                ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
+                            .build())
+                    .build()))
         .withMessage(
             "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present"
                 + " together");
@@ -1033,15 +1028,14 @@ class GameSessionOperatorControlPlaneServiceTest {
             gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.setPinnedScriptPatchVersion(
-                    1L,
-                    7L,
-                    SetPinnedScriptPatchVersionRequest.newBuilder()
-                        .setTargetScriptPatchVersion("   ")
-                        .setControlPlaneRequestId("request-1")
-                        .build()))
+        .isThrownBy(() ->
+            service.setPinnedScriptPatchVersion(
+                1L,
+                7L,
+                SetPinnedScriptPatchVersionRequest.newBuilder()
+                    .setTargetScriptPatchVersion("   ")
+                    .setControlPlaneRequestId("request-1")
+                    .build()))
         .withMessage("target_script_patch_version is required");
 
     verifyNoInteractions(
@@ -1059,15 +1053,14 @@ class GameSessionOperatorControlPlaneServiceTest {
             gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.rollbackScriptPatchVersion(
-                    1L,
-                    7L,
-                    RollbackScriptPatchVersionRequest.newBuilder()
-                        .setTargetScriptPatchVersion("")
-                        .setControlPlaneRequestId("request-1")
-                        .build()))
+        .isThrownBy(() ->
+            service.rollbackScriptPatchVersion(
+                1L,
+                7L,
+                RollbackScriptPatchVersionRequest.newBuilder()
+                    .setTargetScriptPatchVersion("")
+                    .setControlPlaneRequestId("request-1")
+                    .build()))
         .withMessage("target_script_patch_version is required");
 
     verifyNoInteractions(
@@ -1081,19 +1074,17 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.setPinnedScriptPatchVersion(
-                    1L,
-                    7L,
-                    SetPinnedScriptPatchVersionRequest.newBuilder()
-                        .setTargetScriptPatchVersion("patch-new")
-                        .setControlPlaneRequestId("request-1")
-                        .setActorPrincipal("operator")
-                        .setReason("pin")
-                        .setExpectedCurrentPin(
-                            ExpectedCurrentPin.newBuilder().setKindValue(99).build())
-                        .build()))
+        .isThrownBy(() ->
+            service.setPinnedScriptPatchVersion(
+                1L,
+                7L,
+                SetPinnedScriptPatchVersionRequest.newBuilder()
+                    .setTargetScriptPatchVersion("patch-new")
+                    .setControlPlaneRequestId("request-1")
+                    .setActorPrincipal("operator")
+                    .setReason("pin")
+                    .setExpectedCurrentPin(ExpectedCurrentPin.newBuilder().setKindValue(99).build())
+                    .build()))
         .withMessage("expected_current_pin kind is required");
 
     verifyNoInteractions(gameInstanceRepository, tickService);
@@ -1106,23 +1097,21 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.setPinnedScriptPatchVersion(
-                    1L,
-                    7L,
-                    SetPinnedScriptPatchVersionRequest.newBuilder()
-                        .setTargetScriptPatchVersion("x".repeat(101))
-                        .setControlPlaneRequestId("request-1")
-                        .setActorPrincipal("operator")
-                        .setReason("pin")
-                        .setExpectedCurrentPin(
-                            ExpectedCurrentPin.newBuilder()
-                                .setKind(
-                                    ExpectedCurrentPin.Kind
-                                        .EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
-                                .build())
-                        .build()))
+        .isThrownBy(() ->
+            service.setPinnedScriptPatchVersion(
+                1L,
+                7L,
+                SetPinnedScriptPatchVersionRequest.newBuilder()
+                    .setTargetScriptPatchVersion("x".repeat(101))
+                    .setControlPlaneRequestId("request-1")
+                    .setActorPrincipal("operator")
+                    .setReason("pin")
+                    .setExpectedCurrentPin(
+                        ExpectedCurrentPin.newBuilder()
+                            .setKind(
+                                ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
+                            .build())
+                    .build()))
         .withMessage("target_script_patch_version must contain at most 100 characters");
 
     verifyNoInteractions(gameInstanceRepository, tickService);
@@ -1174,16 +1163,15 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.setPinnedScriptPatchVersion(
-                    1L,
-                    7L,
-                    SetPinnedScriptPatchVersionRequest.newBuilder()
-                        .setTargetScriptPatchVersion("patch-new")
-                        .setActorPrincipal("operator")
-                        .setReason("pin")
-                        .build()))
+        .isThrownBy(() ->
+            service.setPinnedScriptPatchVersion(
+                1L,
+                7L,
+                SetPinnedScriptPatchVersionRequest.newBuilder()
+                    .setTargetScriptPatchVersion("patch-new")
+                    .setActorPrincipal("operator")
+                    .setReason("pin")
+                    .build()))
         .withMessage("control_plane_request_id is required");
 
     verifyNoInteractions(gameInstanceRepository, tickService);
@@ -1196,16 +1184,15 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.rollbackScriptPatchVersion(
-                    1L,
-                    7L,
-                    RollbackScriptPatchVersionRequest.newBuilder()
-                        .setTargetScriptPatchVersion("patch-old")
-                        .setControlPlaneRequestId("request-1")
-                        .setActorPrincipal("operator")
-                        .build()))
+        .isThrownBy(() ->
+            service.rollbackScriptPatchVersion(
+                1L,
+                7L,
+                RollbackScriptPatchVersionRequest.newBuilder()
+                    .setTargetScriptPatchVersion("patch-old")
+                    .setControlPlaneRequestId("request-1")
+                    .setActorPrincipal("operator")
+                    .build()))
         .withMessage("reason is required");
 
     verifyNoInteractions(gameInstanceRepository, tickService);
@@ -1218,16 +1205,15 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.setPinnedScriptPatchVersion(
-                    1L,
-                    7L,
-                    SetPinnedScriptPatchVersionRequest.newBuilder()
-                        .setTargetScriptPatchVersion("patch-new")
-                        .setControlPlaneRequestId("request-1")
-                        .setReason("pin")
-                        .build()))
+        .isThrownBy(() ->
+            service.setPinnedScriptPatchVersion(
+                1L,
+                7L,
+                SetPinnedScriptPatchVersionRequest.newBuilder()
+                    .setTargetScriptPatchVersion("patch-new")
+                    .setControlPlaneRequestId("request-1")
+                    .setReason("pin")
+                    .build()))
         .withMessage("actor_principal is required");
 
     verifyNoInteractions(gameInstanceRepository, tickService);
@@ -1240,17 +1226,16 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.purgeQueuedTickCommandsForScriptPatch(
-                    1L,
-                    7L,
-                    PurgeQueuedTickCommandsForScriptPatchRequest.newBuilder()
-                        .setScriptPatchVersion("patch-1")
-                        .setControlPlaneRequestId("request-1")
-                        .setActorPrincipal("operator")
-                        .setReason("   ")
-                        .build()))
+        .isThrownBy(() ->
+            service.purgeQueuedTickCommandsForScriptPatch(
+                1L,
+                7L,
+                PurgeQueuedTickCommandsForScriptPatchRequest.newBuilder()
+                    .setScriptPatchVersion("patch-1")
+                    .setControlPlaneRequestId("request-1")
+                    .setActorPrincipal("operator")
+                    .setReason("   ")
+                    .build()))
         .withMessage("reason is required");
 
     verifyNoInteractions(gameInstanceRepository, tickService);
@@ -1263,18 +1248,17 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.purgeQueuedTickCommandsForPluginVersion(
-                    1L,
-                    7L,
-                    PurgeQueuedTickCommandsForPluginVersionRequest.newBuilder()
-                        .setPluginId("plugin-1")
-                        .setPluginVersionId("plugin-v1")
-                        .setControlPlaneRequestId("request-1")
-                        .setActorPrincipal("operator")
-                        .setReason("")
-                        .build()))
+        .isThrownBy(() ->
+            service.purgeQueuedTickCommandsForPluginVersion(
+                1L,
+                7L,
+                PurgeQueuedTickCommandsForPluginVersionRequest.newBuilder()
+                    .setPluginId("plugin-1")
+                    .setPluginVersionId("plugin-v1")
+                    .setControlPlaneRequestId("request-1")
+                    .setActorPrincipal("operator")
+                    .setReason("")
+                    .build()))
         .withMessage("reason is required");
 
     verifyNoInteractions(gameInstanceRepository, tickService);
@@ -1287,14 +1271,13 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.pauseTicksForScope(
-                    1L,
-                    PauseTicksForScopeRequest.newBuilder()
-                        .setGameInstanceId("7")
-                        .setReason("   ")
-                        .build()))
+        .isThrownBy(() ->
+            service.pauseTicksForScope(
+                1L,
+                PauseTicksForScopeRequest.newBuilder()
+                    .setGameInstanceId("7")
+                    .setReason("   ")
+                    .build()))
         .withMessage("reason is required");
 
     verifyNoInteractions(gameInstanceRepository, tickService);
@@ -1307,14 +1290,13 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.resumeTicksForScope(
-                    1L,
-                    ResumeTicksForScopeRequest.newBuilder()
-                        .setGameInstanceId("7")
-                        .setReason("")
-                        .build()))
+        .isThrownBy(() ->
+            service.resumeTicksForScope(
+                1L,
+                ResumeTicksForScopeRequest.newBuilder()
+                    .setGameInstanceId("7")
+                    .setReason("")
+                    .build()))
         .withMessage("reason is required");
 
     verifyNoInteractions(gameInstanceRepository, tickService);

@@ -87,13 +87,12 @@ public class AccountAuditOutboxRepository {
     }
     Optional<AccountAuditEnvelope> found =
         findCanonicalTenantEnvelopeForUpdate(expected.auditEventId());
-    found.ifPresent(
-        actual -> {
-          if (!actual.equals(expected)) {
-            throw new IllegalStateException(
-                "Canonical Account audit identity conflicts with its immutable original envelope");
-          }
-        });
+    found.ifPresent(actual -> {
+      if (!actual.equals(expected)) {
+        throw new IllegalStateException(
+            "Canonical Account audit identity conflicts with its immutable original envelope");
+      }
+    });
     return found;
   }
 

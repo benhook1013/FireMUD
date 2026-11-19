@@ -301,28 +301,26 @@ class StartSessionPreAuthorizationReservationServiceTest {
                 new StartSessionPreAuthorizationReservationRepository.CurrentClaimResult(
                     lookupOnlyRecovery, reservationOwnerId, recoveryOwnerId)));
 
-    assertThatThrownBy(
-            () ->
-                service.readCurrentClaimEvidence(
-                    requestId,
-                    tuple,
-                    reservationOwnerId,
-                    1L,
-                    recoveryOwnerId,
-                    3L,
-                    StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE))
+    assertThatThrownBy(() ->
+            service.readCurrentClaimEvidence(
+                requestId,
+                tuple,
+                reservationOwnerId,
+                1L,
+                recoveryOwnerId,
+                3L,
+                StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
-    assertThatThrownBy(
-            () ->
-                service.readCurrentClaimEvidence(
-                    requestId,
-                    tuple,
-                    reservationOwnerId,
-                    1L,
-                    reservationOwnerId,
-                    1L,
-                    StartSessionPreAuthorizationReservationService.ReadPurpose.RECOVER))
+    assertThatThrownBy(() ->
+            service.readCurrentClaimEvidence(
+                requestId,
+                tuple,
+                reservationOwnerId,
+                1L,
+                reservationOwnerId,
+                1L,
+                StartSessionPreAuthorizationReservationService.ReadPurpose.RECOVER))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
     verify(repository)
@@ -359,16 +357,15 @@ class StartSessionPreAuthorizationReservationServiceTest {
                 new StartSessionPreAuthorizationReservationRepository.CurrentClaimResult(
                     expired, reservationOwnerId, reservationOwnerId)));
 
-    assertThatThrownBy(
-            () ->
-                service.readCurrentClaimEvidence(
-                    requestId,
-                    tuple,
-                    reservationOwnerId,
-                    1L,
-                    reservationOwnerId,
-                    1L,
-                    StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE))
+    assertThatThrownBy(() ->
+            service.readCurrentClaimEvidence(
+                requestId,
+                tuple,
+                reservationOwnerId,
+                1L,
+                reservationOwnerId,
+                1L,
+                StartSessionPreAuthorizationReservationService.ReadPurpose.ISSUE))
         .isInstanceOf(
             StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
   }

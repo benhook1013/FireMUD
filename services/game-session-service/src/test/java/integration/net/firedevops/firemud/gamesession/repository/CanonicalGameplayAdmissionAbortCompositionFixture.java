@@ -380,19 +380,18 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
                 .candidateReservation()
                 .reservationId();
         originalSource =
-            dsl.transactionResult(
-                configuration -> {
-                  var transaction = DSL.using(configuration);
-                  CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-                  var row =
-                      transaction.fetchSingle(
-                          "SELECT * FROM game_session_canonical_issuer_bootstrap_member_operation WHERE bootstrap_operation_id = ? AND reservation_id = ?",
-                          installedAnchor.bootstrapOperationId(),
-                          originalReservationId);
-                  return CanonicalGameplayIssuerOriginalMemberSourceRepository
-                      .readInstalledInTransaction(
-                          transaction, installedAnchor, initialIssuerState, row);
-                });
+            dsl.transactionResult(configuration -> {
+              var transaction = DSL.using(configuration);
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+              var row =
+                  transaction.fetchSingle(
+                      "SELECT * FROM game_session_canonical_issuer_bootstrap_member_operation WHERE bootstrap_operation_id = ? AND reservation_id = ?",
+                      installedAnchor.bootstrapOperationId(),
+                      originalReservationId);
+              return CanonicalGameplayIssuerOriginalMemberSourceRepository
+                  .readInstalledInTransaction(
+                      transaction, installedAnchor, initialIssuerState, row);
+            });
       } else {
         var request =
             new CanonicalGameplayIssuerBindingLocalOperation.Request(
@@ -1064,20 +1063,19 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
    */
   public void recordOriginalAccountAbortThenAdvanceControlBeforeCommit() {
     var source = repository.readFirstNewAdmissionAbortSource(transitionId);
-    dsl.transaction(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          var transactionRepository = new CanonicalGameplayBindingInventoryRepository(transaction);
-          transactionRepository.recordFirstNewAccountAbort(
-              source,
+    dsl.transaction(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      var transactionRepository = new CanonicalGameplayBindingInventoryRepository(transaction);
+      transactionRepository.recordFirstNewAccountAbort(
+          source,
+          UUID.nameUUIDFromBytes(
+              "original-controller-stale-control-cleanup".getBytes(StandardCharsets.UTF_8)));
+      new CanonicalGameplayAccountAdmissionBarrierRepository(transaction)
+          .beginFenceIntent(
+              identity.accountId(),
               UUID.nameUUIDFromBytes(
-                  "original-controller-stale-control-cleanup".getBytes(StandardCharsets.UTF_8)));
-          new CanonicalGameplayAccountAdmissionBarrierRepository(transaction)
-              .beginFenceIntent(
-                  identity.accountId(),
-                  UUID.nameUUIDFromBytes(
-                      "original-controller-stale-control-intent".getBytes(StandardCharsets.UTF_8)));
-        });
+                  "original-controller-stale-control-intent".getBytes(StandardCharsets.UTF_8)));
+    });
   }
 
   /** Independent read under the same real GS role; retained ACK never implies physical removal. */
@@ -1479,27 +1477,24 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
                 negative.state(),
                 negative.orphanCleanupId(),
                 negative.negativeResolutionId()));
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readOperation(
-                    dsl, releaseRow, unresolvedSource, originalSource))
+    assertThatThrownBy(() ->
+            CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readOperation(
+                dsl, releaseRow, unresolvedSource, originalSource))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("phase differs");
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayAdmissionAbortSource(
-                    source.transition(),
-                    source.candidate(),
-                    source.reservation(),
-                    source.originalDecision(),
-                    source.orphanCleanupId()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayAdmissionAbortSource(
+                source.transition(),
+                source.candidate(),
+                source.reservation(),
+                source.originalDecision(),
+                source.orphanCleanupId()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not retained for exact cleanup");
     releaseRow.set(releaseRow.field("completion_inventory_revision", BigDecimal.class), null);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readOperation(
-                    dsl, releaseRow, source, originalSource))
+    assertThatThrownBy(() ->
+            CanonicalGameplayIssuerBindingLocalReleaseOperationRepository.readOperation(
+                dsl, releaseRow, source, originalSource))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("phase differs");
   }
@@ -1550,13 +1545,12 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     var work = localProjectionRepository.readPreparedPartitionWork(originalSource);
     return BigInteger.valueOf(
         work.localEntries().stream()
-            .filter(
-                entry ->
-                    entry
-                        .memberValue()
-                        .reservation()
-                        .partitionId()
-                        .equals(originalSource.reservation().partitionId()))
+            .filter(entry ->
+                entry
+                    .memberValue()
+                    .reservation()
+                    .partitionId()
+                    .equals(originalSource.reservation().partitionId()))
             .filter(
                 CanonicalGameplayIssuerBindingLocalProjectionRepository.LocalEntry
                     ::countsTowardCapacity)
@@ -1950,74 +1944,73 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         .isEqualTo(
             net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
                 .Status.PREPARED);
-    dsl.transaction(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          BigInteger currentRevision =
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          BigInteger nextRevision = currentRevision.add(BigInteger.ONE);
-          BigInteger priorRevision = prepared.inventoryRevision();
-          assertThat(
-                  transaction.fetchOne(
-                      "SELECT id FROM game_instances"
-                          + " WHERE tenant_id = ? AND id = ? AND game_instance_uuid = ? FOR UPDATE",
-                      decision.targetEvidence().gameSessionTenantId(),
-                      decision.targetEvidence().gameInstanceId(),
-                      decision.targetEvidence().canonicalGameInstanceId()))
-              .isNotNull();
-          assertThat(
-                  seedHistoricalProvisionalTransition(
-                      transaction, prepared, decision, priorRevision, nextRevision))
-              .isOne();
-          assertThat(
-                  transaction.execute(
-                      "UPDATE game_session_canonical_gameplay_binding_inventory"
-                          + " SET lifecycle = 'PROVISIONAL', inventory_revision = ?"
-                          + " WHERE binding_ref = ? AND transition_id = ?"
-                          + " AND lifecycle = 'CANDIDATE_PREPARED'"
-                          + " AND binding_generation = ? AND account_index_fence = ?"
-                          + " AND account_index_state = 'REPAIR_REQUIRED'"
-                          + " AND issuer_index_state = 'REPAIR_REQUIRED' AND inventory_revision = ?",
-                      new BigDecimal(nextRevision),
-                      prepared.bindingRef().bytes(),
-                      prepared.transitionId(),
-                      new BigDecimal(prepared.bindingGeneration()),
-                      prepared.candidateAccountIndexFence(),
-                      new BigDecimal(priorRevision)))
-              .isOne();
-          for (String obligationTable :
-              List.of(
-                  "game_session_canonical_binding_account_index_obligation",
-                  "game_session_canonical_binding_issuer_index_obligation",
-                  "game_session_canonical_binding_region_bridge_obligation")) {
-            assertThat(
-                    transaction.execute(
-                        "UPDATE "
-                            + obligationTable
-                            + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
-                        new BigDecimal(nextRevision),
-                        prepared.transitionId(),
-                        new BigDecimal(priorRevision)))
-                .isOne();
-          }
-          assertThat(
-                  transaction.execute(
-                      "UPDATE game_session_canonical_issuer_partition_reservation"
-                          + " SET inventory_revision = ? WHERE reservation_id = ? AND transition_id = ?"
-                          + " AND lifecycle = 'RESERVED' AND inventory_revision = ?",
-                      new BigDecimal(nextRevision),
-                      prepared.issuerReservationId(),
-                      prepared.transitionId(),
-                      new BigDecimal(priorRevision)))
-              .isOne();
-          assertThat(
-                  transaction.execute(
-                      "UPDATE game_session_canonical_binding_inventory_clock"
-                          + " SET inventory_revision = ? WHERE singleton_id = 1 AND inventory_revision = ?",
-                      new BigDecimal(nextRevision),
-                      new BigDecimal(currentRevision)))
-              .isOne();
-        });
+    dsl.transaction(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      BigInteger currentRevision =
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      BigInteger nextRevision = currentRevision.add(BigInteger.ONE);
+      BigInteger priorRevision = prepared.inventoryRevision();
+      assertThat(
+              transaction.fetchOne(
+                  "SELECT id FROM game_instances"
+                      + " WHERE tenant_id = ? AND id = ? AND game_instance_uuid = ? FOR UPDATE",
+                  decision.targetEvidence().gameSessionTenantId(),
+                  decision.targetEvidence().gameInstanceId(),
+                  decision.targetEvidence().canonicalGameInstanceId()))
+          .isNotNull();
+      assertThat(
+              seedHistoricalProvisionalTransition(
+                  transaction, prepared, decision, priorRevision, nextRevision))
+          .isOne();
+      assertThat(
+              transaction.execute(
+                  "UPDATE game_session_canonical_gameplay_binding_inventory"
+                      + " SET lifecycle = 'PROVISIONAL', inventory_revision = ?"
+                      + " WHERE binding_ref = ? AND transition_id = ?"
+                      + " AND lifecycle = 'CANDIDATE_PREPARED'"
+                      + " AND binding_generation = ? AND account_index_fence = ?"
+                      + " AND account_index_state = 'REPAIR_REQUIRED'"
+                      + " AND issuer_index_state = 'REPAIR_REQUIRED' AND inventory_revision = ?",
+                  new BigDecimal(nextRevision),
+                  prepared.bindingRef().bytes(),
+                  prepared.transitionId(),
+                  new BigDecimal(prepared.bindingGeneration()),
+                  prepared.candidateAccountIndexFence(),
+                  new BigDecimal(priorRevision)))
+          .isOne();
+      for (String obligationTable :
+          List.of(
+              "game_session_canonical_binding_account_index_obligation",
+              "game_session_canonical_binding_issuer_index_obligation",
+              "game_session_canonical_binding_region_bridge_obligation")) {
+        assertThat(
+                transaction.execute(
+                    "UPDATE "
+                        + obligationTable
+                        + " SET inventory_revision = ? WHERE transition_id = ? AND inventory_revision = ?",
+                    new BigDecimal(nextRevision),
+                    prepared.transitionId(),
+                    new BigDecimal(priorRevision)))
+            .isOne();
+      }
+      assertThat(
+              transaction.execute(
+                  "UPDATE game_session_canonical_issuer_partition_reservation"
+                      + " SET inventory_revision = ? WHERE reservation_id = ? AND transition_id = ?"
+                      + " AND lifecycle = 'RESERVED' AND inventory_revision = ?",
+                  new BigDecimal(nextRevision),
+                  prepared.issuerReservationId(),
+                  prepared.transitionId(),
+                  new BigDecimal(priorRevision)))
+          .isOne();
+      assertThat(
+              transaction.execute(
+                  "UPDATE game_session_canonical_binding_inventory_clock"
+                      + " SET inventory_revision = ? WHERE singleton_id = 1 AND inventory_revision = ?",
+                  new BigDecimal(nextRevision),
+                  new BigDecimal(currentRevision)))
+          .isOne();
+    });
   }
 
   private static int seedHistoricalProvisionalTransition(

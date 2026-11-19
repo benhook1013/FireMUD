@@ -406,209 +406,196 @@ class RealmGrantAuthorityEventV1CodecTest {
                 .auditReason())
         .isEqualTo(multibyteAtLimit);
 
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    String.valueOf((char) 1).repeat(4097),
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                String.valueOf((char) 1).repeat(4097),
+                7))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("4096 UTF-8 bytes");
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    "before" + (char) 0 + "after",
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                "before" + (char) 0 + "after",
+                7))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("NUL");
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    "é".repeat(2049),
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                "é".repeat(2049),
+                7))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("4096 UTF-8 bytes");
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    "cafe" + (char) 0x0301,
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                "cafe" + (char) 0x0301,
+                7))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("NFC");
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    String.valueOf((char) 0x0085),
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                String.valueOf((char) 0x0085),
+                7))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("must not be blank");
   }
 
   @Test
   void rejectsInvalidCountersStatesMutationsDigestsAndNilIdentities() {
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    0,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    AUDIT_REASON,
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                0,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                AUDIT_REASON,
+                7))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    AUDIT_REASON,
-                    -1))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                AUDIT_REASON,
+                -1))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "UNKNOWN",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    AUDIT_REASON,
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "UNKNOWN",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                AUDIT_REASON,
+                7))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "DELETE",
-                    MUTATION_DIGEST,
-                    AUDIT_REASON,
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "DELETE",
+                MUTATION_DIGEST,
+                AUDIT_REASON,
+                7))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    "sha256:" + MUTATION_DIGEST,
-                    AUDIT_REASON,
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                "sha256:" + MUTATION_DIGEST,
+                AUDIT_REASON,
+                7))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    new UUID(0L, 0L),
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    AUDIT_REASON,
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                new UUID(0L, 0L),
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                AUDIT_REASON,
+                7))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "ACTIVE",
-                    EXPIRED_AT,
-                    new UUID(0L, 0L),
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    AUDIT_REASON,
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "ACTIVE",
+                EXPIRED_AT,
+                new UUID(0L, 0L),
+                "CREATE",
+                MUTATION_DIGEST,
+                AUDIT_REASON,
+                7))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                preimage(
-                    REQUEST_ID,
-                    GRANT,
-                    2,
-                    GENERATION,
-                    "REVOKED",
-                    EXPIRED_AT,
-                    ACTOR_ID,
-                    "CREATE",
-                    MUTATION_DIGEST,
-                    AUDIT_REASON,
-                    7))
+    assertThatThrownBy(() ->
+            preimage(
+                REQUEST_ID,
+                GRANT,
+                2,
+                GENERATION,
+                "REVOKED",
+                EXPIRED_AT,
+                ACTOR_ID,
+                "CREATE",
+                MUTATION_DIGEST,
+                AUDIT_REASON,
+                7))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

@@ -52,15 +52,14 @@ final class CanonicalGameplayIssuerBootstrapMemberOperationRepository {
     Objects.requireNonNull(currentAccountCheckpoint, "currentAccountCheckpoint");
     Objects.requireNonNull(stableIncarnation, "stableIncarnation");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration ->
-            beginOrResumeInTransaction(
-                org.jooq.impl.DSL.using(configuration),
-                bootstrapOperationId,
-                bootstrapRequestId,
-                workOrdinal,
-                currentAccountCheckpoint,
-                stableIncarnation));
+    return dsl.transactionResult(configuration ->
+        beginOrResumeInTransaction(
+            org.jooq.impl.DSL.using(configuration),
+            bootstrapOperationId,
+            bootstrapRequestId,
+            workOrdinal,
+            currentAccountCheckpoint,
+            stableIncarnation));
   }
 
   /**
@@ -80,36 +79,35 @@ final class CanonicalGameplayIssuerBootstrapMemberOperationRepository {
     Objects.requireNonNull(currentAccountCheckpoint, "currentAccountCheckpoint");
     Objects.requireNonNull(stableIncarnation, "stableIncarnation");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-          CanonicalGameplayIssuerPartitionBuildRepository buildRepository =
-              new CanonicalGameplayIssuerPartitionBuildRepository(transaction);
-          CanonicalGameplayIssuerPartitionBuildPlan plan =
-              buildRepository.readPreparedPlanInTransaction(
-                  transaction, bootstrapOperationId, bootstrapRequestId);
-          CanonicalGameplayIssuerLayoutBootstrapIntent intent = plan.bootstrapIntent();
-          if (partitionId.signum() < 0
-              || partitionId.compareTo(intent.layoutDescriptor().partitionCount()) >= 0) {
-            throw conflict("Requested partition is outside the exact prepared bootstrap layout");
-          }
-          UUID initialPhysicalRevision =
-              CanonicalGameplayIssuerPartitionMutationRepository.ensureInitialRevisionInTransaction(
-                  transaction, bootstrapOperationId, partitionId);
-          requireCurrentAccountCheckpoint(currentAccountCheckpoint, intent.sourceCheckpoint());
-          CanonicalGameplayIssuerMemberV2Value.Incarnation incarnation = stableIncarnation.value();
-          List<CanonicalGameplayIssuerBootstrapMemberOperation> operations = new ArrayList<>();
-          for (CanonicalGameplayIssuerPartitionBuildPlan.MemberWork work : plan.memberWorks()) {
-            if (!work.plannedPartitionId().equals(partitionId)) continue;
-            CanonicalGameplayIssuerPartitionBuildRepository.PreparedMemberWork prepared =
-                buildRepository.readPreparedMemberWorkFromVerifiedPlan(plan, work.workOrdinal());
-            operations.add(
-                beginOrResumePreparedInTransaction(
-                    transaction, prepared, currentAccountCheckpoint, incarnation));
-          }
-          return new CanonicalGameplayIssuerBootstrapPartitionWork(
-              plan, partitionId, initialPhysicalRevision, operations, incarnation);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+      CanonicalGameplayIssuerPartitionBuildRepository buildRepository =
+          new CanonicalGameplayIssuerPartitionBuildRepository(transaction);
+      CanonicalGameplayIssuerPartitionBuildPlan plan =
+          buildRepository.readPreparedPlanInTransaction(
+              transaction, bootstrapOperationId, bootstrapRequestId);
+      CanonicalGameplayIssuerLayoutBootstrapIntent intent = plan.bootstrapIntent();
+      if (partitionId.signum() < 0
+          || partitionId.compareTo(intent.layoutDescriptor().partitionCount()) >= 0) {
+        throw conflict("Requested partition is outside the exact prepared bootstrap layout");
+      }
+      UUID initialPhysicalRevision =
+          CanonicalGameplayIssuerPartitionMutationRepository.ensureInitialRevisionInTransaction(
+              transaction, bootstrapOperationId, partitionId);
+      requireCurrentAccountCheckpoint(currentAccountCheckpoint, intent.sourceCheckpoint());
+      CanonicalGameplayIssuerMemberV2Value.Incarnation incarnation = stableIncarnation.value();
+      List<CanonicalGameplayIssuerBootstrapMemberOperation> operations = new ArrayList<>();
+      for (CanonicalGameplayIssuerPartitionBuildPlan.MemberWork work : plan.memberWorks()) {
+        if (!work.plannedPartitionId().equals(partitionId)) continue;
+        CanonicalGameplayIssuerPartitionBuildRepository.PreparedMemberWork prepared =
+            buildRepository.readPreparedMemberWorkFromVerifiedPlan(plan, work.workOrdinal());
+        operations.add(
+            beginOrResumePreparedInTransaction(
+                transaction, prepared, currentAccountCheckpoint, incarnation));
+      }
+      return new CanonicalGameplayIssuerBootstrapPartitionWork(
+          plan, partitionId, initialPhysicalRevision, operations, incarnation);
+    });
   }
 
   private static CanonicalGameplayIssuerBootstrapMemberOperation beginOrResumeInTransaction(

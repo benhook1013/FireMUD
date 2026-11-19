@@ -74,100 +74,95 @@ class WorldDesignPublicationFenceEvidenceTest {
     assertThatIllegalArgumentException()
         .isThrownBy(() -> evidence("request-7", validDigest(), validWorkflow(), 42, 0L));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new WorldDesignPublicationFenceEvidence(
-                    "FireMUD",
-                    TENANT_ID,
-                    CANONICAL_VERSION_ID,
-                    VERSION_IDENTITY_OPERATION_ID,
-                    42,
-                    INTAKE_REQUEST_ID,
-                    INTAKE_OPERATION_ID,
-                    INTAKE_REQUEST_DIGEST,
-                    SOURCE_OPERATION_ID,
-                    SOURCE_EVIDENCE_DIGEST,
-                    INTAKE_RECEIPT_DIGEST,
-                    "request-7",
-                    validDigest(),
-                    9,
-                    validWorkflow()));
+        .isThrownBy(() ->
+            new WorldDesignPublicationFenceEvidence(
+                "FireMUD",
+                TENANT_ID,
+                CANONICAL_VERSION_ID,
+                VERSION_IDENTITY_OPERATION_ID,
+                42,
+                INTAKE_REQUEST_ID,
+                INTAKE_OPERATION_ID,
+                INTAKE_REQUEST_DIGEST,
+                SOURCE_OPERATION_ID,
+                SOURCE_EVIDENCE_DIGEST,
+                INTAKE_RECEIPT_DIGEST,
+                "request-7",
+                validDigest(),
+                9,
+                validWorkflow()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new WorldDesignPublicationFenceEvidence(
-                    "firemud",
-                    TENANT_ID,
-                    CANONICAL_VERSION_ID,
-                    VERSION_IDENTITY_OPERATION_ID,
-                    GAME_DESIGN_VERSION_ID,
-                    INTAKE_REQUEST_ID,
-                    INTAKE_OPERATION_ID,
-                    INTAKE_REQUEST_DIGEST,
-                    SOURCE_OPERATION_ID,
-                    SOURCE_EVIDENCE_DIGEST,
-                    INTAKE_RECEIPT_DIGEST.substring("sha256:".length()),
-                    "request-7",
-                    validDigest(),
-                    9,
-                    validWorkflow()));
+        .isThrownBy(() ->
+            new WorldDesignPublicationFenceEvidence(
+                "firemud",
+                TENANT_ID,
+                CANONICAL_VERSION_ID,
+                VERSION_IDENTITY_OPERATION_ID,
+                GAME_DESIGN_VERSION_ID,
+                INTAKE_REQUEST_ID,
+                INTAKE_OPERATION_ID,
+                INTAKE_REQUEST_DIGEST,
+                SOURCE_OPERATION_ID,
+                SOURCE_EVIDENCE_DIGEST,
+                INTAKE_RECEIPT_DIGEST.substring("sha256:".length()),
+                "request-7",
+                validDigest(),
+                9,
+                validWorkflow()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new WorldDesignPublicationFenceEvidence(
-                    "firemud",
-                    NIL_TENANT_ID,
-                    CANONICAL_VERSION_ID,
-                    VERSION_IDENTITY_OPERATION_ID,
-                    GAME_DESIGN_VERSION_ID,
-                    INTAKE_REQUEST_ID,
-                    INTAKE_OPERATION_ID,
-                    INTAKE_REQUEST_DIGEST,
-                    SOURCE_OPERATION_ID,
-                    SOURCE_EVIDENCE_DIGEST,
-                    INTAKE_RECEIPT_DIGEST,
-                    "request-7",
-                    validDigest(),
-                    9,
-                    validWorkflow(NIL_TENANT_ID)));
+        .isThrownBy(() ->
+            new WorldDesignPublicationFenceEvidence(
+                "firemud",
+                NIL_TENANT_ID,
+                CANONICAL_VERSION_ID,
+                VERSION_IDENTITY_OPERATION_ID,
+                GAME_DESIGN_VERSION_ID,
+                INTAKE_REQUEST_ID,
+                INTAKE_OPERATION_ID,
+                INTAKE_REQUEST_DIGEST,
+                SOURCE_OPERATION_ID,
+                SOURCE_EVIDENCE_DIGEST,
+                INTAKE_RECEIPT_DIGEST,
+                "request-7",
+                validDigest(),
+                9,
+                validWorkflow(NIL_TENANT_ID)));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new WorldDesignPublicationFenceEvidence(
-                    "firemud",
-                    TENANT_ID,
-                    CANONICAL_VERSION_ID,
-                    VERSION_IDENTITY_OPERATION_ID,
-                    42,
-                    INTAKE_REQUEST_ID,
-                    INTAKE_OPERATION_ID,
-                    INTAKE_REQUEST_DIGEST,
-                    SOURCE_OPERATION_ID,
-                    "a".repeat(64),
-                    INTAKE_RECEIPT_DIGEST,
-                    "request-7",
-                    validDigest(),
-                    9,
-                    validWorkflow()));
+        .isThrownBy(() ->
+            new WorldDesignPublicationFenceEvidence(
+                "firemud",
+                TENANT_ID,
+                CANONICAL_VERSION_ID,
+                VERSION_IDENTITY_OPERATION_ID,
+                42,
+                INTAKE_REQUEST_ID,
+                INTAKE_OPERATION_ID,
+                INTAKE_REQUEST_DIGEST,
+                SOURCE_OPERATION_ID,
+                "a".repeat(64),
+                INTAKE_RECEIPT_DIGEST,
+                "request-7",
+                validDigest(),
+                9,
+                validWorkflow()));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new WorldDesignPublicationFenceEvidence(
-                    "firemud",
-                    TENANT_ID,
-                    CANONICAL_VERSION_ID,
-                    VERSION_IDENTITY_OPERATION_ID,
-                    GAME_DESIGN_VERSION_ID,
-                    INTAKE_REQUEST_ID,
-                    INTAKE_OPERATION_ID,
-                    INTAKE_REQUEST_DIGEST.substring("sha256:".length()),
-                    SOURCE_OPERATION_ID,
-                    SOURCE_EVIDENCE_DIGEST,
-                    INTAKE_RECEIPT_DIGEST,
-                    "request-7",
-                    validDigest(),
-                    9,
-                    validWorkflow()));
+        .isThrownBy(() ->
+            new WorldDesignPublicationFenceEvidence(
+                "firemud",
+                TENANT_ID,
+                CANONICAL_VERSION_ID,
+                VERSION_IDENTITY_OPERATION_ID,
+                GAME_DESIGN_VERSION_ID,
+                INTAKE_REQUEST_ID,
+                INTAKE_OPERATION_ID,
+                INTAKE_REQUEST_DIGEST.substring("sha256:".length()),
+                SOURCE_OPERATION_ID,
+                SOURCE_EVIDENCE_DIGEST,
+                INTAKE_RECEIPT_DIGEST,
+                "request-7",
+                validDigest(),
+                9,
+                validWorkflow()));
   }
 
   @Test
@@ -185,15 +180,11 @@ class WorldDesignPublicationFenceEvidenceTest {
         .isThrownBy(
             () -> new WorldDesignPublicationFenceEvidence.Checkpoint(" \t", CONTENT_DIGEST, 2));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new WorldDesignPublicationFenceEvidence.Checkpoint(
-                    "version:42", "B".repeat(64), 2));
+        .isThrownBy(() ->
+            new WorldDesignPublicationFenceEvidence.Checkpoint("version:42", "B".repeat(64), 2));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new WorldDesignPublicationFenceEvidence.Checkpoint(
-                    "version:42", CONTENT_DIGEST, 0));
+        .isThrownBy(() ->
+            new WorldDesignPublicationFenceEvidence.Checkpoint("version:42", CONTENT_DIGEST, 0));
   }
 
   private static WorldDesignPublicationFenceEvidence evidence(

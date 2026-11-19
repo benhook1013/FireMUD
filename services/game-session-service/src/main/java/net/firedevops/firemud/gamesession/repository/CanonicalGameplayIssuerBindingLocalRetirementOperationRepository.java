@@ -56,51 +56,47 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
     var before = readCurrentIssuerState();
     requireSourceMatchesRelease(release.cleanupSource(), release);
     CanonicalGameplayIssuerBindingLocalRetirementOperation prepared =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              CanonicalGameplayIssuerCleanupSource currentSource =
-                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
-                      transaction, transitionId, true);
-              requireSameReleaseSource(release.cleanupSource(), currentSource, release);
-              requireExactCommittedReleaseRow(transaction, release);
-              protectCurrentReferences(transaction, release);
-              BigInteger partitionId = release.releasedMemberValue().reservation().partitionId();
-              Record existing =
-                  transaction.fetchOne(
-                      "SELECT * FROM " + RETIREMENT + " WHERE release_operation_id = ? FOR UPDATE",
-                      release.operationId());
-              if (existing != null) return readOperation(transaction, existing, release);
+        dsl.transactionResult(configuration -> {
+          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          CanonicalGameplayIssuerCleanupSource currentSource =
+              CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                  transaction, transitionId, true);
+          requireSameReleaseSource(release.cleanupSource(), currentSource, release);
+          requireExactCommittedReleaseRow(transaction, release);
+          protectCurrentReferences(transaction, release);
+          BigInteger partitionId = release.releasedMemberValue().reservation().partitionId();
+          Record existing =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RETIREMENT + " WHERE release_operation_id = ? FOR UPDATE",
+                  release.operationId());
+          if (existing != null) return readOperation(transaction, existing, release);
 
-              CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead head =
-                  CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
-                      transaction,
-                      release.originalSource().anchor().bootstrapOperationId(),
-                      partitionId);
-              if (head.pendingMutationId() != null) {
-                throw conflict("Another same-partition mutation is unresolved before retirement");
-              }
-              UUID retirementId = freshNonNilUuid();
-              byte[] intendedChange = encodeRetirementIntent(retirementId, release);
-              CanonicalGameplayIssuerPartitionMutation mutation =
-                  CanonicalGameplayIssuerPartitionMutationRepository.prepareInTransaction(
-                      transaction,
-                      CanonicalGameplayIssuerPartitionMutation.Kind.RETIRE,
-                      retirementId,
-                      partitionId,
-                      intendedChange);
-              insertRetirement(transaction, retirementId, release, mutation);
-              Record saved =
-                  transaction.fetchOne(
-                      "SELECT * FROM "
-                          + RETIREMENT
-                          + " WHERE retirement_operation_id = ? FOR UPDATE",
-                      retirementId);
-              if (saved == null)
-                throw conflict("Pending issuer retirement intent was not retained");
-              return readOperation(transaction, saved, release);
-            });
+          CanonicalGameplayIssuerPartitionMutationRepository.PartitionMutationHead head =
+              CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
+                  transaction,
+                  release.originalSource().anchor().bootstrapOperationId(),
+                  partitionId);
+          if (head.pendingMutationId() != null) {
+            throw conflict("Another same-partition mutation is unresolved before retirement");
+          }
+          UUID retirementId = freshNonNilUuid();
+          byte[] intendedChange = encodeRetirementIntent(retirementId, release);
+          CanonicalGameplayIssuerPartitionMutation mutation =
+              CanonicalGameplayIssuerPartitionMutationRepository.prepareInTransaction(
+                  transaction,
+                  CanonicalGameplayIssuerPartitionMutation.Kind.RETIRE,
+                  retirementId,
+                  partitionId,
+                  intendedChange);
+          insertRetirement(transaction, retirementId, release, mutation);
+          Record saved =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RETIREMENT + " WHERE retirement_operation_id = ? FOR UPDATE",
+                  retirementId);
+          if (saved == null) throw conflict("Pending issuer retirement intent was not retained");
+          return readOperation(transaction, saved, release);
+        });
     requireSameCurrentIssuerState(
         before, readCurrentIssuerState(), prepared.release().originalSource().anchor());
     CanonicalGameplayIssuerBindingLocalReleaseOperation after =
@@ -113,28 +109,27 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
   private CanonicalGameplayIssuerBindingLocalRetirementOperation readCompletedRetirement(
       UUID transitionId) {
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-          // The release has a unique transition key; its operation is the retirement's unique
-          // release key. Resolve those two point identities instead of filtering retained history.
-          Record release =
-              transaction.fetchOne(
-                  "SELECT operation_id FROM "
-                      + RELEASE
-                      + " WHERE transition_id = ? AND issuer_id = ? AND status = 'RELEASED'",
-                  transitionId,
-                  ISSUER);
-          if (release == null) return null;
-          Record retirement =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + RETIREMENT
-                      + " WHERE release_operation_id = ? AND status = 'RETIRED'",
-                  uuid(release, "operation_id"));
-          if (retirement == null) return null;
-          return readCompletedRetirementInTransaction(transaction, retirement);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+      // The release has a unique transition key; its operation is the retirement's unique
+      // release key. Resolve those two point identities instead of filtering retained history.
+      Record release =
+          transaction.fetchOne(
+              "SELECT operation_id FROM "
+                  + RELEASE
+                  + " WHERE transition_id = ? AND issuer_id = ? AND status = 'RELEASED'",
+              transitionId,
+              ISSUER);
+      if (release == null) return null;
+      Record retirement =
+          transaction.fetchOne(
+              "SELECT * FROM "
+                  + RETIREMENT
+                  + " WHERE release_operation_id = ? AND status = 'RETIRED'",
+              uuid(release, "operation_id"));
+      if (retirement == null) return null;
+      return readCompletedRetirementInTransaction(transaction, retirement);
+    });
   }
 
   static CanonicalGameplayIssuerBindingLocalRetirementOperation
@@ -459,58 +454,55 @@ final class CanonicalGameplayIssuerBindingLocalRetirementOperationRepository {
     }
     var before = readCurrentIssuerState();
     CanonicalGameplayIssuerBindingLocalRetirementOperation completed =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              CanonicalGameplayIssuerBindingLocalReleaseOperation release = expected.release();
-              CanonicalGameplayIssuerCleanupSource source =
-                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
-                      transaction, release.cleanupSource().transition().transitionId(), true);
-              requireSameReleaseSource(release.cleanupSource(), source, release);
-              requireExactCommittedReleaseRow(transaction, release);
-              protectCurrentReferences(transaction, release);
-              Record row =
-                  transaction.fetchOne(
-                      "SELECT * FROM "
-                          + RETIREMENT
-                          + " WHERE retirement_operation_id = ? FOR UPDATE",
-                      expected.operationId());
-              if (row == null) throw conflict("Pending issuer retirement disappeared");
-              CanonicalGameplayIssuerBindingLocalRetirementOperation current =
-                  readOperation(transaction, row, release);
-              requireSameRetirement(expected, current);
-              if (current.status()
-                  == CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED) {
-                verifyExactAbsence(current, exactBytes, exactDigest);
-                CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
-                    transaction, current.physicalMutation(), exactBytes);
-                return current;
-              }
-              CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
-                  transaction, current.physicalMutation(), exactBytes);
-              int updated =
-                  transaction.execute(
-                      "UPDATE "
-                          + RETIREMENT
-                          + " SET status = 'RETIRED', exact_absence_readback_field_set_bytes = ?"
-                          + ", exact_absence_readback_field_set_digest = ?, completed_at = CURRENT_TIMESTAMP"
-                          + " WHERE retirement_operation_id = ? AND status = 'PENDING_PHYSICAL_PROOF'"
-                          + " AND physical_mutation_id = ? AND expected_revision = ? AND successor_revision = ?",
-                      exactBytes,
-                      exactDigest,
-                      current.operationId(),
-                      current.physicalMutation().mutationId(),
-                      current.physicalMutation().expectedRevision(),
-                      current.physicalMutation().successorRevision());
-              if (updated != 1) throw conflict("Issuer retirement proof compare-and-set refused");
-              Record saved =
-                  transaction.fetchOne(
-                      "SELECT * FROM " + RETIREMENT + " WHERE retirement_operation_id = ?",
-                      current.operationId());
-              if (saved == null) throw conflict("Committed issuer retirement proof is unreadable");
-              return readOperation(transaction, saved, release);
-            });
+        dsl.transactionResult(configuration -> {
+          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          CanonicalGameplayIssuerBindingLocalReleaseOperation release = expected.release();
+          CanonicalGameplayIssuerCleanupSource source =
+              CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                  transaction, release.cleanupSource().transition().transitionId(), true);
+          requireSameReleaseSource(release.cleanupSource(), source, release);
+          requireExactCommittedReleaseRow(transaction, release);
+          protectCurrentReferences(transaction, release);
+          Record row =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RETIREMENT + " WHERE retirement_operation_id = ? FOR UPDATE",
+                  expected.operationId());
+          if (row == null) throw conflict("Pending issuer retirement disappeared");
+          CanonicalGameplayIssuerBindingLocalRetirementOperation current =
+              readOperation(transaction, row, release);
+          requireSameRetirement(expected, current);
+          if (current.status()
+              == CanonicalGameplayIssuerBindingLocalRetirementOperation.Status.RETIRED) {
+            verifyExactAbsence(current, exactBytes, exactDigest);
+            CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+                transaction, current.physicalMutation(), exactBytes);
+            return current;
+          }
+          CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+              transaction, current.physicalMutation(), exactBytes);
+          int updated =
+              transaction.execute(
+                  "UPDATE "
+                      + RETIREMENT
+                      + " SET status = 'RETIRED', exact_absence_readback_field_set_bytes = ?"
+                      + ", exact_absence_readback_field_set_digest = ?, completed_at = CURRENT_TIMESTAMP"
+                      + " WHERE retirement_operation_id = ? AND status = 'PENDING_PHYSICAL_PROOF'"
+                      + " AND physical_mutation_id = ? AND expected_revision = ? AND successor_revision = ?",
+                  exactBytes,
+                  exactDigest,
+                  current.operationId(),
+                  current.physicalMutation().mutationId(),
+                  current.physicalMutation().expectedRevision(),
+                  current.physicalMutation().successorRevision());
+          if (updated != 1) throw conflict("Issuer retirement proof compare-and-set refused");
+          Record saved =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RETIREMENT + " WHERE retirement_operation_id = ?",
+                  current.operationId());
+          if (saved == null) throw conflict("Committed issuer retirement proof is unreadable");
+          return readOperation(transaction, saved, release);
+        });
     requireSameCurrentIssuerState(
         before, readCurrentIssuerState(), completed.release().originalSource().anchor());
     return completed;

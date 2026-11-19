@@ -105,25 +105,23 @@ class EntityRuntimeFamilyCatalogTest {
                     FreshDisposition.BLOCKING_HOLDER_CLOSURE)
                 .stateClass())
         .isEqualTo(StateClass.CONDITIONAL_HOLDER);
-    assertThatThrownBy(
-            () ->
-                new Family(
-                    "item_instances",
-                    "item_instances",
-                    "",
-                    Role.RUNTIME_PAYLOAD,
-                    StateClass.S3,
-                    FreshDisposition.BLOCKING_HOLDER_CLOSURE))
+    assertThatThrownBy(() ->
+            new Family(
+                "item_instances",
+                "item_instances",
+                "",
+                Role.RUNTIME_PAYLOAD,
+                StateClass.S3,
+                FreshDisposition.BLOCKING_HOLDER_CLOSURE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Family(
-                    "item_visible_ref_counters",
-                    "item_visible_ref_counters",
-                    "",
-                    Role.ALLOCATOR,
-                    StateClass.S3,
-                    FreshDisposition.BLOCKING_ALLOCATOR_CLASS))
+    assertThatThrownBy(() ->
+            new Family(
+                "item_visible_ref_counters",
+                "item_visible_ref_counters",
+                "",
+                Role.ALLOCATOR,
+                StateClass.S3,
+                FreshDisposition.BLOCKING_ALLOCATOR_CLASS))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -178,10 +176,9 @@ class EntityRuntimeFamilyCatalogTest {
       assertThatThrownBy(
               () -> EntityRuntimeFamilyCatalog.fromStored(invalid.getBytes(StandardCharsets.UTF_8)))
           .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntityRuntimeFamilyCatalog.fromStored(
-                    new byte[EntityRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
+    assertThatThrownBy(() ->
+            EntityRuntimeFamilyCatalog.fromStored(
+                new byte[EntityRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> EntityRuntimeFamilyCatalog.fromStored(new byte[] {(byte) 0xc3, 0x28}))
         .isInstanceOf(IllegalArgumentException.class);
@@ -191,28 +188,25 @@ class EntityRuntimeFamilyCatalogTest {
   void duplicateUnknownOversizedAndChangedCorrelationFramesRefuse() {
     var read = request();
     var wire = EntityRuntimeFamilyCatalogCodec.toRequest(read);
-    assertThatThrownBy(
-            () ->
-                EntityRuntimeFamilyCatalogCodec.fromRequest(
-                    wire.toBuilder()
-                        .addCanonicalRequestBytes(wire.getCanonicalRequestBytes(0))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntityRuntimeFamilyCatalogCodec.fromRequest(
+                wire.toBuilder()
+                    .addCanonicalRequestBytes(wire.getCanonicalRequestBytes(0))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     var unknown =
         UnknownFieldSet.newBuilder()
             .addField(9, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                EntityRuntimeFamilyCatalogCodec.fromRequest(
-                    wire.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            EntityRuntimeFamilyCatalogCodec.fromRequest(
+                wire.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntityRuntimeFamilyCatalogCodec.fromRequest(
-                    wire.toBuilder()
-                        .setCanonicalRequestBytes(0, ByteString.copyFrom(new byte[1025]))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntityRuntimeFamilyCatalogCodec.fromRequest(
+                wire.toBuilder()
+                    .setCanonicalRequestBytes(0, ByteString.copyFrom(new byte[1025]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     var evidence = new Evidence(read, UUID.randomUUID(), catalog());
     var response = EntityRuntimeFamilyCatalogCodec.toResponse(read, evidence);
@@ -232,10 +226,9 @@ class EntityRuntimeFamilyCatalogTest {
           .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> EntityRuntimeFamilyCatalogCodec.fromResponse(request(), response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntityRuntimeFamilyCatalogCodec.fromResponse(
-                    new Request(read.readRequestId(), "other"), response))
+    assertThatThrownBy(() ->
+            EntityRuntimeFamilyCatalogCodec.fromResponse(
+                new Request(read.readRequestId(), "other"), response))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new Request(new UUID(0, 0), "test"))
         .isInstanceOf(IllegalArgumentException.class);

@@ -21,10 +21,9 @@ public class GameAssetServiceImpl implements GameAssetService {
   @Transactional
   @Timed(value = "gamedesign.asset.upload")
   public GameAssetDto uploadAsset(String tenantId, MultipartFile file) {
-    return CreatorMutationOwnerProofGuard.denyUntilAccountCommitBoundProof(
-        () ->
-            new MutationOwnerProofUnavailableException(
-                "CREATOR_MUTATION_OWNER_PROOF_UNAVAILABLE",
-                "Account commit-bound authority is unavailable for asset upload"));
+    return CreatorMutationOwnerProofGuard.denyUntilAccountCommitBoundProof(() ->
+        new MutationOwnerProofUnavailableException(
+            "CREATOR_MUTATION_OWNER_PROOF_UNAVAILABLE",
+            "Account commit-bound authority is unavailable for asset upload"));
   }
 }

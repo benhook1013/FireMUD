@@ -139,11 +139,10 @@ class EntityCharacterCreateMtlsTest {
               .sslContext(GrpcSslContexts.forClient().trustManager(pki.caCertificate()).build())
               .build();
       try {
-        assertThatThrownBy(
-                () ->
-                    EntityCharacterCreateServiceGrpc.newBlockingStub(noCertificate)
-                        .withDeadlineAfter(5, TimeUnit.SECONDS)
-                        .readEntityCharacterCreateTerminal(read))
+        assertThatThrownBy(() ->
+                EntityCharacterCreateServiceGrpc.newBlockingStub(noCertificate)
+                    .withDeadlineAfter(5, TimeUnit.SECONDS)
+                    .readEntityCharacterCreateTerminal(read))
             .isInstanceOf(io.grpc.StatusRuntimeException.class);
       } finally {
         noCertificate.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);

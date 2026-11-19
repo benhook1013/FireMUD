@@ -141,19 +141,17 @@ class PrivateWorldPreparationSourceCompositionCrossServiceTest {
       assertThat(current.admissionAllowed()).isFalse();
       assertThat(db.dsl.fetchCount(DSL.table("game_session_private_preparation_protection")))
           .isEqualTo(1);
-      assertThatThrownBy(
-              () ->
-                  db.in(
-                      () ->
-                          db.current.select(
-                              new GameSessionCurrentPrivatePlaytestRepository.Request(
-                                  UUID.randomUUID(),
-                                  new GameSessionCurrentPrivatePlaytestRepository.Scope(
-                                      NS, db.tenant, "source-world", "private-playtest"),
-                                  db.second.request().requestId(),
-                                  db.second.playtestLifecycleId(),
-                                  1L,
-                                  db.first.playtestLifecycleId()))))
+      assertThatThrownBy(() ->
+              db.in(() ->
+                  db.current.select(
+                      new GameSessionCurrentPrivatePlaytestRepository.Request(
+                          UUID.randomUUID(),
+                          new GameSessionCurrentPrivatePlaytestRepository.Scope(
+                              NS, db.tenant, "source-world", "private-playtest"),
+                          db.second.request().requestId(),
+                          db.second.playtestLifecycleId(),
+                          1L,
+                          db.first.playtestLifecycleId()))))
           .isInstanceOf(RuntimeException.class)
           .hasStackTraceContaining("unresolved World preparation");
       assertThat(rpc.protectionClient.acquire(request, input.committedReadback()).evidence())
@@ -260,17 +258,16 @@ class PrivateWorldPreparationSourceCompositionCrossServiceTest {
         Objects.requireNonNull(db.serializable.execute(status -> revisions.advance(advance)))
             .snapshot();
     var selected =
-        db.in(
-                () ->
-                    db.current.select(
-                        new GameSessionCurrentPrivatePlaytestRepository.Request(
-                            UUID.randomUUID(),
-                            new GameSessionCurrentPrivatePlaytestRepository.Scope(
-                                NS, db.tenant, "source-world", "private-playtest"),
-                            db.second.request().requestId(),
-                            db.second.playtestLifecycleId(),
-                            1L,
-                            db.first.playtestLifecycleId())))
+        db.in(() ->
+                db.current.select(
+                    new GameSessionCurrentPrivatePlaytestRepository.Request(
+                        UUID.randomUUID(),
+                        new GameSessionCurrentPrivatePlaytestRepository.Scope(
+                            NS, db.tenant, "source-world", "private-playtest"),
+                        db.second.request().requestId(),
+                        db.second.playtestLifecycleId(),
+                        1L,
+                        db.first.playtestLifecycleId())))
             .receipt();
     db.allocateRuntime(revised, selected);
     try (var rpc = new Running(db, directory)) {
@@ -312,23 +309,20 @@ class PrivateWorldPreparationSourceCompositionCrossServiceTest {
     db.allocate();
     String beforePublic = db.publicRows();
     try (var rpc = new Running(db, directory)) {
-      rpc.afterFirst.set(
-          () ->
-              db.in(
-                  () ->
-                      db.current.select(
-                          new GameSessionCurrentPrivatePlaytestRepository.Request(
-                              UUID.randomUUID(),
-                              new GameSessionCurrentPrivatePlaytestRepository.Scope(
-                                  NS, db.tenant, "source-world", "private-playtest"),
-                              db.second.request().requestId(),
-                              db.second.playtestLifecycleId(),
-                              1L,
-                              db.first.playtestLifecycleId()))));
-      assertThatThrownBy(
-              () ->
-                  new WorldPrivatePreparationInputAssembly(rpc.client, Clock.systemUTC())
-                      .assemble(db.scope(), db.first.request().requestId()))
+      rpc.afterFirst.set(() ->
+          db.in(() ->
+              db.current.select(
+                  new GameSessionCurrentPrivatePlaytestRepository.Request(
+                      UUID.randomUUID(),
+                      new GameSessionCurrentPrivatePlaytestRepository.Scope(
+                          NS, db.tenant, "source-world", "private-playtest"),
+                      db.second.request().requestId(),
+                      db.second.playtestLifecycleId(),
+                      1L,
+                      db.first.playtestLifecycleId()))));
+      assertThatThrownBy(() ->
+              new WorldPrivatePreparationInputAssembly(rpc.client, Clock.systemUTC())
+                  .assemble(db.scope(), db.first.request().requestId()))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               error ->
@@ -379,22 +373,20 @@ class PrivateWorldPreparationSourceCompositionCrossServiceTest {
     var target = db.allocate();
     var before = db.retainedRows();
     for (String column : List.of("receipt_digest", "private_source_policy_carrier_digest")) {
-      assertThatThrownBy(
-              () ->
-                  db.dsl.execute(
-                      "UPDATE game_session_canonical_realm_catalog SET "
-                          + column
-                          + " = ? WHERE realm_id = ?",
-                      "sha256:" + "b".repeat(64),
-                      target.realmId()))
+      assertThatThrownBy(() ->
+              db.dsl.execute(
+                  "UPDATE game_session_canonical_realm_catalog SET "
+                      + column
+                      + " = ? WHERE realm_id = ?",
+                  "sha256:" + "b".repeat(64),
+                  target.realmId()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
       assertThat(db.retainedRows()).isEqualTo(before);
     }
     assertThat(
-            db.in(
-                () ->
-                    db.targets.readForWorldPreparation(
-                        db.first.request().requestId(), db.first.playtestLifecycleId())))
+            db.in(() ->
+                db.targets.readForWorldPreparation(
+                    db.first.request().requestId(), db.first.playtestLifecycleId())))
         .contains(target);
     try (var rpc = new Running(db, directory)) {
       assertThat(
@@ -467,18 +459,16 @@ class PrivateWorldPreparationSourceCompositionCrossServiceTest {
                 "NEW_GAME_ROW"));
     var intake =
         Objects.requireNonNull(
-            write.execute(
-                status ->
-                    new GameSessionAuthoredWorldSourceRepository(dsl)
-                        .register(UUID.randomUUID(), source)));
-    write.executeWithoutResult(
-        status ->
-            new GameSessionFreshTenantAssociationRepository(dsl)
-                .associateFresh(
-                    UUID.randomUUID(),
-                    NS,
-                    intake,
-                    CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source)));
+            write.execute(status ->
+                new GameSessionAuthoredWorldSourceRepository(dsl)
+                    .register(UUID.randomUUID(), source)));
+    write.executeWithoutResult(status ->
+        new GameSessionFreshTenantAssociationRepository(dsl)
+            .associateFresh(
+                UUID.randomUUID(),
+                NS,
+                intake,
+                CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source)));
     var catalogRequest =
         new CreateCanonicalRealmCatalogRequest(
             UUID.randomUUID(),
@@ -497,9 +487,9 @@ class PrivateWorldPreparationSourceCompositionCrossServiceTest {
     var policy =
         RealmEntryPolicy.parse(
             """
-        {"schemaVersion":1,"worldSlug":"source-world","worldDisplayName":"Source World","realmSlug":"private-playtest",
-         "realmDisplayName":"Private Playtest","visible":true,"publicProduction":false,"stateScope":"ISOLATED","entryPolicy":"PRESEEDED_ONLY"}
-        """,
+            {"schemaVersion":1,"worldSlug":"source-world","worldDisplayName":"Source World","realmSlug":"private-playtest",
+             "realmDisplayName":"Private Playtest","visible":true,"publicProduction":false,"stateScope":"ISOLATED","entryPolicy":"PRESEEDED_ONLY"}
+            """,
             JsonMapper.builder().build());
     var published =
         CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
@@ -544,17 +534,16 @@ class PrivateWorldPreparationSourceCompositionCrossServiceTest {
     var current = new GameSessionCurrentPrivatePlaytestRepository(dsl);
     var selected =
         Objects.requireNonNull(
-                write.execute(
-                    status ->
-                        current.select(
-                            new GameSessionCurrentPrivatePlaytestRepository.Request(
-                                UUID.randomUUID(),
-                                new GameSessionCurrentPrivatePlaytestRepository.Scope(
-                                    NS, tenant, "source-world", "private-playtest"),
-                                first.request().requestId(),
-                                first.playtestLifecycleId(),
-                                null,
-                                null))))
+                write.execute(status ->
+                    current.select(
+                        new GameSessionCurrentPrivatePlaytestRepository.Request(
+                            UUID.randomUUID(),
+                            new GameSessionCurrentPrivatePlaytestRepository.Scope(
+                                NS, tenant, "source-world", "private-playtest"),
+                            first.request().requestId(),
+                            first.playtestLifecycleId(),
+                            null,
+                            null))))
             .receipt();
     return new Database(
         dsl,
@@ -614,13 +603,12 @@ class PrivateWorldPreparationSourceCompositionCrossServiceTest {
     CanonicalPrivateFreshTargetSnapshot allocate() {
       var target =
           Objects.requireNonNull(
-                  serializable.execute(
-                      status ->
-                          targets.allocate(
-                              new GameSessionPrivateFreshTargetRepository.Request(
-                                  UUID.randomUUID(),
-                                  first.request().requestId(),
-                                  first.playtestLifecycleId()))))
+                  serializable.execute(status ->
+                      targets.allocate(
+                          new GameSessionPrivateFreshTargetRepository.Request(
+                              UUID.randomUUID(),
+                              first.request().requestId(),
+                              first.playtestLifecycleId()))))
               .snapshot();
       allocateRuntime(target, selection);
       return target;
@@ -629,20 +617,19 @@ class PrivateWorldPreparationSourceCompositionCrossServiceTest {
     void allocateRuntime(
         CanonicalPrivateFreshTargetSnapshot target,
         GameSessionCurrentPrivatePlaytestRepository.SelectionReceipt selected) {
-      serializable.execute(
-          status ->
-              new GameSessionPrivateFreshRuntimeAllocationRepository(dsl)
-                  .allocate(
-                      new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
-                          UUID.randomUUID(),
-                          target.preparationRequestId(),
-                          target.playtestLifecycleId(),
-                          target.realmId(),
-                          target.catalogRevision(),
-                          target.creationRequestId(),
-                          target.receiptDigest(),
-                          selected.request().requestId(),
-                          selected.headRevision())));
+      serializable.execute(status ->
+          new GameSessionPrivateFreshRuntimeAllocationRepository(dsl)
+              .allocate(
+                  new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+                      UUID.randomUUID(),
+                      target.preparationRequestId(),
+                      target.playtestLifecycleId(),
+                      target.realmId(),
+                      target.catalogRevision(),
+                      target.creationRequestId(),
+                      target.receiptDigest(),
+                      selected.request().requestId(),
+                      selected.headRevision())));
     }
 
     String publicRows() {

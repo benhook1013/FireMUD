@@ -104,18 +104,16 @@ public class VersionPublishCommandServiceImpl {
   /** Internal plumbing only: a durable selection does not establish creator authorization. */
   PublishWorkflowRequest reserveSelection(PublishIntent intent) {
     try {
-      return publishAttemptService.executeFullVersionTransaction(
-          () -> {
-            AuthoredDraftPublishSelection selection =
-                authoredSelections.reserve(intent).selection();
-            return new PublishWorkflowRequest(
-                selection.target().gameDesignVersionTenantKey(),
-                intent.notes(),
-                intent.publishRequestId(),
-                TemporalVersionPublishOrchestrator.workflowId(
-                    intent.canonicalTenantId().toString(), intent.publishRequestId()),
-                selection.intent());
-          });
+      return publishAttemptService.executeFullVersionTransaction(() -> {
+        AuthoredDraftPublishSelection selection = authoredSelections.reserve(intent).selection();
+        return new PublishWorkflowRequest(
+            selection.target().gameDesignVersionTenantKey(),
+            intent.notes(),
+            intent.publishRequestId(),
+            TemporalVersionPublishOrchestrator.workflowId(
+                intent.canonicalTenantId().toString(), intent.publishRequestId()),
+            selection.intent());
+      });
     } catch (PublishAttemptService.FullVersionTransactionException exception) {
       throw exception.causeException();
     }
@@ -593,47 +591,45 @@ public class VersionPublishCommandServiceImpl {
   private void recordVerifiedAndSucceed(
       PublishWorkflowRequest request, PublishedReleaseBundleDto bundle) {
     try {
-      publishAttemptService.executeFullVersionTransaction(
-          () -> {
-            if (gameRepository.findByTenantIdForUpdate(request.tenantId()) == null) {
-              throw new IllegalArgumentException("game not found");
-            }
-            PublishAttempt current =
-                publishAttemptRepository
-                    .findByPublishWorkflowIdForUpdate(request.publishWorkflowId())
-                    .orElseThrow(
-                        () -> new PendingReconciliationException("publish attempt not found"));
-            validateFullVersionAttempt(current, request);
-            if (current.getStatus() != PublishAttemptStatus.PENDING
-                && current.getStatus() != PublishAttemptStatus.SUCCEEDED) {
-              throw pendingReconciliation("full-version attempt is no longer pending");
-            }
-            if (current.getStatus() == PublishAttemptStatus.PENDING) {
-              publishAttemptRepository.requirePublicationPending(current);
-            } else {
-              publishAttemptRepository.requirePublishedOperation(current);
-            }
-            requireAttemptVersionForUpdate(current, request);
-            PublicationReadback currentReadback = readPublication(request, current);
-            if (!currentReadback.isComplete()) {
-              throw pendingReconciliation(
-                  "published release evidence is incomplete; readback/reconciliation is required");
-            }
-            if (!Objects.equals(bundle, currentReadback.bundle())) {
-              throw pendingReconciliation("published release bundle changed during reconciliation");
-            }
-            assertCommittedBundleEvidence(request, currentReadback);
-            recordedParticipantDigestService.recordVerifiedDigests(
-                request.tenantId(),
-                PublishType.FULL_VERSION,
-                request.publishWorkflowId(),
-                currentReadback.bundle().participantDigests());
-            if (current.getStatus() == PublishAttemptStatus.PENDING) {
-              publishAttemptService.markFullVersionSucceeded(request.publishWorkflowId());
-              publishAttemptRepository.sealPublication(current, true);
-            }
-            return null;
-          });
+      publishAttemptService.executeFullVersionTransaction(() -> {
+        if (gameRepository.findByTenantIdForUpdate(request.tenantId()) == null) {
+          throw new IllegalArgumentException("game not found");
+        }
+        PublishAttempt current =
+            publishAttemptRepository
+                .findByPublishWorkflowIdForUpdate(request.publishWorkflowId())
+                .orElseThrow(() -> new PendingReconciliationException("publish attempt not found"));
+        validateFullVersionAttempt(current, request);
+        if (current.getStatus() != PublishAttemptStatus.PENDING
+            && current.getStatus() != PublishAttemptStatus.SUCCEEDED) {
+          throw pendingReconciliation("full-version attempt is no longer pending");
+        }
+        if (current.getStatus() == PublishAttemptStatus.PENDING) {
+          publishAttemptRepository.requirePublicationPending(current);
+        } else {
+          publishAttemptRepository.requirePublishedOperation(current);
+        }
+        requireAttemptVersionForUpdate(current, request);
+        PublicationReadback currentReadback = readPublication(request, current);
+        if (!currentReadback.isComplete()) {
+          throw pendingReconciliation(
+              "published release evidence is incomplete; readback/reconciliation is required");
+        }
+        if (!Objects.equals(bundle, currentReadback.bundle())) {
+          throw pendingReconciliation("published release bundle changed during reconciliation");
+        }
+        assertCommittedBundleEvidence(request, currentReadback);
+        recordedParticipantDigestService.recordVerifiedDigests(
+            request.tenantId(),
+            PublishType.FULL_VERSION,
+            request.publishWorkflowId(),
+            currentReadback.bundle().participantDigests());
+        if (current.getStatus() == PublishAttemptStatus.PENDING) {
+          publishAttemptService.markFullVersionSucceeded(request.publishWorkflowId());
+          publishAttemptRepository.sealPublication(current, true);
+        }
+        return null;
+      });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
       throw pendingReconciliation(
           "committed publication readback could not be reconciled", ex.causeException());
@@ -691,35 +687,33 @@ public class VersionPublishCommandServiceImpl {
     String failureCode = publishFailureCode(failure);
     String failureMessage = publishFailureMessage(failure);
     try {
-      publishAttemptService.executeFullVersionTransaction(
-          () -> {
-            if (gameRepository.findByTenantIdForUpdate(request.tenantId()) == null) {
-              throw new IllegalArgumentException("game not found");
-            }
-            PublishAttempt current =
-                publishAttemptRepository
-                    .findByPublishWorkflowIdForUpdate(request.publishWorkflowId())
-                    .orElseThrow(
-                        () -> new PendingReconciliationException("publish attempt not found"));
-            validateFullVersionAttempt(current, request);
-            if (current.getStatus() != PublishAttemptStatus.PENDING) {
-              throw pendingReconciliation("full-version attempt is no longer pending");
-            }
-            publishAttemptRepository.requirePublicationPending(current);
-            requireAttemptVersionForUpdate(current, request);
-            PublicationReadback readback = readPublication(request, current);
-            if (!readback.isAbsent()) {
-              if (!readback.isStagedNoRelease() || readback.candidate() != null) {
-                throw pendingReconciliation(
-                    "publication failure has committed or partial release evidence; reconciliation is required");
-              }
-            }
-            publishAttemptService.markFullVersionFailed(
-                request.publishWorkflowId(), failureCode, failureMessage);
-            publishAttemptRepository.sealPublication(current, false);
-            // Approved launch remap sets may reference this failed candidate, so retain the row.
-            return Boolean.TRUE;
-          });
+      publishAttemptService.executeFullVersionTransaction(() -> {
+        if (gameRepository.findByTenantIdForUpdate(request.tenantId()) == null) {
+          throw new IllegalArgumentException("game not found");
+        }
+        PublishAttempt current =
+            publishAttemptRepository
+                .findByPublishWorkflowIdForUpdate(request.publishWorkflowId())
+                .orElseThrow(() -> new PendingReconciliationException("publish attempt not found"));
+        validateFullVersionAttempt(current, request);
+        if (current.getStatus() != PublishAttemptStatus.PENDING) {
+          throw pendingReconciliation("full-version attempt is no longer pending");
+        }
+        publishAttemptRepository.requirePublicationPending(current);
+        requireAttemptVersionForUpdate(current, request);
+        PublicationReadback readback = readPublication(request, current);
+        if (!readback.isAbsent()) {
+          if (!readback.isStagedNoRelease() || readback.candidate() != null) {
+            throw pendingReconciliation(
+                "publication failure has committed or partial release evidence; reconciliation is required");
+          }
+        }
+        publishAttemptService.markFullVersionFailed(
+            request.publishWorkflowId(), failureCode, failureMessage);
+        publishAttemptRepository.sealPublication(current, false);
+        // Approved launch remap sets may reference this failed candidate, so retain the row.
+        return Boolean.TRUE;
+      });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
       PublicationReadback winningPublication;
       try {
@@ -1128,10 +1122,9 @@ public class VersionPublishCommandServiceImpl {
     AuthoredDraftPublishSelection selection =
         authoredSelections
             .readByPublishRequest(request.intent().canonicalTenantId(), request.publishRequestId())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "PUBLISH_SELECTION_REQUIRED: exact durable selection is absent"))
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "PUBLISH_SELECTION_REQUIRED: exact durable selection is absent"))
             .selection();
     if (!selection.intent().equals(request.intent())
         || !selection.target().gameDesignVersionTenantKey().equals(request.tenantId())
@@ -1168,14 +1161,13 @@ public class VersionPublishCommandServiceImpl {
     AuthoredDraftPublishSelection selection = requireSelectedIntent(request);
     if (digests == null
         || digests.stream()
-            .anyMatch(
-                digest ->
-                    digest == null
-                        || !selection
-                            .selectedCommit()
-                            .commitId()
-                            .toString()
-                            .equals(digest.appliedCommitId()))) {
+            .anyMatch(digest ->
+                digest == null
+                    || !selection
+                        .selectedCommit()
+                        .commitId()
+                        .toString()
+                        .equals(digest.appliedCommitId()))) {
       throw new PublishGateFailureException(
           PublishGateFailureCode.APPLIED_COMMIT_MISMATCH,
           "Every participant must report the exact selected authored Draft commit");

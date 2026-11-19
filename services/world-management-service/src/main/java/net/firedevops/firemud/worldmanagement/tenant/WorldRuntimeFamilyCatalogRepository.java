@@ -50,29 +50,28 @@ public final class WorldRuntimeFamilyCatalogRepository {
   public Evidence read(Request request) {
     requireIndependent(request);
     byte[] committed =
-        capture.execute(
-            status -> {
-              WorldRuntimeFamilyCatalog catalog = currentCatalog();
-              byte[] requestBytes = WorldRuntimeFamilyCatalogCodec.requestBytes(request);
-              var proposed = new Evidence(request, UUID.randomUUID(), catalog);
-              byte[] evidenceBytes = WorldRuntimeFamilyCatalogCodec.evidenceBytes(proposed);
-              dsl.execute(
-                  "INSERT INTO "
-                      + table("world_runtime_family_catalog_snapshot")
-                      + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
-                      + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)"
-                      + " ON CONFLICT (read_request_id) DO NOTHING",
-                  request.readRequestId(),
-                  request.targetNamespace(),
-                  requestBytes,
-                  WorldRuntimeFamilyCatalog.sha256(requestBytes),
-                  proposed.snapshotId(),
-                  catalog.catalogEpoch(),
-                  catalog.digest(),
-                  evidenceBytes,
-                  proposed.digest());
-              return retained(request, catalog);
-            });
+        capture.execute(status -> {
+          WorldRuntimeFamilyCatalog catalog = currentCatalog();
+          byte[] requestBytes = WorldRuntimeFamilyCatalogCodec.requestBytes(request);
+          var proposed = new Evidence(request, UUID.randomUUID(), catalog);
+          byte[] evidenceBytes = WorldRuntimeFamilyCatalogCodec.evidenceBytes(proposed);
+          dsl.execute(
+              "INSERT INTO "
+                  + table("world_runtime_family_catalog_snapshot")
+                  + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
+                  + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)"
+                  + " ON CONFLICT (read_request_id) DO NOTHING",
+              request.readRequestId(),
+              request.targetNamespace(),
+              requestBytes,
+              WorldRuntimeFamilyCatalog.sha256(requestBytes),
+              proposed.snapshotId(),
+              catalog.catalogEpoch(),
+              catalog.digest(),
+              evidenceBytes,
+              proposed.digest());
+          return retained(request, catalog);
+        });
     Evidence result = readExact(request);
     if (!Arrays.equals(committed, WorldRuntimeFamilyCatalogCodec.evidenceBytes(result))) {
       throw new CatalogConflictException("Committed catalog readback changed");
@@ -85,9 +84,8 @@ public final class WorldRuntimeFamilyCatalogRepository {
    */
   public Evidence readExact(Request request) {
     requireIndependent(request);
-    return readback.execute(
-        status ->
-            WorldRuntimeFamilyCatalogCodec.evidenceFromStored(retained(request, currentCatalog())));
+    return readback.execute(status ->
+        WorldRuntimeFamilyCatalogCodec.evidenceFromStored(retained(request, currentCatalog())));
   }
 
   private WorldRuntimeFamilyCatalog currentCatalog() {

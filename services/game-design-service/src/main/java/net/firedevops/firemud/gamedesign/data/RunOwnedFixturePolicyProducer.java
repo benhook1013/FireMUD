@@ -62,43 +62,41 @@ public final class RunOwnedFixturePolicyProducer {
     String requestDigest = frame.requestDigest();
     String bindingJson = frame.bindingJson();
     String policyJson = frame.policyJson();
-    write.executeWithoutResult(
-        ignored -> {
-          dsl.fetchSingle(
-              "SELECT id FROM game WHERE id=? AND tenant_id=? FOR UPDATE",
-              creation.sourceGameRowId(),
-              creation.sourceGameTenantKey());
-          dsl.fetchSingle(
-              "SELECT id FROM version WHERE id=? AND tenant_id=? FOR UPDATE",
-              snapshot.version().id(),
-              creation.sourceGameTenantKey());
-          UUID operationId = trusted.operationId();
-          String evidenceDigest =
-              RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
-                  operationId, requestDigest);
-          dsl.execute(
-              "INSERT INTO game_design_published_realm_policy_set "
-                  + "(canonical_tenant_id, canonical_version_id, game_design_version_row_id, version_number, sealed, "
-                  + "fixture_operation_id, fixture_request_bytes, fixture_request_digest, fixture_evidence_digest, "
-                  + "fixture_binding_json, fixture_policy_json) VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?::jsonb, ?::jsonb) "
-                  + "ON CONFLICT (canonical_tenant_id, canonical_version_id) DO NOTHING",
-              source.canonicalTenantId(),
-              snapshot.version().canonicalVersionId(),
-              snapshot.version().id(),
-              snapshot.version().versionNumber(),
-              operationId,
-              request,
-              requestDigest,
-              evidenceDigest,
-              bindingJson,
-              policyJson);
-          requireExactRow(snapshot, request, requestDigest, bindingJson, policyJson);
-        });
+    write.executeWithoutResult(ignored -> {
+      dsl.fetchSingle(
+          "SELECT id FROM game WHERE id=? AND tenant_id=? FOR UPDATE",
+          creation.sourceGameRowId(),
+          creation.sourceGameTenantKey());
+      dsl.fetchSingle(
+          "SELECT id FROM version WHERE id=? AND tenant_id=? FOR UPDATE",
+          snapshot.version().id(),
+          creation.sourceGameTenantKey());
+      UUID operationId = trusted.operationId();
+      String evidenceDigest =
+          RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+              operationId, requestDigest);
+      dsl.execute(
+          "INSERT INTO game_design_published_realm_policy_set "
+              + "(canonical_tenant_id, canonical_version_id, game_design_version_row_id, version_number, sealed, "
+              + "fixture_operation_id, fixture_request_bytes, fixture_request_digest, fixture_evidence_digest, "
+              + "fixture_binding_json, fixture_policy_json) VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?::jsonb, ?::jsonb) "
+              + "ON CONFLICT (canonical_tenant_id, canonical_version_id) DO NOTHING",
+          source.canonicalTenantId(),
+          snapshot.version().canonicalVersionId(),
+          snapshot.version().id(),
+          snapshot.version().versionNumber(),
+          operationId,
+          request,
+          requestDigest,
+          evidenceDigest,
+          bindingJson,
+          policyJson);
+      requireExactRow(snapshot, request, requestDigest, bindingJson, policyJson);
+    });
     var seal =
         Objects.requireNonNull(
-            read.execute(
-                ignored ->
-                    requireExactRow(snapshot, request, requestDigest, bindingJson, policyJson)));
+            read.execute(ignored ->
+                requireExactRow(snapshot, request, requestDigest, bindingJson, policyJson)));
     // Independent owner read after seal commit; changing upstream rows cannot publish a receipt.
     readback.readCommittedCreation(creation);
     var committedSnapshot = readback.readCommittedOutcome(snapshot);
@@ -120,14 +118,13 @@ public final class RunOwnedFixturePolicyProducer {
       ResolvedLaunchDescriptorDto descriptor) {
     PolicyFrame frame = frame(trusted, creation, snapshot, descriptor);
     return Objects.requireNonNull(
-        read.execute(
-            ignored ->
-                requireExactRow(
-                    snapshot,
-                    frame.request(),
-                    frame.requestDigest(),
-                    frame.bindingJson(),
-                    frame.policyJson())));
+        read.execute(ignored ->
+            requireExactRow(
+                snapshot,
+                frame.request(),
+                frame.requestDigest(),
+                frame.bindingJson(),
+                frame.policyJson())));
   }
 
   private PolicyFrame frame(

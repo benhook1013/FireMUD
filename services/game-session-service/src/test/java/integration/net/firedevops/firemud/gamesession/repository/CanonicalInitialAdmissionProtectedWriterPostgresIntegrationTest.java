@@ -107,32 +107,25 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
                   prepared.request().initialAdmissionRequestId())
               .formatJSON();
       Future<Throwable> closedResult =
-          executor.submit(
-              () ->
-                  captureFailure(
-                      () ->
-                          harness
-                              .transactions()
-                              .executeWithoutResult(
-                                  status -> {
-                                    closedPid.set(postgresBackendPid(harness));
-                                    pointers.createInitialClosed(closed);
-                                  })));
+          executor.submit(() ->
+              captureFailure(() ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(status -> {
+                        closedPid.set(postgresBackendPid(harness));
+                        pointers.createInitialClosed(closed);
+                      })));
       assertThat(closedCatalogLocked.await(10, TimeUnit.SECONDS)).isTrue();
       Future<Throwable> protectedResult =
-          executor.submit(
-              () ->
-                  captureFailure(
-                      () ->
-                          harness
-                              .transactions()
-                              .executeWithoutResult(
-                                  status -> {
-                                    protectedPid.set(postgresBackendPid(harness));
-                                    protectedEntered.countDown();
-                                    repository.reserveProtected(
-                                        prepared.request(), prepared.protection());
-                                  })));
+          executor.submit(() ->
+              captureFailure(() ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(status -> {
+                        protectedPid.set(postgresBackendPid(harness));
+                        protectedEntered.countDown();
+                        repository.reserveProtected(prepared.request(), prepared.protection());
+                      })));
       assertThat(protectedEntered.await(10, TimeUnit.SECONDS)).isTrue();
       assertThat(protectedPid.get()).isNotEqualTo(closedPid.get());
       awaitBlockingEdge(harness, protectedPid.get(), closedPid.get());
@@ -262,25 +255,20 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
               .formatJSON();
       // Current-origin refusal is controlled; this does not produce an independently OPEN route.
       rejectCurrentOrigin.set(true);
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              repository.commitProtected(
-                                  prepared.request(),
-                                  prepared.protection(),
-                                  prepared.worldProof())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      repository.commitProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("controlled current-origin refusal");
       assertThat(currentOriginReads).hasValue(2);
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(), prepared.protection(), "controlled upstream denial"));
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(), prepared.protection(), "controlled upstream denial"));
       Record aborted = terminal(harness, prepared.request());
       assertThat(aborted.get("status", String.class)).isEqualTo("ABORTED");
       assertThat(aborted.get("prior_pointer_request_id", UUID.class)).isEqualTo(origin.requestId());
@@ -298,10 +286,9 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
               .orElseThrow();
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(), prepared.protection(), "controlled upstream denial"));
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(), prepared.protection(), "controlled upstream denial"));
       assertThat(terminal(harness, prepared.request()).formatJSON())
           .isEqualTo(aborted.formatJSON());
       assertThat(
@@ -399,20 +386,19 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       try {
         harness
             .transactions()
-            .executeWithoutResult(
-                status ->
-                    assertThat(
-                            harness
-                                .dsl()
-                                .execute(
-                                    "DELETE FROM gameplay_admission_pointer WHERE id = ? "
-                                        + "AND representation_version = 2 AND target_namespace = ? "
-                                        + "AND canonical_tenant_id = ? AND realm_id = ?",
-                                    pointerId,
-                                    catalog.targetNamespace(),
-                                    catalog.tenantId(),
-                                    catalog.realmId()))
-                        .isEqualTo(1));
+            .executeWithoutResult(status ->
+                assertThat(
+                        harness
+                            .dsl()
+                            .execute(
+                                "DELETE FROM gameplay_admission_pointer WHERE id = ? "
+                                    + "AND representation_version = 2 AND target_namespace = ? "
+                                    + "AND canonical_tenant_id = ? AND realm_id = ?",
+                                pointerId,
+                                catalog.targetNamespace(),
+                                catalog.tenantId(),
+                                catalog.realmId()))
+                    .isEqualTo(1));
       } finally {
         harness
             .dsl()
@@ -450,12 +436,9 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
 
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(),
-                      prepared.protection(),
-                      "synthetic current pointer missing"));
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(), prepared.protection(), "synthetic current pointer missing"));
       Record aborted = terminal(harness, prepared.request());
       assertThat(aborted.get("status", String.class)).isEqualTo("ABORTED");
       assertThat(aborted.get("prior_pointer_request_id", UUID.class)).isEqualTo(origin.requestId());
@@ -478,12 +461,9 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
               .orElseThrow();
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(),
-                      prepared.protection(),
-                      "synthetic current pointer missing"));
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(), prepared.protection(), "synthetic current pointer missing"));
       assertThat(terminal(harness, prepared.request()).formatJSON())
           .isEqualTo(aborted.formatJSON());
       assertThat(
@@ -543,12 +523,11 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           .isEqualTo(prepared.protection().accountProtectionId());
       assertThat(pending.get("account_protection_evidence_bytes", byte[].class))
           .containsExactly(prepared.protection().canonicalBytes());
-      assertThatThrownBy(
-              () ->
-                  new AccountInitialAdmissionProtectionBindingRepository(harness.dsl())
-                      .read(
-                          prepared.request().targetNamespace(),
-                          prepared.request().initialAdmissionRequestId()))
+      assertThatThrownBy(() ->
+              new AccountInitialAdmissionProtectionBindingRepository(harness.dsl())
+                  .read(
+                      prepared.request().targetNamespace(),
+                      prepared.request().initialAdmissionRequestId()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Protected admission has no immutable terminal result");
 
@@ -569,54 +548,49 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
               prepared.original(),
               "changed-controlled-account-source");
       for (var changed : List.of(changedId, changedFence, changedBytes)) {
-        assertThatThrownBy(
-                () ->
-                    harness
-                        .transactions()
-                        .executeWithoutResult(
-                            status -> repository.reserveProtected(prepared.request(), changed)))
+        assertThatThrownBy(() ->
+                harness
+                    .transactions()
+                    .executeWithoutResult(
+                        status -> repository.reserveProtected(prepared.request(), changed)))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("different Account protection");
         assertThat(terminal(harness, prepared.request()).formatJSON())
             .isEqualTo(pending.formatJSON());
       }
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              harness
-                                  .dsl()
-                                  .execute(
-                                      "INSERT INTO game_session_canonical_initial_admission_attempt "
-                                          + "SELECT (jsonb_populate_record(NULL::game_session_canonical_initial_admission_attempt, "
-                                          + "to_jsonb(a) || jsonb_build_object("
-                                          + "'initial_admission_request_id', ?, 'account_protection_id', NULL))).* "
-                                          + "FROM game_session_canonical_initial_admission_attempt a "
-                                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                                      prepared.request().initialAdmissionRequestId() + "-partial",
-                                      prepared.request().targetNamespace(),
-                                      prepared.request().initialAdmissionRequestId())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      harness
+                          .dsl()
+                          .execute(
+                              "INSERT INTO game_session_canonical_initial_admission_attempt "
+                                  + "SELECT (jsonb_populate_record(NULL::game_session_canonical_initial_admission_attempt, "
+                                  + "to_jsonb(a) || jsonb_build_object("
+                                  + "'initial_admission_request_id', ?, 'account_protection_id', NULL))).* "
+                                  + "FROM game_session_canonical_initial_admission_attempt a "
+                                  + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                              prepared.request().initialAdmissionRequestId() + "-partial",
+                              prepared.request().targetNamespace(),
+                              prepared.request().initialAdmissionRequestId())))
           .rootCause()
           .hasMessageContaining("requires complete retained Account protection evidence");
       assertThat(terminal(harness, prepared.request()).formatJSON())
           .isEqualTo(pending.formatJSON());
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              harness
-                                  .dsl()
-                                  .execute(
-                                      "UPDATE game_session_canonical_initial_admission_attempt "
-                                          + "SET account_protection_id = ? WHERE target_namespace = ? "
-                                          + "AND initial_admission_request_id = ?",
-                                      uuid(599),
-                                      prepared.request().targetNamespace(),
-                                      prepared.request().initialAdmissionRequestId())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      harness
+                          .dsl()
+                          .execute(
+                              "UPDATE game_session_canonical_initial_admission_attempt "
+                                  + "SET account_protection_id = ? WHERE target_namespace = ? "
+                                  + "AND initial_admission_request_id = ?",
+                              uuid(599),
+                              prepared.request().targetNamespace(),
+                              prepared.request().initialAdmissionRequestId())))
           .rootCause()
           .hasMessageContaining("immutable");
       assertThat(terminal(harness, prepared.request()).formatJSON())
@@ -625,10 +599,9 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       OffsetDateTime terminalBefore = databaseTimestamp(harness);
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.commitProtected(
-                      prepared.request(), prepared.protection(), prepared.worldProof()));
+          .executeWithoutResult(status ->
+              repository.commitProtected(
+                  prepared.request(), prepared.protection(), prepared.worldProof()));
       OffsetDateTime terminalAfter = databaseTimestamp(harness);
 
       var proof =
@@ -693,21 +666,18 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
               status -> repository.reserveProtected(prepared.request(), prepared.protection()));
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.commitProtected(
-                      prepared.request(), prepared.protection(), prepared.worldProof()));
+          .executeWithoutResult(status ->
+              repository.commitProtected(
+                  prepared.request(), prepared.protection(), prepared.worldProof()));
       assertThat(terminal(harness, prepared.request()).formatJSON())
           .isEqualTo(terminal.formatJSON());
 
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              repository.commitProtected(
-                                  prepared.request(), changedId, prepared.worldProof())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      repository.commitProtected(
+                          prepared.request(), changedId, prepared.worldProof())))
           .isInstanceOf(
               CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
           .hasMessageContaining("changed Account protection");
@@ -736,14 +706,11 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       Record after = terminal(harness, prepared.request());
       assertThat(after.formatJSON()).isEqualTo(before.formatJSON());
       CanonicalInitialAdmissionRepository repository = repository(harness);
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              repository.reserveProtected(
-                                  prepared.request(), prepared.protection())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      repository.reserveProtected(prepared.request(), prepared.protection())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("PENDING admission reservation retains different");
       assertThat(terminal(harness, prepared.request()).formatJSON()).isEqualTo(before.formatJSON());
@@ -768,10 +735,9 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       OffsetDateTime terminalBefore = databaseTimestamp(harness);
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(), prepared.protection(), "controlled upstream denial"));
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(), prepared.protection(), "controlled upstream denial"));
 
       OffsetDateTime terminalAfter = databaseTimestamp(harness);
       Record terminal = terminal(harness, prepared.request());
@@ -806,20 +772,15 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
 
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(), prepared.protection(), "controlled upstream denial"));
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              repository.commitProtected(
-                                  prepared.request(),
-                                  prepared.protection(),
-                                  prepared.worldProof())))
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(), prepared.protection(), "controlled upstream denial"));
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      repository.commitProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof())))
           .isInstanceOf(
               CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
           .hasMessageContaining("ABORTED");
@@ -863,16 +824,12 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           pointers
               .readOriginalClosedOrigin(closeRequest.targetNamespace(), closeRequest.requestId())
               .orElseThrow();
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              repository.commitProtected(
-                                  prepared.request(),
-                                  prepared.protection(),
-                                  prepared.worldProof())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      repository.commitProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof())))
           .isInstanceOf(RuntimeException.class)
           .hasMessageContaining("representation");
       assertThat(terminal(harness, prepared.request()).get("status", String.class))
@@ -882,60 +839,53 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
               "visible = false",
               "public_production = false",
               "catalog_revision = catalog_revision + 1")) {
-        assertThatThrownBy(
-                () ->
-                    harness
-                        .transactions()
-                        .executeWithoutResult(
-                            status ->
-                                harness
-                                    .dsl()
-                                    .execute(
-                                        "UPDATE game_session_canonical_realm_catalog SET "
-                                            + mutation
-                                            + " WHERE target_namespace=? AND realm_id=?",
-                                        catalog.targetNamespace(),
-                                        catalog.realmId())))
+        assertThatThrownBy(() ->
+                harness
+                    .transactions()
+                    .executeWithoutResult(status ->
+                        harness
+                            .dsl()
+                            .execute(
+                                "UPDATE game_session_canonical_realm_catalog SET "
+                                    + mutation
+                                    + " WHERE target_namespace=? AND realm_id=?",
+                                catalog.targetNamespace(),
+                                catalog.realmId())))
             .isInstanceOf(org.jooq.exception.DataAccessException.class)
             .hasMessageContaining("immutable");
       }
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              harness
-                                  .dsl()
-                                  .execute(
-                                      "UPDATE game_session_canonical_instance_launch SET public_production=false"
-                                          + " WHERE target_namespace=? AND game_instance_uuid=?",
-                                      catalog.targetNamespace(),
-                                      prepared.request().canonicalGameInstanceId())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      harness
+                          .dsl()
+                          .execute(
+                              "UPDATE game_session_canonical_instance_launch SET public_production=false"
+                                  + " WHERE target_namespace=? AND game_instance_uuid=?",
+                              catalog.targetNamespace(),
+                              prepared.request().canonicalGameInstanceId())))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("immutable");
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              harness
-                                  .dsl()
-                                  .execute(
-                                      "UPDATE gameplay_admission_pointer SET pointer_version=pointer_version+1"
-                                          + " WHERE target_namespace=? AND realm_id=?",
-                                      catalog.targetNamespace(),
-                                      catalog.realmId())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      harness
+                          .dsl()
+                          .execute(
+                              "UPDATE gameplay_admission_pointer SET pointer_version=pointer_version+1"
+                                  + " WHERE target_namespace=? AND realm_id=?",
+                              catalog.targetNamespace(),
+                              catalog.realmId())))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining(
               "Canonical CLOSED pointer may only enter the fenced first-OPEN operation");
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(), prepared.protection(), "controlled upstream denial"));
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(), prepared.protection(), "controlled upstream denial"));
       Record terminal = terminal(harness, prepared.request());
       assertThat(terminal.get("status", String.class)).isEqualTo("ABORTED");
       assertThat(terminal.get("intent_state", String.class)).isEqualTo("TERMINAL");
@@ -943,10 +893,9 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       assertThat(terminal.get("audit_event_id")).isNull();
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(), prepared.protection(), "controlled upstream denial"));
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(), prepared.protection(), "controlled upstream denial"));
       assertThat(terminal(harness, prepared.request()).formatJSON())
           .isEqualTo(terminal.formatJSON());
       assertThat(
@@ -1077,16 +1026,12 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           .isEqualTo(launchBefore.formatJSON());
 
       awaitOriginalOwnerLeaseExpiration(harness, prepared);
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              repository.commitProtected(
-                                  prepared.request(),
-                                  prepared.protection(),
-                                  prepared.worldProof())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      repository.commitProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("original owner lease is no longer live");
       assertThat(terminal(harness, prepared.request()).formatJSON())
@@ -1094,12 +1039,11 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
 
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(),
-                      prepared.protection(),
-                      "controlled denial after original lease expiry"));
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(),
+                  prepared.protection(),
+                  "controlled denial after original lease expiry"));
 
       Record aborted = terminal(harness, prepared.request());
       assertThat(aborted.get("status", String.class)).isEqualTo("ABORTED");
@@ -1178,40 +1122,33 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
           .isTrue();
       harness
           .transactions()
-          .executeWithoutResult(
-              status ->
-                  repository.abortProtected(
-                      prepared.request(),
-                      prepared.protection(),
-                      "controlled denial after original lease expiry"));
+          .executeWithoutResult(status ->
+              repository.abortProtected(
+                  prepared.request(),
+                  prepared.protection(),
+                  "controlled denial after original lease expiry"));
       assertThat(terminal(harness, prepared.request()).formatJSON())
           .isEqualTo(aborted.formatJSON());
 
       var changedProtection =
           protection(target, prepared.hold(), uuid(1005), 1L, prepared.original());
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              repository.abortProtected(
-                                  prepared.request(),
-                                  changedProtection,
-                                  "controlled denial after original lease expiry")))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      repository.abortProtected(
+                          prepared.request(),
+                          changedProtection,
+                          "controlled denial after original lease expiry")))
           .isInstanceOf(
               CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
           .hasMessageContaining("changed Account protection");
-      assertThatThrownBy(
-              () ->
-                  harness
-                      .transactions()
-                      .executeWithoutResult(
-                          status ->
-                              repository.commitProtected(
-                                  prepared.request(),
-                                  prepared.protection(),
-                                  prepared.worldProof())))
+      assertThatThrownBy(() ->
+              harness
+                  .transactions()
+                  .executeWithoutResult(status ->
+                      repository.commitProtected(
+                          prepared.request(), prepared.protection(), prepared.worldProof())))
           .isInstanceOf(
               CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
           .hasMessageContaining("ABORTED");
@@ -1248,55 +1185,45 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       var winnerPid = new AtomicInteger();
       var loserPid = new AtomicInteger();
       Future<Throwable> winner =
-          executor.submit(
-              () ->
-                  captureFailure(
-                      () ->
-                          harness
-                              .transactions()
-                              .executeWithoutResult(
-                                  status -> {
-                                    winnerPid.set(postgresBackendPid(harness));
-                                    lockAdmissionTarget(harness, prepared.request());
-                                    winnerLocked.countDown();
-                                    await(releaseWinner, "release terminal winner");
-                                    if (commitWins) {
-                                      repository.commitProtected(
-                                          prepared.request(),
-                                          prepared.protection(),
-                                          prepared.worldProof());
-                                    } else {
-                                      repository.abortProtected(
-                                          prepared.request(),
-                                          prepared.protection(),
-                                          "concurrent controlled denial");
-                                    }
-                                  })));
+          executor.submit(() ->
+              captureFailure(() ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(status -> {
+                        winnerPid.set(postgresBackendPid(harness));
+                        lockAdmissionTarget(harness, prepared.request());
+                        winnerLocked.countDown();
+                        await(releaseWinner, "release terminal winner");
+                        if (commitWins) {
+                          repository.commitProtected(
+                              prepared.request(), prepared.protection(), prepared.worldProof());
+                        } else {
+                          repository.abortProtected(
+                              prepared.request(),
+                              prepared.protection(),
+                              "concurrent controlled denial");
+                        }
+                      })));
       assertThat(winnerLocked.await(10, TimeUnit.SECONDS)).isTrue();
 
       Future<Throwable> loser =
-          executor.submit(
-              () ->
-                  captureFailure(
-                      () ->
-                          harness
-                              .transactions()
-                              .executeWithoutResult(
-                                  status -> {
-                                    loserPid.set(postgresBackendPid(harness));
-                                    loserEntered.countDown();
-                                    if (commitWins) {
-                                      repository.abortProtected(
-                                          prepared.request(),
-                                          prepared.protection(),
-                                          "concurrent controlled denial");
-                                    } else {
-                                      repository.commitProtected(
-                                          prepared.request(),
-                                          prepared.protection(),
-                                          prepared.worldProof());
-                                    }
-                                  })));
+          executor.submit(() ->
+              captureFailure(() ->
+                  harness
+                      .transactions()
+                      .executeWithoutResult(status -> {
+                        loserPid.set(postgresBackendPid(harness));
+                        loserEntered.countDown();
+                        if (commitWins) {
+                          repository.abortProtected(
+                              prepared.request(),
+                              prepared.protection(),
+                              "concurrent controlled denial");
+                        } else {
+                          repository.commitProtected(
+                              prepared.request(), prepared.protection(), prepared.worldProof());
+                        }
+                      })));
       assertThat(loserEntered.await(10, TimeUnit.SECONDS)).isTrue();
       assertThat(loserPid.get()).isNotEqualTo(winnerPid.get());
       awaitBlockingEdge(harness, loserPid.get(), winnerPid.get());
@@ -1338,20 +1265,17 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
         assertThat(terminal.get("abort_proof_digest")).isNull();
         harness
             .transactions()
-            .executeWithoutResult(
-                status ->
-                    repository.commitProtected(
-                        prepared.request(), prepared.protection(), prepared.worldProof()));
-        assertThatThrownBy(
-                () ->
-                    harness
-                        .transactions()
-                        .executeWithoutResult(
-                            status ->
-                                repository.abortProtected(
-                                    prepared.request(),
-                                    prepared.protection(),
-                                    "concurrent controlled denial")))
+            .executeWithoutResult(status ->
+                repository.commitProtected(
+                    prepared.request(), prepared.protection(), prepared.worldProof()));
+        assertThatThrownBy(() ->
+                harness
+                    .transactions()
+                    .executeWithoutResult(status ->
+                        repository.abortProtected(
+                            prepared.request(),
+                            prepared.protection(),
+                            "concurrent controlled denial")))
             .isInstanceOf(
                 CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException
                     .class)
@@ -1364,20 +1288,15 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
         assertThat(terminal.get("abort_proof_digest", String.class)).startsWith("sha256:");
         harness
             .transactions()
-            .executeWithoutResult(
-                status ->
-                    repository.abortProtected(
-                        prepared.request(), prepared.protection(), "concurrent controlled denial"));
-        assertThatThrownBy(
-                () ->
-                    harness
-                        .transactions()
-                        .executeWithoutResult(
-                            status ->
-                                repository.commitProtected(
-                                    prepared.request(),
-                                    prepared.protection(),
-                                    prepared.worldProof())))
+            .executeWithoutResult(status ->
+                repository.abortProtected(
+                    prepared.request(), prepared.protection(), "concurrent controlled denial"));
+        assertThatThrownBy(() ->
+                harness
+                    .transactions()
+                    .executeWithoutResult(status ->
+                        repository.commitProtected(
+                            prepared.request(), prepared.protection(), prepared.worldProof())))
             .isInstanceOf(
                 CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException
                     .class)
@@ -1558,11 +1477,10 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
     target
         .harness()
         .transactions()
-        .executeWithoutResult(
-            status ->
-                target
-                    .intents()
-                    .reserve(retainedHoldRequest, target.lifecycleRequest(uuid(idBase + 2))));
+        .executeWithoutResult(status ->
+            target
+                .intents()
+                .reserve(retainedHoldRequest, target.lifecycleRequest(uuid(idBase + 2))));
     target
         .harness()
         .transactions()
@@ -1680,40 +1598,39 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
       CanonicalInitialAdmissionRequest request) {
     harness
         .transactions()
-        .executeWithoutResult(
-            status ->
-                harness
-                    .dsl()
-                    .execute(
-                        "INSERT INTO game_session_canonical_initial_admission_attempt "
-                            + "(target_namespace, initial_admission_request_id, request_digest, "
-                            + "canonical_tenant_id, world_slug, realm_id, playable_state_namespace_id, "
-                            + "playable_state_scope, canonical_game_instance_id, game_session_tenant_id, "
-                            + "game_instance_id, canonical_version_id, runtime_version_id, "
-                            + "expected_catalog_revision, origin_kind, expected_prior_pointer_version, "
-                            + "active_lifecycle_epoch, hold_id, hold_fence, hold_binding_digest, status, "
-                            + "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                            + "?, ?, ?, ?, ?, ?, 'PENDING', clock_timestamp(), clock_timestamp())",
-                        request.targetNamespace(),
-                        request.initialAdmissionRequestId(),
-                        request.requestDigest(),
-                        request.canonicalTenantId(),
-                        request.worldSlug(),
-                        request.realmId(),
-                        request.playableStateNamespaceId(),
-                        request.playableStateScope(),
-                        request.canonicalGameInstanceId(),
-                        target.launch().association().gameSessionTenantId(),
-                        target.launch().gameInstanceId(),
-                        request.canonicalVersionId(),
-                        target.launch().runtimeVersionId(),
-                        request.expectedCatalogRevision(),
-                        request.originKind().name(),
-                        request.expectedPriorPointerVersion(),
-                        request.activeLifecycleEpoch(),
-                        request.holdId(),
-                        request.holdFence(),
-                        request.holdBindingDigest()));
+        .executeWithoutResult(status ->
+            harness
+                .dsl()
+                .execute(
+                    "INSERT INTO game_session_canonical_initial_admission_attempt "
+                        + "(target_namespace, initial_admission_request_id, request_digest, "
+                        + "canonical_tenant_id, world_slug, realm_id, playable_state_namespace_id, "
+                        + "playable_state_scope, canonical_game_instance_id, game_session_tenant_id, "
+                        + "game_instance_id, canonical_version_id, runtime_version_id, "
+                        + "expected_catalog_revision, origin_kind, expected_prior_pointer_version, "
+                        + "active_lifecycle_epoch, hold_id, hold_fence, hold_binding_digest, status, "
+                        + "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        + "?, ?, ?, ?, ?, ?, 'PENDING', clock_timestamp(), clock_timestamp())",
+                    request.targetNamespace(),
+                    request.initialAdmissionRequestId(),
+                    request.requestDigest(),
+                    request.canonicalTenantId(),
+                    request.worldSlug(),
+                    request.realmId(),
+                    request.playableStateNamespaceId(),
+                    request.playableStateScope(),
+                    request.canonicalGameInstanceId(),
+                    target.launch().association().gameSessionTenantId(),
+                    target.launch().gameInstanceId(),
+                    request.canonicalVersionId(),
+                    target.launch().runtimeVersionId(),
+                    request.expectedCatalogRevision(),
+                    request.originKind().name(),
+                    request.expectedPriorPointerVersion(),
+                    request.activeLifecycleEpoch(),
+                    request.holdId(),
+                    request.holdFence(),
+                    request.holdBindingDigest()));
   }
 
   private static CanonicalInitialAdmissionRepository repository(

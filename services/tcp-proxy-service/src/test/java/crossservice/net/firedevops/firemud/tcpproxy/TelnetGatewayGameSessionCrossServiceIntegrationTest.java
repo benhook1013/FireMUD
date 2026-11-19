@@ -125,19 +125,18 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     assertThat(GAME_SESSION_STUB.stub().receivedCommands())
         .contains("WORLDS", "LOGIN demo@example.com swordfish", "PLAY demo", "look");
     assertThat(GAME_SESSION_STUB.stub().receivedHandshakeHeaders())
-        .anySatisfy(
-            headers -> {
-              assertLoopbackAddress(headers.getFirst("X-Client-IP"));
-              assertLoopbackAddress(headers.getFirst("X-Proxy-Client-IP"));
-              assertThat(headers.getFirst("X-Proxy-Connection-Id")).isNotBlank();
-              assertThat(headers.getFirst("X-Game-Instance-Id")).isEqualTo("1");
-              assertThat(headers.getFirst("X-Proxy-Game-Instance-Id")).isEqualTo("1");
-              assertThat(headers.getFirst("X-Tenant-Id")).isEqualTo("1");
-              assertThat(headers.getFirst("X-Proxy-Tenant-Id")).isEqualTo("1");
-              assertThat(headers.getFirst("X-World-Slug")).isEqualTo("demo");
-              assertThat(headers.getFirst("X-Realm-Slug")).isEqualTo("production");
-              assertThat(headers.getFirst("X-Pointer-Version")).isEqualTo("1");
-            });
+        .anySatisfy(headers -> {
+          assertLoopbackAddress(headers.getFirst("X-Client-IP"));
+          assertLoopbackAddress(headers.getFirst("X-Proxy-Client-IP"));
+          assertThat(headers.getFirst("X-Proxy-Connection-Id")).isNotBlank();
+          assertThat(headers.getFirst("X-Game-Instance-Id")).isEqualTo("1");
+          assertThat(headers.getFirst("X-Proxy-Game-Instance-Id")).isEqualTo("1");
+          assertThat(headers.getFirst("X-Tenant-Id")).isEqualTo("1");
+          assertThat(headers.getFirst("X-Proxy-Tenant-Id")).isEqualTo("1");
+          assertThat(headers.getFirst("X-World-Slug")).isEqualTo("demo");
+          assertThat(headers.getFirst("X-Realm-Slug")).isEqualTo("production");
+          assertThat(headers.getFirst("X-Pointer-Version")).isEqualTo("1");
+        });
   }
 
   private static void assertLoopbackAddress(String address) {

@@ -310,15 +310,14 @@ public class ScriptGameplayCommandHandoffServiceImpl
     if (isReconciliationRequired(downstreamResult)) {
       if (!normalize(downstreamResult.commandId()).isBlank()) {
         try {
-          return executeResponseTransaction(
-              () ->
-                  persistReconciliationRequiredCommandId(
-                      workItem,
-                      command,
-                      dispatchId,
-                      downstreamResult,
-                      preparation.intentId(),
-                      preparation.intentRowVersion()));
+          return executeResponseTransaction(() ->
+              persistReconciliationRequiredCommandId(
+                  workItem,
+                  command,
+                  dispatchId,
+                  downstreamResult,
+                  preparation.intentId(),
+                  preparation.intentRowVersion()));
         } catch (RuntimeException ex) {
           LOGGER.warn(
               "Unable to persist retained Game Session command identity for workItemId={} commandOrdinal={}; retaining in-flight evidence",
@@ -330,15 +329,14 @@ public class ScriptGameplayCommandHandoffServiceImpl
       return downstreamResult;
     }
     try {
-      return executeResponseTransaction(
-          () ->
-              persistDownstreamResponse(
-                  workItem,
-                  command,
-                  dispatchId,
-                  downstreamResult,
-                  preparation.intentId(),
-                  preparation.intentRowVersion()));
+      return executeResponseTransaction(() ->
+          persistDownstreamResponse(
+              workItem,
+              command,
+              dispatchId,
+              downstreamResult,
+              preparation.intentId(),
+              preparation.intentRowVersion()));
     } catch (RuntimeException ex) {
       LOGGER.warn(
           "Unable to persist script handoff response for workItemId={} commandOrdinal={}; retaining in-flight evidence",
@@ -391,11 +389,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
       action.run();
       return;
     }
-    handoffTransactionTemplate.execute(
-        status -> {
-          action.run();
-          return null;
-        });
+    handoffTransactionTemplate.execute(status -> {
+      action.run();
+      return null;
+    });
   }
 
   private HandoffResult executeRpcWithoutLocalTransaction(RpcCall rpcCall) {
@@ -1225,40 +1222,37 @@ public class ScriptGameplayCommandHandoffServiceImpl
       String dispatchId,
       WorkItemIntentState intentState) {
     try {
-      return executeRpcWithoutLocalTransaction(
-          () -> {
-            Optional<ScriptWorkItem> persistedWorkItem =
-                workItemRepository.findById(workItem.getId());
-            Optional<ScriptHandoffEvent> persistedIntent =
-                handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal(
-                    workItem.getTenantId(), workItem.getId(), command.ordinal());
-            if (persistedIntent.isPresent()) {
-              ScriptHandoffEvent intent = persistedIntent.orElseThrow();
-              ScriptWorkItem identitySource = persistedWorkItem.orElse(workItem);
-              if (!handoffIdentityMatches(intent, identitySource, command, dispatchId)) {
-                return reconciliationRequiredResult(
-                    "persisted handoff intent identity does not match request; reconciliation is required");
-              }
-              if (!isAcceptedHandoff(intent) && isHandoffInFlightIntent(intent)) {
-                return retainedInFlightHandoffResult(intent);
-              }
-              if (!isDefinitiveNonAcceptedHandoff(intent)) {
-                return reconciliationRequiredResult(
-                    "handoff intent may have committed; reconciliation is required");
-              }
-            }
-            if (persistedWorkItem.isEmpty()) {
-              return reconciliationRequiredResult(
-                  "handoff preparation outcome could not be confirmed");
-            }
-            ScriptWorkItem persisted = persistedWorkItem.orElseThrow();
-            if (!Objects.equals(persisted.getStatus(), intentState.status())
-                || persisted.getRowVersion() != intentState.rowVersion()) {
-              return reconciliationRequiredResult(
-                  "work item state changed while handoff preparation outcome was uncertain");
-            }
-            return retryablePreparationResult();
-          });
+      return executeRpcWithoutLocalTransaction(() -> {
+        Optional<ScriptWorkItem> persistedWorkItem = workItemRepository.findById(workItem.getId());
+        Optional<ScriptHandoffEvent> persistedIntent =
+            handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal(
+                workItem.getTenantId(), workItem.getId(), command.ordinal());
+        if (persistedIntent.isPresent()) {
+          ScriptHandoffEvent intent = persistedIntent.orElseThrow();
+          ScriptWorkItem identitySource = persistedWorkItem.orElse(workItem);
+          if (!handoffIdentityMatches(intent, identitySource, command, dispatchId)) {
+            return reconciliationRequiredResult(
+                "persisted handoff intent identity does not match request; reconciliation is required");
+          }
+          if (!isAcceptedHandoff(intent) && isHandoffInFlightIntent(intent)) {
+            return retainedInFlightHandoffResult(intent);
+          }
+          if (!isDefinitiveNonAcceptedHandoff(intent)) {
+            return reconciliationRequiredResult(
+                "handoff intent may have committed; reconciliation is required");
+          }
+        }
+        if (persistedWorkItem.isEmpty()) {
+          return reconciliationRequiredResult("handoff preparation outcome could not be confirmed");
+        }
+        ScriptWorkItem persisted = persistedWorkItem.orElseThrow();
+        if (!Objects.equals(persisted.getStatus(), intentState.status())
+            || persisted.getRowVersion() != intentState.rowVersion()) {
+          return reconciliationRequiredResult(
+              "work item state changed while handoff preparation outcome was uncertain");
+        }
+        return retryablePreparationResult();
+      });
     } catch (RuntimeException readbackFailure) {
       LOGGER.warn(
           "Unable to read back failed script handoff preparation for workItemId={} commandOrdinal={}; retaining in-flight evidence",
@@ -1572,14 +1566,13 @@ public class ScriptGameplayCommandHandoffServiceImpl
       ScriptWorkItem workItem, String stage, String outcome, String reason, Instant now) {
     auditRepository
         .findByWorkItemId(workItem.getId())
-        .ifPresent(
-            audit -> {
-              audit.setFinalStage(stage);
-              audit.setFinalOutcome(outcome);
-              audit.setFinalReason(reason);
-              audit.setUpdatedAt(now);
-              auditRepository.save(audit);
-            });
+        .ifPresent(audit -> {
+          audit.setFinalStage(stage);
+          audit.setFinalOutcome(outcome);
+          audit.setFinalReason(reason);
+          audit.setUpdatedAt(now);
+          auditRepository.save(audit);
+        });
   }
 
   private static String dispatchId(ScriptWorkItem workItem, int ordinal) {
@@ -1677,11 +1670,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
       handoffEventRepository
           .findByTenantIdAndWorkItemIdAndCommandOrdinal(
               workItem.getTenantId(), workItem.getId(), command.ordinal())
-          .ifPresent(
-              existing -> {
-                event.setId(existing.getId());
-                event.setRowVersion(existing.getRowVersion());
-              });
+          .ifPresent(existing -> {
+            event.setId(existing.getId());
+            event.setRowVersion(existing.getRowVersion());
+          });
     }
     ScriptHandoffEvent saved = handoffEventRepository.save(event);
     return saved == null ? event : saved;

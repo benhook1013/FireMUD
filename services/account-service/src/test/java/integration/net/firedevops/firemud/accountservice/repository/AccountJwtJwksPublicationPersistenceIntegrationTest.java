@@ -145,81 +145,75 @@ class AccountJwtJwksPublicationPersistenceIntegrationTest {
         inTransaction(
             context, () -> desiredRepository.readCurrentGenerationRequest(PROD_BINDING, trust()));
     String invalidMarker = marker.replace("\"pending\":{", "\"pending\":{\"unexpected\":true,");
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        publicationRepository.recordPrepublicationIntent(
-                            PROD_BINDING,
-                            trust(),
-                            result,
-                            currentRequest,
-                            API_DIGEST,
-                            API_REVISION,
-                            CONFIG_MAP_UID,
-                            "41",
-                            expectedSnapshotDigest,
-                            desiredJwks,
-                            invalidMarker)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    publicationRepository.recordPrepublicationIntent(
+                        PROD_BINDING,
+                        trust(),
+                        result,
+                        currentRequest,
+                        API_DIGEST,
+                        API_REVISION,
+                        CONFIG_MAP_UID,
+                        "41",
+                        expectedSnapshotDigest,
+                        desiredJwks,
+                        invalidMarker)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        publicationRepository.recordPrepublicationIntent(
-                            PROD_BINDING,
-                            trust(),
-                            result,
-                            currentRequest,
-                            API_DIGEST,
-                            API_REVISION,
-                            CONFIG_MAP_UID,
-                            "41",
-                            expectedSnapshotDigest,
-                            desiredJwks,
-                            invalidBindingMarker)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    publicationRepository.recordPrepublicationIntent(
+                        PROD_BINDING,
+                        trust(),
+                        result,
+                        currentRequest,
+                        API_DIGEST,
+                        API_REVISION,
+                        CONFIG_MAP_UID,
+                        "41",
+                        expectedSnapshotDigest,
+                        desiredJwks,
+                        invalidBindingMarker)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        publicationRepository.recordPrepublicationIntent(
-                            PROD_BINDING,
-                            trust(),
-                            result,
-                            currentRequest,
-                            API_DIGEST,
-                            API_REVISION,
-                            CONFIG_MAP_UID,
-                            "41",
-                            expectedSnapshotDigest,
-                            jwks(
-                                mutateJwk(retainedJwk, "key_ops", List.of("sign")),
-                                result.publicJwkJson()),
-                            marker)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    publicationRepository.recordPrepublicationIntent(
+                        PROD_BINDING,
+                        trust(),
+                        result,
+                        currentRequest,
+                        API_DIGEST,
+                        API_REVISION,
+                        CONFIG_MAP_UID,
+                        "41",
+                        expectedSnapshotDigest,
+                        jwks(
+                            mutateJwk(retainedJwk, "key_ops", List.of("sign")),
+                            result.publicJwkJson()),
+                        marker)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        publicationRepository.recordPrepublicationIntent(
-                            PROD_BINDING,
-                            trust(),
-                            result,
-                            currentRequest,
-                            API_DIGEST,
-                            API_REVISION,
-                            CONFIG_MAP_UID,
-                            "41",
-                            expectedSnapshotDigest,
-                            jwks(
-                                mutateJwk(retainedJwk, "unexpected", "field"),
-                                result.publicJwkJson()),
-                            marker)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    publicationRepository.recordPrepublicationIntent(
+                        PROD_BINDING,
+                        trust(),
+                        result,
+                        currentRequest,
+                        API_DIGEST,
+                        API_REVISION,
+                        CONFIG_MAP_UID,
+                        "41",
+                        expectedSnapshotDigest,
+                        jwks(mutateJwk(retainedJwk, "unexpected", "field"), result.publicJwkJson()),
+                        marker)))
         .isInstanceOf(DataAccessException.class);
     var intent =
         inTransaction(
@@ -278,36 +272,33 @@ class AccountJwtJwksPublicationPersistenceIntegrationTest {
     assertThat(count(context, "account_jwt_jwks_publication_receipts")).isEqualTo(1L);
     assertThat(count(context, "account_jwt_jwks_mount_observations")).isEqualTo(1L);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        context
-                            .dsl()
-                            .execute(
-                                "UPDATE account_jwt_jwks_prepublication_intents "
-                                    + "SET public_data_digest = ? WHERE operation_id = ?",
-                                "f".repeat(64),
-                                result.operationId())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    context
+                        .dsl()
+                        .execute(
+                            "UPDATE account_jwt_jwks_prepublication_intents "
+                                + "SET public_data_digest = ? WHERE operation_id = ?",
+                            "f".repeat(64),
+                            result.operationId())))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        context
-                            .dsl()
-                            .execute(
-                                "DELETE FROM account_jwt_jwks_publication_receipts "
-                                    + "WHERE operation_id = ?",
-                                result.operationId())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    context
+                        .dsl()
+                        .execute(
+                            "DELETE FROM account_jwt_jwks_publication_receipts "
+                                + "WHERE operation_id = ?",
+                            result.operationId())))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () -> context.dsl().execute("TRUNCATE account_jwt_jwks_mount_observations")))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () -> context.dsl().execute("TRUNCATE account_jwt_jwks_mount_observations")))
         .isInstanceOf(DataAccessException.class);
 
     assertThat(count(context, "account_jwt_jwks_prepublication_intents")).isEqualTo(1L);
@@ -318,12 +309,11 @@ class AccountJwtJwksPublicationPersistenceIntegrationTest {
                 context, () -> publicationRepository.readCurrentPublication(PROD_BINDING, trust())))
         .isPresent()
         .get()
-        .satisfies(
-            evidence -> {
-              assertThat(evidence.intent()).isEqualTo(intent);
-              assertThat(evidence.receipt()).contains(receipt);
-              assertThat(evidence.mountedCorrespondence()).contains(mountObservation);
-            });
+        .satisfies(evidence -> {
+          assertThat(evidence.intent()).isEqualTo(intent);
+          assertThat(evidence.receipt()).contains(receipt);
+          assertThat(evidence.mountedCorrespondence()).contains(mountObservation);
+        });
   }
 
   private TestContext newTestContext() {

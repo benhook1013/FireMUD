@@ -73,10 +73,9 @@ public final class CanonicalGameplayActorSelection {
     }
     var actors =
         roster.actors().stream()
-            .map(
-                actor ->
-                    new CanonicalGameplayRosterClient.RosterActor(
-                        UUID.fromString(actor.getCharacterUuid()), actor.getDisplayName()))
+            .map(actor ->
+                new CanonicalGameplayRosterClient.RosterActor(
+                    UUID.fromString(actor.getCharacterUuid()), actor.getDisplayName()))
             .toList();
     return select(
         roster.canonicalAccountUuid(),

@@ -159,10 +159,9 @@ class StartSessionOperatorRedemptionClientMtlsTest {
 
       assertThat(failure)
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              thrown ->
-                  assertThat(((StatusRuntimeException) thrown).getStatus().getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED))
+          .satisfies(thrown ->
+              assertThat(((StatusRuntimeException) thrown).getStatus().getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED))
           .hasMessageNotContaining(REFERENCE);
       assertThat(rpcStarts).hasValue(0);
       assertThat(applicationCalls).hasValue(0);

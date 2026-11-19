@@ -152,11 +152,10 @@ class InitialGameplayLoginCleanupOwnerTest {
     } else if (failure.equals("freeze-commit")) {
       fixture.transactions.failAtCommit = 2;
     } else {
-      doAnswer(
-              invocation ->
-                  fixture.snapshot.frozenRetirementRequest().isPresent()
-                      ? Optional.empty()
-                      : Optional.of(fixture.snapshot))
+      doAnswer(invocation ->
+              fixture.snapshot.frozenRetirementRequest().isPresent()
+                  ? Optional.empty()
+                  : Optional.of(fixture.snapshot))
           .when(fixture.journal)
           .readCommitted(ORIGINAL);
     }
@@ -390,85 +389,77 @@ class InitialGameplayLoginCleanupOwnerTest {
 
     private Fixture() {
       when(journal.reserve(ORIGINAL))
-          .thenAnswer(
-              invocation -> {
-                assertTransaction();
-                events.add("reserve");
-                return snapshot;
-              });
+          .thenAnswer(invocation -> {
+            assertTransaction();
+            events.add("reserve");
+            return snapshot;
+          });
       when(journal.readCommitted(ORIGINAL))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                events.add("read");
-                return Optional.of(snapshot);
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            events.add("read");
+            return Optional.of(snapshot);
+          });
       when(journal.abandon(ORIGINAL))
-          .thenAnswer(
-              invocation -> {
-                assertTransaction();
-                events.add("abandon");
-                snapshot =
-                    snapshot(
-                        ORIGINAL,
-                        true,
-                        snapshot.verifiedWitness(),
-                        snapshot.frozenRetirementRequest(),
-                        snapshot.retainedReceipt());
-                return snapshot;
-              });
+          .thenAnswer(invocation -> {
+            assertTransaction();
+            events.add("abandon");
+            snapshot =
+                snapshot(
+                    ORIGINAL,
+                    true,
+                    snapshot.verifiedWitness(),
+                    snapshot.frozenRetirementRequest(),
+                    snapshot.retainedReceipt());
+            return snapshot;
+          });
       when(journal.freezeRetirementRequest(ORIGINAL))
-          .thenAnswer(
-              invocation -> {
-                assertTransaction();
-                events.add("freeze");
-                snapshot =
-                    snapshot(
-                        ORIGINAL,
-                        true,
-                        snapshot.verifiedWitness(),
-                        Optional.of(
-                            snapshot
-                                .frozenRetirementRequest()
-                                .orElseGet(
-                                    () ->
-                                        InitialGameplayLoginJournalSnapshot.request(
-                                            ORIGINAL, snapshot.verifiedWitness().orElse(null)))),
-                        snapshot.retainedReceipt());
-                return snapshot;
-              });
+          .thenAnswer(invocation -> {
+            assertTransaction();
+            events.add("freeze");
+            snapshot =
+                snapshot(
+                    ORIGINAL,
+                    true,
+                    snapshot.verifiedWitness(),
+                    Optional.of(
+                        snapshot
+                            .frozenRetirementRequest()
+                            .orElseGet(() ->
+                                InitialGameplayLoginJournalSnapshot.request(
+                                    ORIGINAL, snapshot.verifiedWitness().orElse(null)))),
+                    snapshot.retainedReceipt());
+            return snapshot;
+          });
       when(journal.recordDisposalReceipt(any(), any()))
-          .thenAnswer(
-              invocation -> {
-                assertTransaction();
-                events.add("receipt");
-                snapshot =
-                    snapshot(
-                        ORIGINAL,
-                        true,
-                        snapshot.verifiedWitness(),
-                        snapshot.frozenRetirementRequest(),
-                        Optional.of(invocation.getArgument(1)));
-                return snapshot;
-              });
+          .thenAnswer(invocation -> {
+            assertTransaction();
+            events.add("receipt");
+            snapshot =
+                snapshot(
+                    ORIGINAL,
+                    true,
+                    snapshot.verifiedWitness(),
+                    snapshot.frozenRetirementRequest(),
+                    Optional.of(invocation.getArgument(1)));
+            return snapshot;
+          });
       when(closure.withAcknowledgedClosure(any(), any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(snapshot.abandoned()).isTrue();
-                events.add("closure");
-                Function<AcknowledgedClosure, CleanupObservation> continuation =
-                    invocation.getArgument(1);
-                return Optional.of(continuation.apply(new AcknowledgedClosure(ORIGINAL)));
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(snapshot.abandoned()).isTrue();
+            events.add("closure");
+            Function<AcknowledgedClosure, CleanupObservation> continuation =
+                invocation.getArgument(1);
+            return Optional.of(continuation.apply(new AcknowledgedClosure(ORIGINAL)));
+          });
       when(account.retireInitialGameplayLogin(any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(snapshot.frozenRetirementRequest()).contains(invocation.getArgument(0));
-                events.add("account");
-                return response;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(snapshot.frozenRetirementRequest()).contains(invocation.getArgument(0));
+            events.add("account");
+            return response;
+          });
     }
   }
 

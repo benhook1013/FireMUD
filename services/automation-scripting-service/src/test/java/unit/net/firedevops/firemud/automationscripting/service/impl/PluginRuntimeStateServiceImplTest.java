@@ -508,11 +508,10 @@ class PluginRuntimeStateServiceImplTest {
     when(historyRepository.find("1", "game-1", "plugin-1", "disable-noop"))
         .thenAnswer(invocation -> Optional.ofNullable(receipt[0]));
     when(historyRepository.insertOrGet(Mockito.any(PluginRuntimeRequestHistory.class)))
-        .thenAnswer(
-            invocation -> {
-              receipt[0] = invocation.getArgument(0);
-              return receipt[0];
-            });
+        .thenAnswer(invocation -> {
+          receipt[0] = invocation.getArgument(0);
+          return receipt[0];
+        });
     PluginRuntimeStateServiceImpl service = service(repository, eventRepository, historyRepository);
     PluginRuntimeStateService.PluginStateCommand command =
         new PluginRuntimeStateService.PluginStateCommand(
@@ -559,11 +558,10 @@ class PluginRuntimeStateServiceImplTest {
     when(historyRepository.find("1", "game-1", "plugin-1", "activate-noop"))
         .thenAnswer(invocation -> Optional.ofNullable(receipt[0]));
     when(historyRepository.insertOrGet(Mockito.any(PluginRuntimeRequestHistory.class)))
-        .thenAnswer(
-            invocation -> {
-              receipt[0] = invocation.getArgument(0);
-              return receipt[0];
-            });
+        .thenAnswer(invocation -> {
+          receipt[0] = invocation.getArgument(0);
+          return receipt[0];
+        });
     when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
         .thenReturn(
             publishedPluginVersion(
@@ -635,11 +633,10 @@ class PluginRuntimeStateServiceImplTest {
     when(historyRepository.find("1", "game-1", "plugin-1", "drain-1"))
         .thenAnswer(invocation -> Optional.ofNullable(receipt[0]));
     when(historyRepository.insertOrGet(Mockito.any(PluginRuntimeRequestHistory.class)))
-        .thenAnswer(
-            invocation -> {
-              receipt[0] = invocation.getArgument(0);
-              return receipt[0];
-            });
+        .thenAnswer(invocation -> {
+          receipt[0] = invocation.getArgument(0);
+          return receipt[0];
+        });
     PluginRuntimeStateServiceImpl service = service(repository, eventRepository, historyRepository);
     PluginRuntimeStateService.PluginStateCommand command =
         new PluginRuntimeStateService.PluginStateCommand(
@@ -652,11 +649,10 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(receipt[0].getPluginActivationEpoch()).isZero();
     assertThat(receipt[0].getLifecycleRevision()).isZero();
     assertThat(service.drain(command)).isFalse();
-    assertThatThrownBy(
-            () ->
-                service.drain(
-                    new PluginRuntimeStateService.PluginStateCommand(
-                        "1", "game-1", "plugin-1", "drain-1", "operator", "changed-reason")))
+    assertThatThrownBy(() ->
+            service.drain(
+                new PluginRuntimeStateService.PluginStateCommand(
+                    "1", "game-1", "plugin-1", "drain-1", "operator", "changed-reason")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id already records a different plugin request");
 
@@ -829,17 +825,16 @@ class PluginRuntimeStateServiceImplTest {
             preflightService,
             historyRepository);
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1",
-                        "game-1",
-                        "plugin-1",
-                        "plugin-v1",
-                        "shared-request",
-                        "operator",
-                        "activate")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1",
+                    "game-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "shared-request",
+                    "operator",
+                    "activate")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id already records a different plugin request");
 
@@ -869,11 +864,10 @@ class PluginRuntimeStateServiceImplTest {
             (tenantId, gameInstanceId, scriptPatchVersion, pluginId, pluginVersionId) -> {},
             historyRepository);
 
-    assertThatThrownBy(
-            () ->
-                service.drain(
-                    new PluginRuntimeStateService.PluginStateCommand(
-                        "1", "game-1", "plugin-1", "shared-request", "operator", "operator_drain")))
+    assertThatThrownBy(() ->
+            service.drain(
+                new PluginRuntimeStateService.PluginStateCommand(
+                    "1", "game-1", "plugin-1", "shared-request", "operator", "operator_drain")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id already records a different plugin request");
 
@@ -908,17 +902,16 @@ class PluginRuntimeStateServiceImplTest {
             preflightService,
             historyRepository);
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1",
-                        "game-1",
-                        "plugin-1",
-                        "plugin-v2",
-                        "activation-request",
-                        "operator",
-                        "activate")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1",
+                    "game-1",
+                    "plugin-1",
+                    "plugin-v2",
+                    "activation-request",
+                    "operator",
+                    "activate")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id already records a different plugin request");
 
@@ -940,17 +933,16 @@ class PluginRuntimeStateServiceImplTest {
         .thenReturn(Optional.of(existing));
     PluginRuntimeStateService service = service(repository, eventRepository, historyRepository);
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1",
-                        "game-1",
-                        "plugin-1",
-                        "plugin-v1",
-                        "reused-request",
-                        "operator",
-                        "activate")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1",
+                    "game-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "reused-request",
+                    "operator",
+                    "activate")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id has no immutable activation request history");
 
@@ -971,11 +963,10 @@ class PluginRuntimeStateServiceImplTest {
         .thenReturn(Optional.of(existing));
     PluginRuntimeStateService service = service(repository, eventRepository, historyRepository);
 
-    assertThatThrownBy(
-            () ->
-                service.disable(
-                    new PluginRuntimeStateService.PluginStateCommand(
-                        "1", "game-1", "plugin-1", "reused-request", "operator", "disable")))
+    assertThatThrownBy(() ->
+            service.disable(
+                new PluginRuntimeStateService.PluginStateCommand(
+                    "1", "game-1", "plugin-1", "reused-request", "operator", "disable")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id has no immutable plugin state request history");
 
@@ -1111,11 +1102,10 @@ class PluginRuntimeStateServiceImplTest {
             Mockito.mock(GameSessionControlPlaneClient.class),
             Mockito.mock(ScriptScheduleInstanceService.class));
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1", "game-1", "plugin-1", "", "req-1", "admin", "")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1", "game-1", "plugin-1", "", "req-1", "admin", "")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("target_plugin_version_id is required");
   }
@@ -1132,11 +1122,10 @@ class PluginRuntimeStateServiceImplTest {
             Mockito.mock(GameSessionControlPlaneClient.class),
             Mockito.mock(ScriptScheduleInstanceService.class));
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1", "game-1", "plugin-1", "plugin-v1", "r".repeat(129), "admin", "")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1", "game-1", "plugin-1", "plugin-v1", "r".repeat(129), "admin", "")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id must be at most 128 characters");
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
@@ -1155,11 +1144,10 @@ class PluginRuntimeStateServiceImplTest {
             Mockito.mock(GameSessionControlPlaneClient.class),
             Mockito.mock(ScriptScheduleInstanceService.class));
 
-    assertThatThrownBy(
-            () ->
-                service.disable(
-                    new PluginRuntimeStateService.PluginStateCommand(
-                        "1", "game-1", "plugin-1", "r".repeat(129), "admin", "")))
+    assertThatThrownBy(() ->
+            service.disable(
+                new PluginRuntimeStateService.PluginStateCommand(
+                    "1", "game-1", "plugin-1", "r".repeat(129), "admin", "")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("control_plane_request_id must be at most 128 characters");
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
@@ -1202,11 +1190,10 @@ class PluginRuntimeStateServiceImplTest {
             gameSessionClient,
             Mockito.mock(ScriptScheduleInstanceService.class));
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("PLUGIN_SIGNER_REVOKED: plugin signer is revoked for activation");
     Mockito.verifyNoInteractions(gameSessionClient);
@@ -1248,11 +1235,10 @@ class PluginRuntimeStateServiceImplTest {
             gameSessionClient,
             Mockito.mock(ScriptScheduleInstanceService.class));
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("PLUGIN_COMPONENT_POLICY_BLOCKED: plugin component policy blocks activation");
     Mockito.verifyNoInteractions(gameSessionClient);
@@ -1322,11 +1308,10 @@ class PluginRuntimeStateServiceImplTest {
             gameSessionClient,
             Mockito.mock(ScriptScheduleInstanceService.class));
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "PLUGIN_BASE_VERSION_MISMATCH: plugin base version does not match runtime version");
@@ -1365,11 +1350,10 @@ class PluginRuntimeStateServiceImplTest {
             gameSessionClient,
             scheduleInstanceService);
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("GAME_INSTANCE_RUNTIME_UNAVAILABLE: runtimeVersionId must be positive");
     Mockito.verify(gameDesignClient, Mockito.never())
@@ -1440,11 +1424,10 @@ class PluginRuntimeStateServiceImplTest {
             gameSessionClient,
             Mockito.mock(ScriptScheduleInstanceService.class));
 
-    assertThatThrownBy(
-            () ->
-                service.setActiveVersion(
-                    new PluginRuntimeStateService.ActivationCommand(
-                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+    assertThatThrownBy(() ->
+            service.setActiveVersion(
+                new PluginRuntimeStateService.ActivationCommand(
+                    "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "PLUGIN_ABILITY_SCHEMA_MISMATCH: plugin ability schema digest does not match runtime version");
@@ -1593,18 +1576,17 @@ class PluginRuntimeStateServiceImplTest {
     AtomicInteger committedTransactions = new AtomicInteger();
     List<String> lockedPluginIds = new ArrayList<>();
     when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
-        .thenAnswer(
-            invocation -> {
-              TransactionDefinition definition = invocation.getArgument(0);
-              assertThat(definition.getPropagationBehavior())
-                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-              assertThat(transactionActive.get()).isFalse();
-              assertThat(lifecycleLockHeld.get()).isFalse();
-              assertThat(acquiredLocks.get()).isEqualTo(committedTransactions.get());
-              assertThat(externalReads.get()).isEqualTo(4);
-              transactionActive.set(true);
-              return new SimpleTransactionStatus();
-            });
+        .thenAnswer(invocation -> {
+          TransactionDefinition definition = invocation.getArgument(0);
+          assertThat(definition.getPropagationBehavior())
+              .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+          assertThat(transactionActive.get()).isFalse();
+          assertThat(lifecycleLockHeld.get()).isFalse();
+          assertThat(acquiredLocks.get()).isEqualTo(committedTransactions.get());
+          assertThat(externalReads.get()).isEqualTo(4);
+          transactionActive.set(true);
+          return new SimpleTransactionStatus();
+        });
     Mockito.doAnswer(
             invocation -> {
               assertThat(transactionActive.get()).isTrue();
@@ -1648,12 +1630,11 @@ class PluginRuntimeStateServiceImplTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(gameDesignClient.getPublishedPluginVersion(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenAnswer(
-            invocation -> {
-              externalReads.incrementAndGet();
-              return publishedPluginVersion(
-                  PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, true);
-            });
+        .thenAnswer(invocation -> {
+          externalReads.incrementAndGet();
+          return publishedPluginVersion(
+              PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, true);
+        });
     GetGameInstanceRuntimeStateResponse runtimeResponse =
         GetGameInstanceRuntimeStateResponse.newBuilder()
             .setRuntimeState(
@@ -1665,11 +1646,10 @@ class PluginRuntimeStateServiceImplTest {
                     .build())
             .build();
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
-        .thenAnswer(
-            invocation -> {
-              externalReads.incrementAndGet();
-              return runtimeResponse;
-            });
+        .thenAnswer(invocation -> {
+          externalReads.incrementAndGet();
+          return runtimeResponse;
+        });
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
             repository,

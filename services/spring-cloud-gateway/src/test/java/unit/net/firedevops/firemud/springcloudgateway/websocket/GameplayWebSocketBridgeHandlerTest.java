@@ -95,11 +95,10 @@ class GameplayWebSocketBridgeHandlerTest {
     when(downstream.send(any())).thenReturn(Mono.never());
     when(downstream.receive()).thenReturn(Flux.never());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              upstreamHeaders.set(invocation.getArgument(1));
-              return Mono.never();
-            });
+        .thenAnswer(invocation -> {
+          upstreamHeaders.set(invocation.getArgument(1));
+          return Mono.never();
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -213,14 +212,13 @@ class GameplayWebSocketBridgeHandlerTest {
     when(upstream.receive()).thenReturn(Flux.empty());
     when(upstream.closeStatus()).thenReturn(Mono.empty());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              if (!failAfterTransportConnect) {
-                return Mono.error(new IllegalStateException("connection failed"));
-              }
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          if (!failAfterTransportConnect) {
+            return Mono.error(new IllegalStateException("connection failed"));
+          }
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -231,12 +229,11 @@ class GameplayWebSocketBridgeHandlerTest {
                 "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
 
     StepVerifier.withVirtualTime(() -> handler.handle(downstream))
-        .then(
-            () -> {
-              verify(client)
-                  .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
-              downstreamClosed.tryEmitEmpty();
-            })
+        .then(() -> {
+          verify(client)
+              .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+          downstreamClosed.tryEmitEmpty();
+        })
         .thenAwait(Duration.ofSeconds(2))
         .expectComplete()
         .verify(Duration.ofSeconds(5));
@@ -420,11 +417,10 @@ class GameplayWebSocketBridgeHandlerTest {
     when(upstream.receive()).thenReturn(Flux.never());
     when(upstream.closeStatus()).thenReturn(Mono.empty());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -485,11 +481,10 @@ class GameplayWebSocketBridgeHandlerTest {
     when(upstream.receive()).thenReturn(Flux.never());
     when(upstream.closeStatus()).thenReturn(Mono.empty());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -547,11 +542,10 @@ class GameplayWebSocketBridgeHandlerTest {
     when(upstream.receive()).thenReturn(Flux.never());
     when(upstream.closeStatus()).thenReturn(Mono.empty());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -611,11 +605,10 @@ class GameplayWebSocketBridgeHandlerTest {
     when(upstream.receive()).thenReturn(Flux.never());
     when(upstream.closeStatus()).thenReturn(Mono.empty());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -631,19 +624,17 @@ class GameplayWebSocketBridgeHandlerTest {
     StepVerifier.create(handler.handle(downstream))
         .expectSubscription()
         .thenAwait(Duration.ofMillis(100))
-        .then(
-            () -> {
-              handler.stop(() -> firstShutdownComplete.set(true));
-              handler.stop(() -> secondShutdownComplete.set(true));
-              assertThat(firstShutdownComplete).isFalse();
-              assertThat(secondShutdownComplete).isFalse();
-              closeWrite.tryEmitEmpty();
-            })
-        .then(
-            () -> {
-              assertThat(firstShutdownComplete).isTrue();
-              assertThat(secondShutdownComplete).isTrue();
-            })
+        .then(() -> {
+          handler.stop(() -> firstShutdownComplete.set(true));
+          handler.stop(() -> secondShutdownComplete.set(true));
+          assertThat(firstShutdownComplete).isFalse();
+          assertThat(secondShutdownComplete).isFalse();
+          closeWrite.tryEmitEmpty();
+        })
+        .then(() -> {
+          assertThat(firstShutdownComplete).isTrue();
+          assertThat(secondShutdownComplete).isTrue();
+        })
         .thenCancel()
         .verify();
 
@@ -682,30 +673,28 @@ class GameplayWebSocketBridgeHandlerTest {
     when(downstream.getHandshakeInfo()).thenReturn(handshakeInfo);
     when(handshakeInfo.getHeaders()).thenReturn(headers);
     when(downstream.send(any()))
-        .thenAnswer(
-            invocation -> {
-              Publisher<WebSocketMessage> outbound = invocation.getArgument(0);
-              Flux.from(outbound)
-                  .subscribe(
-                      new BaseSubscriber<>() {
-                        @Override
-                        protected void hookOnSubscribe(Subscription subscription) {
-                          // Keep the outbound sink subscribed without consuming its first item.
-                        }
-                      });
-              return Mono.never();
-            });
+        .thenAnswer(invocation -> {
+          Publisher<WebSocketMessage> outbound = invocation.getArgument(0);
+          Flux.from(outbound)
+              .subscribe(
+                  new BaseSubscriber<>() {
+                    @Override
+                    protected void hookOnSubscribe(Subscription subscription) {
+                      // Keep the outbound sink subscribed without consuming its first item.
+                    }
+                  });
+          return Mono.never();
+        });
     when(downstream.receive()).thenReturn(Flux.never());
     when(downstream.close(any(CloseStatus.class))).thenReturn(Mono.empty());
     when(upstream.send(any())).thenReturn(Mono.never());
     when(upstream.receive()).thenReturn(Flux.just(firstPayload, secondPayload));
     when(upstream.closeStatus()).thenReturn(Mono.empty());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -764,21 +753,19 @@ class GameplayWebSocketBridgeHandlerTest {
     when(downstream.send(any())).thenReturn(Mono.never());
     when(downstream.receive()).thenReturn(downstreamMessages.asFlux());
     when(downstream.close(any(CloseStatus.class)))
-        .thenAnswer(
-            invocation -> {
-              closeStatus.set(invocation.getArgument(0));
-              closeInvoked.countDown();
-              return closeWrite.asMono();
-            });
+        .thenAnswer(invocation -> {
+          closeStatus.set(invocation.getArgument(0));
+          closeInvoked.countDown();
+          return closeWrite.asMono();
+        });
     when(upstream.send(any())).thenReturn(Mono.never());
     when(upstream.receive()).thenReturn(Flux.never());
     when(upstream.closeStatus()).thenReturn(Mono.empty());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -790,19 +777,17 @@ class GameplayWebSocketBridgeHandlerTest {
 
     StepVerifier.create(handler.handle(downstream))
         .expectSubscription()
-        .then(
-            () -> {
-              assertThat(downstreamMessages.tryEmitNext(payload)).isEqualTo(Sinks.EmitResult.OK);
-              downstreamMessages.tryEmitNext(payload);
-            })
-        .then(
-            () -> {
-              awaitClose(closeInvoked);
-              assertThat(closeStatus.get()).isNotNull();
-              assertThat(closeStatus.get().getCode()).isEqualTo(1013);
-              assertThat(closeStatus.get().getReason()).isEqualTo("backend_unavailable");
-              closeWrite.tryEmitEmpty();
-            })
+        .then(() -> {
+          assertThat(downstreamMessages.tryEmitNext(payload)).isEqualTo(Sinks.EmitResult.OK);
+          downstreamMessages.tryEmitNext(payload);
+        })
+        .then(() -> {
+          awaitClose(closeInvoked);
+          assertThat(closeStatus.get()).isNotNull();
+          assertThat(closeStatus.get().getCode()).isEqualTo(1013);
+          assertThat(closeStatus.get().getReason()).isEqualTo("backend_unavailable");
+          closeWrite.tryEmitEmpty();
+        })
         .thenCancel()
         .verify();
   }
@@ -829,34 +814,31 @@ class GameplayWebSocketBridgeHandlerTest {
     when(downstream.send(any())).thenReturn(Mono.never());
     when(downstream.receive()).thenReturn(downstreamMessages.asFlux());
     when(downstream.close(any(CloseStatus.class)))
-        .thenAnswer(
-            invocation -> {
-              closeStatus.set(invocation.getArgument(0));
-              closeInvoked.countDown();
-              return closeWrite.asMono();
-            });
+        .thenAnswer(invocation -> {
+          closeStatus.set(invocation.getArgument(0));
+          closeInvoked.countDown();
+          return closeWrite.asMono();
+        });
     when(upstream.send(any()))
-        .thenAnswer(
-            invocation -> {
-              Publisher<WebSocketMessage> outbound = invocation.getArgument(0);
-              Flux.from(outbound)
-                  .subscribe(
-                      new BaseSubscriber<>() {
-                        @Override
-                        protected void hookOnSubscribe(Subscription subscription) {
-                          // Keep the inbound sink subscribed without consuming its buffer.
-                        }
-                      });
-              return Mono.never();
-            });
+        .thenAnswer(invocation -> {
+          Publisher<WebSocketMessage> outbound = invocation.getArgument(0);
+          Flux.from(outbound)
+              .subscribe(
+                  new BaseSubscriber<>() {
+                    @Override
+                    protected void hookOnSubscribe(Subscription subscription) {
+                      // Keep the inbound sink subscribed without consuming its buffer.
+                    }
+                  });
+          return Mono.never();
+        });
     when(upstream.receive()).thenReturn(Flux.never());
     when(upstream.closeStatus()).thenReturn(Mono.empty());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -868,20 +850,17 @@ class GameplayWebSocketBridgeHandlerTest {
 
     StepVerifier.create(handler.handle(downstream))
         .expectSubscription()
-        .then(
-            () -> {
-              assertThat(downstreamMessages.tryEmitNext(firstPayload))
-                  .isEqualTo(Sinks.EmitResult.OK);
-              downstreamMessages.tryEmitNext(secondPayload);
-            })
-        .then(
-            () -> {
-              awaitClose(closeInvoked);
-              assertThat(closeStatus.get()).isNotNull();
-              assertThat(closeStatus.get().getCode()).isEqualTo(1013);
-              assertThat(closeStatus.get().getReason()).isEqualTo("backend_unavailable");
-              closeWrite.tryEmitEmpty();
-            })
+        .then(() -> {
+          assertThat(downstreamMessages.tryEmitNext(firstPayload)).isEqualTo(Sinks.EmitResult.OK);
+          downstreamMessages.tryEmitNext(secondPayload);
+        })
+        .then(() -> {
+          awaitClose(closeInvoked);
+          assertThat(closeStatus.get()).isNotNull();
+          assertThat(closeStatus.get().getCode()).isEqualTo(1013);
+          assertThat(closeStatus.get().getReason()).isEqualTo("backend_unavailable");
+          closeWrite.tryEmitEmpty();
+        })
         .thenCancel()
         .verify();
   }
@@ -903,30 +882,28 @@ class GameplayWebSocketBridgeHandlerTest {
     when(downstream.getHandshakeInfo()).thenReturn(handshakeInfo);
     when(handshakeInfo.getHeaders()).thenReturn(headers);
     when(downstream.send(any()))
-        .thenAnswer(
-            invocation -> {
-              Publisher<WebSocketMessage> outbound = invocation.getArgument(0);
-              Flux.from(outbound)
-                  .subscribe(
-                      new BaseSubscriber<>() {
-                        @Override
-                        protected void hookOnSubscribe(Subscription subscription) {
-                          subscription.cancel();
-                        }
-                      });
-              return Mono.never();
-            });
+        .thenAnswer(invocation -> {
+          Publisher<WebSocketMessage> outbound = invocation.getArgument(0);
+          Flux.from(outbound)
+              .subscribe(
+                  new BaseSubscriber<>() {
+                    @Override
+                    protected void hookOnSubscribe(Subscription subscription) {
+                      subscription.cancel();
+                    }
+                  });
+          return Mono.never();
+        });
     when(downstream.receive()).thenReturn(Flux.never());
     when(downstream.close(any(CloseStatus.class))).thenReturn(Mono.empty());
     when(upstream.send(any())).thenReturn(Mono.never());
     when(upstream.receive()).thenReturn(Flux.just(payload));
     when(upstream.closeStatus()).thenReturn(Mono.empty());
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
@@ -985,11 +962,10 @@ class GameplayWebSocketBridgeHandlerTest {
     when(upstream.receive()).thenReturn(Flux.empty());
     when(upstream.closeStatus()).thenReturn(Mono.just(plannedDrain));
     when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
-        .thenAnswer(
-            invocation -> {
-              WebSocketHandler upstreamHandler = invocation.getArgument(2);
-              return upstreamHandler.handle(upstream);
-            });
+        .thenAnswer(invocation -> {
+          WebSocketHandler upstreamHandler = invocation.getArgument(2);
+          return upstreamHandler.handle(upstream);
+        });
 
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(

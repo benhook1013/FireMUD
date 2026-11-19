@@ -173,15 +173,14 @@ class PublishedRealmEntryPolicyEvidenceTest {
     assertThat(evidence.policy().canonicalJson()).isEqualTo(policy.canonicalJson());
     assertThat(evidence.policyId()).isEqualTo(POLICY_ID);
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new PublishedRealmEntryPolicyEvidence(
-                    POLICY_ID,
-                    SOURCE_COMMIT_ID,
-                    SOURCE_REVISION_ID,
-                    "main-policy-v1",
-                    policy,
-                    "not-a-digest"));
+        .isThrownBy(() ->
+            new PublishedRealmEntryPolicyEvidence(
+                POLICY_ID,
+                SOURCE_COMMIT_ID,
+                SOURCE_REVISION_ID,
+                "main-policy-v1",
+                policy,
+                "not-a-digest"));
   }
 
   private static String digest(

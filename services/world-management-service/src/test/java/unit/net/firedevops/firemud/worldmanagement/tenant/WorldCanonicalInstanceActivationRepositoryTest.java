@@ -64,15 +64,14 @@ class WorldCanonicalInstanceActivationRepositoryTest {
     var repository = new WorldCanonicalInstanceActivationRepository(dsl, manager, lifecycle);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    assertThatThrownBy(
-            () ->
-                repository.activate(
-                    request(),
-                    new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
-                      public void requireHeld() {}
+    assertThatThrownBy(() ->
+            repository.activate(
+                request(),
+                new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+                  public void requireHeld() {}
 
-                      public void close() {}
-                    }))
+                  public void close() {}
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("must not join an ambient transaction");
 
@@ -114,13 +113,12 @@ class WorldCanonicalInstanceActivationRepositoryTest {
     String query =
         "SELECT * FROM world_canonical_instance_activation_fence "
             + "WHERE activation_request_id=? OR canonical_game_instance_id=?";
-    assertThatThrownBy(
-            () ->
-                context(provider(fixture, 2, 0, new AtomicInteger(), new AtomicInteger()))
-                    .fetchOne(
-                        query,
-                        input.worldActivationRequest().activationRequestId(),
-                        input.worldActivationRequest().canonicalGameInstanceId()))
+    assertThatThrownBy(() ->
+            context(provider(fixture, 2, 0, new AtomicInteger(), new AtomicInteger()))
+                .fetchOne(
+                    query,
+                    input.worldActivationRequest().activationRequestId(),
+                    input.worldActivationRequest().canonicalGameInstanceId()))
         .isInstanceOf(TooManyRowsException.class);
 
     AtomicInteger protectedQueries = new AtomicInteger();
@@ -143,13 +141,12 @@ class WorldCanonicalInstanceActivationRepositoryTest {
         "SELECT 1 FROM world_canonical_instance_activation_operation "
             + "WHERE activation_request_id=? "
             + "OR (canonical_game_instance_id=? AND outcome='COMMITTED')";
-    assertThatThrownBy(
-            () ->
-                context(provider(fixture, 0, 2, new AtomicInteger(), new AtomicInteger()))
-                    .fetchOne(
-                        query,
-                        input.worldActivationRequest().activationRequestId(),
-                        input.worldActivationRequest().canonicalGameInstanceId()))
+    assertThatThrownBy(() ->
+            context(provider(fixture, 0, 2, new AtomicInteger(), new AtomicInteger()))
+                .fetchOne(
+                    query,
+                    input.worldActivationRequest().activationRequestId(),
+                    input.worldActivationRequest().canonicalGameInstanceId()))
         .isInstanceOf(TooManyRowsException.class);
 
     AtomicInteger protectedQueries = new AtomicInteger();

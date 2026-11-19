@@ -31,25 +31,19 @@ final class WorldPublicationTerminalTestFixtures {
     var request = operation.world().request();
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new Participant(
-                        owner,
-                        Long.toString(
-                            operation
-                                .account()
-                                .input()
-                                .selection()
-                                .target()
-                                .gameDesignVersionRowId()),
-                        null,
-                        request.appliedCommitId(),
-                        owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        owner.equals("GAME_LOGIC") ? DIGEST : null,
-                        null,
-                        null))
+            .map(owner ->
+                new Participant(
+                    owner,
+                    Long.toString(
+                        operation.account().input().selection().target().gameDesignVersionRowId()),
+                    null,
+                    request.appliedCommitId(),
+                    owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    owner.equals("GAME_LOGIC") ? DIGEST : null,
+                    null,
+                    null))
             .toList();
     var release =
         new ReleaseContent(

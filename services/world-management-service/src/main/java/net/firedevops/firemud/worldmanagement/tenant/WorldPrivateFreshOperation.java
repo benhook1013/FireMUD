@@ -68,11 +68,10 @@ public final class WorldPrivateFreshOperation {
       throw new IllegalArgumentException(
           "Private FRESH generation and spawn intent are unsupported");
     if (plan.regions().stream()
-        .anyMatch(
-            region ->
-                !region.content().getWeather().isEmpty()
-                    || !region.content().getGeneratorType().isEmpty()
-                    || !region.content().getGeneratorParams().isEmpty()))
+        .anyMatch(region ->
+            !region.content().getWeather().isEmpty()
+                || !region.content().getGeneratorType().isEmpty()
+                || !region.content().getGeneratorParams().isEmpty()))
       throw new IllegalArgumentException(
           "Private FRESH configured weather and region generation are unsupported");
     if (plan.regions().isEmpty() || plan.zones().isEmpty() || plan.rooms().isEmpty())

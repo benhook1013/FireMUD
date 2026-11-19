@@ -410,13 +410,12 @@ public final class HostedTermsEnvironmentBindingRepository {
     if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new IllegalStateException("Writable owner transaction required");
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException("Writable READ_COMMITTED Account transaction required");
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException("Writable READ_COMMITTED Account transaction required");
+      }
+    });
   }
 }

@@ -199,12 +199,11 @@ final class TickRuntimeProgressService {
                 ownership.regionId(),
                 RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED,
                 ownership.lastCommittedTickId() + 1L)
-            .map(
-                followup ->
-                    Math.max(
-                        0L,
-                        (ownership.lastCommittedTickId() + 1L - followup.getDueTickId())
-                            * tickDurationMs))
+            .map(followup ->
+                Math.max(
+                    0L,
+                    (ownership.lastCommittedTickId() + 1L - followup.getDueTickId())
+                        * tickDurationMs))
             .orElse(0L);
     String gaugeKey = tenantId + ":" + ownership.regionId();
     remoteFollowupDueByTarget.compute(

@@ -65,18 +65,16 @@ class GameSessionAuthoredWorldIntakeDigestTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> GameSessionAuthoredWorldIntakeDigest.requestDigest(REQUEST, null))
         .isInstanceOf(NullPointerException.class);
-    assertThatThrownBy(
-            () ->
-                GameSessionAuthoredWorldIntakeDigest.receiptDigest(
-                    new UUID(0, 0), source("x").requestDigest(), source("x").evidenceDigest()))
+    assertThatThrownBy(() ->
+            GameSessionAuthoredWorldIntakeDigest.receiptDigest(
+                new UUID(0, 0), source("x").requestDigest(), source("x").evidenceDigest()))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () -> GameSessionAuthoredWorldIntakeDigest.receiptDigest(OPERATION, null, "sha256:x"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameSessionAuthoredWorldIntakeDigest.receiptDigest(
-                    OPERATION, source("x").requestDigest(), "SHA256:" + "a".repeat(64)))
+    assertThatThrownBy(() ->
+            GameSessionAuthoredWorldIntakeDigest.receiptDigest(
+                OPERATION, source("x").requestDigest(), "SHA256:" + "a".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

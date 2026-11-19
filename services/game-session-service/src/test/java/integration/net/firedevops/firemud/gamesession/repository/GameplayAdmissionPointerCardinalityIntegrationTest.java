@@ -91,17 +91,16 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
                     + "AND public_production_realm = true"))
         .isEqualTo(2L);
 
-    assertUniqueIndexViolation(
-        () ->
-            dsl.execute(
-                "INSERT INTO gameplay_admission_pointer (world_slug, world_display_name, "
-                    + "realm_slug, realm_display_name, tenant_id, game_instance_id, "
-                    + "pointer_version, visible, requires_character_selection, state_scope, "
-                    + "character_creation_policy, last_updated_by, last_update_reason, "
-                    + "public_production_realm) VALUES ('write-attempt', 'Write Attempt', "
-                    + "'production', 'Production', ?, 9510201, 1, true, false, 'SHARED', "
-                    + "'ALLOW_NEW', 'test/cardinality', 'second public insert', true)",
-                SINGLE_PUBLIC_TENANT_ID));
+    assertUniqueIndexViolation(() ->
+        dsl.execute(
+            "INSERT INTO gameplay_admission_pointer (world_slug, world_display_name, "
+                + "realm_slug, realm_display_name, tenant_id, game_instance_id, "
+                + "pointer_version, visible, requires_character_selection, state_scope, "
+                + "character_creation_policy, last_updated_by, last_update_reason, "
+                + "public_production_realm) VALUES ('write-attempt', 'Write Attempt', "
+                + "'production', 'Production', ?, 9510201, 1, true, false, 'SHARED', "
+                + "'ALLOW_NEW', 'test/cardinality', 'second public insert', true)",
+            SINGLE_PUBLIC_TENANT_ID));
     assertThat(
             scalarLong(
                 dsl,
@@ -111,12 +110,11 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
         .isZero();
 
     String nonpublicBefore = rowAndXmin(dsl, VISIBLE_NONPUBLIC_ID);
-    assertUniqueIndexViolation(
-        () ->
-            dsl.execute(
-                "UPDATE gameplay_admission_pointer SET public_production_realm = true "
-                    + "WHERE id = ?",
-                VISIBLE_NONPUBLIC_ID));
+    assertUniqueIndexViolation(() ->
+        dsl.execute(
+            "UPDATE gameplay_admission_pointer SET public_production_realm = true "
+                + "WHERE id = ?",
+            VISIBLE_NONPUBLIC_ID));
     assertThat(rowAndXmin(dsl, VISIBLE_NONPUBLIC_ID)).isEqualTo(nonpublicBefore);
     assertThat(visiblePublicCount(dsl, SINGLE_PUBLIC_TENANT_ID)).isEqualTo(1L);
 
@@ -178,28 +176,24 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
         retainedRowsAndXmins(dsl, "gameplay_admission_pointer");
     List<String> eventsBeforeCreateConflict =
         retainedRowsAndXmins(dsl, "gameplay_admission_pointer_event");
-    assertThatThrownBy(
-            () ->
-                dsl.transaction(
-                    configuration ->
-                        authorityService(DSL.using(configuration))
-                            .upsertPointer(
-                                pointerMutation(
-                                    "another-world",
-                                    "production",
-                                    SINGLE_PUBLIC_TENANT_ID,
-                                    9510202L,
-                                    true,
-                                    0L,
-                                    0L,
-                                    "duplicate-public-create"))))
+    assertThatThrownBy(() ->
+            dsl.transaction(configuration ->
+                authorityService(DSL.using(configuration))
+                    .upsertPointer(
+                        pointerMutation(
+                            "another-world",
+                            "production",
+                            SINGLE_PUBLIC_TENANT_ID,
+                            9510202L,
+                            true,
+                            0L,
+                            0L,
+                            "duplicate-public-create"))))
         .isInstanceOf(AdmissionPointerConflictException.class)
-        .satisfies(
-            failure -> {
-              assertThat(failure.getCause())
-                  .isInstanceOf(IntegrityConstraintViolationException.class);
-              assertThat(sqlState(failure)).isEqualTo("23505");
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getCause()).isInstanceOf(IntegrityConstraintViolationException.class);
+          assertThat(sqlState(failure)).isEqualTo("23505");
+        });
     assertThat(retainedRowsAndXmins(dsl, "gameplay_admission_pointer"))
         .isEqualTo(pointersBeforeCreateConflict);
     assertThat(retainedRowsAndXmins(dsl, "gameplay_admission_pointer_event"))
@@ -219,28 +213,24 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
         retainedRowsAndXmins(dsl, "gameplay_admission_pointer");
     List<String> eventsBeforeUpdateConflict =
         retainedRowsAndXmins(dsl, "gameplay_admission_pointer_event");
-    assertThatThrownBy(
-            () ->
-                dsl.transaction(
-                    configuration ->
-                        authorityService(DSL.using(configuration))
-                            .upsertPointer(
-                                pointerMutation(
-                                    "preview-world",
-                                    "preview",
-                                    SINGLE_PUBLIC_TENANT_ID,
-                                    9510203L,
-                                    true,
-                                    1L,
-                                    1L,
-                                    "duplicate-public-update"))))
+    assertThatThrownBy(() ->
+            dsl.transaction(configuration ->
+                authorityService(DSL.using(configuration))
+                    .upsertPointer(
+                        pointerMutation(
+                            "preview-world",
+                            "preview",
+                            SINGLE_PUBLIC_TENANT_ID,
+                            9510203L,
+                            true,
+                            1L,
+                            1L,
+                            "duplicate-public-update"))))
         .isInstanceOf(AdmissionPointerConflictException.class)
-        .satisfies(
-            failure -> {
-              assertThat(failure.getCause())
-                  .isInstanceOf(IntegrityConstraintViolationException.class);
-              assertThat(sqlState(failure)).isEqualTo("23505");
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getCause()).isInstanceOf(IntegrityConstraintViolationException.class);
+          assertThat(sqlState(failure)).isEqualTo("23505");
+        });
     assertThat(retainedRowsAndXmins(dsl, "gameplay_admission_pointer"))
         .isEqualTo(pointersBeforeUpdateConflict);
     assertThat(retainedRowsAndXmins(dsl, "gameplay_admission_pointer_event"))

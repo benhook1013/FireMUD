@@ -30,22 +30,20 @@ public class TemporalScriptPatchReadinessActivitiesImpl
     readinessProjectionService.refreshFromOnLoadWorkItems(tenantId, scriptPatchVersion);
     return readinessProjectionService
         .getProjection(tenantId, scriptPatchVersion)
-        .map(
-            summary ->
-                new ScriptPatchReadinessWorkflowSnapshot(
-                    summary.tenantId(),
-                    summary.scriptPatchVersion(),
-                    summary.status(),
-                    summary.statusReason(),
-                    summary.supersededByScriptPatchVersion(),
-                    summary.lastChangedAtMs()))
-        .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "SCRIPT_PATCH_READINESS_NOT_FOUND: tenantId="
-                        + tenantId
-                        + ", scriptPatchVersion="
-                        + scriptPatchVersion));
+        .map(summary ->
+            new ScriptPatchReadinessWorkflowSnapshot(
+                summary.tenantId(),
+                summary.scriptPatchVersion(),
+                summary.status(),
+                summary.statusReason(),
+                summary.supersededByScriptPatchVersion(),
+                summary.lastChangedAtMs()))
+        .orElseThrow(() ->
+            new IllegalStateException(
+                "SCRIPT_PATCH_READINESS_NOT_FOUND: tenantId="
+                    + tenantId
+                    + ", scriptPatchVersion="
+                    + scriptPatchVersion));
   }
 
   static String workflowId(String tenantId, String scriptPatchVersion) {

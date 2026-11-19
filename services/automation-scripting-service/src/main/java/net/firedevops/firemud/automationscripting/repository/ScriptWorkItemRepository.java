@@ -334,11 +334,10 @@ public class ScriptWorkItemRepository {
             SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID, SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION)
         .from(SCRIPT_WORK_ITEMS)
         .where(condition)
-        .fetch(
-            record ->
-                new ScriptPatchInstanceProjectionView(
-                    record.get(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID),
-                    record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION)));
+        .fetch(record ->
+            new ScriptPatchInstanceProjectionView(
+                record.get(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID),
+                record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION)));
   }
 
   public List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(
@@ -744,10 +743,8 @@ public class ScriptWorkItemRepository {
     }
     entity.setRowVersion(nextRowVersion);
     return findById(entity.getId())
-        .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "Saved script_work_item missing for id=" + entity.getId()));
+        .orElseThrow(() ->
+            new IllegalStateException("Saved script_work_item missing for id=" + entity.getId()));
   }
 
   public ScriptWorkItem saveAndFlush(ScriptWorkItem entity) {
@@ -827,10 +824,9 @@ public class ScriptWorkItemRepository {
         .doUpdate()
         .set(SCRIPT_WORK_ITEMS.ID, SCRIPT_WORK_ITEMS.ID)
         .returningResult(returningFields)
-        .fetchOptional(
-            returned ->
-                new TriggerIdentityInsertResult(
-                    toEntity(returned), Boolean.TRUE.equals(returned.get(INSERTED_ROW))));
+        .fetchOptional(returned ->
+            new TriggerIdentityInsertResult(
+                toEntity(returned), Boolean.TRUE.equals(returned.get(INSERTED_ROW))));
   }
 
   private record TriggerIdentityInsertResult(ScriptWorkItem workItem, boolean inserted) {}

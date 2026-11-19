@@ -81,20 +81,18 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
     long validBefore = System.currentTimeMillis() + 60_000L;
 
     FreshTenantCreationEvidence receipt =
-        fixture.inTransaction(
-            () -> {
-              fixture.dispatches.applyLocalWriteTimeouts();
-              assertThat(fixture.dispatches.isAuthorizationCurrent(validBefore)).isTrue();
-              OriginalOutcomeSnapshot claim = fixture.outcomes.claimLocked(binding);
-              assertThat(claim.status()).isEqualTo(OutcomeStatus.PENDING);
-              FreshTenantCreationEvidence created =
-                  fixture.creation.createCandidate(
-                      NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-              fixture.outcomes.markCreatedLocked(binding, created);
-              fixture.dispatches.recordAuthorizedDispatch(
-                  binding, AUTHORIZATION_READ_ID, validBefore);
-              return created;
-            });
+        fixture.inTransaction(() -> {
+          fixture.dispatches.applyLocalWriteTimeouts();
+          assertThat(fixture.dispatches.isAuthorizationCurrent(validBefore)).isTrue();
+          OriginalOutcomeSnapshot claim = fixture.outcomes.claimLocked(binding);
+          assertThat(claim.status()).isEqualTo(OutcomeStatus.PENDING);
+          FreshTenantCreationEvidence created =
+              fixture.creation.createCandidate(
+                  NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+          fixture.outcomes.markCreatedLocked(binding, created);
+          fixture.dispatches.recordAuthorizedDispatch(binding, AUTHORIZATION_READ_ID, validBefore);
+          return created;
+        });
 
     OriginalOutcomeSnapshot outcome = fixture.outcomes.readCommitted(binding).orElseThrow();
     var dispatch = fixture.dispatches.readCommitted(binding).orElseThrow();
@@ -115,22 +113,20 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
     Binding binding = repositoryBinding();
     long expiredBefore = System.currentTimeMillis() - 1_000L;
 
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () -> {
-                      fixture.dispatches.applyLocalWriteTimeouts();
-                      fixture.outcomes.claimLocked(binding);
-                      FreshTenantCreationEvidence receipt =
-                          fixture.creation.createCandidate(
-                              NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-                      fixture.outcomes.markCreatedLocked(binding, receipt);
-                      // Intentionally bypass the preflight clock check to exercise V1034's deferred
-                      // fresh-clock commit guard and prove the whole owner transaction rolls back.
-                      fixture.dispatches.recordAuthorizedDispatch(
-                          binding, AUTHORIZATION_READ_ID, expiredBefore);
-                      return receipt;
-                    }))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() -> {
+              fixture.dispatches.applyLocalWriteTimeouts();
+              fixture.outcomes.claimLocked(binding);
+              FreshTenantCreationEvidence receipt =
+                  fixture.creation.createCandidate(
+                      NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+              fixture.outcomes.markCreatedLocked(binding, receipt);
+              // Intentionally bypass the preflight clock check to exercise V1034's deferred
+              // fresh-clock commit guard and prove the whole owner transaction rolls back.
+              fixture.dispatches.recordAuthorizedDispatch(
+                  binding, AUTHORIZATION_READ_ID, expiredBefore);
+              return receipt;
+            }))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("authorization expired before Game Design commit");
 
@@ -153,41 +149,36 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
 
     try {
       Future<OriginalOutcomeSnapshot> tombstone =
-          executor.submit(
-              () ->
-                  fixture.inTransaction(
-                      () -> {
-                        OriginalOutcomeSnapshot closed =
-                            fixture.outcomes.closeNotCreatedLocked(binding);
-                        tombstoneWritten.countDown();
-                        await(allowTombstoneCommit);
-                        return closed;
-                      }));
+          executor.submit(() ->
+              fixture.inTransaction(() -> {
+                OriginalOutcomeSnapshot closed = fixture.outcomes.closeNotCreatedLocked(binding);
+                tombstoneWritten.countDown();
+                await(allowTombstoneCommit);
+                return closed;
+              }));
       assertThat(tombstoneWritten.await(10, TimeUnit.SECONDS)).isTrue();
 
       Future<Throwable> delayedAuthorizedCreate =
-          executor.submit(
-              () -> {
-                try {
-                  fixture.inTransaction(
-                      () -> {
-                        fixture.dispatches.applyLocalWriteTimeouts();
-                        if (!fixture.dispatches.isAuthorizationCurrent(
-                            System.currentTimeMillis() + 60_000L)) {
-                          throw new IllegalStateException("Controlled authorization expired");
-                        }
-                        OriginalOutcomeSnapshot claim = fixture.outcomes.claimLocked(binding);
-                        if (claim.status() == OutcomeStatus.NOT_CREATED) {
-                          throw new IllegalStateException("Definitive tombstone blocks creation");
-                        }
-                        return fixture.creation.createCandidate(
-                            NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-                      });
-                  return null;
-                } catch (RuntimeException failure) {
-                  return failure;
+          executor.submit(() -> {
+            try {
+              fixture.inTransaction(() -> {
+                fixture.dispatches.applyLocalWriteTimeouts();
+                if (!fixture.dispatches.isAuthorizationCurrent(
+                    System.currentTimeMillis() + 60_000L)) {
+                  throw new IllegalStateException("Controlled authorization expired");
                 }
+                OriginalOutcomeSnapshot claim = fixture.outcomes.claimLocked(binding);
+                if (claim.status() == OutcomeStatus.NOT_CREATED) {
+                  throw new IllegalStateException("Definitive tombstone blocks creation");
+                }
+                return fixture.creation.createCandidate(
+                    NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
               });
+              return null;
+            } catch (RuntimeException failure) {
+              return failure;
+            }
+          });
       waitForAdvisoryWaiter(fixture.dsl);
       allowTombstoneCommit.countDown();
 
@@ -251,22 +242,20 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
                 NAMESPACE,
                 REQUEST_ID));
     owner.closeOriginal(binding);
-    assertThatThrownBy(
-            () ->
-                owner.closeOriginal(
-                    new Binding(
-                        NAMESPACE,
-                        REQUEST_ID,
-                        ACCOUNT_OPERATION_ID,
-                        UUID.randomUUID(),
-                        REQUEST_DIGEST,
-                        ACCOUNT_DIGEST)))
+    assertThatThrownBy(() ->
+            owner.closeOriginal(
+                new Binding(
+                    NAMESPACE,
+                    REQUEST_ID,
+                    ACCOUNT_OPERATION_ID,
+                    UUID.randomUUID(),
+                    REQUEST_DIGEST,
+                    ACCOUNT_DIGEST)))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                owner.create(
-                    new AccountAuthorizedTenantCreationService.CandidateRequest(
-                        UUID.randomUUID(), binding, SOURCE_KEY, NAME, DESCRIPTION)))
+    assertThatThrownBy(() ->
+            owner.create(
+                new AccountAuthorizedTenantCreationService.CandidateRequest(
+                    UUID.randomUUID(), binding, SOURCE_KEY, NAME, DESCRIPTION)))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
             java.util.Objects.requireNonNull(
@@ -292,33 +281,30 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<FreshTenantCreationEvidence> creation =
-          executor.submit(
-              () ->
-                  fixture.inTransaction(
-                      () -> {
-                        var binding = repositoryBinding();
-                        fixture.outcomes.claimLocked(binding);
-                        var receipt =
-                            fixture.creation.createCandidate(
-                                NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-                        fixture.outcomes.markCreatedLocked(binding, receipt);
-                        fixture.dispatches.recordAuthorizedDispatch(
-                            binding, AUTHORIZATION_READ_ID, System.currentTimeMillis() + 60000);
-                        created.countDown();
-                        await(releaseCommit);
-                        return receipt;
-                      }));
+          executor.submit(() ->
+              fixture.inTransaction(() -> {
+                var binding = repositoryBinding();
+                fixture.outcomes.claimLocked(binding);
+                var receipt =
+                    fixture.creation.createCandidate(
+                        NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+                fixture.outcomes.markCreatedLocked(binding, receipt);
+                fixture.dispatches.recordAuthorizedDispatch(
+                    binding, AUTHORIZATION_READ_ID, System.currentTimeMillis() + 60000);
+                created.countDown();
+                await(releaseCommit);
+                return receipt;
+              }));
       assertThat(created.await(10, TimeUnit.SECONDS)).isTrue();
       Future<Throwable> closure =
-          executor.submit(
-              () -> {
-                try {
-                  owner.closeOriginal(closureBinding());
-                  return null;
-                } catch (RuntimeException failure) {
-                  return failure;
-                }
-              });
+          executor.submit(() -> {
+            try {
+              owner.closeOriginal(closureBinding());
+              return null;
+            } catch (RuntimeException failure) {
+              return failure;
+            }
+          });
       waitForAdvisoryWaiter(fixture.dsl);
       releaseCommit.countDown();
       var receipt = creation.get(10, TimeUnit.SECONDS);
@@ -389,16 +375,15 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
       AccountAuthorizedTenantCreationRepository dispatches,
       TransactionTemplate write) {
     private <T> T inTransaction(java.util.concurrent.Callable<T> work) {
-      return write.execute(
-          status -> {
-            try {
-              return work.call();
-            } catch (RuntimeException exception) {
-              throw exception;
-            } catch (Exception exception) {
-              throw new IllegalStateException(exception);
-            }
-          });
+      return write.execute(status -> {
+        try {
+          return work.call();
+        } catch (RuntimeException exception) {
+          throw exception;
+        } catch (Exception exception) {
+          throw new IllegalStateException(exception);
+        }
+      });
     }
   }
 }

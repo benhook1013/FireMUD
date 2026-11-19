@@ -123,13 +123,12 @@ public class RedisScreenBufferService implements ScreenBufferService {
   public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
     return readPayload(tenantId, gameInstanceId, characterId)
         .filter(payload -> !payload.entries.isEmpty())
-        .map(
-            payload ->
-                new BufferedScreen(
-                    payload.entries.stream().map(EntryPayload::toPublicEntry).toList(),
-                    payload.entries.size(),
-                    payload.entries.stream().mapToInt(entry -> entry.lineCount).sum(),
-                    payload.updatedAtMs));
+        .map(payload ->
+            new BufferedScreen(
+                payload.entries.stream().map(EntryPayload::toPublicEntry).toList(),
+                payload.entries.size(),
+                payload.entries.stream().mapToInt(entry -> entry.lineCount).sum(),
+                payload.updatedAtMs));
   }
 
   @Override

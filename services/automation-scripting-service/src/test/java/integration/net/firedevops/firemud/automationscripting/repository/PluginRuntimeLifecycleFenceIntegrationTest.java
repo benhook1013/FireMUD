@@ -114,25 +114,21 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<?> firstTransaction =
-          executor.submit(
-              () ->
-                  dsl.transaction(
-                      configuration -> {
-                        new PluginRuntimeStateRepository(DSL.using(configuration))
-                            .lockLifecycleScope("1", "game-1", "plugin-1");
-                        firstHasLock.countDown();
-                        await(releaseFirst);
-                      }));
+          executor.submit(() ->
+              dsl.transaction(configuration -> {
+                new PluginRuntimeStateRepository(DSL.using(configuration))
+                    .lockLifecycleScope("1", "game-1", "plugin-1");
+                firstHasLock.countDown();
+                await(releaseFirst);
+              }));
       assertThat(firstHasLock.await(5, TimeUnit.SECONDS)).isTrue();
       Future<?> secondTransaction =
-          executor.submit(
-              () ->
-                  dsl.transaction(
-                      configuration -> {
-                        secondReachedLockCall.countDown();
-                        new PluginRuntimeStateRepository(DSL.using(configuration))
-                            .lockLifecycleScope("1", "game-1", "plugin-1");
-                      }));
+          executor.submit(() ->
+              dsl.transaction(configuration -> {
+                secondReachedLockCall.countDown();
+                new PluginRuntimeStateRepository(DSL.using(configuration))
+                    .lockLifecycleScope("1", "game-1", "plugin-1");
+              }));
       assertThat(secondReachedLockCall.await(5, TimeUnit.SECONDS)).isTrue();
       Thread.sleep(100);
       assertThat(secondTransaction.isDone()).isFalse();
@@ -161,26 +157,22 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     Future<?> secondTransaction = null;
     try {
       firstTransaction =
-          executor.submit(
-              () ->
-                  dsl.transaction(
-                      configuration -> {
-                        new PluginRuntimeStateRepository(DSL.using(configuration))
-                            .lockLifecycleScope("tenant-1", "game-1", firstPluginId);
-                        firstHasLock.countDown();
-                        await(releaseFirst);
-                      }));
+          executor.submit(() ->
+              dsl.transaction(configuration -> {
+                new PluginRuntimeStateRepository(DSL.using(configuration))
+                    .lockLifecycleScope("tenant-1", "game-1", firstPluginId);
+                firstHasLock.countDown();
+                await(releaseFirst);
+              }));
       assertThat(firstHasLock.await(5, TimeUnit.SECONDS)).isTrue();
       secondTransaction =
-          executor.submit(
-              () ->
-                  dsl.transaction(
-                      configuration -> {
-                        secondReachedLockCall.countDown();
-                        new PluginRuntimeStateRepository(DSL.using(configuration))
-                            .lockLifecycleScope("tenant-1", "game-1", secondPluginId);
-                        secondHasLock.countDown();
-                      }));
+          executor.submit(() ->
+              dsl.transaction(configuration -> {
+                secondReachedLockCall.countDown();
+                new PluginRuntimeStateRepository(DSL.using(configuration))
+                    .lockLifecycleScope("tenant-1", "game-1", secondPluginId);
+                secondHasLock.countDown();
+              }));
       assertThat(secondReachedLockCall.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(secondHasLock.await(5, TimeUnit.SECONDS)).isTrue();
       releaseFirst.countDown();
@@ -194,76 +186,74 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
 
   @Test
   void nextEligibleDefaultUsesUtcWhenSessionTimezoneIsNonUtc() {
-    dsl.transaction(
-        configuration -> {
-          DSLContext transactionDsl = DSL.using(configuration);
-          transactionDsl.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
-          transactionDsl.execute(
-              "insert into script_work_items "
-                  + "(tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, "
-                  + "plugin_id, plugin_version_id, event_type, event_schema_version, "
-                  + "script_patch_version, script_event_id, source_service, trigger_mode) "
-                  + "values ('tenant-utc', 'instance-utc', 'region-1', 1, 'entity-1', 'script-1', "
-                  + "'plugin-1', 'version-1', 'onCommand', '1', 'patch-1', "
-                  + "'event-utc-default', 'test', 'MANUAL')");
+    dsl.transaction(configuration -> {
+      DSLContext transactionDsl = DSL.using(configuration);
+      transactionDsl.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
+      transactionDsl.execute(
+          "insert into script_work_items "
+              + "(tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, "
+              + "plugin_id, plugin_version_id, event_type, event_schema_version, "
+              + "script_patch_version, script_event_id, source_service, trigger_mode) "
+              + "values ('tenant-utc', 'instance-utc', 'region-1', 1, 'entity-1', 'script-1', "
+              + "'plugin-1', 'version-1', 'onCommand', '1', 'patch-1', "
+              + "'event-utc-default', 'test', 'MANUAL')");
 
-          assertThat(
-                  transactionDsl.fetchValue(
-                      "select next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
-                          + "from script_work_items where script_event_id = 'event-utc-default'",
-                      Boolean.class))
-              .isEqualTo(Boolean.TRUE);
-        });
+      assertThat(
+              transactionDsl.fetchValue(
+                  "select next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
+                      + "from script_work_items where script_event_id = 'event-utc-default'",
+                  Boolean.class))
+          .isEqualTo(Boolean.TRUE);
+    });
   }
 
   @Test
   void retryEligibilityUsesUtcWhenSessionTimezoneIsNonUtc() {
-    dsl.transaction(
-        configuration -> {
-          DSLContext transactionDsl = DSL.using(configuration);
-          transactionDsl.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
-          transactionDsl.execute(
-              "insert into script_work_items "
-                  + "(tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, "
-                  + "plugin_id, plugin_version_id, event_type, event_schema_version, "
-                  + "script_patch_version, script_event_id, source_service, trigger_mode) "
-                  + "values ('tenant-utc', 'instance-utc', 'region-1', 1, 'entity-1', 'script-1', "
-                  + "'plugin-1', 'version-1', 'onCommand', '1', 'patch-1', "
-                  + "'event-utc-retry', 'test', 'MANUAL')");
-          Long workItemId =
-              transactionDsl
-                  .fetchSingle(
-                      "select id from script_work_items where script_event_id = 'event-utc-retry'")
-                  .get("id", Long.class);
-          assertThat(workItemId).isNotNull();
-          transactionDsl.execute(
-              "update script_work_items "
-                  + "set next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
-                  + "+ interval '1 hour' where script_event_id = 'event-utc-retry'");
+    dsl.transaction(configuration -> {
+      DSLContext transactionDsl = DSL.using(configuration);
+      transactionDsl.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
+      transactionDsl.execute(
+          "insert into script_work_items "
+              + "(tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, "
+              + "plugin_id, plugin_version_id, event_type, event_schema_version, "
+              + "script_patch_version, script_event_id, source_service, trigger_mode) "
+              + "values ('tenant-utc', 'instance-utc', 'region-1', 1, 'entity-1', 'script-1', "
+              + "'plugin-1', 'version-1', 'onCommand', '1', 'patch-1', "
+              + "'event-utc-retry', 'test', 'MANUAL')");
+      Long workItemId =
+          transactionDsl
+              .fetchSingle(
+                  "select id from script_work_items where script_event_id = 'event-utc-retry'")
+              .get("id", Long.class);
+      assertThat(workItemId).isNotNull();
+      transactionDsl.execute(
+          "update script_work_items "
+              + "set next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
+              + "+ interval '1 hour' where script_event_id = 'event-utc-retry'");
 
-          ScriptWorkItemRepository repository = new ScriptWorkItemRepository(transactionDsl);
-          Instant futureEligibleAt = Instant.now().plusSeconds(86_400);
-          assertThat(
-                  repository.findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
-                      List.of(workItemId),
-                      "PENDING_EVALUATION",
-                      futureEligibleAt,
-                      PageRequest.of(0, 10)))
-              .isEmpty();
+      ScriptWorkItemRepository repository = new ScriptWorkItemRepository(transactionDsl);
+      Instant futureEligibleAt = Instant.now().plusSeconds(86_400);
+      assertThat(
+              repository.findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
+                  List.of(workItemId),
+                  "PENDING_EVALUATION",
+                  futureEligibleAt,
+                  PageRequest.of(0, 10)))
+          .isEmpty();
 
-          transactionDsl.execute(
-              "update script_work_items "
-                  + "set next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
-                  + "- interval '1 minute' where script_event_id = 'event-utc-retry'");
+      transactionDsl.execute(
+          "update script_work_items "
+              + "set next_eligible_at = pg_catalog.timezone('UTC', current_timestamp) "
+              + "- interval '1 minute' where script_event_id = 'event-utc-retry'");
 
-          assertThat(
-                  repository.findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
-                      List.of(workItemId),
-                      "PENDING_EVALUATION",
-                      futureEligibleAt,
-                      PageRequest.of(0, 10)))
-              .hasSize(1);
-        });
+      assertThat(
+              repository.findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
+                  List.of(workItemId),
+                  "PENDING_EVALUATION",
+                  futureEligibleAt,
+                  PageRequest.of(0, 10)))
+          .hasSize(1);
+    });
   }
 
   @Test
@@ -473,57 +463,52 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
 
   @Test
   void databaseRejectsIncoherentAndNegativePluginFencePairs() {
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "insert into plugin_runtime_states "
-                        + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, "
-                        + "plugin_state, status_reason, plugin_activation_epoch, lifecycle_revision) "
-                        + "values ('tenant-invalid', 'instance-active-zero', 'plugin-invalid', "
-                        + "'version-active', 'PLUGIN_STATE_ENABLED', 'invalid', 0, 0)"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "insert into plugin_runtime_states "
+                    + "(tenant_id, game_instance_id, plugin_id, active_plugin_version_id, "
+                    + "plugin_state, status_reason, plugin_activation_epoch, lifecycle_revision) "
+                    + "values ('tenant-invalid', 'instance-active-zero', 'plugin-invalid', "
+                    + "'version-active', 'PLUGIN_STATE_ENABLED', 'invalid', 0, 0)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "insert into plugin_runtime_states "
-                        + "(tenant_id, game_instance_id, plugin_id, plugin_state, "
-                        + "status_reason, plugin_activation_epoch, lifecycle_revision) "
-                        + "values ('tenant-invalid', 'instance-incoherent', 'plugin-invalid', "
-                        + "'DISABLED', 'invalid', 1, 0)"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "insert into plugin_runtime_states "
+                    + "(tenant_id, game_instance_id, plugin_id, plugin_state, "
+                    + "status_reason, plugin_activation_epoch, lifecycle_revision) "
+                    + "values ('tenant-invalid', 'instance-incoherent', 'plugin-invalid', "
+                    + "'DISABLED', 'invalid', 1, 0)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "insert into plugin_runtime_states "
-                        + "(tenant_id, game_instance_id, plugin_id, plugin_state, "
-                        + "status_reason, plugin_activation_epoch, lifecycle_revision) "
-                        + "values ('tenant-invalid', 'instance-negative', 'plugin-invalid', "
-                        + "'DISABLED', 'invalid', -1, -1)"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "insert into plugin_runtime_states "
+                    + "(tenant_id, game_instance_id, plugin_id, plugin_state, "
+                    + "status_reason, plugin_activation_epoch, lifecycle_revision) "
+                    + "values ('tenant-invalid', 'instance-negative', 'plugin-invalid', "
+                    + "'DISABLED', 'invalid', -1, -1)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_states_plugin_fence");
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "insert into plugin_runtime_request_history "
-                        + "(tenant_id, game_instance_id, plugin_id, operation, "
-                        + "control_plane_request_id, request_fingerprint, plugin_state, "
-                        + "plugin_activation_epoch, lifecycle_revision) "
-                        + "values ('tenant-invalid', 'instance-incoherent', 'plugin-invalid', "
-                        + "'DISABLE', 'request-incoherent', 'fingerprint', 'DISABLED', 1, 0)"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "insert into plugin_runtime_request_history "
+                    + "(tenant_id, game_instance_id, plugin_id, operation, "
+                    + "control_plane_request_id, request_fingerprint, plugin_state, "
+                    + "plugin_activation_epoch, lifecycle_revision) "
+                    + "values ('tenant-invalid', 'instance-incoherent', 'plugin-invalid', "
+                    + "'DISABLE', 'request-incoherent', 'fingerprint', 'DISABLED', 1, 0)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_request_history_plugin_fence");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "insert into plugin_runtime_request_history "
-                        + "(tenant_id, game_instance_id, plugin_id, operation, "
-                        + "control_plane_request_id, request_fingerprint, plugin_state, "
-                        + "plugin_activation_epoch, lifecycle_revision) "
-                        + "values ('tenant-invalid', 'instance-negative', 'plugin-invalid', "
-                        + "'DISABLE', 'request-negative', 'fingerprint', 'DISABLED', -1, -1)"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "insert into plugin_runtime_request_history "
+                    + "(tenant_id, game_instance_id, plugin_id, operation, "
+                    + "control_plane_request_id, request_fingerprint, plugin_state, "
+                    + "plugin_activation_epoch, lifecycle_revision) "
+                    + "values ('tenant-invalid', 'instance-negative', 'plugin-invalid', "
+                    + "'DISABLE', 'request-negative', 'fingerprint', 'DISABLED', -1, -1)"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_plugin_runtime_request_history_plugin_fence");
   }

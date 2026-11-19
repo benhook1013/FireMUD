@@ -122,11 +122,10 @@ class AccountGameplayDelegationTokenRegistryTest {
             snapshot(),
             evidenceBundleReference());
     when(repository.readPendingRegistryCandidate(UUID.fromString(REQUEST_ID)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              return candidate;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          return candidate;
+        });
     when(commands.aclWhoami())
         .thenReturn(AccountGameplayDelegationRedisClient.REQUIRED_ACL_IDENTITY);
     when(commands.scriptLoad(any(byte[].class)))
@@ -161,10 +160,9 @@ class AccountGameplayDelegationTokenRegistryTest {
   void rejectsAmbientAccountTransactionBeforeReadingCandidateOrOpeningRedis() {
     TransactionTemplate ambientTransaction = new TransactionTemplate(transactionManager);
 
-    assertThatThrownBy(
-            () ->
-                ambientTransaction.execute(
-                    status -> registry.registerPending(UUID.fromString(REQUEST_ID))))
+    assertThatThrownBy(() ->
+            ambientTransaction.execute(
+                status -> registry.registerPending(UUID.fromString(REQUEST_ID))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("ambient Account transaction");
 
@@ -372,9 +370,8 @@ class AccountGameplayDelegationTokenRegistryTest {
             16_384,
             getClass().getClassLoader());
 
-    assertThatThrownBy(
-            () ->
-                alteredClient.registerPending(candidate.tokenHash(), encodedRecord, EXPIRY_MILLIS))
+    assertThatThrownBy(() ->
+            alteredClient.registerPending(candidate.tokenHash(), encodedRecord, EXPIRY_MILLIS))
         .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
     verifyNoMoreInteractions(connection);
   }

@@ -60,15 +60,12 @@ public final class GameLogicIntakeAuthorizationGrpcCodec {
             .setOutcome(toWire(result.outcome()));
     result
         .sourceScope()
-        .ifPresent(
-            scope ->
-                builder.setPreliminarySourceScope(ByteString.copyFrom(scope.canonicalBytes())));
+        .ifPresent(scope ->
+            builder.setPreliminarySourceScope(ByteString.copyFrom(scope.canonicalBytes())));
     result
         .authorization()
-        .ifPresent(
-            binding ->
-                builder.setFinalizedIntakeAuthorization(
-                    ByteString.copyFrom(binding.canonicalBytes())));
+        .ifPresent(binding ->
+            builder.setFinalizedIntakeAuthorization(ByteString.copyFrom(binding.canonicalBytes())));
     var response = builder.build();
     requireWireSize(response.getSerializedSize());
     return response;

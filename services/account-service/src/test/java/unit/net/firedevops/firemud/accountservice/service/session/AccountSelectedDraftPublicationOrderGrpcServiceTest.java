@@ -135,17 +135,15 @@ class AccountSelectedDraftPublicationOrderGrpcServiceTest {
                 .code())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     assertThat(
-            authorized(
-                    () ->
-                        invoke(
-                            request.toBuilder()
-                                .setUnknownFields(
-                                    UnknownFieldSet.newBuilder()
-                                        .addField(
-                                            99,
-                                            UnknownFieldSet.Field.newBuilder().addVarint(1).build())
-                                        .build())
-                                .build()))
+            authorized(() ->
+                    invoke(
+                        request.toBuilder()
+                            .setUnknownFields(
+                                UnknownFieldSet.newBuilder()
+                                    .addField(
+                                        99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                                    .build())
+                            .build()))
                 .code())
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(owner, terms);
@@ -174,21 +172,18 @@ class AccountSelectedDraftPublicationOrderGrpcServiceTest {
                     null,
                     new byte[] {1})));
     when(terms.captureCurrentEnvironmentBoundary())
-        .thenAnswer(
-            call -> {
-              outsideSql();
-              return captured;
-            });
+        .thenAnswer(call -> {
+          outsideSql();
+          return captured;
+        });
     when(owner.authorize(eq(CREDENTIAL), any(), same(captured)))
-        .thenAnswer(
-            call -> {
-              outsideSql();
-              assertThat(
-                      call.getArgument(1, AuthoredDraftPublishSelectionBinding.class)
-                          .canonicalBytes())
-                  .isEqualTo(decoded.originalSelection());
-              return binding;
-            });
+        .thenAnswer(call -> {
+          outsideSql();
+          assertThat(
+                  call.getArgument(1, AuthoredDraftPublishSelectionBinding.class).canonicalBytes())
+              .isEqualTo(decoded.originalSelection());
+          return binding;
+        });
     var result = authorized(() -> invoke(request));
     assertThat(result.error()).isNull();
     assertThat(

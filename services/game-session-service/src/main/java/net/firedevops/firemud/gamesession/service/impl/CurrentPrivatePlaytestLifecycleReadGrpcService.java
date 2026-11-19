@@ -108,13 +108,12 @@ public final class CurrentPrivatePlaytestLifecycleReadGrpcService
     final Optional<Current> current;
     try {
       current =
-          ownerReadTransaction.execute(
-              status ->
-                  repository.readCurrent(
-                      selector.scope().targetNamespace(),
-                      selector.scope().tenantId(),
-                      selector.scope().worldSlug(),
-                      selector.scope().realmSlug()));
+          ownerReadTransaction.execute(status ->
+              repository.readCurrent(
+                  selector.scope().targetNamespace(),
+                  selector.scope().tenantId(),
+                  selector.scope().worldSlug(),
+                  selector.scope().realmSlug()));
       if (current == null) {
         throw new IllegalStateException("Current private-playtest owner returned no result");
       }

@@ -69,33 +69,31 @@ public class TestDataSeeder implements ApplicationRunner {
     return characterRepository
         .findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(
             DEMO_TENANT_ID, SHARED_LIVE_PLAYABLE_STATE, DEMO_CHARACTER_NAME)
-        .map(
-            character -> {
-              if (!accountUuid.equals(character.getAccountUuid())) {
-                throw new IllegalStateException(
-                    "Retained demo character has unresolved or different Account ownership");
-              }
-              character.setBodyLayoutKey("DEFAULT");
-              return characterRepository.save(character);
-            })
-        .orElseGet(
-            () -> {
-              Character character = new Character();
-              character.setTenantId(DEMO_TENANT_ID);
-              character.setAccountUuid(accountUuid);
-              character.setPlayableStateKey(SHARED_LIVE_PLAYABLE_STATE);
-              character.setName(DEMO_CHARACTER_NAME);
-              character.setBodyLayoutKey("DEFAULT");
-              character.setLevel(1);
-              character.setExperience(0);
-              character.setStrength(10);
-              character.setAgility(10);
-              character.setIntelligence(10);
-              character.setStamina(10);
-              character.setHealth(100);
-              character.setMana(50);
-              return characterRepository.save(character);
-            });
+        .map(character -> {
+          if (!accountUuid.equals(character.getAccountUuid())) {
+            throw new IllegalStateException(
+                "Retained demo character has unresolved or different Account ownership");
+          }
+          character.setBodyLayoutKey("DEFAULT");
+          return characterRepository.save(character);
+        })
+        .orElseGet(() -> {
+          Character character = new Character();
+          character.setTenantId(DEMO_TENANT_ID);
+          character.setAccountUuid(accountUuid);
+          character.setPlayableStateKey(SHARED_LIVE_PLAYABLE_STATE);
+          character.setName(DEMO_CHARACTER_NAME);
+          character.setBodyLayoutKey("DEFAULT");
+          character.setLevel(1);
+          character.setExperience(0);
+          character.setStrength(10);
+          character.setAgility(10);
+          character.setIntelligence(10);
+          character.setStamina(10);
+          character.setHealth(100);
+          character.setMana(50);
+          return characterRepository.save(character);
+        });
   }
 
   private void ensureEquipmentSchema() {
@@ -136,27 +134,25 @@ public class TestDataSeeder implements ApplicationRunner {
   private Item ensureItem(String name, String description, String equipmentSlot) {
     return itemRepository
         .findByTenantIdAndNameIgnoreCase(DEMO_TENANT_ID, name)
-        .map(
-            item -> {
-              item.setVersionId(VERSION_ID);
-              item.setDescription(description);
-              item.setEquipmentSlot(equipmentSlot);
-              item.setContainer(false);
-              item.setStackable(false);
-              return itemRepository.save(item);
-            })
-        .orElseGet(
-            () -> {
-              Item item = new Item();
-              item.setTenantId(DEMO_TENANT_ID);
-              item.setVersionId(VERSION_ID);
-              item.setName(name);
-              item.setDescription(description);
-              item.setEquipmentSlot(equipmentSlot);
-              item.setContainer(false);
-              item.setStackable(false);
-              return itemRepository.save(item);
-            });
+        .map(item -> {
+          item.setVersionId(VERSION_ID);
+          item.setDescription(description);
+          item.setEquipmentSlot(equipmentSlot);
+          item.setContainer(false);
+          item.setStackable(false);
+          return itemRepository.save(item);
+        })
+        .orElseGet(() -> {
+          Item item = new Item();
+          item.setTenantId(DEMO_TENANT_ID);
+          item.setVersionId(VERSION_ID);
+          item.setName(name);
+          item.setDescription(description);
+          item.setEquipmentSlot(equipmentSlot);
+          item.setContainer(false);
+          item.setStackable(false);
+          return itemRepository.save(item);
+        });
   }
 
   private ContainerInstance ensureRoomContainer(
@@ -167,16 +163,15 @@ public class TestDataSeeder implements ApplicationRunner {
             .orElseGet(() -> createRoomItemInstance(item, token, sequence, visibleRef));
     return containerInstanceRepository
         .findByItemInstance_Id(itemInstance.getId())
-        .orElseGet(
-            () -> {
-              ContainerInstance container = new ContainerInstance();
-              container.setTenantId(DEMO_TENANT_ID);
-              container.setGameInstanceId(DEMO_GAME_INSTANCE_ID);
-              container.setRoomInstanceId(STARTER_RUNTIME_ROOM_INSTANCE_ID);
-              container.setItem(item);
-              container.setItemInstance(itemInstance);
-              return containerInstanceRepository.save(container);
-            });
+        .orElseGet(() -> {
+          ContainerInstance container = new ContainerInstance();
+          container.setTenantId(DEMO_TENANT_ID);
+          container.setGameInstanceId(DEMO_GAME_INSTANCE_ID);
+          container.setRoomInstanceId(STARTER_RUNTIME_ROOM_INSTANCE_ID);
+          container.setItem(item);
+          container.setItemInstance(itemInstance);
+          return containerInstanceRepository.save(container);
+        });
   }
 
   private void ensureContainedItem(

@@ -380,29 +380,24 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     assertThat(proofImage(dsl)).isEqualTo(installedProofImage);
 
     String beforeRefusals = localRegistrationImage(dsl);
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request("changed-first-request", "first-new-transition", firstCandidate)))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("changed-first-request", "first-new-transition", firstCandidate)))
         .isInstanceOf(IllegalStateException.class);
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request("first-new-request", "other-transition", identity("changed-first"))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("first-new-request", "other-transition", identity("changed-first"))))
         .isInstanceOf(IllegalStateException.class);
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
 
     currentState.set(
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             checkpointShape(BigInteger.valueOf(8)), incarnation));
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request(
-                        "moved-source-request",
-                        "moved-source-transition",
-                        identity("moved-source"))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request(
+                    "moved-source-request", "moved-source-transition", identity("moved-source"))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("source");
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
@@ -411,33 +406,30 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     currentState.set(
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             intent.sourceCheckpoint(), stableIncarnation("moved-incarnation")));
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request(
-                        "moved-incarnation-request",
-                        "moved-incarnation-transition",
-                        identity("moved-incarnation"))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request(
+                    "moved-incarnation-request",
+                    "moved-incarnation-transition",
+                    identity("moved-incarnation"))))
         .isInstanceOf(IllegalStateException.class);
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
     currentState.set(initialState);
 
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request(
-                        "wrong-layout-request",
-                        "wrong-layout-transition",
-                        identityWithLayout("wrong-layout", BigInteger.TWO))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request(
+                    "wrong-layout-request",
+                    "wrong-layout-transition",
+                    identityWithLayout("wrong-layout", BigInteger.TWO))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("layout");
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
 
     var sameController = sameControllerDifferentBinding(firstCandidate, "same-controller");
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request("controller-request", "controller-transition", sameController)))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("controller-request", "controller-transition", sameController)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("controller");
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
@@ -588,27 +580,26 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
                 .formatJSON())
         .isEqualTo(acknowledgementCounterImageBeforeAmbientRefusals);
 
-    dsl.transaction(
-        configuration -> {
-          DSLContext callerTransaction = DSL.using(configuration);
-          var callerOwnedAcknowledgementRepository =
-              new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(
-                  callerTransaction, acknowledgementSource);
-          assertThatThrownBy(
-                  () -> callerOwnedAcknowledgementRepository.acknowledge(acknowledgementReadback))
-              .isInstanceOf(IllegalStateException.class)
-              .hasMessage(
-                  "Issuer binding-local acknowledgement is unavailable: Issuer acknowledgement owner cannot join a jOOQ transaction");
-          assertThat(acknowledgementSourceReads).hasValue(0);
-          assertThat(callerTransaction.fetch("SELECT * FROM " + ACKNOWLEDGEMENT_TABLE).formatJSON())
-              .isEqualTo(acknowledgementImageBeforeAmbientRefusals);
-          assertThat(
-                  callerTransaction
-                      .fetch(
-                          "SELECT * FROM game_session_canonical_issuer_binding_local_ack_gen_counter")
-                      .formatJSON())
-              .isEqualTo(acknowledgementCounterImageBeforeAmbientRefusals);
-        });
+    dsl.transaction(configuration -> {
+      DSLContext callerTransaction = DSL.using(configuration);
+      var callerOwnedAcknowledgementRepository =
+          new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(
+              callerTransaction, acknowledgementSource);
+      assertThatThrownBy(
+              () -> callerOwnedAcknowledgementRepository.acknowledge(acknowledgementReadback))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Issuer binding-local acknowledgement is unavailable: Issuer acknowledgement owner cannot join a jOOQ transaction");
+      assertThat(acknowledgementSourceReads).hasValue(0);
+      assertThat(callerTransaction.fetch("SELECT * FROM " + ACKNOWLEDGEMENT_TABLE).formatJSON())
+          .isEqualTo(acknowledgementImageBeforeAmbientRefusals);
+      assertThat(
+              callerTransaction
+                  .fetch(
+                      "SELECT * FROM game_session_canonical_issuer_binding_local_ack_gen_counter")
+                  .formatJSON())
+          .isEqualTo(acknowledgementCounterImageBeforeAmbientRefusals);
+    });
     assertThat(dsl.fetch("SELECT * FROM " + ACKNOWLEDGEMENT_TABLE).formatJSON())
         .isEqualTo(acknowledgementImageBeforeAmbientRefusals);
     assertThat(
@@ -655,13 +646,12 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
                     "Expected owner-issued local ACK generation counter")
                 .get("last_issued_binding_local_acknowledgement_generation", BigDecimal.class))
         .isEqualTo(BigDecimal.ONE);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE game_session_canonical_issuer_binding_local_ack_gen_counter"
-                        + " SET last_issued_binding_local_acknowledgement_generation = 3,"
-                        + " counter_version = counter_version + 1 WHERE issuer_id = ?",
-                    ISSUER))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE game_session_canonical_issuer_binding_local_ack_gen_counter"
+                    + " SET last_issued_binding_local_acknowledgement_generation = 3,"
+                    + " counter_version = counter_version + 1 WHERE issuer_id = ?",
+                ISSUER))
         .hasMessageContaining("must advance its own domain by one");
     assertThat(
             Objects.requireNonNull(
@@ -686,15 +676,14 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     assertThat(restartedAcknowledgementRepository.readHistorical(first.operationId()).exactBytes())
         .containsExactly(issuerAcknowledgement.exactBytes());
     var transactionLocalHistoricalReceipt =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext historicalQuery = DSL.using(configuration);
-              boolean autoCommit =
-                  historicalQuery.connectionResult(connection -> connection.getAutoCommit());
-              assertThat(autoCommit).isFalse();
-              return CanonicalGameplayIssuerBindingLocalAcknowledgementRepository.readHistorical(
-                  historicalQuery, first.operationId());
-            });
+        dsl.transactionResult(configuration -> {
+          DSLContext historicalQuery = DSL.using(configuration);
+          boolean autoCommit =
+              historicalQuery.connectionResult(connection -> connection.getAutoCommit());
+          assertThat(autoCommit).isFalse();
+          return CanonicalGameplayIssuerBindingLocalAcknowledgementRepository.readHistorical(
+              historicalQuery, first.operationId());
+        });
     assertThat(transactionLocalHistoricalReceipt.exactBytes())
         .containsExactly(issuerAcknowledgement.exactBytes());
     assertThat(transactionLocalHistoricalReceipt.digest())
@@ -710,20 +699,18 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
                     "Expected replay to retain the owner-issued ACK generation")
                 .get("last_issued_binding_local_acknowledgement_generation", BigDecimal.class))
         .isEqualTo(BigDecimal.ONE);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE game_session_canonical_issuer_binding_local_acknowledgement"
-                        + " SET acknowledgement_bytes = ? WHERE operation_id = ?",
-                    issuerAcknowledgement.exactBytes(),
-                    first.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE game_session_canonical_issuer_binding_local_acknowledgement"
+                    + " SET acknowledgement_bytes = ? WHERE operation_id = ?",
+                issuerAcknowledgement.exactBytes(),
+                first.operationId()))
         .hasMessageContaining("issuer binding-local acknowledgements are immutable");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM game_session_canonical_issuer_binding_local_acknowledgement"
-                        + " WHERE operation_id = ?",
-                    first.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM game_session_canonical_issuer_binding_local_acknowledgement"
+                    + " WHERE operation_id = ?",
+                first.operationId()))
         .hasMessageContaining("issuer binding-local acknowledgements are immutable");
     assertThat(count(dsl, ACKNOWLEDGEMENT_TABLE)).isEqualTo(1L);
     currentState.set(
@@ -738,10 +725,9 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     currentState.set(initialState);
 
     String beforeCapacityRefusal = localRegistrationImage(dsl);
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request("capacity-request", "capacity-transition", identity("capacity-new"))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("capacity-request", "capacity-transition", identity("capacity-new"))))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("capacity");
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeCapacityRefusal);
@@ -837,11 +823,9 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     new CanonicalGameplayAccountAdmissionBarrierRepository(dsl)
         .beginFenceIntent(firstCandidate.accountId(), UUID.randomUUID());
     String accountFencedImage = localRegistrationImage(dsl);
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request(
-                        "account-fenced-request", "account-fenced-transition", fencedCandidate)))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("account-fenced-request", "account-fenced-transition", fencedCandidate)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("Account");
     assertThat(localRegistrationImage(dsl)).isEqualTo(accountFencedImage);
@@ -1198,9 +1182,8 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     Map<String, byte[]> baseline = new TreeMap<>();
     administratorCommands
         .hgetall(key)
-        .forEach(
-            (field, value) ->
-                baseline.put(new String(field, StandardCharsets.UTF_8), value.clone()));
+        .forEach((field, value) ->
+            baseline.put(new String(field, StandardCharsets.UTF_8), value.clone()));
     assertThat(baseline).containsKey(METADATA_FIELD).containsKey(malformedCapacityField);
 
     ObjectNode malformedMember =
@@ -1214,11 +1197,10 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     arguments.add(ascii(PARTITION_COUNT.toString()));
     arguments.add(ascii(PARTITION_CAPACITY.toString()));
     arguments.add(ascii(Integer.toString(baseline.size())));
-    baseline.forEach(
-        (field, value) -> {
-          arguments.add(field.getBytes(StandardCharsets.UTF_8));
-          arguments.add(value);
-        });
+    baseline.forEach((field, value) -> {
+      arguments.add(field.getBytes(StandardCharsets.UTF_8));
+      arguments.add(value);
+    });
     while (arguments.size() < 16) arguments.add(ascii("unused"));
     return arguments.toArray(byte[][]::new);
   }
@@ -1245,11 +1227,10 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
     Map<String, String> image = new TreeMap<>();
     administratorCommands
         .hgetall(key)
-        .forEach(
-            (field, value) ->
-                image.put(
-                    Base64.getEncoder().encodeToString(field),
-                    Base64.getEncoder().encodeToString(value)));
+        .forEach((field, value) ->
+            image.put(
+                Base64.getEncoder().encodeToString(field),
+                Base64.getEncoder().encodeToString(value)));
     return image;
   }
 

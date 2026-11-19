@@ -90,15 +90,13 @@ public class RuntimeRegionStatusRepository {
             .doNothing()
             .returning()
             .fetchOptional(this::toEntity);
-    return inserted.orElseGet(
-        () ->
-            findByTenantIdAndGameInstanceId(entity.getTenantId(), entity.getGameInstanceId())
-                .orElseThrow(
-                    () ->
-                        new IllegalStateException(
-                            ("Natural-key conflict did not yield runtime_region_status for "
-                                    + "tenantId=%d gameInstanceId=%d")
-                                .formatted(entity.getTenantId(), entity.getGameInstanceId()))));
+    return inserted.orElseGet(() ->
+        findByTenantIdAndGameInstanceId(entity.getTenantId(), entity.getGameInstanceId())
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    ("Natural-key conflict did not yield runtime_region_status for "
+                            + "tenantId=%d gameInstanceId=%d")
+                        .formatted(entity.getTenantId(), entity.getGameInstanceId()))));
   }
 
   public Optional<RuntimeRegionStatus> claimObservedOwnership(
@@ -166,10 +164,8 @@ public class RuntimeRegionStatusRepository {
         .set(RUNTIME_REGION_STATUS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
         .returning()
         .fetchOptional(this::toEntity)
-        .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "Runtime ownership mutation did not return a committed row"));
+        .orElseThrow(() ->
+            new IllegalStateException("Runtime ownership mutation did not return a committed row"));
   }
 
   private Optional<RuntimeRegionStatus> findById(Long id) {

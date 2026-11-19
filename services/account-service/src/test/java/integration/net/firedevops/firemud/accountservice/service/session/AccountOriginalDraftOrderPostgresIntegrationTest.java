@@ -129,31 +129,28 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
           AccountControlUiCoordination.digest(
               "SHA-256", issued.compact().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
       var jti =
-          f.tx(
-              () ->
-                  f.dsl
-                      .fetchSingle(
-                          "SELECT token_jti FROM account_control_ui_issuance_operations "
-                              + "WHERE token_hash=? AND status='COMMITTED'",
-                          tokenHash)
-                      .get("token_jti", UUID.class));
+          f.tx(() ->
+              f.dsl
+                  .fetchSingle(
+                      "SELECT token_jti FROM account_control_ui_issuance_operations "
+                          + "WHERE token_hash=? AND status='COMMITTED'",
+                      tokenHash)
+                  .get("token_jti", UUID.class));
       long issuedAt =
           java.util.Objects.requireNonNull(
-              f.tx(
-                  () ->
-                      f.dsl
-                          .fetchSingle(
-                              "SELECT issued_at_epoch_second FROM account_control_ui_issuance_operations "
-                                  + "WHERE token_jti=?",
-                              jti)
-                          .get("issued_at_epoch_second", Long.class)));
+              f.tx(() ->
+                  f.dsl
+                      .fetchSingle(
+                          "SELECT issued_at_epoch_second FROM account_control_ui_issuance_operations "
+                              + "WHERE token_jti=?",
+                          jti)
+                      .get("issued_at_epoch_second", Long.class)));
       var before =
-          f.tx(
-              () ->
-                  f.dsl.fetchSingle(
-                      "SELECT row_to_json(a)::TEXT AS payload, a.xmin::TEXT AS row_version "
-                          + "FROM account_control_ui_issuance_operations a WHERE token_jti=?",
-                      jti));
+          f.tx(() ->
+              f.dsl.fetchSingle(
+                  "SELECT row_to_json(a)::TEXT AS payload, a.xmin::TEXT AS row_version "
+                      + "FROM account_control_ui_issuance_operations a WHERE token_jti=?",
+                  jti));
       var callback = new AtomicBoolean();
       var clockChanged = new AtomicBoolean();
       var originalListeners = f.dsl.configuration().executeListenerProviders();
@@ -184,33 +181,32 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
       f.dsl.configuration().set(listeners);
       try {
         Throwable failure =
-            catchThrowable(
-                () -> {
-                  if (signedCredential) {
-                    issued
-                        .actors()
-                        .withCurrent(
-                            issued.compact(),
-                            f.tenant,
-                            issued.environment(),
-                            current -> {
-                              callback.set(true);
-                              return "callback invoked";
-                            });
-                  } else {
-                    issued
-                        .actors()
-                        .withCurrentCommitted(
-                            f.account.getAccountUuid(),
-                            f.tenant,
-                            jti,
-                            issued.environment(),
-                            current -> {
-                              callback.set(true);
-                              return "callback invoked";
-                            });
-                  }
-                });
+            catchThrowable(() -> {
+              if (signedCredential) {
+                issued
+                    .actors()
+                    .withCurrent(
+                        issued.compact(),
+                        f.tenant,
+                        issued.environment(),
+                        current -> {
+                          callback.set(true);
+                          return "callback invoked";
+                        });
+              } else {
+                issued
+                    .actors()
+                    .withCurrentCommitted(
+                        f.account.getAccountUuid(),
+                        f.tenant,
+                        jti,
+                        issued.environment(),
+                        current -> {
+                          callback.set(true);
+                          return "callback invoked";
+                        });
+              }
+            });
         assertThat(clockChanged).isTrue();
         assertThat(clock.instant().isBefore(Instant.ofEpochSecond(issuedAt)))
             .isEqualTo(clockChange.isNegative());
@@ -224,12 +220,11 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
               .hasMessage("Exact current authenticated initial creator required");
         }
         assertThat(
-                f.tx(
-                    () ->
-                        f.dsl.fetchSingle(
-                            "SELECT row_to_json(a)::TEXT AS payload, a.xmin::TEXT AS row_version "
-                                + "FROM account_control_ui_issuance_operations a WHERE token_jti=?",
-                            jti)))
+                f.tx(() ->
+                    f.dsl.fetchSingle(
+                        "SELECT row_to_json(a)::TEXT AS payload, a.xmin::TEXT AS row_version "
+                            + "FROM account_control_ui_issuance_operations a WHERE token_jti=?",
+                        jti)))
             .isEqualTo(before);
       } finally {
         f.dsl.configuration().set(originalListeners);
@@ -266,13 +261,12 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
           AccountControlUiCoordination.digest(
               "SHA-256", issued.compact().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
       var original =
-          f.tx(
-              () ->
-                  f.dsl.fetchSingle(
-                      "SELECT token_jti, signer_receipt, row_to_json(a)::TEXT AS payload, "
-                          + "a.xmin::TEXT AS row_version FROM account_control_ui_issuance_operations a "
-                          + "WHERE token_hash=? AND status='COMMITTED'",
-                      tokenHash));
+          f.tx(() ->
+              f.dsl.fetchSingle(
+                  "SELECT token_jti, signer_receipt, row_to_json(a)::TEXT AS payload, "
+                      + "a.xmin::TEXT AS row_version FROM account_control_ui_issuance_operations a "
+                      + "WHERE token_hash=? AND status='COMMITTED'",
+                  tokenHash));
       UUID jti = original.get("token_jti", UUID.class);
       var receipt =
           AccountControlUiIssuanceRepository.object(original.get("signer_receipt", byte[].class));
@@ -388,30 +382,28 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                     });
           };
       Throwable failure =
-          catchThrowable(
-              () -> {
-                if ("SQL".equals(keyState)) {
-                  f.tx(action::get);
-                } else if ("SYNCHRONIZATION".equals(keyState)) {
-                  org.springframework.transaction.support.TransactionSynchronizationManager
-                      .initSynchronization();
-                  try {
-                    action.get();
-                  } finally {
-                    org.springframework.transaction.support.TransactionSynchronizationManager
-                        .clearSynchronization();
-                  }
-                } else {
-                  action.get();
-                }
-              });
+          catchThrowable(() -> {
+            if ("SQL".equals(keyState)) {
+              f.tx(action::get);
+            } else if ("SYNCHRONIZATION".equals(keyState)) {
+              org.springframework.transaction.support.TransactionSynchronizationManager
+                  .initSynchronization();
+              try {
+                action.get();
+              } finally {
+                org.springframework.transaction.support.TransactionSynchronizationManager
+                    .clearSynchronization();
+              }
+            } else {
+              action.get();
+            }
+          });
       var after =
-          f.tx(
-              () ->
-                  f.dsl.fetchSingle(
-                      "SELECT row_to_json(a)::TEXT AS payload, a.xmin::TEXT AS row_version "
-                          + "FROM account_control_ui_issuance_operations a WHERE token_hash=?",
-                      tokenHash));
+          f.tx(() ->
+              f.dsl.fetchSingle(
+                  "SELECT row_to_json(a)::TEXT AS payload, a.xmin::TEXT AS row_version "
+                      + "FROM account_control_ui_issuance_operations a WHERE token_hash=?",
+                  tokenHash));
       assertThat(after.get("payload", String.class))
           .isEqualTo(original.get("payload", String.class));
       assertThat(after.get("row_version", String.class))
@@ -547,12 +539,11 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                   original.inputDigest(),
                   original.sources())
               .withRequiredOwners();
-      assertThatThrownBy(
-              () ->
-                  asPeer(
-                      "test",
-                      "game-design-service",
-                      () -> owner.claim(issued.compact(), changed, issued.environment())))
+      assertThatThrownBy(() ->
+              asPeer(
+                  "test",
+                  "game-design-service",
+                  () -> owner.claim(issued.compact(), changed, issued.environment())))
           .isInstanceOf(io.grpc.StatusRuntimeException.class)
           .extracting(failure -> io.grpc.Status.fromThrowable(failure).getCode())
           .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION);
@@ -572,12 +563,11 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                   original.inputDigest(),
                   original.sources())
               .withRequiredOwners();
-      assertThatThrownBy(
-              () ->
-                  asPeer(
-                      "test",
-                      "game-design-service",
-                      () -> owner.claim(issued.compact(), absent, issued.environment())))
+      assertThatThrownBy(() ->
+              asPeer(
+                  "test",
+                  "game-design-service",
+                  () -> owner.claim(issued.compact(), absent, issued.environment())))
           .isInstanceOf(
               net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier
                   .VerificationException.class);
@@ -586,36 +576,33 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
           List.of(
               new String[] {"other", "game-design-service"},
               new String[] {"test", "world-management-service"})) {
-        assertThatThrownBy(
-                () ->
-                    asPeer(
-                        peer[0],
-                        peer[1],
-                        () -> owner.claim(issued.compact(), original, issued.environment())))
+        assertThatThrownBy(() ->
+                asPeer(
+                    peer[0],
+                    peer[1],
+                    () -> owner.claim(issued.compact(), original, issued.environment())))
             .isInstanceOf(io.grpc.StatusRuntimeException.class);
       }
       // Explicit upstream terminal stipulation tests settled denial; it never fabricates HELD.
-      f.tx(
-          () -> {
-            f.fences.recordOwnerReadback(
-                original,
-                new DraftAuthorizationFenceBinding.OwnerReadback(
-                    DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
-                    DraftAuthorizationFenceBinding.Outcome.COMMITTED,
-                    original.operationId(),
-                    original.commitId(),
-                    original.fenceId(),
-                    original.inputDigest(),
-                    original.canonicalBytes(),
-                    new byte[] {1}));
-            return null;
-          });
-      assertThatThrownBy(
-              () ->
-                  asPeer(
-                      "test",
-                      "game-design-service",
-                      () -> owner.claim(issued.compact(), original, issued.environment())))
+      f.tx(() -> {
+        f.fences.recordOwnerReadback(
+            original,
+            new DraftAuthorizationFenceBinding.OwnerReadback(
+                DraftAuthorizationFenceBinding.Owner.GAME_DESIGN,
+                DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+                original.operationId(),
+                original.commitId(),
+                original.fenceId(),
+                original.inputDigest(),
+                original.canonicalBytes(),
+                new byte[] {1}));
+        return null;
+      });
+      assertThatThrownBy(() ->
+              asPeer(
+                  "test",
+                  "game-design-service",
+                  () -> owner.claim(issued.compact(), original, issued.environment())))
           .isInstanceOf(io.grpc.StatusRuntimeException.class);
       var reservedInput =
           DraftCommitBinding.create(
@@ -642,24 +629,22 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                   sources)
               .withRequiredOwners();
       f.tx(() -> f.fences.reserve(reserved));
-      assertThatThrownBy(
-              () ->
-                  asPeer(
-                      "test",
-                      "game-design-service",
-                      () -> owner.claim(issued.compact(), reserved, issued.environment())))
+      assertThatThrownBy(() ->
+              asPeer(
+                  "test",
+                  "game-design-service",
+                  () -> owner.claim(issued.compact(), reserved, issued.environment())))
           .isInstanceOf(io.grpc.StatusRuntimeException.class);
       var change =
           new net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository
               .SourceChange(UUID.randomUUID(), sources, new byte[] {9});
       assertThat(f.tx(() -> f.fences.requestSourceChange(change))).isFalse();
       assertThat(f.tx(() -> f.fences.read(reserved)).ordering().name()).isEqualTo("REVOKE_ORDER");
-      assertThatThrownBy(
-              () ->
-                  asPeer(
-                      "test",
-                      "game-design-service",
-                      () -> owner.claim(issued.compact(), reserved, issued.environment())))
+      assertThatThrownBy(() ->
+              asPeer(
+                  "test",
+                  "game-design-service",
+                  () -> owner.claim(issued.compact(), reserved, issued.environment())))
           .isInstanceOf(io.grpc.StatusRuntimeException.class);
     }
   }

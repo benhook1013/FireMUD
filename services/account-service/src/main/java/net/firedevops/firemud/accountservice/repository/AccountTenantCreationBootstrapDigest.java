@@ -60,23 +60,21 @@ public final class AccountTenantCreationBootstrapDigest {
     source.put(
         "outboxCheckpoints",
         snapshot.outboxCheckpoints().stream()
-            .map(
-                checkpoint ->
-                    Map.of(
-                        "outboxStreamKey", checkpoint.outboxStreamKey(),
-                        "outboxSequence", checkpoint.outboxSequence()))
+            .map(checkpoint ->
+                Map.of(
+                    "outboxStreamKey", checkpoint.outboxStreamKey(),
+                    "outboxSequence", checkpoint.outboxSequence()))
             .toList());
     source.put(
         "outboxSourceEvidence",
         snapshot.outboxSourceEvidence().stream()
-            .map(
-                evidence ->
-                    Map.of(
-                        "outboxStreamKey", evidence.outboxStreamKey(),
-                        "outboxSequence", evidence.outboxSequence(),
-                        "eventId", evidence.eventId(),
-                        "eventDigest", evidence.eventDigest(),
-                        "canonicalEventJson", evidence.canonicalEventJson()))
+            .map(evidence ->
+                Map.of(
+                    "outboxStreamKey", evidence.outboxStreamKey(),
+                    "outboxSequence", evidence.outboxSequence(),
+                    "eventId", evidence.eventId(),
+                    "eventDigest", evidence.eventDigest(),
+                    "canonicalEventJson", evidence.canonicalEventJson()))
             .toList());
     return canonicalJson(source);
   }
@@ -180,13 +178,11 @@ public final class AccountTenantCreationBootstrapDigest {
         .ifPresent(cutoff -> result.put("accountSecurityCutoff", cutoffMap(cutoff)));
     tuple
         .tenantBillingCutoff()
-        .ifPresent(
-            cutoffs -> {
-              Map<String, Object> encodedCutoffs = new LinkedHashMap<>();
-              cutoffs.forEach(
-                  (tenantId, cutoff) -> encodedCutoffs.put(tenantId, cutoffMap(cutoff)));
-              result.put("tenantBillingCutoff", encodedCutoffs);
-            });
+        .ifPresent(cutoffs -> {
+          Map<String, Object> encodedCutoffs = new LinkedHashMap<>();
+          cutoffs.forEach((tenantId, cutoff) -> encodedCutoffs.put(tenantId, cutoffMap(cutoff)));
+          result.put("tenantBillingCutoff", encodedCutoffs);
+        });
     return result;
   }
 

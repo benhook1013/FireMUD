@@ -85,9 +85,8 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
 
     List<ResolvedBinding> targetBindings =
         allBindings.stream()
-            .filter(
-                binding ->
-                    binding.pluginOwner().matches(pluginId, pluginVersionId) && binding.enabled())
+            .filter(binding ->
+                binding.pluginOwner().matches(pluginId, pluginVersionId) && binding.enabled())
             .toList();
     if (targetBindings.isEmpty()) {
       return;
@@ -105,11 +104,10 @@ public class PluginActivationPreflightServiceImpl implements PluginActivationPre
     List<ResolvedBinding> existingBindings =
         allBindings.stream()
             .filter(ResolvedBinding::enabled)
-            .filter(
-                binding ->
-                    !binding.pluginOwner().matches(pluginId, pluginVersionId)
-                        && participatesInResolvedHandlerSet(
-                            binding.pluginOwner(), activePluginVersions))
+            .filter(binding ->
+                !binding.pluginOwner().matches(pluginId, pluginVersionId)
+                    && participatesInResolvedHandlerSet(
+                        binding.pluginOwner(), activePluginVersions))
             .toList();
 
     validateCommandAliases(targetBindings);

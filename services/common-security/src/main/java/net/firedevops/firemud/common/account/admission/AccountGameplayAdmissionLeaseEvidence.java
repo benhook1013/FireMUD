@@ -365,11 +365,10 @@ public final class AccountGameplayAdmissionLeaseEvidence {
   private static Map<String, Object> object(Object value) {
     if (!(value instanceof Map<?, ?> map)) throw invalid();
     Map<String, Object> result = new LinkedHashMap<>();
-    map.forEach(
-        (key, child) -> {
-          if (!(key instanceof String text)) throw invalid();
-          result.put(text, child);
-        });
+    map.forEach((key, child) -> {
+      if (!(key instanceof String text)) throw invalid();
+      result.put(text, child);
+    });
     return result;
   }
 

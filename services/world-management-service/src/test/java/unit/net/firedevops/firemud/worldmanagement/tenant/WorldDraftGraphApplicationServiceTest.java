@@ -69,10 +69,8 @@ class WorldDraftGraphApplicationServiceTest {
     when(operation.accountBindingBytes()).thenReturn(new byte[] {3});
     when(repository.readCommitted(application)).thenReturn(Optional.empty());
     when(verifier.verifyHeldOriginalCommitOrder(operation)).thenReturn(proof);
-    assertThatThrownBy(
-            () ->
-                new WorldDraftGraphApplicationService(repository, manager, verifier)
-                    .apply(application))
+    assertThatThrownBy(() ->
+            new WorldDraftGraphApplicationService(repository, manager, verifier).apply(application))
         .hasMessageContaining("proof differs from original complete operation");
     verifyNoInteractions(manager);
   }
@@ -89,10 +87,8 @@ class WorldDraftGraphApplicationServiceTest {
     var status = mock(TransactionStatus.class);
     when(manager.getTransaction(any())).thenReturn(status);
     when(repository.apply(application, proof)).thenThrow(new IllegalStateException("late failure"));
-    assertThatThrownBy(
-            () ->
-                new WorldDraftGraphApplicationService(repository, manager, verifier)
-                    .apply(application))
+    assertThatThrownBy(() ->
+            new WorldDraftGraphApplicationService(repository, manager, verifier).apply(application))
         .hasMessage("late failure");
     var order = inOrder(repository, verifier, manager);
     order.verify(repository).readCommitted(application);

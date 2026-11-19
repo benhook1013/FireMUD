@@ -82,48 +82,42 @@ class EntitySelectedSourceIntakeTerminalReadGrpcCodecTest {
   @Test
   void rejectsNamespaceReaderPurposeOwnerAndAuthorizationDrift() {
     var binding = fixture.authorization();
-    assertThatThrownBy(
-            () ->
-                new EntitySelectedSourceIntakeTerminalReadEvidence.Request(
-                    1, "other", UUID.randomUUID(), binding))
+    assertThatThrownBy(() ->
+            new EntitySelectedSourceIntakeTerminalReadEvidence.Request(
+                1, "other", UUID.randomUUID(), binding))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new EntitySelectedSourceIntakeTerminalReadEvidence.Request(
-                    1, "test", UUID.randomUUID(), fixture.wrongOwnerAuthorization()))
+    assertThatThrownBy(() ->
+            new EntitySelectedSourceIntakeTerminalReadEvidence.Request(
+                1, "test", UUID.randomUUID(), fixture.wrongOwnerAuthorization()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var request = EntitySelectedSourceIntakeTerminalReadGrpcCodec.toRequest(request());
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(
-                    request.toBuilder()
-                        .setIntendedReader("spiffe://firemud/ns/test/sa/entity-management-service")
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(
+                request.toBuilder()
+                    .setIntendedReader("spiffe://firemud/ns/test/sa/entity-management-service")
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(
-                    request.toBuilder().setTerminalReadPurpose("ENTITY_INTAKE_RETENTION").build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(
+                request.toBuilder().setTerminalReadPurpose("ENTITY_INTAKE_RETENTION").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(
-                    request.toBuilder()
-                        .setIntakeAuthorizationDigest("sha256:" + "0".repeat(64))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(
+                request.toBuilder()
+                    .setIntakeAuthorizationDigest("sha256:" + "0".repeat(64))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     byte[] changedBinding = request.getOriginalIntakeAuthorizationBinding().toByteArray();
     changedBinding[4] ^= 1;
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(
-                    request.toBuilder()
-                        .setOriginalIntakeAuthorizationBinding(ByteString.copyFrom(changedBinding))
-                        .setIntakeAuthorizationDigest(
-                            DraftAuthorizationFenceBinding.digest(changedBinding))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(
+                request.toBuilder()
+                    .setOriginalIntakeAuthorizationBinding(ByteString.copyFrom(changedBinding))
+                    .setIntakeAuthorizationDigest(
+                        DraftAuthorizationFenceBinding.digest(changedBinding))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -134,31 +128,27 @@ class EntitySelectedSourceIntakeTerminalReadGrpcCodecTest {
         EntitySelectedSourceIntakeTerminalReadGrpcCodec.toResponse(
             new EntitySelectedSourceIntakeTerminalReadEvidence(request, fixture.receipt()));
 
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setResult(
-                            EntitySelectedSourceIntakeTerminalResult
-                                .ENTITY_SELECTED_SOURCE_INTAKE_TERMINAL_RESULT_UNSPECIFIED)
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setResult(
+                        EntitySelectedSourceIntakeTerminalResult
+                            .ENTITY_SELECTED_SOURCE_INTAKE_TERMINAL_RESULT_UNSPECIFIED)
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder().setReceiptDigest("sha256:" + "0".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request, response.toBuilder().setReceiptDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(
-                            response.getRequest().toBuilder()
-                                .setReadRequestId("12121212-1212-4212-8212-121212121212"))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(
+                        response.getRequest().toBuilder()
+                            .setReadRequestId("12121212-1212-4212-8212-121212121212"))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var requestUnknown =
@@ -170,10 +160,8 @@ class EntitySelectedSourceIntakeTerminalReadGrpcCodecTest {
             () -> EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(requestUnknown))
         .isInstanceOf(IllegalArgumentException.class);
     var responseUnknown = response.toBuilder().setUnknownFields(unknownFields()).build();
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request, responseUnknown))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(request, responseUnknown))
         .isInstanceOf(IllegalArgumentException.class);
 
     byte[] trailing =
@@ -181,26 +169,24 @@ class EntitySelectedSourceIntakeTerminalReadGrpcCodecTest {
             response.getCommittedEmptyReceipt().toByteArray(),
             response.getCommittedEmptyReceipt().size() + 1);
     trailing[trailing.length - 1] = 0x55;
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setCommittedEmptyReceipt(ByteString.copyFrom(trailing))
-                        .setReceiptDigest(DraftAuthorizationFenceBinding.digest(trailing))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setCommittedEmptyReceipt(ByteString.copyFrom(trailing))
+                    .setReceiptDigest(DraftAuthorizationFenceBinding.digest(trailing))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     byte[] changedReceipt = response.getCommittedEmptyReceipt().toByteArray();
     changedReceipt[changedReceipt.length - 1] ^= 1;
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setCommittedEmptyReceipt(ByteString.copyFrom(changedReceipt))
-                        .setReceiptDigest(DraftAuthorizationFenceBinding.digest(changedReceipt))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setCommittedEmptyReceipt(ByteString.copyFrom(changedReceipt))
+                    .setReceiptDigest(DraftAuthorizationFenceBinding.digest(changedReceipt))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -227,10 +213,9 @@ class EntitySelectedSourceIntakeTerminalReadGrpcCodecTest {
             .toBuilder()
             .setCommittedEmptyReceipt(ByteString.copyFrom(oversizedReceipt))
             .build();
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
-                    request, oversizedResponse))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromResponse(
+                request, oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

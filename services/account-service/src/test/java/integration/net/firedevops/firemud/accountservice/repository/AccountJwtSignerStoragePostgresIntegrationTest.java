@@ -159,18 +159,17 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
     assertThat(observation.expectedSecretResourceVersion()).isEqualTo(observedResourceVersion);
     assertThat(observation.secretUid()).isEqualTo(SECRET_UID);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        desired.recordSecretObservation(
-                            BINDING,
-                            trust,
-                            request.operationId(),
-                            request.operationDigest(),
-                            SECRET_UID,
-                            "13")))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    desired.recordSecretObservation(
+                        BINDING,
+                        trust,
+                        request.operationId(),
+                        request.operationDigest(),
+                        SECRET_UID,
+                        "13")))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class);
 
     PublicJwk key = publicJwk(request.targetKid());
@@ -204,38 +203,36 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
     assertThat(result.publicKeyFingerprint()).isEqualTo(key.fingerprint());
     assertThat(result.publicJwkJson()).doesNotContain("\"d\"");
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        desired.recordGenerationResult(
-                            BINDING,
-                            trust,
-                            request.operationId(),
-                            observation.generationRequestDigest(),
-                            SECRET_UID,
-                            observedResourceVersion,
-                            "14",
-                            key.json())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    desired.recordGenerationResult(
+                        BINDING,
+                        trust,
+                        request.operationId(),
+                        observation.generationRequestDigest(),
+                        SECRET_UID,
+                        observedResourceVersion,
+                        "14",
+                        key.json())))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class);
 
     TrustFence staleTrust =
         new TrustFence(CLUSTER_UID, NAMESPACE_UID, "a".repeat(64), TRUST_REVISION);
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        desired.recordGenerationResult(
-                            BINDING,
-                            staleTrust,
-                            request.operationId(),
-                            observation.generationRequestDigest(),
-                            SECRET_UID,
-                            observedResourceVersion,
-                            "13",
-                            key.json())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    desired.recordGenerationResult(
+                        BINDING,
+                        staleTrust,
+                        request.operationId(),
+                        observation.generationRequestDigest(),
+                        SECRET_UID,
+                        observedResourceVersion,
+                        "13",
+                        key.json())))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.BindingMismatchException.class);
 
     AccountJwtSignerDesiredStateRepository restartedRepository =
@@ -319,26 +316,23 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
             result.publicKeyFingerprint(),
             result.publicJwkJson(),
             "f".repeat(64));
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () -> desired.abortUnpreparedGeneration(BINDING, trust, changedResult)))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context, () -> desired.abortUnpreparedGeneration(BINDING, trust, changedResult)))
         .isInstanceOf(AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class);
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context,
-                    () ->
-                        context
-                            .dsl()
-                            .execute(
-                                "UPDATE account_jwt_signer_desired_states "
-                                    + "SET record_version = record_version + 1, "
-                                    + "generation_operation_id = NULL "
-                                    + "WHERE environment_id = ?",
-                                BINDING.environmentId())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                context,
+                () ->
+                    context
+                        .dsl()
+                        .execute(
+                            "UPDATE account_jwt_signer_desired_states "
+                                + "SET record_version = record_version + 1, "
+                                + "generation_operation_id = NULL "
+                                + "WHERE environment_id = ?",
+                            BINDING.environmentId())))
         .isInstanceOf(DataAccessException.class);
 
     var receipt =
@@ -417,13 +411,12 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
     String validRow =
         context
             .transaction()
-            .execute(
-                status -> {
-                  desired.initialize(BINDING, enrollmentIdentity());
-                  String row = signerRow(context, "account_jwt_signer_desired_states");
-                  status.setRollbackOnly();
-                  return row;
-                });
+            .execute(status -> {
+              desired.initialize(BINDING, enrollmentIdentity());
+              String row = signerRow(context, "account_jwt_signer_desired_states");
+              status.setRollbackOnly();
+              return row;
+            });
     assertThat(validRow).isNotNull();
     for (String field :
         List.of(
@@ -436,17 +429,16 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
             "enrollment_public_config_map_uid",
             "enrollment_public_config_map_resource_version",
             "enrollment_public_config_map_snapshot_digest")) {
-      assertThatThrownBy(
-              () ->
-                  inTransaction(
-                      context,
-                      () ->
-                          insertSignerRow(
-                              context,
-                              "account_jwt_signer_desired_states",
-                              validRow,
-                              "jsonb_build_object(?, NULL)",
-                              field)))
+      assertThatThrownBy(() ->
+              inTransaction(
+                  context,
+                  () ->
+                      insertSignerRow(
+                          context,
+                          "account_jwt_signer_desired_states",
+                          validRow,
+                          "jsonb_build_object(?, NULL)",
+                          field)))
           .as("independent partial enrollment INSERT: %s", field)
           .isInstanceOf(DataAccessException.class)
           .satisfies(failure -> assertThat(signerSqlState(failure)).isEqualTo("23514"));
@@ -457,18 +449,17 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
             "enrollment_materializer_binding_digest",
             "enrollment_api_binding_digest",
             "enrollment_public_config_map_snapshot_digest")) {
-      assertThatThrownBy(
-              () ->
-                  inTransaction(
-                      context,
-                      () ->
-                          insertSignerRow(
-                              context,
-                              "account_jwt_signer_desired_states",
-                              validRow,
-                              "jsonb_build_object(?, ?)",
-                              field,
-                              "not-a-sha256")))
+      assertThatThrownBy(() ->
+              inTransaction(
+                  context,
+                  () ->
+                      insertSignerRow(
+                          context,
+                          "account_jwt_signer_desired_states",
+                          validRow,
+                          "jsonb_build_object(?, ?)",
+                          field,
+                          "not-a-sha256")))
           .as("independent malformed enrollment INSERT: %s", field)
           .isInstanceOf(DataAccessException.class)
           .satisfies(failure -> assertThat(signerSqlState(failure)).isEqualTo("23514"));
@@ -490,37 +481,34 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
     String observationRow =
         context
             .transaction()
-            .execute(
-                status -> {
-                  desired.recordSecretObservation(
-                      BINDING,
-                      trust(),
-                      request.operationId(),
-                      request.operationDigest(),
-                      SECRET_UID,
-                      "12");
-                  String row = signerRow(context, "account_jwt_signer_secret_observations");
-                  status.setRollbackOnly();
-                  return row;
-                });
+            .execute(status -> {
+              desired.recordSecretObservation(
+                  BINDING,
+                  trust(),
+                  request.operationId(),
+                  request.operationDigest(),
+                  SECRET_UID,
+                  "12");
+              String row = signerRow(context, "account_jwt_signer_secret_observations");
+              status.setRollbackOnly();
+              return row;
+            });
     assertThat(observationRow).isNotNull();
     for (String invalid : List.of("", "r\n", "r\u0001", "r".repeat(257))) {
-      assertThatThrownBy(
-              () ->
-                  inTransaction(
-                      context,
-                      () ->
-                          insertSignerRow(
-                              context,
-                              "account_jwt_signer_secret_observations",
-                              observationRow,
-                              "jsonb_build_object('observed_resource_version', ?)",
-                              invalid)))
+      assertThatThrownBy(() ->
+              inTransaction(
+                  context,
+                  () ->
+                      insertSignerRow(
+                          context,
+                          "account_jwt_signer_secret_observations",
+                          observationRow,
+                          "jsonb_build_object('observed_resource_version', ?)",
+                          invalid)))
           .isInstanceOf(DataAccessException.class)
-          .satisfies(
-              failure ->
-                  assertThat(signerSqlState(failure))
-                      .isEqualTo(invalid.length() > 256 ? "22001" : "23514"));
+          .satisfies(failure ->
+              assertThat(signerSqlState(failure))
+                  .isEqualTo(invalid.length() > 256 ? "22001" : "23514"));
       assertThat(count(context, "account_jwt_signer_secret_observations")).isZero();
     }
     GenerationRequest observed =
@@ -538,42 +526,39 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
     String resultRow =
         context
             .transaction()
-            .execute(
-                status -> {
-                  desired.recordGenerationResult(
-                      BINDING,
-                      trust(),
-                      request.operationId(),
-                      observed.generationRequestDigest(),
-                      SECRET_UID,
-                      "12",
-                      "13",
-                      key.json());
-                  String row = signerRow(context, "account_jwt_signer_generation_results");
-                  status.setRollbackOnly();
-                  return row;
-                });
+            .execute(status -> {
+              desired.recordGenerationResult(
+                  BINDING,
+                  trust(),
+                  request.operationId(),
+                  observed.generationRequestDigest(),
+                  SECRET_UID,
+                  "12",
+                  "13",
+                  key.json());
+              String row = signerRow(context, "account_jwt_signer_generation_results");
+              status.setRollbackOnly();
+              return row;
+            });
     assertThat(resultRow).isNotNull();
     for (String field : List.of("expected_prior_resource_version", "observed_resource_version")) {
       for (String invalid : List.of("", "r\n", "r\u0001", "r".repeat(257))) {
-        assertThatThrownBy(
-                () ->
-                    inTransaction(
-                        context,
-                        () ->
-                            insertSignerRow(
-                                context,
-                                "account_jwt_signer_generation_results",
-                                resultRow,
-                                "jsonb_build_object(?, ?)",
-                                field,
-                                invalid)))
+        assertThatThrownBy(() ->
+                inTransaction(
+                    context,
+                    () ->
+                        insertSignerRow(
+                            context,
+                            "account_jwt_signer_generation_results",
+                            resultRow,
+                            "jsonb_build_object(?, ?)",
+                            field,
+                            invalid)))
             .as("raw result resource version: %s", field)
             .isInstanceOf(DataAccessException.class)
-            .satisfies(
-                failure ->
-                    assertThat(signerSqlState(failure))
-                        .isEqualTo(invalid.length() > 256 ? "22001" : "23514"));
+            .satisfies(failure ->
+                assertThat(signerSqlState(failure))
+                    .isEqualTo(invalid.length() > 256 ? "22001" : "23514"));
         assertThat(count(context, "account_jwt_signer_generation_results")).isZero();
       }
     }
@@ -636,21 +621,20 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
     String resultRow =
         context
             .transaction()
-            .execute(
-                status -> {
-                  desired.recordGenerationResult(
-                      BINDING,
-                      trust(),
-                      request.operationId(),
-                      observed.generationRequestDigest(),
-                      SECRET_UID,
-                      "12",
-                      "13",
-                      key.json());
-                  String row = signerRow(context, "account_jwt_signer_generation_results");
-                  status.setRollbackOnly();
-                  return row;
-                });
+            .execute(status -> {
+              desired.recordGenerationResult(
+                  BINDING,
+                  trust(),
+                  request.operationId(),
+                  observed.generationRequestDigest(),
+                  SECRET_UID,
+                  "12",
+                  "13",
+                  key.json());
+              String row = signerRow(context, "account_jwt_signer_generation_results");
+              status.setRollbackOnly();
+              return row;
+            });
     assertThat(resultRow).isNotNull();
     // Raw INSERT takes no repository locks: these locks must come from the result trigger.
     inTransaction(
@@ -766,13 +750,12 @@ class AccountJwtSignerStoragePostgresIntegrationTest {
     var provider = mock(AccountJwtSignerMaterializerTrustBinding.class);
     when(provider.current())
         .thenReturn(Optional.of(initial), Optional.of(initial))
-        .thenAnswer(
-            invocation -> {
-              assertThat(count(context, "account_jwt_signer_generation_results"))
-                  .as("the real INSERT is visible inside the transaction before trust moves")
-                  .isEqualTo(1L);
-              return Optional.of(changed);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(count(context, "account_jwt_signer_generation_results"))
+              .as("the real INSERT is visible inside the transaction before trust moves")
+              .isEqualTo(1L);
+          return Optional.of(changed);
+        });
     var service =
         new AccountJwtSignerMaterializationService(
             desired,

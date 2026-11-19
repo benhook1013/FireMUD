@@ -179,10 +179,9 @@ class CurrentPrivatePlaytestLifecycleReadGrpcServiceIntegrationTest {
 
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-        .run(
-            () ->
-                service.readCurrentPrivatePlaytestLifecycle(
-                    CurrentPrivatePlaytestLifecycleReadGrpcCodec.toRequest(selector), observer));
+        .run(() ->
+            service.readCurrentPrivatePlaytestLifecycle(
+                CurrentPrivatePlaytestLifecycleReadGrpcCodec.toRequest(selector), observer));
 
     ArgumentCaptor<Throwable> failure = ArgumentCaptor.forClass(Throwable.class);
     org.mockito.Mockito.verify(observer).onError(failure.capture());
@@ -205,10 +204,9 @@ class CurrentPrivatePlaytestLifecycleReadGrpcServiceIntegrationTest {
     try {
       Context.current()
           .withValue(GrpcPeerIdentity.CONTEXT_KEY, accountPeer(NAMESPACE))
-          .run(
-              () ->
-                  service.readCurrentPrivatePlaytestLifecycle(
-                      CurrentPrivatePlaytestLifecycleReadGrpcCodec.toRequest(selector), observer));
+          .run(() ->
+              service.readCurrentPrivatePlaytestLifecycle(
+                  CurrentPrivatePlaytestLifecycleReadGrpcCodec.toRequest(selector), observer));
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
@@ -247,10 +245,9 @@ class CurrentPrivatePlaytestLifecycleReadGrpcServiceIntegrationTest {
           CurrentPrivatePlaytestLifecycleReadServiceGrpc.newBlockingStub(channel)
               .withDeadlineAfter(5, TimeUnit.SECONDS);
       Request selector = new Request(UUID.randomUUID(), scope);
-      assertThatThrownBy(
-              () ->
-                  stub.readCurrentPrivatePlaytestLifecycle(
-                      CurrentPrivatePlaytestLifecycleReadGrpcCodec.toRequest(selector)))
+      assertThatThrownBy(() ->
+              stub.readCurrentPrivatePlaytestLifecycle(
+                  CurrentPrivatePlaytestLifecycleReadGrpcCodec.toRequest(selector)))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               failure -> {

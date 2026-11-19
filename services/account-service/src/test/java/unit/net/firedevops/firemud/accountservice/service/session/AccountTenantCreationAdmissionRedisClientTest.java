@@ -137,9 +137,8 @@ class AccountTenantCreationAdmissionRedisClientTest {
 
     var wrongPrincipal = new Fixture();
     when(wrongPrincipal.writer.aclWhoami()).thenReturn("another_owner");
-    assertThatThrownBy(
-            () ->
-                wrongPrincipal.client.withExistingReceipt(wrongPrincipal.binding, receipt -> true))
+    assertThatThrownBy(() ->
+            wrongPrincipal.client.withExistingReceipt(wrongPrincipal.binding, receipt -> true))
         .isInstanceOf(IllegalStateException.class);
     verify(wrongPrincipal.writer, never()).scriptLoad(any(byte[].class));
 
@@ -159,12 +158,11 @@ class AccountTenantCreationAdmissionRedisClientTest {
       var f = new Fixture();
       doReturn(counts).when(f.writer).dispatch(any(), any(), any());
       var called = new AtomicBoolean();
-      assertThatThrownBy(
-              () ->
-                  f.client.withInitialReceipt(
-                      f.binding,
-                      AccountTenantCreationAdmissionBindingTest.active(),
-                      receipt -> called.compareAndSet(false, true)))
+      assertThatThrownBy(() ->
+              f.client.withInitialReceipt(
+                  f.binding,
+                  AccountTenantCreationAdmissionBindingTest.active(),
+                  receipt -> called.compareAndSet(false, true)))
           .isInstanceOf(IllegalStateException.class);
       assertThat(called).isFalse();
       verifyNoInteractions(f.reader);
@@ -195,18 +193,16 @@ class AccountTenantCreationAdmissionRedisClientTest {
 
     var late = new Fixture();
     when(late.reader.get(any(byte[].class)))
-        .thenAnswer(
-            ignored -> {
-              when(late.clock.millis()).thenReturn(late.binding.operationDeadlineEpochMillis());
-              return late.binding.canonicalReceipt();
-            });
+        .thenAnswer(ignored -> {
+          when(late.clock.millis()).thenReturn(late.binding.operationDeadlineEpochMillis());
+          return late.binding.canonicalReceipt();
+        });
     var called = new AtomicBoolean();
-    assertThatThrownBy(
-            () ->
-                late.client.withInitialReceipt(
-                    late.binding,
-                    AccountTenantCreationAdmissionBindingTest.active(),
-                    receipt -> called.compareAndSet(false, true)))
+    assertThatThrownBy(() ->
+            late.client.withInitialReceipt(
+                late.binding,
+                AccountTenantCreationAdmissionBindingTest.active(),
+                receipt -> called.compareAndSet(false, true)))
         .isInstanceOf(IllegalStateException.class);
     assertThat(called).isFalse();
   }
@@ -229,18 +225,15 @@ class AccountTenantCreationAdmissionRedisClientTest {
   void lostExternalExclusionAfterPhysicalReadbackDoesNotEnterCallback() throws Exception {
     var f = new Fixture();
     when(f.reader.get(any(byte[].class)))
-        .thenAnswer(
-            ignored -> {
-              doThrow(new IllegalStateException("Controlled external exclusion loss"))
-                  .when(f.lease)
-                  .requireCurrent();
-              return f.binding.canonicalReceipt();
-            });
+        .thenAnswer(ignored -> {
+          doThrow(new IllegalStateException("Controlled external exclusion loss"))
+              .when(f.lease)
+              .requireCurrent();
+          return f.binding.canonicalReceipt();
+        });
     var called = new AtomicBoolean();
-    assertThatThrownBy(
-            () ->
-                f.client.withExistingReceipt(
-                    f.binding, receipt -> called.compareAndSet(false, true)))
+    assertThatThrownBy(() ->
+            f.client.withExistingReceipt(f.binding, receipt -> called.compareAndSet(false, true)))
         .isInstanceOf(IllegalStateException.class);
     assertThat(called).isFalse();
     verify(f.lease).close();

@@ -69,10 +69,8 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
   @Test
   void expiredCancelledAndAmbientCallsNeverAcquire() throws Exception {
     var fixture = new Fixture(0, 1);
-    assertThatThrownBy(
-            () ->
-                fixture.repository.readCommitted(
-                    fixture.request, Deadline.after(-1, TimeUnit.SECONDS)))
+    assertThatThrownBy(() ->
+            fixture.repository.readCommitted(fixture.request, Deadline.after(-1, TimeUnit.SECONDS)))
         .isInstanceOfSatisfying(
             StatusRuntimeException.class,
             error ->
@@ -84,10 +82,9 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
     }
     TransactionSynchronizationManager.initSynchronization();
     try {
-      assertThatThrownBy(
-              () ->
-                  fixture.repository.readCommitted(
-                      fixture.request, Deadline.after(5, TimeUnit.SECONDS)))
+      assertThatThrownBy(() ->
+              fixture.repository.readCommitted(
+                  fixture.request, Deadline.after(5, TimeUnit.SECONDS)))
           .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
@@ -194,10 +191,9 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
       }
       await(fixture.acquireEntered);
       for (var read : reads) assertStatus(read, Status.Code.DEADLINE_EXCEEDED);
-      assertThatThrownBy(
-              () ->
-                  fixture.repository.readCommitted(
-                      fixture.request, Deadline.after(5, TimeUnit.SECONDS)))
+      assertThatThrownBy(() ->
+              fixture.repository.readCommitted(
+                  fixture.request, Deadline.after(5, TimeUnit.SECONDS)))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               error ->
@@ -308,10 +304,9 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
     boolean resourceStopped = false;
     try {
       try {
-        assertThatThrownBy(
-                () ->
-                    fixture.repository.readCommitted(
-                        fixture.request, Deadline.after(5, TimeUnit.SECONDS)))
+        assertThatThrownBy(() ->
+                fixture.repository.readCommitted(
+                    fixture.request, Deadline.after(5, TimeUnit.SECONDS)))
             .isInstanceOf(DataAccessException.class)
             .hasMessage("Controlled connection return failed");
       } finally {
@@ -319,20 +314,18 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
         resourceStopped = true;
       }
       assertThat(appender.list)
-          .anySatisfy(
-              event -> {
-                assertThat(event.getLevel()).isEqualTo(Level.WARN);
-                assertThat(event.getFormattedMessage())
-                    .contains("retaining deadline-read slot", "Remaining capacity: 0 of 4");
-                assertThat(event.getThrowableProxy().getMessage())
-                    .isEqualTo("Controlled connection return failed");
-              });
+          .anySatisfy(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage())
+                .contains("retaining deadline-read slot", "Remaining capacity: 0 of 4");
+            assertThat(event.getThrowableProxy().getMessage())
+                .isEqualTo("Controlled connection return failed");
+          });
       assertThat(fixture.releaseAttempts.get()).isEqualTo(1);
       assertThat(capacity.availablePermits()).isZero();
-      assertThatThrownBy(
-              () ->
-                  fixture.repository.readCommitted(
-                      fixture.request, Deadline.after(5, TimeUnit.SECONDS)))
+      assertThatThrownBy(() ->
+              fixture.repository.readCommitted(
+                  fixture.request, Deadline.after(5, TimeUnit.SECONDS)))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               error ->
@@ -448,15 +441,14 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
               "e".repeat(64),
               3,
               binding.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-                  .map(
-                      unit ->
-                          new OwnedAffectedTuple(
-                              unit.owner().name(),
-                              unit.aggregateType(),
-                              unit.aggregateId(),
-                              unit.scopeType(),
-                              unit.scopeId(),
-                              unit.expectedEpoch()))
+                  .map(unit ->
+                      new OwnedAffectedTuple(
+                          unit.owner().name(),
+                          unit.aggregateType(),
+                          unit.aggregateId(),
+                          unit.scopeType(),
+                          unit.scopeId(),
+                          unit.expectedEpoch()))
                   .toList());
       includeBinding = blockedQuery == 2;
       backing =
@@ -605,14 +597,13 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
       var value = new CompletableFuture<Optional<WorldCanonicalFrozenTopology>>();
       Thread.ofVirtual()
           .start(
-              context.wrap(
-                  () -> {
-                    try {
-                      value.complete(repository.readCommitted(request, deadline));
-                    } catch (RuntimeException | Error failure) {
-                      value.completeExceptionally(failure);
-                    }
-                  }));
+              context.wrap(() -> {
+                try {
+                  value.complete(repository.readCommitted(request, deadline));
+                } catch (RuntimeException | Error failure) {
+                  value.completeExceptionally(failure);
+                }
+              }));
       return value;
     }
 

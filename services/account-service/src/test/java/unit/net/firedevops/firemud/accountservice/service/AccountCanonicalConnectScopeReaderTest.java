@@ -106,10 +106,8 @@ class AccountCanonicalConnectScopeReaderTest {
         () ->
             f.reader.read(
                 ACCOUNT,
-                f.issue(
-                    claims ->
-                        claims.put(
-                            "aud", List.of("bootstrap-connect-scope", "player-bootstrap")))));
+                f.issue(claims ->
+                    claims.put("aud", List.of("bootstrap-connect-scope", "player-bootstrap")))));
     assertCode(
         "CONNECT_SCOPE_INVALID",
         () -> f.reader.read(ACCOUNT, f.issue(claims -> claims.put("targetClass", "PRIVATE"))));
@@ -179,9 +177,8 @@ class AccountCanonicalConnectScopeReaderTest {
         () ->
             f.reader.read(
                 ACCOUNT,
-                f.issue(
-                    claims ->
-                        claims.put("evaluatedAt", Instant.now().plusSeconds(30).toString()))));
+                f.issue(claims ->
+                    claims.put("evaluatedAt", Instant.now().plusSeconds(30).toString()))));
     assertCode(
         "CONNECT_SCOPE_INVALID",
         () ->
@@ -196,13 +193,12 @@ class AccountCanonicalConnectScopeReaderTest {
         () ->
             f.reader.read(
                 ACCOUNT,
-                f.issue(
-                    claims ->
-                        claims.put(
-                            "connectScopeExpiresAt",
-                            Instant.parse((String) claims.get("connectScopeExpiresAt"))
-                                .plusSeconds(1)
-                                .toString()))));
+                f.issue(claims ->
+                    claims.put(
+                        "connectScopeExpiresAt",
+                        Instant.parse((String) claims.get("connectScopeExpiresAt"))
+                            .plusSeconds(1)
+                            .toString()))));
     assertThat(f.transactions.started).isZero();
     verifyNoInteractions(f.scopes);
   }
@@ -276,12 +272,11 @@ class AccountCanonicalConnectScopeReaderTest {
   private static void assertCode(String expected, Runnable action) {
     assertThatThrownBy(action::run)
         .isInstanceOf(AuthenticationException.class)
-        .satisfies(
-            failure -> {
-              AuthenticationException authentication = (AuthenticationException) failure;
-              assertThat(authentication.getCode()).isEqualTo(expected);
-              assertThat(authentication.getMessage()).doesNotContain("eyJ");
-            });
+        .satisfies(failure -> {
+          AuthenticationException authentication = (AuthenticationException) failure;
+          assertThat(authentication.getCode()).isEqualTo(expected);
+          assertThat(authentication.getMessage()).doesNotContain("eyJ");
+        });
   }
 
   private static CanonicalJoinScopeV2 scope(String token, String evaluatedAt, String expiresAt) {

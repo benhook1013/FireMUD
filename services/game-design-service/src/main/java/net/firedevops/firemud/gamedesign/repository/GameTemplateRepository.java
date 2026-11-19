@@ -92,15 +92,14 @@ public class GameTemplateRepository {
             .from(TABLE_REF)
             .where(TENANT_ID.eq(tenantId).and(ID.eq(id)))
             .limit(1)
-            .fetchOne(
-                record ->
-                    new GameTemplateLaunchConfigViewRecord(
-                        record.get(ID),
-                        record.get(TENANT_ID),
-                        record.get(DEFAULT_VERSION_ID),
-                        record.get(DEFAULT_SCRIPT_PATCH_VERSION),
-                        record.get(DEFAULT_RUNTIME_FLAGS_JSON),
-                        TemplateReferencePhase.valueOf(record.get(TEMPLATE_REFERENCE_PHASE)))));
+            .fetchOne(record ->
+                new GameTemplateLaunchConfigViewRecord(
+                    record.get(ID),
+                    record.get(TENANT_ID),
+                    record.get(DEFAULT_VERSION_ID),
+                    record.get(DEFAULT_SCRIPT_PATCH_VERSION),
+                    record.get(DEFAULT_RUNTIME_FLAGS_JSON),
+                    TemplateReferencePhase.valueOf(record.get(TEMPLATE_REFERENCE_PHASE)))));
   }
 
   public GameTemplate save(GameTemplate template) {

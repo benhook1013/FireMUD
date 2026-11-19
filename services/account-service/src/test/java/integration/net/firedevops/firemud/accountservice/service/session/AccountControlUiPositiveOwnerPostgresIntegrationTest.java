@@ -539,19 +539,17 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                   .setCurrentClaimFence(claimEvidence.currentClaimFence())
                   .build();
 
-          assertThatThrownBy(
-                  () ->
-                      accountTransport
-                          .gameDesign()
-                          .issueHumanOperatorAuthorizationReference(issueRequest))
+          assertThatThrownBy(() ->
+                  accountTransport
+                      .gameDesign()
+                      .issueHumanOperatorAuthorizationReference(issueRequest))
               .isInstanceOf(StatusRuntimeException.class)
               .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
               .isEqualTo(Status.Code.PERMISSION_DENIED);
           assertThat(
-                  f.tx(
-                      () ->
-                          operatorRepository.findByControlPlaneRequestId(
-                              tuple.controlPlaneRequestId())))
+                  f.tx(() ->
+                      operatorRepository.findByControlPlaneRequestId(
+                          tuple.controlPlaneRequestId())))
               .isEmpty();
 
           var issuedOperator =
@@ -568,11 +566,10 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                   .setCurrentClaimFence(claimEvidence.currentClaimFence())
                   .build();
 
-          assertThatThrownBy(
-                  () ->
-                      accountTransport
-                          .logging()
-                          .recoverOperatorAuthorizationReference(staleRecoveryRequest))
+          assertThatThrownBy(() ->
+                  accountTransport
+                      .logging()
+                      .recoverOperatorAuthorizationReference(staleRecoveryRequest))
               .isInstanceOf(StatusRuntimeException.class)
               .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
               .isEqualTo(Status.Code.INVALID_ARGUMENT);
@@ -695,21 +692,17 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                       ByteString.copyFrom(
                           changedTuple.canonicalJson().getBytes(StandardCharsets.UTF_8)))
                   .build();
-          assertThatThrownBy(
-                  () ->
-                      accountTransport
-                          .gameDesign()
-                          .readRedeemedOperationProjection(wrongOperationRead))
+          assertThatThrownBy(() ->
+                  accountTransport.gameDesign().readRedeemedOperationProjection(wrongOperationRead))
               .isInstanceOf(StatusRuntimeException.class)
               .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
               .isEqualTo(Status.Code.FAILED_PRECONDITION);
 
           var storedAfterDeniedRead =
-              f.tx(
-                  () ->
-                      operatorRepository
-                          .findByControlPlaneRequestId(tuple.controlPlaneRequestId())
-                          .orElseThrow());
+              f.tx(() ->
+                  operatorRepository
+                      .findByControlPlaneRequestId(tuple.controlPlaneRequestId())
+                      .orElseThrow());
           assertThat(storedAfterDeniedRead.status())
               .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
           assertThat(storedAfterDeniedRead.redemptionRedeemerWorkloadUri())
@@ -883,16 +876,15 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     assertThat(callbackSource).isEqualTo(originalSource.evidence());
     // A mutation through the real Account owner shares the consumer transaction and rolls back
     // together with its generation, source, fence and outbox effects when the callback fails.
-    assertThatThrownBy(
-            () ->
-                actors.withCurrentAccount(
-                    passwordCompact,
-                    actor -> {
-                      var mutation = f.accounts.findByAccountUuid(actor.accountId()).orElseThrow();
-                      mutation.setRole("admin");
-                      f.accounts.save(mutation);
-                      throw new IllegalStateException("test-only Account callback rollback");
-                    }))
+    assertThatThrownBy(() ->
+            actors.withCurrentAccount(
+                passwordCompact,
+                actor -> {
+                  var mutation = f.accounts.findByAccountUuid(actor.accountId()).orElseThrow();
+                  mutation.setRole("admin");
+                  f.accounts.save(mutation);
+                  throw new IllegalStateException("test-only Account callback rollback");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test-only Account callback rollback");
     assertThat(f.accounts.findById(account.getId()).orElseThrow().getRole()).isNull();
@@ -924,43 +916,39 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
       assertThat(retry.compactBytes()).isEqualTo(originalCompact);
       assertThat(retry.expiresAt()).isEqualTo(expiry);
       assertThat(retry.recoveryExpiresAt()).isEqualTo(recoveryExpiry);
-      assertThatThrownBy(
-              () ->
-                  issuance.issueAccount(
-                      new AccountControlUiIssuanceService.AccountSignInRequest(
-                          otpRequest.requestId(),
-                          account.getEmail(),
-                          "changed-secret",
-                          otpRequest.callerContextId())))
+      assertThatThrownBy(() ->
+              issuance.issueAccount(
+                  new AccountControlUiIssuanceService.AccountSignInRequest(
+                      otpRequest.requestId(),
+                      account.getEmail(),
+                      "changed-secret",
+                      otpRequest.callerContextId())))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
-      assertThatThrownBy(
-              () ->
-                  issuance.issueAccount(
-                      new AccountControlUiIssuanceService.AccountSignInRequest(
-                          otpRequest.requestId(),
-                          "changed@example.test",
-                          otp,
-                          otpRequest.callerContextId())))
+      assertThatThrownBy(() ->
+              issuance.issueAccount(
+                  new AccountControlUiIssuanceService.AccountSignInRequest(
+                      otpRequest.requestId(),
+                      "changed@example.test",
+                      otp,
+                      otpRequest.callerContextId())))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
-      assertThatThrownBy(
-              () ->
-                  issuance.issueAccount(
-                      new AccountControlUiIssuanceService.AccountSignInRequest(
-                          otpRequest.requestId(), account.getEmail(), otp, UUID.randomUUID())))
+      assertThatThrownBy(() ->
+              issuance.issueAccount(
+                  new AccountControlUiIssuanceService.AccountSignInRequest(
+                      otpRequest.requestId(), account.getEmail(), otp, UUID.randomUUID())))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
-      assertThatThrownBy(
-              () ->
-                  issuance.issue(
-                      new AccountControlUiIssuanceService.Request(
-                          otpRequest.requestId(),
-                          account.getEmail(),
-                          otp,
-                          f.tenant,
-                          otpRequest.callerContextId()),
-                      environment))
+      assertThatThrownBy(() ->
+              issuance.issue(
+                  new AccountControlUiIssuanceService.Request(
+                      otpRequest.requestId(),
+                      account.getEmail(),
+                      otp,
+                      f.tenant,
+                      otpRequest.callerContextId()),
+                  environment))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
     }
@@ -992,12 +980,11 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     }
     var generations = new AccountAuthorityGenerationRepository(f.dsl);
     var beforeMutation = f.tx(() -> generations.read(AuthorityScope.account(accountId)));
-    f.tx(
-        () -> {
-          var mutation = f.accounts.findById(account.getId()).orElseThrow();
-          mutation.setRole("admin");
-          return f.accounts.save(mutation);
-        });
+    f.tx(() -> {
+      var mutation = f.accounts.findById(account.getId()).orElseThrow();
+      mutation.setRole("admin");
+      return f.accounts.save(mutation);
+    });
     // A generic scalar-role mutation advances the retained owner history, but it is not a
     // receipt-bearing operation or canonical global-role authority. Current-source use must deny.
     var advanced = f.tx(() -> generations.read(AuthorityScope.account(accountId)));
@@ -1029,14 +1016,13 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         .isExactlyInstanceOf(SourceEvidenceUnavailableException.class);
     for (String compact : List.of(passwordCompact, otpCompact)) {
       var invoked = new java.util.concurrent.atomic.AtomicBoolean();
-      assertThatThrownBy(
-              () ->
-                  actors.withCurrentAccount(
-                      compact,
-                      actor -> {
-                        invoked.set(true);
-                        return actor.accountId();
-                      }))
+      assertThatThrownBy(() ->
+              actors.withCurrentAccount(
+                  compact,
+                  actor -> {
+                    invoked.set(true);
+                    return actor.accountId();
+                  }))
           .isExactlyInstanceOf(SourceEvidenceUnavailableException.class);
       assertThat(invoked).isFalse();
     }

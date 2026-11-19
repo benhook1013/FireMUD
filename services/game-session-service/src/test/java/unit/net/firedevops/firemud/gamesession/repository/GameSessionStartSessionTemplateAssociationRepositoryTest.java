@@ -27,10 +27,9 @@ class GameSessionStartSessionTemplateAssociationRepositoryTest {
         mock(GameSessionStartSessionOperatorAttemptRepository.class);
     var repository = new GameSessionStartSessionTemplateAssociationRepository(dsl, attempts);
 
-    assertThatThrownBy(
-            () ->
-                repository.findPinned(
-                    (GameSessionStartSessionOperatorAttemptRepository.AttemptClaim) null))
+    assertThatThrownBy(() ->
+            repository.findPinned(
+                (GameSessionStartSessionOperatorAttemptRepository.AttemptClaim) null))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("claim");
 
@@ -64,17 +63,16 @@ class GameSessionStartSessionTemplateAssociationRepositoryTest {
     assertThatThrownBy(() -> repository.pinInitialOrValidateExactReplay(null, null))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("claim");
-    assertThatThrownBy(
-            () ->
-                repository.pinInitialOrValidateExactReplay(
-                    new GameSessionStartSessionOperatorAttemptRepository.AttemptClaim(
-                        "world-runtime",
-                        "operator-request",
-                        java.util.UUID.fromString("02222222-2222-4222-8222-222222222222"),
-                        java.util.UUID.fromString("03333333-3333-4333-8333-333333333333"),
-                        java.util.UUID.fromString("04444444-4444-4444-8444-444444444444"),
-                        7L),
-                    null))
+    assertThatThrownBy(() ->
+            repository.pinInitialOrValidateExactReplay(
+                new GameSessionStartSessionOperatorAttemptRepository.AttemptClaim(
+                    "world-runtime",
+                    "operator-request",
+                    java.util.UUID.fromString("02222222-2222-4222-8222-222222222222"),
+                    java.util.UUID.fromString("03333333-3333-4333-8333-333333333333"),
+                    java.util.UUID.fromString("04444444-4444-4444-8444-444444444444"),
+                    7L),
+                null))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("candidate");
 
@@ -169,11 +167,9 @@ class GameSessionStartSessionTemplateAssociationRepositoryTest {
         Mockito.mockingDetails(dsl).getInvocations().stream()
             .filter(invocation -> invocation.getMethod().getName().equals("fetchOne"))
             .filter(invocation -> invocation.getRawArguments()[0] instanceof String sql)
-            .filter(
-                invocation ->
-                    ((String) invocation.getRawArguments()[0])
-                        .contains(
-                            "INSERT INTO game_session_start_session_template_association_pin"))
+            .filter(invocation ->
+                ((String) invocation.getRawArguments()[0])
+                    .contains("INSERT INTO game_session_start_session_template_association_pin"))
             .findFirst()
             .orElseThrow(() -> new AssertionError("Missing initial association INSERT SELECT"));
     Object[] rawArguments = insertCall.getRawArguments();

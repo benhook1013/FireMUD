@@ -513,18 +513,17 @@ public final class CanonicalInitialAdmissionIntentRepository {
       throw new IllegalStateException(
           "Canonical initial-admission intent mutation requires a writable owner transaction");
     }
-    dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()) {
-            throw new IllegalStateException(
-                "Canonical initial-admission intent DSL connection must join the owner transaction");
-          }
-          if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Canonical initial-admission intent mutation requires READ COMMITTED isolation");
-          }
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()) {
+        throw new IllegalStateException(
+            "Canonical initial-admission intent DSL connection must join the owner transaction");
+      }
+      if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Canonical initial-admission intent mutation requires READ COMMITTED isolation");
+      }
+      return null;
+    });
     Record readOnly = dsl.fetchOne("SHOW transaction_read_only");
     if (readOnly == null || !"off".equalsIgnoreCase(readOnly.get(0, String.class).trim())) {
       throw new IllegalStateException(

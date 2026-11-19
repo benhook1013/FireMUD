@@ -66,23 +66,20 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
 
     PersistedTarget rejected = persistTarget(jdbc, 2);
     WorldPublishedStartLocationEvidence rejectedEvidence = evidence(rejected);
-    assertThatThrownBy(
-            () ->
-                insertRelease(
-                    jdbc,
-                    rejected,
-                    rejectedEvidence,
-                    withRetainedControlPlaneSchema(
-                        selectedV2Participants(rejected, rejectedEvidence))))
+    assertThatThrownBy(() ->
+            insertRelease(
+                jdbc,
+                rejected,
+                rejectedEvidence,
+                withRetainedControlPlaneSchema(selectedV2Participants(rejected, rejectedEvidence))))
         .rootCause()
         .isInstanceOf(PSQLException.class)
-        .satisfies(
-            cause -> {
-              PSQLException postgresException = (PSQLException) cause;
-              assertThat(postgresException.getSQLState()).isEqualTo("23514");
-              assertThat(postgresException.getServerErrorMessage().getMessage())
-                  .isEqualTo("release v2 participant differs from selected commit/digest/schema");
-            });
+        .satisfies(cause -> {
+          PSQLException postgresException = (PSQLException) cause;
+          assertThat(postgresException.getSQLState()).isEqualTo("23514");
+          assertThat(postgresException.getServerErrorMessage().getMessage())
+              .isEqualTo("release v2 participant differs from selected commit/digest/schema");
+        });
     assertThat(releaseCount(jdbc, rejected.versionId())).isEqualTo(0L);
 
     migrate(dataSource, schema, null);
@@ -142,23 +139,20 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
 
     PersistedTarget rejected = persistTarget(jdbc, 3);
     WorldPublishedStartLocationEvidence rejectedEvidence = evidence(rejected);
-    assertThatThrownBy(
-            () ->
-                insertRelease(
-                    jdbc,
-                    rejected,
-                    rejectedEvidence,
-                    withRetainedControlPlaneSchema(
-                        selectedV2Participants(rejected, rejectedEvidence))))
+    assertThatThrownBy(() ->
+            insertRelease(
+                jdbc,
+                rejected,
+                rejectedEvidence,
+                withRetainedControlPlaneSchema(selectedV2Participants(rejected, rejectedEvidence))))
         .rootCause()
         .isInstanceOf(PSQLException.class)
-        .satisfies(
-            cause -> {
-              PSQLException postgresException = (PSQLException) cause;
-              assertThat(postgresException.getSQLState()).isEqualTo("23514");
-              assertThat(postgresException.getServerErrorMessage().getMessage())
-                  .isEqualTo("release v2 participant differs from selected commit/digest/schema");
-            });
+        .satisfies(cause -> {
+          PSQLException postgresException = (PSQLException) cause;
+          assertThat(postgresException.getSQLState()).isEqualTo("23514");
+          assertThat(postgresException.getServerErrorMessage().getMessage())
+              .isEqualTo("release v2 participant differs from selected commit/digest/schema");
+        });
     assertThat(releaseCount(jdbc, rejected.versionId())).isEqualTo(0L);
 
     migrate(dataSource, schema, null);
@@ -179,10 +173,9 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
     // A schema-valid v2 row still needs a genuine publication attempt under the latest guard.
     PersistedTarget target = persistTarget(jdbc, versionNumber);
     WorldPublishedStartLocationEvidence targetEvidence = evidence(target);
-    assertThatThrownBy(
-            () ->
-                insertRelease(
-                    jdbc, target, targetEvidence, selectedV2Participants(target, targetEvidence)))
+    assertThatThrownBy(() ->
+            insertRelease(
+                jdbc, target, targetEvidence, selectedV2Participants(target, targetEvidence)))
         .rootCause()
         .isInstanceOf(PSQLException.class)
         .satisfies(cause -> assertThat(((PSQLException) cause).getSQLState()).isEqualTo("P0002"));
@@ -270,20 +263,19 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
   private List<PublishParticipantDigestDto> withRetainedControlPlaneSchema(
       List<PublishParticipantDigestDto> participants) {
     return participants.stream()
-        .map(
-            participant ->
-                "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
-                    ? new PublishParticipantDigestDto(
-                        participant.participantKey(),
-                        participant.scopeValue(),
-                        participant.baseVersionId(),
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION,
-                        participant.abilitySchemaDigest(),
-                        participant.errorCode(),
-                        participant.errorMessage())
-                    : participant)
+        .map(participant ->
+            "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
+                ? new PublishParticipantDigestDto(
+                    participant.participantKey(),
+                    participant.scopeValue(),
+                    participant.baseVersionId(),
+                    participant.appliedCommitId(),
+                    participant.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION,
+                    participant.abilitySchemaDigest(),
+                    participant.errorCode(),
+                    participant.errorMessage())
+                : participant)
         .toList();
   }
 

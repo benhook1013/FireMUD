@@ -99,10 +99,8 @@ public class AccountInitialTenantBillingOwnerRepository {
       insertInitialCurrentOwner(request, ownerGeneration);
       InitialBindingResult stored =
           findOperationForUpdate(request.requestId())
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Initial billing-owner result is absent after insert"));
+              .orElseThrow(() ->
+                  new IllegalStateException("Initial billing-owner result is absent after insert"));
       requireSameRequest(stored, request, encoded);
       if (!stored.ownerGeneration().equals(ownerGeneration)
           || !Arrays.equals(stored.resultPayload(), resultPayload)
@@ -112,10 +110,9 @@ public class AccountInitialTenantBillingOwnerRepository {
       }
       CurrentOwnerBinding current =
           findCurrentOwnerForUpdate(creation.canonicalTenantId())
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Initial current billing owner is absent after insert"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "Initial current billing owner is absent after insert"));
       requireInitialCurrentOwner(current, request, ownerGeneration);
       return stored;
     }

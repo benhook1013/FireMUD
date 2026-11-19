@@ -59,14 +59,13 @@ class InitialGameplayReleaseControllerTest {
             evidence,
             port);
 
-    caller.executeWithoutResult(
-        status -> {
-          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-          assertThatThrownBy(() -> controller.reconcileNextEffect(UUID.randomUUID()))
-              .isInstanceOf(OwnerBoundaryUnavailableException.class)
-              .hasMessage("INITIAL_GAMEPLAY_RELEASE_RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
-          status.setRollbackOnly();
-        });
+    caller.executeWithoutResult(status -> {
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+      assertThatThrownBy(() -> controller.reconcileNextEffect(UUID.randomUUID()))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
+      status.setRollbackOnly();
+    });
     verify(connection).rollback();
     verifyNoInteractions(journal, evidence, port);
   }
@@ -236,28 +235,27 @@ class InitialGameplayReleaseControllerTest {
             org.mockito.ArgumentMatchers.eq(effectId),
             any(),
             any()))
-        .thenAnswer(
-            invocation -> {
-              UUID requested = invocation.getArgument(2);
-              claimedAttempt.set(requested);
-              var claimed =
-                  mock(
-                      net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry
-                          .class);
-              when(claimed.state())
-                  .thenReturn(
-                      net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel
-                          .EffectOutboxState.DISPATCHED);
-              when(claimed.lastAttemptId())
-                  .thenReturn(
-                      ownsClaim
-                          ? requested
-                          : new UUID(
-                              ~requested.getMostSignificantBits(),
-                              requested.getLeastSignificantBits()));
-              if (ownsClaim) when(claimed.effect()).thenReturn(effect);
-              return claimed;
-            });
+        .thenAnswer(invocation -> {
+          UUID requested = invocation.getArgument(2);
+          claimedAttempt.set(requested);
+          var claimed =
+              mock(
+                  net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry
+                      .class);
+          when(claimed.state())
+              .thenReturn(
+                  net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel
+                      .EffectOutboxState.DISPATCHED);
+          when(claimed.lastAttemptId())
+              .thenReturn(
+                  ownsClaim
+                      ? requested
+                      : new UUID(
+                          ~requested.getMostSignificantBits(),
+                          requested.getLeastSignificantBits()));
+          if (ownsClaim) when(claimed.effect()).thenReturn(effect);
+          return claimed;
+        });
     if (ownsClaim)
       when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any()))
           .thenThrow(new IllegalStateException("response lost after possible owner send"));
@@ -469,10 +467,9 @@ class InitialGameplayReleaseControllerTest {
             new InitialGameplayReleaseEffectPort.EffectReadbackResolution(
                 status, readback, observedAt))
         .isEqualTo(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback));
-    assertThatThrownBy(
-            () ->
-                new InitialGameplayReleaseEffectPort.EffectReadbackResolution(
-                    status, readback, observedAt.plusSeconds(1)))
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseEffectPort.EffectReadbackResolution(
+                status, readback, observedAt.plusSeconds(1)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("must match receipt");
   }

@@ -133,113 +133,108 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionReadRepository {
   private SourceSnapshot readCurrentSource(Selector selector) {
     requireNoAmbientTransaction();
     SourceRows rows =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext tx = DSL.using(configuration);
-              tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              Record transition =
-                  tx.fetchOne(
-                      "SELECT * FROM " + TRANSITION + " WHERE transition_id = ?",
-                      selector.bindingDecisionId());
-              if (transition == null) throw conflict("Original NEW transition is unavailable");
+        dsl.transactionResult(configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          Record transition =
+              tx.fetchOne(
+                  "SELECT * FROM " + TRANSITION + " WHERE transition_id = ?",
+                  selector.bindingDecisionId());
+          if (transition == null) throw conflict("Original NEW transition is unavailable");
 
-              byte[] bindingRef = requiredBytes(transition, "candidate_binding_ref");
-              Record candidateRow =
-                  tx.fetchOne("SELECT * FROM " + INVENTORY + " WHERE binding_ref = ?", bindingRef);
-              Record reservationRow =
-                  tx.fetchOne(
-                      "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ?",
-                      requiredUuid(transition, "issuer_reservation_id"));
-              byte[] candidateBytes = requiredBytes(transition, "original_new_candidate_bytes");
-              CanonicalGameplayOriginalNewCandidate candidate =
-                  CanonicalGameplayOriginalNewCandidate.parseCanonical(candidateBytes);
-              AccountGameplayAdmissionLeaseEvidence lease =
-                  requireOriginalSources(selector, workloadNamespace, transition, candidate);
-              requireCandidateAndReservationRows(
-                  transition, candidateRow, reservationRow, candidate);
+          byte[] bindingRef = requiredBytes(transition, "candidate_binding_ref");
+          Record candidateRow =
+              tx.fetchOne("SELECT * FROM " + INVENTORY + " WHERE binding_ref = ?", bindingRef);
+          Record reservationRow =
+              tx.fetchOne(
+                  "SELECT * FROM " + RESERVATION + " WHERE reservation_id = ?",
+                  requiredUuid(transition, "issuer_reservation_id"));
+          byte[] candidateBytes = requiredBytes(transition, "original_new_candidate_bytes");
+          CanonicalGameplayOriginalNewCandidate candidate =
+              CanonicalGameplayOriginalNewCandidate.parseCanonical(candidateBytes);
+          AccountGameplayAdmissionLeaseEvidence lease =
+              requireOriginalSources(selector, workloadNamespace, transition, candidate);
+          requireCandidateAndReservationRows(transition, candidateRow, reservationRow, candidate);
 
-              List<Record> accountRows =
-                  tx.fetch(
-                      "SELECT * FROM "
-                          + ACCOUNT_OBLIGATION
-                          + " WHERE transition_id = ? ORDER BY obligation_ordinal",
-                      selector.bindingDecisionId());
-              List<Record> accountRepairRows =
-                  tx.fetch(
-                      "SELECT * FROM "
-                          + ACCOUNT_MEMBER_REPAIR
-                          + " WHERE transition_id = ? AND obligation_ordinal = 0",
-                      selector.bindingDecisionId());
-              Record accountControlRow =
-                  tx.fetchOne(
-                      "SELECT * FROM " + ACCOUNT_COVERAGE_CONTROL + " WHERE account_id = ?",
-                      candidate.bindingIdentity().accountId());
-              List<Record> issuerObligationRows =
-                  tx.fetch(
-                      "SELECT * FROM "
-                          + ISSUER_OBLIGATION
-                          + " WHERE transition_id = ? AND binding_ref = ?",
-                      selector.bindingDecisionId(),
-                      bindingRef);
-              Record regionRow =
-                  tx.fetchOne(
-                      "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ?",
-                      selector.bindingDecisionId());
-              List<Record> issuerAckRows =
-                  tx.fetch(
-                      "SELECT * FROM "
-                          + ISSUER_ACK
-                          + " WHERE transition_id = ? AND binding_ref = ?",
-                      selector.bindingDecisionId(),
-                      bindingRef);
-              Record tagRow =
-                  tx.fetchOne(
-                      "SELECT allocation_version, tenant_gameplay_tag FROM "
-                          + TENANT_TAG
-                          + " WHERE tenant_id = ?",
-                      candidate.bindingIdentity().tenantId());
+          List<Record> accountRows =
+              tx.fetch(
+                  "SELECT * FROM "
+                      + ACCOUNT_OBLIGATION
+                      + " WHERE transition_id = ? ORDER BY obligation_ordinal",
+                  selector.bindingDecisionId());
+          List<Record> accountRepairRows =
+              tx.fetch(
+                  "SELECT * FROM "
+                      + ACCOUNT_MEMBER_REPAIR
+                      + " WHERE transition_id = ? AND obligation_ordinal = 0",
+                  selector.bindingDecisionId());
+          Record accountControlRow =
+              tx.fetchOne(
+                  "SELECT * FROM " + ACCOUNT_COVERAGE_CONTROL + " WHERE account_id = ?",
+                  candidate.bindingIdentity().accountId());
+          List<Record> issuerObligationRows =
+              tx.fetch(
+                  "SELECT * FROM "
+                      + ISSUER_OBLIGATION
+                      + " WHERE transition_id = ? AND binding_ref = ?",
+                  selector.bindingDecisionId(),
+                  bindingRef);
+          Record regionRow =
+              tx.fetchOne(
+                  "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ?",
+                  selector.bindingDecisionId());
+          List<Record> issuerAckRows =
+              tx.fetch(
+                  "SELECT * FROM " + ISSUER_ACK + " WHERE transition_id = ? AND binding_ref = ?",
+                  selector.bindingDecisionId(),
+                  bindingRef);
+          Record tagRow =
+              tx.fetchOne(
+                  "SELECT allocation_version, tenant_gameplay_tag FROM "
+                      + TENANT_TAG
+                      + " WHERE tenant_id = ?",
+                  candidate.bindingIdentity().tenantId());
 
-              requireAccountAcknowledgement(
-                  accountRows, accountRepairRows, accountControlRow, candidate, transition);
-              requireIssuerObligation(issuerObligationRows, candidate, transition);
-              requireRegionAcknowledgement(regionRow, candidate, transition);
-              requirePersistedTag(tagRow);
-              if (issuerAckRows.size() != 1) {
-                throw conflict("Exact original NEW issuer acknowledgement is unavailable");
-              }
-              UUID issuerAckOperationId = requiredUuid(issuerAckRows.getFirst(), "operation_id");
-              String sourceFingerprint =
-                  fingerprint(
-                      Map.ofEntries(
-                          Map.entry("transition", rowFields("transition", transition)),
-                          Map.entry("candidate", rowFields("candidate", candidateRow)),
-                          Map.entry("reservation", rowFields("reservation", reservationRow)),
-                          Map.entry("account", rowFields("account", accountRows.getFirst())),
-                          Map.entry(
-                              "accountRepair",
-                              rowFields("accountRepair", accountRepairRows.getFirst())),
-                          Map.entry(
-                              "accountControl", rowFields("accountControl", accountControlRow)),
-                          Map.entry(
-                              "issuerObligation",
-                              rowFields("issuerObligation", issuerObligationRows.getFirst())),
-                          Map.entry("region", rowFields("region", regionRow)),
-                          Map.entry("issuerAck", rowFields("issuerAck", issuerAckRows.getFirst())),
-                          Map.entry("tenantTag", rowFields("tenantTag", tagRow)),
-                          Map.entry(
-                              "candidateBytes", Base64.getEncoder().encodeToString(candidateBytes)),
-                          Map.entry("leaseSha256", lease.sha256())));
-              wipe(candidateBytes);
-              return new SourceRows(
-                  candidate,
-                  issuerAckOperationId,
-                  sourceFingerprint,
-                  new FinalReceipt(
-                      requiredText(transition, "original_new_final_session_sha256"),
-                      requiredLong(transition, "original_new_admission_at_ms"),
-                      requiredLong(transition, "original_new_continuity_expires_at_ms"),
-                      requiredLong(transition, "original_new_session_duration_ms")));
-            });
+          requireAccountAcknowledgement(
+              accountRows, accountRepairRows, accountControlRow, candidate, transition);
+          requireIssuerObligation(issuerObligationRows, candidate, transition);
+          requireRegionAcknowledgement(regionRow, candidate, transition);
+          requirePersistedTag(tagRow);
+          if (issuerAckRows.size() != 1) {
+            throw conflict("Exact original NEW issuer acknowledgement is unavailable");
+          }
+          UUID issuerAckOperationId = requiredUuid(issuerAckRows.getFirst(), "operation_id");
+          String sourceFingerprint =
+              fingerprint(
+                  Map.ofEntries(
+                      Map.entry("transition", rowFields("transition", transition)),
+                      Map.entry("candidate", rowFields("candidate", candidateRow)),
+                      Map.entry("reservation", rowFields("reservation", reservationRow)),
+                      Map.entry("account", rowFields("account", accountRows.getFirst())),
+                      Map.entry(
+                          "accountRepair",
+                          rowFields("accountRepair", accountRepairRows.getFirst())),
+                      Map.entry("accountControl", rowFields("accountControl", accountControlRow)),
+                      Map.entry(
+                          "issuerObligation",
+                          rowFields("issuerObligation", issuerObligationRows.getFirst())),
+                      Map.entry("region", rowFields("region", regionRow)),
+                      Map.entry("issuerAck", rowFields("issuerAck", issuerAckRows.getFirst())),
+                      Map.entry("tenantTag", rowFields("tenantTag", tagRow)),
+                      Map.entry(
+                          "candidateBytes", Base64.getEncoder().encodeToString(candidateBytes)),
+                      Map.entry("leaseSha256", lease.sha256())));
+          wipe(candidateBytes);
+          return new SourceRows(
+              candidate,
+              issuerAckOperationId,
+              sourceFingerprint,
+              new FinalReceipt(
+                  requiredText(transition, "original_new_final_session_sha256"),
+                  requiredLong(transition, "original_new_admission_at_ms"),
+                  requiredLong(transition, "original_new_continuity_expires_at_ms"),
+                  requiredLong(transition, "original_new_session_duration_ms")));
+        });
 
     requireNoAmbientTransaction();
     CanonicalGameplayIssuerBindingLocalAcknowledgement issuerAck =
