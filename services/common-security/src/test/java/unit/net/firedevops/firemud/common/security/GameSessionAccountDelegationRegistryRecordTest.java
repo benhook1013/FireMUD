@@ -62,19 +62,18 @@ class GameSessionAccountDelegationRegistryRecordTest {
     assertThat(decoded.fields().get("membershipVersion")).isEqualTo(Map.of(ACCOUNT_ID, "3"));
     assertThatThrownBy(() -> record(compact))
         .isInstanceOf(GameSessionAccountDelegationRegistryRecord.InvalidRecordException.class);
-    assertThatThrownBy(
-            () ->
-                GameSessionAccountDelegationRegistryRecord.fromAccountSignedBoundCompactJwt(
-                    compact,
-                    "5",
-                    binding(),
-                    snapshot(),
-                    bundleReference(),
-                    "22222222-2222-4222-8222-222222222222",
-                    tuple,
-                    Map.of(ACCOUNT_ID, "3"),
-                    NOW,
-                    MAX_RECORD_BYTES))
+    assertThatThrownBy(() ->
+            GameSessionAccountDelegationRegistryRecord.fromAccountSignedBoundCompactJwt(
+                compact,
+                "5",
+                binding(),
+                snapshot(),
+                bundleReference(),
+                "22222222-2222-4222-8222-222222222222",
+                tuple,
+                Map.of(ACCOUNT_ID, "3"),
+                NOW,
+                MAX_RECORD_BYTES))
         .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
   }
 
@@ -201,16 +200,15 @@ class GameSessionAccountDelegationRegistryRecordTest {
         .forEach((key, value) -> fabricatedTuple.put((String) key, value));
     fabricatedTuple.put("accountSecurityCutoff", cutoff(1L, 1L).toMap());
     fabricatedBaseline.put("authorityTuple", fabricatedTuple);
-    assertThatThrownBy(
-            () ->
-                GameSessionAccountDelegationRegistryRecord.fromAccountSignedCompactJwt(
-                    compact(fabricatedBaseline),
-                    "5",
-                    binding(),
-                    baselineSnapshot(),
-                    bundleReference(),
-                    NOW,
-                    MAX_RECORD_BYTES))
+    assertThatThrownBy(() ->
+            GameSessionAccountDelegationRegistryRecord.fromAccountSignedCompactJwt(
+                compact(fabricatedBaseline),
+                "5",
+                binding(),
+                baselineSnapshot(),
+                bundleReference(),
+                NOW,
+                MAX_RECORD_BYTES))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -221,25 +219,23 @@ class GameSessionAccountDelegationRegistryRecordTest {
     assertInvalid(tooLong);
 
     String compact = compact(claims());
-    assertThatThrownBy(
-            () ->
-                GameSessionAccountDelegationRegistryRecord.fromAccountSignedCompactJwt(
-                    compact + "=",
-                    "5",
-                    binding(),
-                    snapshot(),
-                    bundleReference(),
-                    NOW,
-                    MAX_RECORD_BYTES))
+    assertThatThrownBy(() ->
+            GameSessionAccountDelegationRegistryRecord.fromAccountSignedCompactJwt(
+                compact + "=",
+                "5",
+                binding(),
+                snapshot(),
+                bundleReference(),
+                NOW,
+                MAX_RECORD_BYTES))
         .isInstanceOf(IllegalArgumentException.class);
 
     GameSessionAccountDelegationRegistryRecord record = record(compact);
     byte[] bytes = record.toCanonicalJsonBytes(MAX_RECORD_BYTES);
     String nonCanonical = "{ \"state\": \"pending\" }";
-    assertThatThrownBy(
-            () ->
-                GameSessionAccountDelegationRegistryRecord.decode(
-                    nonCanonical.getBytes(StandardCharsets.UTF_8), MAX_RECORD_BYTES))
+    assertThatThrownBy(() ->
+            GameSessionAccountDelegationRegistryRecord.decode(
+                nonCanonical.getBytes(StandardCharsets.UTF_8), MAX_RECORD_BYTES))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(bytes).isNotEmpty();
   }
@@ -293,10 +289,8 @@ class GameSessionAccountDelegationRegistryRecordTest {
     incompleteFields.put("authEvidenceBundle", incompleteReference);
     byte[] incompleteBytes =
         Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(incompleteFields));
-    assertThatThrownBy(
-            () ->
-                GameSessionAccountDelegationRegistryRecord.decode(
-                    incompleteBytes, MAX_RECORD_BYTES))
+    assertThatThrownBy(() ->
+            GameSessionAccountDelegationRegistryRecord.decode(incompleteBytes, MAX_RECORD_BYTES))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

@@ -128,18 +128,14 @@ public final class EntityManagementStubServer implements AutoCloseable {
                         == PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED) {
                       response.addAllCharacters(
                           characters.get().stream()
-                              .filter(
-                                  character ->
-                                      request.getTenantId().equals(character.getTenantId())
-                                          && request
-                                              .getAccountId()
-                                              .equals(character.getAccountId()))
-                              .map(
-                                  character ->
-                                      character.toBuilder()
-                                          .setPlayableStateScope(
-                                              PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                                          .build())
+                              .filter(character ->
+                                  request.getTenantId().equals(character.getTenantId())
+                                      && request.getAccountId().equals(character.getAccountId()))
+                              .map(character ->
+                                  character.toBuilder()
+                                      .setPlayableStateScope(
+                                          PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                                      .build())
                               .toList());
                     }
                     responseObserver.onNext(response.build());

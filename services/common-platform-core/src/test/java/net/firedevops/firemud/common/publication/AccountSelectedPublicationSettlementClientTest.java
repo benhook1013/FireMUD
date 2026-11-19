@@ -53,10 +53,9 @@ class AccountSelectedPublicationSettlementClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedPublicationSettlementClient(
-                    endpoints, plaintext, factory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new AccountSelectedPublicationSettlementClient(
+                endpoints, plaintext, factory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Account publication settlement")
         .hasNoCause();
@@ -66,10 +65,9 @@ class AccountSelectedPublicationSettlementClientTest {
     classpath.setCertChain("classpath:client.crt");
     classpath.setPrivateKey(directory.resolve("client.key").toString());
     classpath.setCaCert(directory.resolve("ca.crt").toString());
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedPublicationSettlementClient(
-                    endpoints, classpath, factory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new AccountSelectedPublicationSettlementClient(
+                endpoints, classpath, factory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Account publication settlement")
         .hasMessageNotContaining("classpath:client.crt")

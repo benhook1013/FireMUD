@@ -32,23 +32,20 @@ class WorldAuthoredVersionIdentityClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var tls = tls(directory);
     tls.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldAuthoredVersionIdentityClient(
-                    new ServiceEndpointsProperties(), tls, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldAuthoredVersionIdentityClient(
+                new ServiceEndpointsProperties(), tls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     tls.setPlaintext(false);
     tls.setCaCert("classpath:ca.crt");
-    assertThatThrownBy(
-            () ->
-                new WorldAuthoredVersionIdentityClient(
-                    new ServiceEndpointsProperties(), tls, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldAuthoredVersionIdentityClient(
+                new ServiceEndpointsProperties(), tls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     tls.setCaCert(directory.resolve("missing.crt").toString());
-    assertThatThrownBy(
-            () ->
-                new WorldAuthoredVersionIdentityClient(
-                    new ServiceEndpointsProperties(), tls, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldAuthoredVersionIdentityClient(
+                new ServiceEndpointsProperties(), tls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(factory);
   }

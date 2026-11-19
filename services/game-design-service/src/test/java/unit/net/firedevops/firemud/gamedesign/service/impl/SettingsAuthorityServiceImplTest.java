@@ -33,10 +33,9 @@ class SettingsAuthorityServiceImplTest {
             new ScopedSettingsOverrides.CommandHistoryOverride(maxEntries));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.putDomainOverride(
-                    "demo", 7L, ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY, overrides))
+        .isThrownBy(() ->
+            service.putDomainOverride(
+                "demo", 7L, ScopedSettingsOverrides.SettingsDomain.COMMAND_HISTORY, overrides))
         .withMessage("Command history maxEntries must be between 1 and 20");
 
     verifyNoInteractions(repository);
@@ -55,13 +54,9 @@ class SettingsAuthorityServiceImplTest {
             new ScopedSettingsOverrides.CommandCapabilitiesOverride(null, null, null, null));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.putDomainOverride(
-                    "demo",
-                    7L,
-                    ScopedSettingsOverrides.SettingsDomain.COMMAND_CAPABILITIES,
-                    overrides))
+        .isThrownBy(() ->
+            service.putDomainOverride(
+                "demo", 7L, ScopedSettingsOverrides.SettingsDomain.COMMAND_CAPABILITIES, overrides))
         .withMessage("Command capabilities override must set at least one capability");
 
     verifyNoInteractions(repository);
@@ -82,10 +77,9 @@ class SettingsAuthorityServiceImplTest {
             null);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.putDomainOverride(
-                    "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+        .isThrownBy(() ->
+            service.putDomainOverride(
+                "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
         .withMessage("Reconnection buffer maxEntries must be positive");
 
     verifyNoInteractions(repository);
@@ -105,10 +99,9 @@ class SettingsAuthorityServiceImplTest {
             null);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.putDomainOverride(
-                    "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+        .isThrownBy(() ->
+            service.putDomainOverride(
+                "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
         .withMessage("Reconnection buffer hardMaxBytes must be at least softMaxBytes");
 
     verifyNoInteractions(repository);
@@ -128,10 +121,9 @@ class SettingsAuthorityServiceImplTest {
             null);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.putDomainOverride(
-                    "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+        .isThrownBy(() ->
+            service.putDomainOverride(
+                "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
         .withMessage(
             "Reconnection buffer softMaxBytes and hardMaxBytes must be set together "
                 + "or inherited from a complete tenant override");
@@ -170,10 +162,9 @@ class SettingsAuthorityServiceImplTest {
             null);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                gameInstanceService.putDomainOverride(
-                    "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+        .isThrownBy(() ->
+            gameInstanceService.putDomainOverride(
+                "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
         .withMessage("Reconnection buffer hardMaxBytes must be at least softMaxBytes");
 
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
@@ -277,10 +268,9 @@ class SettingsAuthorityServiceImplTest {
             null);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                tenantService.putDomainOverride(
-                    "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+        .isThrownBy(() ->
+            tenantService.putDomainOverride(
+                "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
         .withMessage("Reconnection buffer hardMaxBytes must be at least softMaxBytes");
 
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
@@ -306,10 +296,9 @@ class SettingsAuthorityServiceImplTest {
         new SettingsAuthorityServiceImpl(repository, objectMapper);
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                tenantService.deleteDomainOverride(
-                    "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION))
+        .isThrownBy(() ->
+            tenantService.deleteDomainOverride(
+                "demo", null, ScopedSettingsOverrides.SettingsDomain.RECONNECTION))
         .withMessage(
             "Reconnection buffer softMaxBytes and hardMaxBytes must be set together "
                 + "or inherited from a complete tenant override");
@@ -332,10 +321,9 @@ class SettingsAuthorityServiceImplTest {
       ScopedSettingsOverrides overrides =
           new ScopedSettingsOverrides(reconnection, null, null, null, null);
       assertThatIllegalArgumentException()
-          .isThrownBy(
-              () ->
-                  service.putDomainOverride(
-                      "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
+          .isThrownBy(() ->
+              service.putDomainOverride(
+                  "demo", 7L, ScopedSettingsOverrides.SettingsDomain.RECONNECTION, overrides))
           .withMessage("Reconnection override must set policy or buffer values");
     }
 

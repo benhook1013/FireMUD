@@ -138,10 +138,9 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
       assertThat(
               GameSessionCharacterCreatePublicSourceService.ResolvedPlayerCreatedRosterSource.class
                   .getDeclaredConstructors())
-          .allSatisfy(
-              constructor ->
-                  assertThat(java.lang.reflect.Modifier.isPrivate(constructor.getModifiers()))
-                      .isTrue());
+          .allSatisfy(constructor ->
+              assertThat(java.lang.reflect.Modifier.isPrivate(constructor.getModifiers()))
+                  .isTrue());
     }
   }
 
@@ -156,14 +155,13 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
         invalidate.accept(fixture);
         assertThatThrownBy(() -> fixture.service.resolvePlayerCreatedRosterSource(rosterRequest()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure -> {
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION);
-                  assertThat(Status.fromThrowable(failure).getDescription())
-                      .isEqualTo(
-                          "Exact original public CHARACTER_CREATE source is unavailable or changed");
-                });
+            .satisfies(failure -> {
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(Status.fromThrowable(failure).getDescription())
+                  .isEqualTo(
+                      "Exact original public CHARACTER_CREATE source is unavailable or changed");
+            });
       }
     }
 
@@ -179,14 +177,13 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
         invalidate.accept(fixture);
         assertThatThrownBy(() -> fixture.service.resolvePlayerCreatedRosterSource(rosterRequest()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure -> {
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION);
-                  assertThat(Status.fromThrowable(failure).getDescription())
-                      .isEqualTo(
-                          "Exact original public CHARACTER_CREATE source is unavailable or changed");
-                });
+            .satisfies(failure -> {
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(Status.fromThrowable(failure).getDescription())
+                  .isEqualTo(
+                      "Exact original public CHARACTER_CREATE source is unavailable or changed");
+            });
       }
     }
   }
@@ -474,10 +471,9 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
         invalidate.accept(fixture);
         assertThatThrownBy(() -> fixture.service.readPlayerCreatedRosterSource(rosterRequest()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.FAILED_PRECONDITION));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
       }
     }
   }
@@ -488,11 +484,10 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
       var changed = mock(CanonicalPlayableTarget.class);
       when(changed.targetNamespace()).thenReturn("other");
       when(fixture.publishedPolicies.listPublishedRealmEntryPolicies(TENANT, VERSION))
-          .thenAnswer(
-              invocation -> {
-                when(fixture.routes.readCurrentTarget(TENANT)).thenReturn(changed);
-                return fixture.policySet;
-              });
+          .thenAnswer(invocation -> {
+            when(fixture.routes.readCurrentTarget(TENANT)).thenReturn(changed);
+            return fixture.policySet;
+          });
       assertThatThrownBy(() -> fixture.service.resolvePlayerCreatedRosterSource(rosterRequest()))
           .isInstanceOf(StatusRuntimeException.class);
       verify(fixture.gameDesign).read(any());
@@ -864,10 +859,9 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
       try (var fixture = new Fixture()) {
         assertThatThrownBy(() -> fixture.service.read(invalid))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.INVALID_ARGUMENT));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.INVALID_ARGUMENT));
         verifyNoInteractions(
             fixture.routes,
             fixture.catalogs,
@@ -1326,19 +1320,16 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
             .thenReturn("sha256:" + "1".repeat(64));
         when(publicationTerminal.releaseContent().canonicalBytes()).thenReturn(new byte[] {8});
         when(publishedPolicies.listPublishedRealmEntryPolicies(TENANT, VERSION))
-            .thenAnswer(
-                invocation -> {
-                  assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                      .isFalse();
-                  return policySet;
-                });
+            .thenAnswer(invocation -> {
+              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return policySet;
+            });
         when(gameDesign.read(any()))
-            .thenAnswer(
-                invocation -> {
-                  assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-                  return authored;
-                });
+            .thenAnswer(invocation -> {
+              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+              return authored;
+            });
         sourceCodec
             .when(() -> AuthoredInitialActorCoreReadGrpcCodec.toResponse(authored))
             .thenReturn(
@@ -1347,12 +1338,11 @@ class GameSessionCharacterCreatePublicSourceServiceTest {
                     .setCanonicalResultBytes(ByteString.copyFrom(sourceBytes))
                     .build());
         when(world.read(any()))
-            .thenAnswer(
-                invocation -> {
-                  assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-                  when(lifecycle.request()).thenReturn(invocation.getArgument(0));
-                  return lifecycle;
-                });
+            .thenAnswer(invocation -> {
+              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+              when(lifecycle.request()).thenReturn(invocation.getArgument(0));
+              return lifecycle;
+            });
         when(lifecycle.lifecycleStatus()).thenReturn("ACTIVE");
         when(lifecycle.lifecycleEpoch()).thenReturn(7L);
         when(lifecycle.launchBinding()).thenReturn(launchBinding);

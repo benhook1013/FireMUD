@@ -110,10 +110,9 @@ class WorldOriginalStartSessionProtectedActivationGrpcMtlsTest {
 
           assertThatThrownBy(() -> client.activate(fixture.input()))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure ->
-                      assertThat(Status.fromThrowable(failure).getCode())
-                          .isEqualTo(Status.Code.PERMISSION_DENIED));
+              .satisfies(failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.PERMISSION_DENIED));
         }
       }
     }
@@ -140,20 +139,16 @@ class WorldOriginalStartSessionProtectedActivationGrpcMtlsTest {
       var request =
           WorldOriginalStartSessionProtectedActivationGrpcCodec.toRequest(fixture.input(), "test");
 
-      assertThatThrownBy(
-              () ->
-                  WorldOriginalStartSessionProtectedActivationServiceGrpc.newBlockingStub(
-                          unauthenticatedClient.channel())
-                      .withDeadlineAfter(3, TimeUnit.SECONDS)
-                      .activateOriginalStartSessionProtected(request))
+      assertThatThrownBy(() ->
+              WorldOriginalStartSessionProtectedActivationServiceGrpc.newBlockingStub(
+                      unauthenticatedClient.channel())
+                  .withDeadlineAfter(3, TimeUnit.SECONDS)
+                  .activateOriginalStartSessionProtected(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
-                      .as(
-                          "missing client certificate must fail during TLS negotiation: %s",
-                          failure)
-                      .isTrue());
+          .satisfies(failure ->
+              assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
+                  .as("missing client certificate must fail during TLS negotiation: %s", failure)
+                  .isTrue());
     }
 
     assertThat(handlerCalls).hasValue(0);
@@ -179,10 +174,9 @@ class WorldOriginalStartSessionProtectedActivationGrpcMtlsTest {
 
       assertThatThrownBy(() -> client.activate(fixture.input()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     }
 
     assertThat(handlerCalls).hasValue(1);

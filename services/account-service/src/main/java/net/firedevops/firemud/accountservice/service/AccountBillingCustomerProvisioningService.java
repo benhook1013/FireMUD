@@ -48,41 +48,37 @@ public final class AccountBillingCustomerProvisioningService {
     }
     Prepared prepared =
         Objects.requireNonNull(
-            transaction.execute(
-                status -> {
-                  AccountBillingCustomerRecord current =
-                      lock(accountUuid, customerProvisioningRequestId);
-                  if (current.state() == State.CONFIRMED) {
-                    return new Prepared(current, null);
-                  }
-                  return new Prepared(
-                      current, customers.claimFirstProviderDispatch(current, UUID.randomUUID()));
-                }));
+            transaction.execute(status -> {
+              AccountBillingCustomerRecord current =
+                  lock(accountUuid, customerProvisioningRequestId);
+              if (current.state() == State.CONFIRMED) {
+                return new Prepared(current, null);
+              }
+              return new Prepared(
+                  current, customers.claimFirstProviderDispatch(current, UUID.randomUUID()));
+            }));
     if (prepared.dispatch() == null) {
       return new RetainedCustomer(prepared.intent());
     }
     // Independently verify the committed claim and original durable intent before any provider IO.
     AccountBillingCustomerRecord dispatchReadback =
         Objects.requireNonNull(
-            transaction.execute(
-                status -> {
-                  AccountBillingCustomerRecord current =
-                      lock(accountUuid, customerProvisioningRequestId);
-                  DispatchClaim retained =
-                      customers
-                          .findDispatchClaim(accountUuid)
-                          .orElseThrow(
-                              () ->
-                                  new IllegalStateException(
-                                      "Committed dispatch claim disappeared"));
-                  if (!retained.equals(prepared.dispatch().claim())
-                      || !current
-                          .providerIdempotencyId()
-                          .equals(prepared.intent().providerIdempotencyId())) {
-                    throw new IllegalStateException("Committed customer dispatch binding changed");
-                  }
-                  return current;
-                }));
+            transaction.execute(status -> {
+              AccountBillingCustomerRecord current =
+                  lock(accountUuid, customerProvisioningRequestId);
+              DispatchClaim retained =
+                  customers
+                      .findDispatchClaim(accountUuid)
+                      .orElseThrow(
+                          () -> new IllegalStateException("Committed dispatch claim disappeared"));
+              if (!retained.equals(prepared.dispatch().claim())
+                  || !current
+                      .providerIdempotencyId()
+                      .equals(prepared.intent().providerIdempotencyId())) {
+                throw new IllegalStateException("Committed customer dispatch binding changed");
+              }
+              return current;
+            }));
     if (dispatchReadback.state() == State.CONFIRMED) {
       return new RetainedCustomer(dispatchReadback);
     }
@@ -102,80 +98,74 @@ public final class AccountBillingCustomerProvisioningService {
     UUID observationRequestId = UUID.randomUUID();
     CommitResult committed =
         Objects.requireNonNull(
-            transaction.execute(
-                status -> {
-                  AccountBillingCustomerRecord current =
-                      lock(accountUuid, customerProvisioningRequestId);
-                  if (!confirmed.accountUuid().equals(current.accountUuid())
-                      || !confirmed
-                          .customerProvisioningRequestId()
-                          .equals(current.customerProvisioningRequestId())
-                      || !confirmed
-                          .providerIdempotencyId()
-                          .equals(current.providerIdempotencyId())) {
-                    throw new IllegalStateException(
-                        "Provider evidence changed immutable customer operation");
-                  }
-                  if (current.state() == State.CONFIRMED) {
-                    if (!confirmed.providerCustomerId().equals(current.providerCustomerId())) {
-                      throw new IllegalStateException(
-                          "Provider customer conflicts with retained confirmation");
-                    }
-                    return new CommitResult(current, false);
-                  }
-                  if (current.rowVersion() != prepared.intent().rowVersion()) {
-                    throw new AccountBillingCustomerRepository.StaleVersionException();
-                  }
-                  AccountBillingCustomerRecord receipt =
-                      customers.recordObservation(
-                          accountUuid,
-                          customerProvisioningRequestId,
-                          current.rowVersion(),
-                          observationRequestId,
-                          Observation.CONFIRMED,
-                          confirmed.providerCustomerId(),
-                          confirmed.evidenceDigest());
-                  if (!receipt.changeRequestId().equals(observationRequestId)
-                      || receipt.rowVersion() != current.rowVersion() + 1
-                      || !confirmed.evidenceDigest().equals(receipt.evidenceDigest())) {
-                    throw new IllegalStateException(
-                        "Customer confirmation receipt changed observation identity");
-                  }
-                  return new CommitResult(receipt, true);
-                }));
+            transaction.execute(status -> {
+              AccountBillingCustomerRecord current =
+                  lock(accountUuid, customerProvisioningRequestId);
+              if (!confirmed.accountUuid().equals(current.accountUuid())
+                  || !confirmed
+                      .customerProvisioningRequestId()
+                      .equals(current.customerProvisioningRequestId())
+                  || !confirmed.providerIdempotencyId().equals(current.providerIdempotencyId())) {
+                throw new IllegalStateException(
+                    "Provider evidence changed immutable customer operation");
+              }
+              if (current.state() == State.CONFIRMED) {
+                if (!confirmed.providerCustomerId().equals(current.providerCustomerId())) {
+                  throw new IllegalStateException(
+                      "Provider customer conflicts with retained confirmation");
+                }
+                return new CommitResult(current, false);
+              }
+              if (current.rowVersion() != prepared.intent().rowVersion()) {
+                throw new AccountBillingCustomerRepository.StaleVersionException();
+              }
+              AccountBillingCustomerRecord receipt =
+                  customers.recordObservation(
+                      accountUuid,
+                      customerProvisioningRequestId,
+                      current.rowVersion(),
+                      observationRequestId,
+                      Observation.CONFIRMED,
+                      confirmed.providerCustomerId(),
+                      confirmed.evidenceDigest());
+              if (!receipt.changeRequestId().equals(observationRequestId)
+                  || receipt.rowVersion() != current.rowVersion() + 1
+                  || !confirmed.evidenceDigest().equals(receipt.evidenceDigest())) {
+                throw new IllegalStateException(
+                    "Customer confirmation receipt changed observation identity");
+              }
+              return new CommitResult(receipt, true);
+            }));
     // The write transaction has actually committed. Read the exact immutable observation and
     // current owner afresh; its in-transaction return value alone is not durable readback proof.
     AccountBillingCustomerRecord retained =
         Objects.requireNonNull(
-            transaction.execute(
-                status -> {
-                  AccountBillingCustomerRecord current =
-                      lock(accountUuid, customerProvisioningRequestId);
-                  AccountBillingCustomerRecord receipt =
-                      customers
-                          .findObservationByRequestId(committed.receipt().changeRequestId())
-                          .orElseThrow(
-                              () ->
-                                  new IllegalStateException(
-                                      "Committed customer observation disappeared"));
-                  if (!receipt.equals(committed.receipt())
-                      || !current.equals(receipt)
-                      || receipt.state() != State.CONFIRMED
-                      || receipt.observation() != Observation.CONFIRMED
-                      || !confirmed.providerCustomerId().equals(receipt.providerCustomerId())
-                      || !confirmed.accountUuid().equals(receipt.accountUuid())
-                      || !confirmed
-                          .customerProvisioningRequestId()
-                          .equals(receipt.customerProvisioningRequestId())
-                      || !confirmed.providerIdempotencyId().equals(receipt.providerIdempotencyId())
-                      || (committed.newlyRecorded()
-                          && (!observationRequestId.equals(receipt.changeRequestId())
-                              || !confirmed.evidenceDigest().equals(receipt.evidenceDigest())))) {
-                    throw new IllegalStateException(
-                        "Committed customer confirmation readback mismatch");
-                  }
-                  return receipt;
-                }));
+            transaction.execute(status -> {
+              AccountBillingCustomerRecord current =
+                  lock(accountUuid, customerProvisioningRequestId);
+              AccountBillingCustomerRecord receipt =
+                  customers
+                      .findObservationByRequestId(committed.receipt().changeRequestId())
+                      .orElseThrow(() ->
+                          new IllegalStateException("Committed customer observation disappeared"));
+              if (!receipt.equals(committed.receipt())
+                  || !current.equals(receipt)
+                  || receipt.state() != State.CONFIRMED
+                  || receipt.observation() != Observation.CONFIRMED
+                  || !confirmed.providerCustomerId().equals(receipt.providerCustomerId())
+                  || !confirmed.accountUuid().equals(receipt.accountUuid())
+                  || !confirmed
+                      .customerProvisioningRequestId()
+                      .equals(receipt.customerProvisioningRequestId())
+                  || !confirmed.providerIdempotencyId().equals(receipt.providerIdempotencyId())
+                  || (committed.newlyRecorded()
+                      && (!observationRequestId.equals(receipt.changeRequestId())
+                          || !confirmed.evidenceDigest().equals(receipt.evidenceDigest())))) {
+                throw new IllegalStateException(
+                    "Committed customer confirmation readback mismatch");
+              }
+              return receipt;
+            }));
     // A simultaneous confirmation keeps its own original observation identity and digest. It is
     // historical replay, not a new observation under this invocation's unused request identity.
     if (!committed.newlyRecorded()) {

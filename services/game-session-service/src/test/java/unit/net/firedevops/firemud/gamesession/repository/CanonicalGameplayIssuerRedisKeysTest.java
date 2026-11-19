@@ -83,10 +83,9 @@ class CanonicalGameplayIssuerRedisKeysTest {
     CanonicalGameplayBindingRef bindingRef =
         CanonicalGameplayBindingRef.of("tenant-01", "instance-01", "session-01");
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayIssuerRedisKeys.forBindingReference(
-                    layout, bindingRef, BigInteger.valueOf(6)))
+    assertThatThrownBy(() ->
+            CanonicalGameplayIssuerRedisKeys.forBindingReference(
+                layout, bindingRef, BigInteger.valueOf(6)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () -> CanonicalGameplayIssuerRedisKeys.forPartition(layout, BigInteger.valueOf(16)))

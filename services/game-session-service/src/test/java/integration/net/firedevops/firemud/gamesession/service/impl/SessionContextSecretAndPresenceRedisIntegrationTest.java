@@ -276,11 +276,10 @@ class SessionContextSecretAndPresenceRedisIntegrationTest {
   }
 
   private void assertRetainedUnchanged(Map<String, RetainedValue> retained) {
-    retained.forEach(
-        (key, value) -> {
-          assertThat(rawValue(key)).containsExactly(value.bytes());
-          assertThat(remainingTtl(key)).isPositive().isLessThanOrEqualTo(value.ttlMillis());
-        });
+    retained.forEach((key, value) -> {
+      assertThat(rawValue(key)).containsExactly(value.bytes());
+      assertThat(remainingTtl(key)).isPositive().isLessThanOrEqualTo(value.ttlMillis());
+    });
   }
 
   private long remainingTtl(String key) {

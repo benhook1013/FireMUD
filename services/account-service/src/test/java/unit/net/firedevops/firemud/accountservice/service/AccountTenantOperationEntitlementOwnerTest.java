@@ -53,18 +53,15 @@ class AccountTenantOperationEntitlementOwnerTest {
       // This driver is controlled; the PostgreSQL suite proves physical connection isolation.
       var dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
       when(demos.readCurrent(tenantId))
-          .thenAnswer(
-              ignored -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-                assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                    .isFalse();
-                dsl.connection(
-                    current ->
-                        assertThat(current.getTransactionIsolation())
-                            .isEqualTo(Connection.TRANSACTION_SERIALIZABLE));
-                dsl.execute("SELECT 1");
-                throw new AssertionError("The controlled source statement must time out");
-              });
+          .thenAnswer(ignored -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+            dsl.connection(current ->
+                assertThat(current.getTransactionIsolation())
+                    .isEqualTo(Connection.TRANSACTION_SERIALIZABLE));
+            dsl.execute("SELECT 1");
+            throw new AssertionError("The controlled source statement must time out");
+          });
       var owner =
           new AccountTenantOperationEntitlementOwner(
               hosting, demos, transactions, Clock.systemUTC(), "prod");

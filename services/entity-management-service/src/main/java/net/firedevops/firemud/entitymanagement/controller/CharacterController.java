@@ -29,19 +29,14 @@ public class CharacterController {
       @RequestParam String gameInstanceId,
       @RequestParam PlayableStateScope playableStateScope,
       Pageable pageable) {
-    return EntityManagementRequestReaders.withBadRequest(
-        () -> {
-          EntityManagementRequestReaders.AccountScope scope =
-              EntityManagementRequestReaders.requireAccountScope(tenantId, accountId);
-          SessionContext.requireTenantAccess(scope.tenantId());
-          Page<CharacterDto> list =
-              characterService.listForGameplayScope(
-                  scope.tenantId(),
-                  scope.accountId(),
-                  gameInstanceId,
-                  playableStateScope,
-                  pageable);
-          return ResponseEntity.ok(ApiResponse.success(list));
-        });
+    return EntityManagementRequestReaders.withBadRequest(() -> {
+      EntityManagementRequestReaders.AccountScope scope =
+          EntityManagementRequestReaders.requireAccountScope(tenantId, accountId);
+      SessionContext.requireTenantAccess(scope.tenantId());
+      Page<CharacterDto> list =
+          characterService.listForGameplayScope(
+              scope.tenantId(), scope.accountId(), gameInstanceId, playableStateScope, pageable);
+      return ResponseEntity.ok(ApiResponse.success(list));
+    });
   }
 }

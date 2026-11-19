@@ -474,10 +474,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var source =
         Objects.requireNonNull(
             ownerTransaction()
-                .execute(
-                    status ->
-                        sourceRepository.acceptFresh(
-                            "dev", UUID.randomUUID(), evidence.sourceReceipt().sourceEvidence())));
+                .execute(status ->
+                    sourceRepository.acceptFresh(
+                        "dev", UUID.randomUUID(), evidence.sourceReceipt().sourceEvidence())));
     var state =
         AuthoredWorldVersionStateEvidence.create(
             new AuthoredWorldVersionStateEvidence.Request(
@@ -598,15 +597,13 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         assertSqlState(
             () ->
                 ownerTransaction(evidence)
-                    .executeWithoutResult(
-                        status -> {
-                          dsl.fetchOne(
-                              "SELECT set_config('world.fixture_copy_mismatch_field', ?, TRUE)",
-                              field);
-                          fenceRepository.lockOpen(binding(source, version));
-                          associationRepository.allocateRunOwnedFixtureInOwnerTransaction(
-                              evidence, request, source, version);
-                        }),
+                    .executeWithoutResult(status -> {
+                      dsl.fetchOne(
+                          "SELECT set_config('world.fixture_copy_mismatch_field', ?, TRUE)", field);
+                      fenceRepository.lockOpen(binding(source, version));
+                      associationRepository.allocateRunOwnedFixtureInOwnerTransaction(
+                          evidence, request, source, version);
+                    }),
             "23514",
             "Run-owned fixture association differs from its exact World, source, Version, or GS owner readback");
         assertThat(allRows(dsl))
@@ -628,23 +625,19 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     CountDownLatch release = new CountDownLatch(1);
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<WorldInstanceLifecycleSnapshotDto> first =
-          executor.submit(
-              () ->
-                  withControlledPeer(
-                      () -> {
-                        ready.countDown();
-                        await(release);
-                        return prepareWithInstallation(firstOwner, evidence);
-                      }));
+          executor.submit(() ->
+              withControlledPeer(() -> {
+                ready.countDown();
+                await(release);
+                return prepareWithInstallation(firstOwner, evidence);
+              }));
       Future<WorldInstanceLifecycleSnapshotDto> second =
-          executor.submit(
-              () ->
-                  withControlledPeer(
-                      () -> {
-                        ready.countDown();
-                        await(release);
-                        return prepareWithInstallation(secondOwner, evidence);
-                      }));
+          executor.submit(() ->
+              withControlledPeer(() -> {
+                ready.countDown();
+                await(release);
+                return prepareWithInstallation(secondOwner, evidence);
+              }));
       assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
       release.countDown();
       assertThat(first.get(30, TimeUnit.SECONDS)).isEqualTo(second.get(30, TimeUnit.SECONDS));
@@ -671,10 +664,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var versionOwner = new WorldAuthoredVersionIdentityRepository(dsl);
     var intake =
         ownerTransaction()
-            .execute(
-                status ->
-                    sourceOwner.acceptFresh(
-                        "dev", UUID.randomUUID(), evidence.sourceReceipt().sourceEvidence()));
+            .execute(status ->
+                sourceOwner.acceptFresh(
+                    "dev", UUID.randomUUID(), evidence.sourceReceipt().sourceEvidence()));
     var state =
         AuthoredWorldVersionStateEvidence.create(
             new AuthoredWorldVersionStateEvidence.Request(
@@ -694,29 +686,27 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     controlledInstallation.withLaunchOwners(
         evidence.gameSessionAssociation().gameInstanceUuid(), () -> null);
     var original = allRows(dsl);
-    assertThatThrownBy(
-            () ->
-                ownerTransaction(evidence)
-                    .executeWithoutResult(
-                        status -> {
-                          new WorldDesignPublicationFenceRepository(dsl, sourceOwner)
-                              .lockOpen(binding(intake, version));
-                          var allocated =
-                              associationRepository()
-                                  .allocateRunOwnedFixtureInOwnerTransaction(
-                                      evidence,
-                                      RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence),
-                                      intake,
-                                      version);
-                          RunOwnedWorldFixedPresetResources.materialize(
-                              dsl,
+    assertThatThrownBy(() ->
+            ownerTransaction(evidence)
+                .executeWithoutResult(status -> {
+                  new WorldDesignPublicationFenceRepository(dsl, sourceOwner)
+                      .lockOpen(binding(intake, version));
+                  var allocated =
+                      associationRepository()
+                          .allocateRunOwnedFixtureInOwnerTransaction(
                               evidence,
-                              RunOwnedWorldFixedPresetResources.plan(allocated, intake, version),
-                              allocated.worldInstanceId(),
-                              allocated.worldPrivateKeys().gameInstanceId());
-                          throw new IllegalStateException(
-                              "controlled failure after actual topology writes");
-                        }))
+                              RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence),
+                              intake,
+                              version);
+                  RunOwnedWorldFixedPresetResources.materialize(
+                      dsl,
+                      evidence,
+                      RunOwnedWorldFixedPresetResources.plan(allocated, intake, version),
+                      allocated.worldInstanceId(),
+                      allocated.worldPrivateKeys().gameInstanceId());
+                  throw new IllegalStateException(
+                      "controlled failure after actual topology writes");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("controlled failure after actual topology writes");
     assertThat(allRows(dsl)).isEqualTo(original);
@@ -730,10 +720,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var versionOwner = new WorldAuthoredVersionIdentityRepository(dsl);
     var intake =
         ownerTransaction()
-            .execute(
-                status ->
-                    sourceOwner.acceptFresh(
-                        "dev", UUID.randomUUID(), evidence.sourceReceipt().sourceEvidence()));
+            .execute(status ->
+                sourceOwner.acceptFresh(
+                    "dev", UUID.randomUUID(), evidence.sourceReceipt().sourceEvidence()));
     var state =
         AuthoredWorldVersionStateEvidence.create(
             new AuthoredWorldVersionStateEvidence.Request(
@@ -757,12 +746,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var fixtureRequest = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
     var allocatedFixture =
         ownerTransaction(evidence)
-            .execute(
-                status -> {
-                  fixtureFence.lockOpen(binding(intake, version));
-                  return fixtureAssociations.allocateRunOwnedFixtureInOwnerTransaction(
-                      evidence, fixtureRequest, intake, version);
-                });
+            .execute(status -> {
+              fixtureFence.lockOpen(binding(intake, version));
+              return fixtureAssociations.allocateRunOwnedFixtureInOwnerTransaction(
+                  evidence, fixtureRequest, intake, version);
+            });
     var fixtureAssociation =
         fixtureAssociations.readRunOwnedFixtureAssociation(evidence, fixtureRequest);
     var fixturePlan = RunOwnedWorldFixedPresetResources.plan(fixtureAssociation, intake, version);
@@ -772,33 +760,31 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
 
     var materialized =
         ownerTransaction(evidence)
-            .execute(
-                status -> {
-                  var result =
-                      savepoint.execute(
-                          nestedStatus ->
-                              RunOwnedWorldFixedPresetResources.materialize(
-                                  dsl,
-                                  evidence,
-                                  fixturePlan,
-                                  allocatedFixture.worldInstanceId(),
-                                  allocatedFixture.worldPrivateKeys().gameInstanceId()));
-                  var preparationStamp =
-                      dsl.fetchSingle(
-                          "SELECT p.preparation_inserted_full_xid::text, p.xmin::text, "
-                              + "pg_current_xact_id()::text, "
-                              + "(txid_current() % 4294967296)::text "
-                              + "FROM world_canonical_instance_preparation p "
-                              + "WHERE p.world_instance_id = ?",
-                          allocatedFixture.worldInstanceId());
-                  assertThat(preparationStamp.get(0, String.class))
-                      .as("the BEFORE INSERT server stamp records the top-level full XID")
-                      .isEqualTo(preparationStamp.get(2, String.class));
-                  assertThat(preparationStamp.get(1, String.class))
-                      .as("the row inserted beneath the owner savepoint keeps its child xmin")
-                      .isNotEqualTo(preparationStamp.get(3, String.class));
-                  return result;
-                });
+            .execute(status -> {
+              var result =
+                  savepoint.execute(nestedStatus ->
+                      RunOwnedWorldFixedPresetResources.materialize(
+                          dsl,
+                          evidence,
+                          fixturePlan,
+                          allocatedFixture.worldInstanceId(),
+                          allocatedFixture.worldPrivateKeys().gameInstanceId()));
+              var preparationStamp =
+                  dsl.fetchSingle(
+                      "SELECT p.preparation_inserted_full_xid::text, p.xmin::text, "
+                          + "pg_current_xact_id()::text, "
+                          + "(txid_current() % 4294967296)::text "
+                          + "FROM world_canonical_instance_preparation p "
+                          + "WHERE p.world_instance_id = ?",
+                      allocatedFixture.worldInstanceId());
+              assertThat(preparationStamp.get(0, String.class))
+                  .as("the BEFORE INSERT server stamp records the top-level full XID")
+                  .isEqualTo(preparationStamp.get(2, String.class));
+              assertThat(preparationStamp.get(1, String.class))
+                  .as("the row inserted beneath the owner savepoint keeps its child xmin")
+                  .isNotEqualTo(preparationStamp.get(3, String.class));
+              return result;
+            });
     assertThat(materialized).isNotNull();
     assertThat(materialized.regionCount()).isEqualTo(1);
     assertThat(materialized.zoneCount()).isEqualTo(1);
@@ -845,10 +831,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                 positiveLong(),
                 id),
         "23514");
-    assertThatThrownBy(
-            () ->
-                associationRepository()
-                    .activateRunOwnedFixtureInOwnerTransaction(association, 1L, 0L))
+    assertThatThrownBy(() ->
+            associationRepository().activateRunOwnedFixtureInOwnerTransaction(association, 1L, 0L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageStartingWith("RUN_OWNED_WORLD_ACTIVATION_UNAVAILABLE:");
     assertThat(
@@ -860,22 +844,20 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         .isNull();
     assertThat(
             ownerTransaction()
-                .<Boolean>execute(
-                    status ->
-                        dsl.fetchSingle(
-                                "SELECT world_consume_canonical_prepare_execution_manifest('world_instance','INSERT',NULL,to_jsonb(w)) FROM world_instance w WHERE id = ?",
-                                id)
-                            .get(0, Boolean.class)))
+                .<Boolean>execute(status ->
+                    dsl.fetchSingle(
+                            "SELECT world_consume_canonical_prepare_execution_manifest('world_instance','INSERT',NULL,to_jsonb(w)) FROM world_instance w WHERE id = ?",
+                            id)
+                        .get(0, Boolean.class)))
         .isFalse();
     assertThat(
             ownerTransaction()
-                .<Boolean>execute(
-                    status ->
-                        dsl.fetchSingle(
-                                "SELECT world_consume_region_execution_manifest('region','INSERT',NULL,to_jsonb(r)) FROM region r WHERE tenant_id = ? AND version_id = ?",
-                                association.worldPrivateKeys().tenantId(),
-                                association.worldPrivateKeys().versionId())
-                            .get(0, Boolean.class)))
+                .<Boolean>execute(status ->
+                    dsl.fetchSingle(
+                            "SELECT world_consume_region_execution_manifest('region','INSERT',NULL,to_jsonb(r)) FROM region r WHERE tenant_id = ? AND version_id = ?",
+                            association.worldPrivateKeys().tenantId(),
+                            association.worldPrivateKeys().versionId())
+                        .get(0, Boolean.class)))
         .isFalse();
     for (String table :
         List.of(
@@ -922,10 +904,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertSqlState(
         () ->
             ownerTransaction()
-                .executeWithoutResult(
-                    status ->
-                        dsl.fetch(
-                            "SELECT world_finalize_canonical_initial_admission_hold(NULL::uuid,NULL::uuid,'COMMITTED',NULL::text,NULL::text,NULL::text,NULL::bigint,NULL::timestamptz,false,NULL::bytea,NULL::text)")),
+                .executeWithoutResult(status ->
+                    dsl.fetch(
+                        "SELECT world_finalize_canonical_initial_admission_hold(NULL::uuid,NULL::uuid,'COMMITTED',NULL::text,NULL::text,NULL::text,NULL::bigint,NULL::timestamptz,false,NULL::bytea,NULL::text)")),
         "23514",
         "terminal proof is incomplete");
     // Invalid controlled bytes with a correct byte digest only pass the preliminary digest
@@ -939,12 +920,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertSqlState(
         () ->
             ownerTransaction()
-                .executeWithoutResult(
-                    status ->
-                        dsl.fetch(
-                            "SELECT world_finalize_canonical_initial_admission_hold(NULL::uuid,NULL::uuid,'COMMITTED',NULL::text,NULL::text,NULL::text,NULL::bigint,TIMESTAMPTZ '2026-10-14T00:00:00Z',false,?::bytea,?::text)",
-                            invalidControlledProbe,
-                            invalidControlledProbeDigest)),
+                .executeWithoutResult(status ->
+                    dsl.fetch(
+                        "SELECT world_finalize_canonical_initial_admission_hold(NULL::uuid,NULL::uuid,'COMMITTED',NULL::text,NULL::text,NULL::text,NULL::bigint,TIMESTAMPTZ '2026-10-14T00:00:00Z',false,?::bytea,?::text)",
+                        invalidControlledProbe,
+                        invalidControlledProbeDigest)),
         "55000",
         "hold identity is missing or untyped");
     assertThat(allRows(dsl)).isEqualTo(original);
@@ -1003,10 +983,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       UUID intakeRequest = UUID.randomUUID();
       var intake =
           Objects.requireNonNull(
-              write.execute(
-                  status ->
-                      sourceOwner.acceptFresh(
-                          "dev", intakeRequest, evidence.sourceReceipt().sourceEvidence())));
+              write.execute(status ->
+                  sourceOwner.acceptFresh(
+                      "dev", intakeRequest, evidence.sourceReceipt().sourceEvidence())));
       var state =
           AuthoredWorldVersionStateEvidence.create(
               new AuthoredWorldVersionStateEvidence.Request(
@@ -1133,25 +1112,23 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
               descriptor.versionStateEpoch(),
               null);
       WorldCanonicalInstanceAssociation allocatedFixture =
-          write.execute(
-              status -> {
-                fixtureFence.lockOpen(binding(intake, version));
-                return fixtureAssociations.allocateRunOwnedFixtureInOwnerTransaction(
-                    evidence, fixtureRequest, intake, version);
-              });
+          write.execute(status -> {
+            fixtureFence.lockOpen(binding(intake, version));
+            return fixtureAssociations.allocateRunOwnedFixtureInOwnerTransaction(
+                evidence, fixtureRequest, intake, version);
+          });
       assertThat(allocatedFixture).isNotNull();
       assertThat(historicalRequests).hasValue(1);
       var fixtureAssociation =
           fixtureAssociations.readRunOwnedFixtureAssociation(evidence, fixtureRequest);
       var fixturePlan = RunOwnedWorldFixedPresetResources.plan(fixtureAssociation, intake, version);
-      write.executeWithoutResult(
-          status ->
-              RunOwnedWorldFixedPresetResources.materialize(
-                  connection,
-                  evidence,
-                  fixturePlan,
-                  fixtureAssociation.worldInstanceId(),
-                  fixtureAssociation.worldPrivateKeys().gameInstanceId()));
+      write.executeWithoutResult(status ->
+          RunOwnedWorldFixedPresetResources.materialize(
+              connection,
+              evidence,
+              fixturePlan,
+              fixtureAssociation.worldInstanceId(),
+              fixtureAssociation.worldPrivateKeys().gameInstanceId()));
       var preparedFixture =
           connection.fetchSingle(
               "SELECT status, lifecycle_epoch, row_version FROM world_instance WHERE id = ?",
@@ -1362,11 +1339,10 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   preservedForgedPublicationFence))
           .as(
               "the pre-1042.9 caller-forged stamp is retained while the new server stamp stays NULL")
-          .satisfies(
-              row -> {
-                assertThat(row.get(0, String.class)).isEqualTo("9223372036854775807");
-                assertThat(row.get(1, String.class)).isNull();
-              });
+          .satisfies(row -> {
+            assertThat(row.get(0, String.class)).isEqualTo("9223372036854775807");
+            assertThat(row.get(1, String.class)).isNull();
+          });
       assertThat(
               connection
                   .fetchSingle(
@@ -1435,18 +1411,17 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                       + "AND c.relname = 'world_canonical_instance_preparation' "
                       + "AND t.tgname = 'trg_world_preparation_full_xid_stamp'",
                   schema))
-          .satisfies(
-              row -> {
-                assertThat(row.get(0, String.class)).isEqualTo("7");
-                assertThat(row.get(1, String.class)).isEqualTo("O");
-                assertThat(row.get(2, String.class))
-                    .isEqualTo(
-                        connection
-                            .fetchSingle(
-                                "SELECT oid::text FROM pg_proc WHERE oid = to_regprocedure(?)",
-                                schema + ".world_stamp_preparation_insert_full_xid()")
-                            .get(0, String.class));
-              });
+          .satisfies(row -> {
+            assertThat(row.get(0, String.class)).isEqualTo("7");
+            assertThat(row.get(1, String.class)).isEqualTo("O");
+            assertThat(row.get(2, String.class))
+                .isEqualTo(
+                    connection
+                        .fetchSingle(
+                            "SELECT oid::text FROM pg_proc WHERE oid = to_regprocedure(?)",
+                            schema + ".world_stamp_preparation_insert_full_xid()")
+                        .get(0, String.class));
+          });
       assertThat(
               connection
                   .fetchSingle(
@@ -1969,14 +1944,13 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             null);
     WorldCanonicalInstanceAssociation allocated =
         ownerTransaction(evidence)
-            .execute(
-                status -> {
-                  fenceRepository.lockOpen(binding);
-                  var association =
-                      associationRepository.allocateRunOwnedFixtureInOwnerTransaction(
-                          evidence, request, source, version);
-                  return association;
-                });
+            .execute(status -> {
+              fenceRepository.lockOpen(binding);
+              var association =
+                  associationRepository.allocateRunOwnedFixtureInOwnerTransaction(
+                      evidence, request, source, version);
+              return association;
+            });
     assertThat(allocated).isNotNull();
     assertNoPendingManifests(allocated.worldInstanceId());
     var association = associationRepository.readRunOwnedFixtureAssociation(evidence, request);
@@ -2021,12 +1995,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertSqlState(
         () ->
             ownerTransaction()
-                .executeWithoutResult(
-                    status ->
-                        dsl.execute(
-                            "INSERT INTO world_canonical_instance_association "
-                                + "SELECT (jsonb_populate_record(NULL::world_canonical_instance_association, ?::jsonb)).*",
-                            unmanifestedAssociation)),
+                .executeWithoutResult(status ->
+                    dsl.execute(
+                        "INSERT INTO world_canonical_instance_association "
+                            + "SELECT (jsonb_populate_record(NULL::world_canonical_instance_association, ?::jsonb)).*",
+                        unmanifestedAssociation)),
         "23514",
         "exact one-use transaction execution manifest");
     Map<String, Object> changedUnmanifestedAssociation = new LinkedHashMap<>(allocationAssociation);
@@ -2034,12 +2007,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertSqlState(
         () ->
             ownerTransaction()
-                .executeWithoutResult(
-                    status ->
-                        dsl.execute(
-                            "INSERT INTO world_canonical_instance_association "
-                                + "SELECT (jsonb_populate_record(NULL::world_canonical_instance_association, ?::jsonb)).*",
-                            json(changedUnmanifestedAssociation))),
+                .executeWithoutResult(status ->
+                    dsl.execute(
+                        "INSERT INTO world_canonical_instance_association "
+                            + "SELECT (jsonb_populate_record(NULL::world_canonical_instance_association, ?::jsonb)).*",
+                        json(changedUnmanifestedAssociation))),
         "23514",
         "exact one-use transaction execution manifest");
     assertThat(resourceCount()).isEqualTo(before);
@@ -2067,12 +2039,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertSqlState(
         () ->
             ownerTransaction()
-                .executeWithoutResult(
-                    status ->
-                        dsl.fetchSingle(
-                            "SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)",
-                            json(incompleteAllocationWorld),
-                            json(allocationAssociation))),
+                .executeWithoutResult(status ->
+                    dsl.fetchSingle(
+                        "SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)",
+                        json(incompleteAllocationWorld),
+                        json(allocationAssociation))),
         "P0001",
         "Fixture allocation requires complete exact owner row values");
     assertThat(resourceCount()).isEqualTo(before);
@@ -2083,12 +2054,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertSqlState(
         () ->
             ownerTransaction()
-                .executeWithoutResult(
-                    status ->
-                        dsl.fetchSingle(
-                            "SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)",
-                            json(changedAllocationWorld),
-                            json(allocationAssociation))),
+                .executeWithoutResult(status ->
+                    dsl.fetchSingle(
+                        "SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)",
+                        json(changedAllocationWorld),
+                        json(allocationAssociation))),
         "23514",
         "no exact transaction execution manifest");
     assertThat(resourceCount()).isEqualTo(before);
@@ -2101,12 +2071,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertSqlState(
         () ->
             ownerTransaction()
-                .executeWithoutResult(
-                    status ->
-                        dsl.fetchSingle(
-                            "SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)",
-                            json(allocationWorld),
-                            json(changedAllocationAssociation))),
+                .executeWithoutResult(status ->
+                    dsl.fetchSingle(
+                        "SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)",
+                        json(allocationWorld),
+                        json(changedAllocationAssociation))),
         "23514");
     assertThat(resourceCount()).isEqualTo(before);
     assertThat(dsl.fetchValue("SELECT count(*) FROM world_instance WHERE id = ?", rejectedWorldId))
@@ -2134,29 +2103,27 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertSqlState(
         () ->
             ownerTransaction()
-                .executeWithoutResult(
-                    status ->
-                        dsl.execute(
-                            "INSERT INTO region (tenant_id, version_id, name, shard_id, generation_seed, spacing_multiplier, version) "
-                                + "VALUES (?, ?, 'unowned resource', 0, 0, 1.0, 0)",
-                            source.localTenantKey(),
-                            version.localVersionKey())),
+                .executeWithoutResult(status ->
+                    dsl.execute(
+                        "INSERT INTO region (tenant_id, version_id, name, shard_id, generation_seed, spacing_multiplier, version) "
+                            + "VALUES (?, ?, 'unowned resource', 0, 0, 1.0, 0)",
+                        source.localTenantKey(),
+                        version.localVersionKey())),
         "23514",
         "no exact transaction execution manifest");
     assertThat(resourceCount()).isEqualTo(before);
 
     var result =
         ownerTransaction(evidence)
-            .execute(
-                status -> {
-                  fenceRepository.lockOpen(binding);
-                  var replayAllocation =
-                      associationRepository.allocateRunOwnedFixtureInOwnerTransaction(
-                          evidence, request, source, version);
-                  assertThat(replayAllocation.worldInstanceId()).isEqualTo(worldId);
-                  return RunOwnedWorldFixedPresetResources.materialize(
-                      dsl, evidence, plan, worldId, privateKey);
-                });
+            .execute(status -> {
+              fenceRepository.lockOpen(binding);
+              var replayAllocation =
+                  associationRepository.allocateRunOwnedFixtureInOwnerTransaction(
+                      evidence, request, source, version);
+              assertThat(replayAllocation.worldInstanceId()).isEqualTo(worldId);
+              return RunOwnedWorldFixedPresetResources.materialize(
+                  dsl, evidence, plan, worldId, privateKey);
+            });
     assertThat(result).isNotNull();
     assertThat(result.regionCount()).isEqualTo(1);
     assertThat(result.zoneCount()).isEqualTo(1);
@@ -2310,16 +2277,15 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             worldId);
     var replayResult =
         ownerTransaction(evidence)
-            .execute(
-                status -> {
-                  fenceRepository.lockOpen(binding);
-                  var replayAllocation =
-                      associationRepository.allocateRunOwnedFixtureInOwnerTransaction(
-                          evidence, request, source, version);
-                  assertThat(replayAllocation.worldInstanceId()).isEqualTo(worldId);
-                  return RunOwnedWorldFixedPresetResources.materialize(
-                      dsl, evidence, plan, worldId, privateKey);
-                });
+            .execute(status -> {
+              fenceRepository.lockOpen(binding);
+              var replayAllocation =
+                  associationRepository.allocateRunOwnedFixtureInOwnerTransaction(
+                      evidence, request, source, version);
+              assertThat(replayAllocation.worldInstanceId()).isEqualTo(worldId);
+              return RunOwnedWorldFixedPresetResources.materialize(
+                  dsl, evidence, plan, worldId, privateKey);
+            });
     assertThat(replayResult).isEqualTo(result);
     assertThat(resourceCount()).isEqualTo(materializedCount);
     assertThat(
@@ -2345,26 +2311,24 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     // Only upstream replies are controlled. The fixture bridge uses real World SQL owners.
     var source = mock(AuthoredWorldSourceClient.class);
     when(source.read(any()))
-        .thenAnswer(
-            invocation -> {
-              upstreamReads.incrementAndGet();
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return evidence.sourceReceipt().sourceEvidence();
-            });
+        .thenAnswer(invocation -> {
+          upstreamReads.incrementAndGet();
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return evidence.sourceReceipt().sourceEvidence();
+        });
     var versions = mock(AuthoredWorldVersionStateClient.class);
     when(versions.read(any()))
-        .thenAnswer(
-            invocation -> {
-              upstreamReads.incrementAndGet();
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
-              return AuthoredWorldVersionStateEvidence.create(
-                  request,
-                  evidence.sourceReceipt().sourceEvidence(),
-                  evidence.gameSessionAssociation().canonicalVersionId(),
-                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
-                  evidence.launchDescriptor().versionStateEpoch());
-            });
+        .thenAnswer(invocation -> {
+          upstreamReads.incrementAndGet();
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          AuthoredWorldVersionStateEvidence.Request request = invocation.getArgument(0);
+          return AuthoredWorldVersionStateEvidence.create(
+              request,
+              evidence.sourceReceipt().sourceEvidence(),
+              evidence.gameSessionAssociation().canonicalVersionId(),
+              VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+              evidence.launchDescriptor().versionStateEpoch());
+        });
     // Package preparation consumes the closed-parser carrier directly; this enabled provider
     // supplies configuration only and does not pretend to read files or authenticate producers.
     var provider =
@@ -3227,11 +3191,10 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     read.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
     read.setReadOnly(true);
     assertThat(
-            read.<String>execute(
-                status ->
-                    RunOwnedWorldFixedPresetResources.readCommitted(
-                            dsl, plan, worldId, association.worldPrivateKeys().gameInstanceId())
-                        .graphSha256()))
+            read.<String>execute(status ->
+                RunOwnedWorldFixedPresetResources.readCommitted(
+                        dsl, plan, worldId, association.worldPrivateKeys().gameInstanceId())
+                    .graphSha256()))
         .isEqualTo(plan.expectedGraphSha256());
   }
 
@@ -3502,18 +3465,16 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     transaction.setReadOnly(readOnly);
     if (supported) {
       RunOwnedWorldFixedPresetResources.MaterializedFixedPreset actual =
-          transaction.execute(
-              status ->
-                  readPresetInCurrentTransaction(
-                      plan, worldId, privateGameInstanceKey, readOnly, expectedIsolation));
+          transaction.execute(status ->
+              readPresetInCurrentTransaction(
+                  plan, worldId, privateGameInstanceKey, readOnly, expectedIsolation));
       assertThat(actual).as(mode).isEqualTo(expected);
     } else {
       assertSqlState(
           () ->
-              transaction.execute(
-                  status ->
-                      readPresetInCurrentTransaction(
-                          plan, worldId, privateGameInstanceKey, readOnly, expectedIsolation)),
+              transaction.execute(status ->
+                  readPresetInCurrentTransaction(
+                      plan, worldId, privateGameInstanceKey, readOnly, expectedIsolation)),
           "23514",
           "Run-owned fixed-preset readback requires an owner read transaction");
     }
@@ -3762,14 +3723,13 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   private void materialize(String planJson, long worldInstanceId, long privateGameInstanceKey) {
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    transaction.executeWithoutResult(
-        status ->
-            dsl.fetch(
-                "SELECT * FROM world_materialize_run_owned_fixed_preset(?, ?, ?, ?)",
-                planJson,
-                CONTENT_DIGEST,
-                worldInstanceId,
-                privateGameInstanceKey));
+    transaction.executeWithoutResult(status ->
+        dsl.fetch(
+            "SELECT * FROM world_materialize_run_owned_fixed_preset(?, ?, ?, ?)",
+            planJson,
+            CONTENT_DIGEST,
+            worldInstanceId,
+            privateGameInstanceKey));
   }
 
   private long insertLegacyWorldRow(long tenantKey, long privateKey, long versionKey) {
@@ -3915,19 +3875,18 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   private static void assertSqlState(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String state, String message) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              Throwable cause = failure;
-              while (cause.getCause() != null) {
-                cause = cause.getCause();
-              }
-              assertThat(cause).isInstanceOf(PSQLException.class);
-              PSQLException postgresFailure = (PSQLException) cause;
-              assertThat(postgresFailure.getSQLState()).isEqualTo(state);
-              if (message != null) {
-                assertThat(postgresFailure.getMessage()).contains(message);
-              }
-            });
+        .satisfies(failure -> {
+          Throwable cause = failure;
+          while (cause.getCause() != null) {
+            cause = cause.getCause();
+          }
+          assertThat(cause).isInstanceOf(PSQLException.class);
+          PSQLException postgresFailure = (PSQLException) cause;
+          assertThat(postgresFailure.getSQLState()).isEqualTo(state);
+          if (message != null) {
+            assertThat(postgresFailure.getMessage()).contains(message);
+          }
+        });
   }
 
   private RunOwnedCanonicalWorldLaunchEvidence controlledEvidence() {

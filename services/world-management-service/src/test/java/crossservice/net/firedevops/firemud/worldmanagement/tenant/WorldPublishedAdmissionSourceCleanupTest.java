@@ -17,13 +17,12 @@ class WorldPublishedAdmissionSourceCleanupTest {
     var server = stoppedServer();
     var peer = new AtomicReference<String>();
     Throwable result =
-        catchThrowable(
-            () -> {
-              try (var peerCheck = WorldPublishedAdmissionSourceComposition.checkPeerOnClose(peer);
-                  var lifetime = WorldPublishedAdmissionSourceComposition.stopOnClose(server)) {
-                peer.set("wrong authenticated peer");
-              }
-            });
+        catchThrowable(() -> {
+          try (var peerCheck = WorldPublishedAdmissionSourceComposition.checkPeerOnClose(peer);
+              var lifetime = WorldPublishedAdmissionSourceComposition.stopOnClose(server)) {
+            peer.set("wrong authenticated peer");
+          }
+        });
 
     assertThat(result)
         .isInstanceOf(AssertionError.class)
@@ -99,14 +98,13 @@ class WorldPublishedAdmissionSourceCleanupTest {
 
   private static Throwable run(Server server, String peerFailure, AssertionError primary) {
     var peer = new AtomicReference<>(peerFailure);
-    return catchThrowable(
-        () -> {
-          try (var peerCheck = WorldPublishedAdmissionSourceComposition.checkPeerOnClose(peer);
-              var lifetime = WorldPublishedAdmissionSourceComposition.stopOnClose(server)) {
-            if (primary != null) {
-              throw primary;
-            }
-          }
-        });
+    return catchThrowable(() -> {
+      try (var peerCheck = WorldPublishedAdmissionSourceComposition.checkPeerOnClose(peer);
+          var lifetime = WorldPublishedAdmissionSourceComposition.stopOnClose(server)) {
+        if (primary != null) {
+          throw primary;
+        }
+      }
+    });
   }
 }

@@ -93,14 +93,13 @@ class LettuceInitialGameplayLoginConnectionProviderTest {
     var connectStarted = new CountDownLatch(1);
     var finishConnect = new CountDownLatch(1);
     when(client.connect(ByteArrayCodec.INSTANCE))
-        .thenAnswer(
-            ignored -> {
-              connectStarted.countDown();
-              if (!finishConnect.await(5, TimeUnit.SECONDS)) {
-                throw new AssertionError("test connection was not released");
-              }
-              return connection;
-            });
+        .thenAnswer(ignored -> {
+          connectStarted.countDown();
+          if (!finishConnect.await(5, TimeUnit.SECONDS)) {
+            throw new AssertionError("test connection was not released");
+          }
+          return connection;
+        });
     var executor = Executors.newSingleThreadExecutor();
     try (var factory = mockStatic(RedisClient.class)) {
       factory.when(() -> RedisClient.create(uri)).thenReturn(client);

@@ -55,36 +55,31 @@ class AccountJwtReadinessTrustBindingTest {
   @Test
   void missingExpiredDuplicateUnknownAndChangedIdentityBindingsAreRejected() {
     String valid = protectedConfig(NOW + 60);
-    assertThatThrownBy(
-            () ->
-                AccountJwtReadinessTrustBinding.parseProtectedBytes(
-                    valid.getBytes(StandardCharsets.UTF_8), NOW + 60))
+    assertThatThrownBy(() ->
+            AccountJwtReadinessTrustBinding.parseProtectedBytes(
+                valid.getBytes(StandardCharsets.UTF_8), NOW + 60))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountJwtReadinessTrustBinding.parseProtectedBytes(
-                    (valid + "validatorInstanceId=other\n").getBytes(StandardCharsets.UTF_8), NOW))
+    assertThatThrownBy(() ->
+            AccountJwtReadinessTrustBinding.parseProtectedBytes(
+                (valid + "validatorInstanceId=other\n").getBytes(StandardCharsets.UTF_8), NOW))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountJwtReadinessTrustBinding.parseProtectedBytes(
-                    (valid + "untrusted=true\n").getBytes(StandardCharsets.UTF_8), NOW))
+    assertThatThrownBy(() ->
+            AccountJwtReadinessTrustBinding.parseProtectedBytes(
+                (valid + "untrusted=true\n").getBytes(StandardCharsets.UTF_8), NOW))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountJwtReadinessTrustBinding.parseProtectedBytes(
-                    valid
-                        .replace(
-                            "validatorInstanceId=account-validator-instance-7",
-                            "validatorInstanceId=other")
-                        .getBytes(StandardCharsets.UTF_8),
-                    NOW))
+    assertThatThrownBy(() ->
+            AccountJwtReadinessTrustBinding.parseProtectedBytes(
+                valid
+                    .replace(
+                        "validatorInstanceId=account-validator-instance-7",
+                        "validatorInstanceId=other")
+                    .getBytes(StandardCharsets.UTF_8),
+                NOW))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountJwtReadinessTrustBinding.parseProtectedBytes(
-                    valid.replace("enabled=true", "enabled=false").getBytes(StandardCharsets.UTF_8),
-                    NOW))
+    assertThatThrownBy(() ->
+            AccountJwtReadinessTrustBinding.parseProtectedBytes(
+                valid.replace("enabled=true", "enabled=false").getBytes(StandardCharsets.UTF_8),
+                NOW))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -191,30 +186,26 @@ class AccountJwtReadinessTrustBindingTest {
     try (MockedStatic<Files> mockedFiles =
         Mockito.mockStatic(Files.class, Mockito.CALLS_REAL_METHODS)) {
       mockedFiles
-          .when(
-              () ->
-                  Files.getAttribute(
-                      absoluteBinding, "unix:uid", java.nio.file.LinkOption.NOFOLLOW_LINKS))
+          .when(() ->
+              Files.getAttribute(
+                  absoluteBinding, "unix:uid", java.nio.file.LinkOption.NOFOLLOW_LINKS))
           .thenReturn(0L);
       mockedFiles
-          .when(
-              () ->
-                  Files.getPosixFilePermissions(
-                      absoluteBinding, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+          .when(() ->
+              Files.getPosixFilePermissions(
+                  absoluteBinding, java.nio.file.LinkOption.NOFOLLOW_LINKS))
           .thenReturn(fileMode);
       for (Path ancestor : owners.keySet()) {
         Path resolvedAncestor = ancestor;
         mockedFiles
-            .when(
-                () ->
-                    Files.getAttribute(
-                        resolvedAncestor, "unix:uid", java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            .when(() ->
+                Files.getAttribute(
+                    resolvedAncestor, "unix:uid", java.nio.file.LinkOption.NOFOLLOW_LINKS))
             .thenAnswer(invocation -> owners.get(resolvedAncestor));
         mockedFiles
-            .when(
-                () ->
-                    Files.getPosixFilePermissions(
-                        resolvedAncestor, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            .when(() ->
+                Files.getPosixFilePermissions(
+                    resolvedAncestor, java.nio.file.LinkOption.NOFOLLOW_LINKS))
             .thenAnswer(invocation -> directoryModes.get(resolvedAncestor));
       }
 

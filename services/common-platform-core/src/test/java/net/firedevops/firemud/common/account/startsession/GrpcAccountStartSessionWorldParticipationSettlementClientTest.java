@@ -125,12 +125,11 @@ class GrpcAccountStartSessionWorldParticipationSettlementClientTest {
               eq(6565),
               any(CommonGrpcClientProperties.class),
               eq(true)))
-          .thenAnswer(
-              invocation -> {
-                ManagedChannel channel = mock(ManagedChannel.class);
-                channels.add(channel);
-                return channel;
-              });
+          .thenAnswer(invocation -> {
+            ManagedChannel channel = mock(ManagedChannel.class);
+            channels.add(channel);
+            return channel;
+          });
       client =
           new GrpcAccountStartSessionWorldParticipationSettlementClient(
               endpoints, tls, channelFactory, "world-runtime");

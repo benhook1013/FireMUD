@@ -41,30 +41,26 @@ class WorldPublicationTerminalReadClientTest {
             directory.toString())) {
       var invalid = tls(directory);
       invalid.setCertChain(badPath);
-      assertThatThrownBy(
-              () ->
-                  new WorldPublicationTerminalReadClient(
-                      new ServiceEndpointsProperties(), invalid, factory, "test"))
+      assertThatThrownBy(() ->
+              new WorldPublicationTerminalReadClient(
+                  new ServiceEndpointsProperties(), invalid, factory, "test"))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var noKey = tls(directory);
     noKey.setPrivateKey(null);
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadClient(
-                    new ServiceEndpointsProperties(), noKey, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadClient(
+                new ServiceEndpointsProperties(), noKey, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     var noCa = tls(directory);
     noCa.setCaCert(null);
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadClient(
-                    new ServiceEndpointsProperties(), noCa, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadClient(
+                new ServiceEndpointsProperties(), noCa, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadClient(
-                    new ServiceEndpointsProperties(), tls(directory), factory, "Test"))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadClient(
+                new ServiceEndpointsProperties(), tls(directory), factory, "Test"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(factory);
   }
@@ -75,10 +71,9 @@ class WorldPublicationTerminalReadClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var plaintext = tls(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalReadClient(
-                    new ServiceEndpointsProperties(), plaintext, factory, "test"))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalReadClient(
+                new ServiceEndpointsProperties(), plaintext, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
 

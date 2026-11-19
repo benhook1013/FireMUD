@@ -81,10 +81,8 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
       throw conflict("Bootstrap operation and request identities must be distinct");
     }
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration ->
-            prepareInTransaction(
-                DSL.using(configuration), bootstrapOperationId, bootstrapRequestId));
+    return dsl.transactionResult(configuration ->
+        prepareInTransaction(DSL.using(configuration), bootstrapOperationId, bootstrapRequestId));
   }
 
   private CanonicalGameplayIssuerPartitionBuildPlan prepareInTransaction(
@@ -516,33 +514,32 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
         .fetch(
             "SELECT * FROM " + BOOTSTRAP_COHORT + " WHERE operation_id = ? ORDER BY row_ordinal",
             operationId)
-        .map(
-            row -> {
-              String sourceJson = requireText(row, "source_row_json");
-              String digest = requireText(row, "source_row_digest");
-              if (!sha256(sourceJson.getBytes(StandardCharsets.UTF_8)).equals(digest)) {
-                throw conflict("Frozen bootstrap cohort contains a changed source-row digest");
-              }
-              if (!operationId.equals(row.get("operation_id", UUID.class))
-                  || !ISSUER.equals(row.get("issuer_id", String.class))) {
-                throw conflict("Frozen bootstrap cohort row lost its exact owner linkage");
-              }
-              CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow cohortRow;
-              try {
-                cohortRow =
-                    new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
-                        requireLong(row, "row_ordinal"),
-                        CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
-                            requireText(row, "source_kind")),
-                        requireText(row, "source_key"),
-                        readBigInteger(row, "source_inventory_revision"),
-                        sourceJson,
-                        digest);
-              } catch (RuntimeException malformed) {
-                throw conflict("Frozen bootstrap cohort row is malformed");
-              }
-              return new IssuerCohortSourceRow(cohortRow);
-            });
+        .map(row -> {
+          String sourceJson = requireText(row, "source_row_json");
+          String digest = requireText(row, "source_row_digest");
+          if (!sha256(sourceJson.getBytes(StandardCharsets.UTF_8)).equals(digest)) {
+            throw conflict("Frozen bootstrap cohort contains a changed source-row digest");
+          }
+          if (!operationId.equals(row.get("operation_id", UUID.class))
+              || !ISSUER.equals(row.get("issuer_id", String.class))) {
+            throw conflict("Frozen bootstrap cohort row lost its exact owner linkage");
+          }
+          CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow cohortRow;
+          try {
+            cohortRow =
+                new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
+                    requireLong(row, "row_ordinal"),
+                    CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
+                        requireText(row, "source_kind")),
+                    requireText(row, "source_key"),
+                    readBigInteger(row, "source_inventory_revision"),
+                    sourceJson,
+                    digest);
+          } catch (RuntimeException malformed) {
+            throw conflict("Frozen bootstrap cohort row is malformed");
+          }
+          return new IssuerCohortSourceRow(cohortRow);
+        });
   }
 
   private static CanonicalGameplayLegacyMigrationDisposition persistedLegacyDisposition(
@@ -588,32 +585,30 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
         .fetch(
             CanonicalGameplayIssuerCohortSql.cohortSql(),
             CanonicalGameplayIssuerCohortSql.cohortBindings(ISSUER, decimal(snapshotRevision)))
-        .map(
-            row -> {
-              String sourceJson = requireText(row, "source_row_json");
-              String sourceKey = requireText(row, "source_key");
-              BigInteger sourceRevision = readBigInteger(row, "source_revision");
-              CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind kind;
-              try {
-                kind =
-                    CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
-                        requireText(row, "source_kind"));
-              } catch (RuntimeException malformed) {
-                throw conflict("Current issuer inventory contains an unsupported source family");
-              }
-              if (sourceRevision.compareTo(snapshotRevision) > 0) {
-                throw conflict(
-                    "Current issuer inventory source is newer than its bootstrap snapshot");
-              }
-              return new IssuerCohortSourceRow(
-                  new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
-                      0L,
-                      kind,
-                      sourceKey,
-                      sourceRevision,
-                      sourceJson,
-                      sha256(sourceJson.getBytes(StandardCharsets.UTF_8))));
-            });
+        .map(row -> {
+          String sourceJson = requireText(row, "source_row_json");
+          String sourceKey = requireText(row, "source_key");
+          BigInteger sourceRevision = readBigInteger(row, "source_revision");
+          CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind kind;
+          try {
+            kind =
+                CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
+                    requireText(row, "source_kind"));
+          } catch (RuntimeException malformed) {
+            throw conflict("Current issuer inventory contains an unsupported source family");
+          }
+          if (sourceRevision.compareTo(snapshotRevision) > 0) {
+            throw conflict("Current issuer inventory source is newer than its bootstrap snapshot");
+          }
+          return new IssuerCohortSourceRow(
+              new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
+                  0L,
+                  kind,
+                  sourceKey,
+                  sourceRevision,
+                  sourceJson,
+                  sha256(sourceJson.getBytes(StandardCharsets.UTF_8))));
+        });
   }
 
   private static void requireCurrentCohortMatches(
@@ -775,13 +770,12 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
     for (var entry : bindings.entrySet()) {
       List<BindingSource> rows = entry.getValue();
       if (rows.size() != 1) {
-        rows.forEach(
-            row ->
-                blockers.add(
-                    new PlanBlocker(
-                        row.rowOrdinal(),
-                        CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
-                            .CONFLICTING_RESERVATION_LINK)));
+        rows.forEach(row ->
+            blockers.add(
+                new PlanBlocker(
+                    row.rowOrdinal(),
+                    CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                        .CONFLICTING_RESERVATION_LINK)));
         continue;
       }
       BindingSource binding = rows.get(0);
@@ -859,30 +853,26 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
 
     List<PlannedReservation> planned =
         initialLayoutReservations.stream()
-            .map(
-                reservation -> {
-                  Long bindingOrdinal =
-                      bindingOrdinalByReservation.get(reservation.reservationId());
-                  String bindingDigest =
-                      bindingOrdinal == null
-                          ? null
-                          : byOrdinal.get(bindingOrdinal).sourceRowDigest();
-                  BigInteger partitionId;
-                  try {
-                    partitionId =
-                        CanonicalGameplayBindingRef.fromExactBytes(reservation.bindingRef())
-                            .partitionId(intent.layoutDescriptor().partitionCount());
-                  } catch (RuntimeException malformed) {
-                    blockers.add(
-                        new PlanBlocker(
-                            reservation.rowOrdinal(),
-                            CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
-                                .UNREPRESENTABLE_RESERVATION));
-                    return null;
-                  }
-                  return new PlannedReservation(
-                      reservation, bindingOrdinal, bindingDigest, partitionId);
-                })
+            .map(reservation -> {
+              Long bindingOrdinal = bindingOrdinalByReservation.get(reservation.reservationId());
+              String bindingDigest =
+                  bindingOrdinal == null ? null : byOrdinal.get(bindingOrdinal).sourceRowDigest();
+              BigInteger partitionId;
+              try {
+                partitionId =
+                    CanonicalGameplayBindingRef.fromExactBytes(reservation.bindingRef())
+                        .partitionId(intent.layoutDescriptor().partitionCount());
+              } catch (RuntimeException malformed) {
+                blockers.add(
+                    new PlanBlocker(
+                        reservation.rowOrdinal(),
+                        CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                            .UNREPRESENTABLE_RESERVATION));
+                return null;
+              }
+              return new PlannedReservation(
+                  reservation, bindingOrdinal, bindingDigest, partitionId);
+            })
             .filter(Objects::nonNull)
             .toList();
     requireIssuerSourceLinks(
@@ -902,13 +892,12 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
         physicallyOversizedPartitions.add(entry.getKey());
         entry
             .getValue()
-            .forEach(
-                item ->
-                    blockers.add(
-                        new PlanBlocker(
-                            item.reservation().rowOrdinal(),
-                            CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
-                                .PARTITION_CAPACITY_EXCEEDED)));
+            .forEach(item ->
+                blockers.add(
+                    new PlanBlocker(
+                        item.reservation().rowOrdinal(),
+                        CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                            .PARTITION_CAPACITY_EXCEEDED)));
       }
     }
     Map<BigInteger, List<PlannedReservation>> countedByPartition = new HashMap<>();
@@ -927,13 +916,12 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
           && BigInteger.valueOf(partitionReservations.size())
                   .compareTo(intent.layoutDescriptor().partitionCapacity())
               > 0) {
-        partitionReservations.forEach(
-            item ->
-                blockers.add(
-                    new PlanBlocker(
-                        item.reservation().rowOrdinal(),
-                        CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
-                            .PARTITION_CAPACITY_EXCEEDED)));
+        partitionReservations.forEach(item ->
+            blockers.add(
+                new PlanBlocker(
+                    item.reservation().rowOrdinal(),
+                    CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                        .PARTITION_CAPACITY_EXCEEDED)));
       }
     }
     BigInteger aggregateCapacity =
@@ -942,13 +930,12 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
             .partitionCount()
             .multiply(intent.layoutDescriptor().partitionCapacity());
     if (BigInteger.valueOf(countedReservations.size()).compareTo(aggregateCapacity) > 0) {
-      countedReservations.forEach(
-          item ->
-              blockers.add(
-                  new PlanBlocker(
-                      item.reservation().rowOrdinal(),
-                      CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
-                          .AGGREGATE_CAPACITY_EXCEEDED)));
+      countedReservations.forEach(item ->
+          blockers.add(
+              new PlanBlocker(
+                  item.reservation().rowOrdinal(),
+                  CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode
+                      .AGGREGATE_CAPACITY_EXCEEDED)));
     }
     blockers.sort(
         Comparator.comparingLong(PlanBlocker::sourceRowOrdinal)
@@ -961,9 +948,8 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
     List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> sortedRows =
         currentRows.stream()
             .sorted(
-                Comparator.comparing(
-                        (CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow row) ->
-                            row.kind().name())
+                Comparator.comparing((CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow row) ->
+                        row.kind().name())
                     .thenComparing(
                         CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::sourceKey))
             .toList();
@@ -1162,15 +1148,14 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
       List<PlanBlocker> blockers,
       List<CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow> cohort) {
     return java.util.stream.IntStream.range(0, blockers.size())
-        .mapToObj(
-            index -> {
-              PlanBlocker blocker = blockers.get(index);
-              return new CanonicalGameplayIssuerPartitionBuildPlan.Blocker(
-                  index,
-                  blocker.sourceRowOrdinal(),
-                  cohort.get((int) blocker.sourceRowOrdinal()).sourceRowDigest(),
-                  blocker.code());
-            })
+        .mapToObj(index -> {
+          PlanBlocker blocker = blockers.get(index);
+          return new CanonicalGameplayIssuerPartitionBuildPlan.Blocker(
+              index,
+              blocker.sourceRowOrdinal(),
+              cohort.get((int) blocker.sourceRowOrdinal()).sourceRowDigest(),
+              blocker.code());
+        })
         .toList();
   }
 
@@ -1431,25 +1416,24 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
                     + BUILD_COHORT
                     + " WHERE build_operation_id = ? ORDER BY source_row_ordinal",
                 buildOperationId)
-            .map(
-                row -> {
-                  String raw = requireText(row, "source_row_json");
-                  String digest = requireText(row, "source_row_digest");
-                  if (!sha256(raw.getBytes(StandardCharsets.UTF_8)).equals(digest)
-                      || !intent.operationId().equals(row.get("source_operation_id", UUID.class))
-                      || !intent.issuerId().equals(row.get("issuer_id", String.class))) {
-                    throw conflict("Build plan cohort row lost its exact bootstrap source link");
-                  }
-                  return new IssuerCohortSourceRow(
-                      new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
-                          requireLong(row, "source_row_ordinal"),
-                          CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
-                              requireText(row, "source_kind")),
-                          requireText(row, "source_key"),
-                          readBigInteger(row, "source_inventory_revision"),
-                          raw,
-                          digest));
-                });
+            .map(row -> {
+              String raw = requireText(row, "source_row_json");
+              String digest = requireText(row, "source_row_digest");
+              if (!sha256(raw.getBytes(StandardCharsets.UTF_8)).equals(digest)
+                  || !intent.operationId().equals(row.get("source_operation_id", UUID.class))
+                  || !intent.issuerId().equals(row.get("issuer_id", String.class))) {
+                throw conflict("Build plan cohort row lost its exact bootstrap source link");
+              }
+              return new IssuerCohortSourceRow(
+                  new CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow(
+                      requireLong(row, "source_row_ordinal"),
+                      CanonicalGameplayIssuerLayoutBootstrapIntent.CohortKind.valueOf(
+                          requireText(row, "source_kind")),
+                      requireText(row, "source_key"),
+                      readBigInteger(row, "source_inventory_revision"),
+                      raw,
+                      digest));
+            });
     requireSameCohort(intent.cohortRows(), planRows);
     if (!intent.cohortDigest().equals(header.get("cohort_digest", String.class))
         || planRows.size() != requireLong(header, "cohort_row_count")) {
@@ -1463,21 +1447,18 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
                     + MEMBER_WORK
                     + " WHERE build_operation_id = ? ORDER BY work_ordinal",
                 buildOperationId)
-            .map(
-                row -> {
-                  if (!intent.operationId().equals(row.get("bootstrap_operation_id", UUID.class))
-                      || !intent.issuerId().equals(row.get("issuer_id", String.class))) {
-                    throw conflict("Member work lost its exact bootstrap plan linkage");
-                  }
-                  CanonicalGameplayIssuerPartitionBuildPlan.MemberWork memberWork =
-                      toMemberWork(row);
-                  Boolean counted = row.get("counts_toward_capacity", Boolean.class);
-                  if (!Objects.equals(counted, memberWork.countsTowardCapacity())) {
-                    throw conflict(
-                        "Member work capacity classification differs from its lifecycle");
-                  }
-                  return memberWork;
-                });
+            .map(row -> {
+              if (!intent.operationId().equals(row.get("bootstrap_operation_id", UUID.class))
+                  || !intent.issuerId().equals(row.get("issuer_id", String.class))) {
+                throw conflict("Member work lost its exact bootstrap plan linkage");
+              }
+              CanonicalGameplayIssuerPartitionBuildPlan.MemberWork memberWork = toMemberWork(row);
+              Boolean counted = row.get("counts_toward_capacity", Boolean.class);
+              if (!Objects.equals(counted, memberWork.countsTowardCapacity())) {
+                throw conflict("Member work capacity classification differs from its lifecycle");
+              }
+              return memberWork;
+            });
     if (work.size() != requireLong(header, "member_work_count")
         || work.size() != derived.reservations().size()) {
       throw conflict("Build plan member work is incomplete or contains unplanned reservations");
@@ -1497,14 +1478,13 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
                     + BUILD_BLOCKER
                     + " WHERE build_operation_id = ? ORDER BY blocker_ordinal",
                 buildOperationId)
-            .map(
-                row ->
-                    new CanonicalGameplayIssuerPartitionBuildPlan.Blocker(
-                        requireLong(row, "blocker_ordinal"),
-                        requireLong(row, "source_row_ordinal"),
-                        requireText(row, "source_row_digest"),
-                        CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode.valueOf(
-                            requireText(row, "blocker_code"))));
+            .map(row ->
+                new CanonicalGameplayIssuerPartitionBuildPlan.Blocker(
+                    requireLong(row, "blocker_ordinal"),
+                    requireLong(row, "source_row_ordinal"),
+                    requireText(row, "source_row_digest"),
+                    CanonicalGameplayIssuerPartitionBuildPlan.BlockerCode.valueOf(
+                        requireText(row, "blocker_code"))));
     List<CanonicalGameplayIssuerPartitionBuildPlan.Blocker> expectedBlockers =
         toBlockers(derived.blockers(), intent.cohortRows());
     if (!sameBlockers(blockers, expectedBlockers)
@@ -1800,14 +1780,13 @@ final class CanonicalGameplayIssuerPartitionBuildRepository {
         .sorted(
             Comparator.comparingLong(
                 CanonicalGameplayIssuerLayoutBootstrapIntent.CohortRow::rowOrdinal))
-        .forEach(
-            row -> {
-              frame(digest, Long.toString(row.rowOrdinal()));
-              frame(digest, row.kind().name());
-              frame(digest, row.sourceKey());
-              frame(digest, row.sourceInventoryRevision().toString());
-              frame(digest, row.sourceRowDigest());
-            });
+        .forEach(row -> {
+          frame(digest, Long.toString(row.rowOrdinal()));
+          frame(digest, row.kind().name());
+          frame(digest, row.sourceKey());
+          frame(digest, row.sourceInventoryRevision().toString());
+          frame(digest, row.sourceRowDigest());
+        });
     return "sha256:" + HexFormat.of().formatHex(digest.digest());
   }
 

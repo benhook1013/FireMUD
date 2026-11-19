@@ -63,28 +63,27 @@ public final class EntityCharacterCreateRepository {
     outsideTransaction();
     Objects.requireNonNull(account, "account");
     Objects.requireNonNull(published, "published");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          var actors =
-              tx.fetch(
-                  "SELECT character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, name, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest FROM characters WHERE tenant_uuid = ? AND account_uuid = ? AND playable_state_namespace_id = ? AND playable_state_scope = 'PLAYABLE_STATE_SCOPE_SHARED' AND actor_entry_policy = 'PLAYER_CREATED' AND actor_identity_status = 'OWNER_RESOLVED' AND actor_identity_quarantine_reason IS NULL ORDER BY character_uuid",
-                  published.tenantId(),
-                  account.accountId(),
-                  published.playableStateNamespaceId());
-          if (actors.isEmpty()) {
-            requireNoPersistedPlayerCreatedRosterActors(tx, account, published);
-          }
-          var result = new java.util.ArrayList<CanonicalGameplayRosterActor>(actors.size());
-          for (Record actor : actors) {
-            readStoredPlayerCreatedTerminal(tx, account, published, actor, false);
-            result.add(
-                new CanonicalGameplayRosterActor(
-                    actor.get("character_uuid", UUID.class), actor.get("name", String.class)));
-          }
-          return List.copyOf(result);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      var actors =
+          tx.fetch(
+              "SELECT character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, name, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest FROM characters WHERE tenant_uuid = ? AND account_uuid = ? AND playable_state_namespace_id = ? AND playable_state_scope = 'PLAYABLE_STATE_SCOPE_SHARED' AND actor_entry_policy = 'PLAYER_CREATED' AND actor_identity_status = 'OWNER_RESOLVED' AND actor_identity_quarantine_reason IS NULL ORDER BY character_uuid",
+              published.tenantId(),
+              account.accountId(),
+              published.playableStateNamespaceId());
+      if (actors.isEmpty()) {
+        requireNoPersistedPlayerCreatedRosterActors(tx, account, published);
+      }
+      var result = new java.util.ArrayList<CanonicalGameplayRosterActor>(actors.size());
+      for (Record actor : actors) {
+        readStoredPlayerCreatedTerminal(tx, account, published, actor, false);
+        result.add(
+            new CanonicalGameplayRosterActor(
+                actor.get("character_uuid", UUID.class), actor.get("name", String.class)));
+      }
+      return List.copyOf(result);
+    });
   }
 
   EntityCharacterCreateTerminal readSelectedPlayerCreatedTerminal(
@@ -95,20 +94,19 @@ public final class EntityCharacterCreateRepository {
     Objects.requireNonNull(account, "account");
     Objects.requireNonNull(published, "published");
     requireCanonicalCharacterId(characterId);
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          Record actor =
-              tx.fetchOne(
-                  "SELECT character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, name, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest FROM characters WHERE character_uuid = ? AND tenant_uuid = ? AND account_uuid = ? AND playable_state_namespace_id = ? AND playable_state_scope = 'PLAYABLE_STATE_SCOPE_SHARED' AND actor_entry_policy = 'PLAYER_CREATED' AND actor_identity_status = 'OWNER_RESOLVED' AND actor_identity_quarantine_reason IS NULL",
-                  characterId,
-                  published.tenantId(),
-                  account.accountId(),
-                  published.playableStateNamespaceId());
-          if (actor == null) throw selectedPlayerCreatedActorUnavailable();
-          return readStoredPlayerCreatedTerminal(tx, account, published, actor, true);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      Record actor =
+          tx.fetchOne(
+              "SELECT character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, name, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest FROM characters WHERE character_uuid = ? AND tenant_uuid = ? AND account_uuid = ? AND playable_state_namespace_id = ? AND playable_state_scope = 'PLAYABLE_STATE_SCOPE_SHARED' AND actor_entry_policy = 'PLAYER_CREATED' AND actor_identity_status = 'OWNER_RESOLVED' AND actor_identity_quarantine_reason IS NULL",
+              characterId,
+              published.tenantId(),
+              account.accountId(),
+              published.playableStateNamespaceId());
+      if (actor == null) throw selectedPlayerCreatedActorUnavailable();
+      return readStoredPlayerCreatedTerminal(tx, account, published, actor, true);
+    });
   }
 
   /**
@@ -300,171 +298,168 @@ public final class EntityCharacterCreateRepository {
   EntityCharacterCreateTerminal settle(EntityCharacterCreateProofs proof, String abortRequestId) {
     outsideTransaction();
     if (abortRequestId != null) EntityCharacterCreateBindings.id(abortRequestId);
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-          var action = proof.action();
-          UUID tenant = UUID.fromString(action.scope().tenantId());
-          UUID namespace = UUID.fromString(action.scope().playableStateNamespaceId());
-          UUID account = UUID.fromString(action.target().accountId());
-          UUID operation = UUID.fromString(proof.original().getOperationId());
-          UUID requestId = UUID.fromString(proof.original().getCreateCharacterRequestId());
-          String workloadNamespace = proof.request().getOriginal().getTargetNamespace();
-          String scope = action.scope().playableStateScope().name();
-          // The selected intake association is actual Entity owner storage, not a numeric ID
-          // bridge.
-          var association =
-              tx.fetchOne(
-                  "SELECT receipt_bytes FROM entity_empty_selected_source_receipt WHERE target_namespace = ? AND intake_request_id = ? FOR KEY SHARE",
-                  workloadNamespace,
-                  proof.entitySource().intakeRequestId());
-          if (association == null
-              || !Arrays.equals(
-                  association.get(0, byte[].class), proof.entitySource().canonicalBytes())) {
-            throw EntityCharacterCreateBindings.conflict();
-          }
-          tx.execute(
-              "INSERT INTO entity_playable_state_namespace_scopes (tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+      var action = proof.action();
+      UUID tenant = UUID.fromString(action.scope().tenantId());
+      UUID namespace = UUID.fromString(action.scope().playableStateNamespaceId());
+      UUID account = UUID.fromString(action.target().accountId());
+      UUID operation = UUID.fromString(proof.original().getOperationId());
+      UUID requestId = UUID.fromString(proof.original().getCreateCharacterRequestId());
+      String workloadNamespace = proof.request().getOriginal().getTargetNamespace();
+      String scope = action.scope().playableStateScope().name();
+      // The selected intake association is actual Entity owner storage, not a numeric ID
+      // bridge.
+      var association =
+          tx.fetchOne(
+              "SELECT receipt_bytes FROM entity_empty_selected_source_receipt WHERE target_namespace = ? AND intake_request_id = ? FOR KEY SHARE",
+              workloadNamespace,
+              proof.entitySource().intakeRequestId());
+      if (association == null
+          || !Arrays.equals(
+              association.get(0, byte[].class), proof.entitySource().canonicalBytes())) {
+        throw EntityCharacterCreateBindings.conflict();
+      }
+      tx.execute(
+          "INSERT INTO entity_playable_state_namespace_scopes (tenant_uuid, playable_state_namespace_id, playable_state_scope) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+          tenant,
+          namespace,
+          scope);
+      var enrolled =
+          tx.fetchOne(
+              "SELECT playable_state_scope FROM entity_playable_state_namespace_scopes WHERE tenant_uuid = ? AND playable_state_namespace_id = ? FOR UPDATE",
               tenant,
-              namespace,
-              scope);
-          var enrolled =
-              tx.fetchOne(
-                  "SELECT playable_state_scope FROM entity_playable_state_namespace_scopes WHERE tenant_uuid = ? AND playable_state_namespace_id = ? FOR UPDATE",
-                  tenant,
-                  namespace);
-          if (enrolled == null || !scope.equals(enrolled.get(0, String.class)))
-            throw EntityCharacterCreateBindings.conflict();
-          tx.execute(
-              "INSERT INTO entity_character_create_operations (target_namespace, operation_id, create_character_request_id, mutation_digest, tenant_uuid, playable_state_namespace_id, playable_state_scope, account_uuid, canonical_version_id, original_request, original_account, original_account_protection, original_game_session_protection, original_world_protection, entity_source_receipt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+              namespace);
+      if (enrolled == null || !scope.equals(enrolled.get(0, String.class)))
+        throw EntityCharacterCreateBindings.conflict();
+      tx.execute(
+          "INSERT INTO entity_character_create_operations (target_namespace, operation_id, create_character_request_id, mutation_digest, tenant_uuid, playable_state_namespace_id, playable_state_scope, account_uuid, canonical_version_id, original_request, original_account, original_account_protection, original_game_session_protection, original_world_protection, entity_source_receipt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+          workloadNamespace,
+          operation,
+          requestId,
+          proof.original().getMutationDigest(),
+          tenant,
+          namespace,
+          scope,
+          account,
+          UUID.fromString(action.target().versionId()),
+          proof.request().toByteArray(),
+          proof.original().toByteArray(),
+          proof.account().toByteArray(),
+          proof.gameSession().originalOwnerReadback().toByteArray(),
+          proof.world().toByteArray(),
+          proof.entitySource().canonicalBytes());
+      var candidates =
+          tx.fetch(
+              "SELECT * FROM entity_character_create_operations WHERE (target_namespace = ? AND operation_id = ?) OR (tenant_uuid = ? AND playable_state_namespace_id = ? AND account_uuid = ? AND create_character_request_id = ?) FOR UPDATE",
               workloadNamespace,
               operation,
-              requestId,
-              proof.original().getMutationDigest(),
               tenant,
               namespace,
-              scope,
               account,
-              UUID.fromString(action.target().versionId()),
-              proof.request().toByteArray(),
-              proof.original().toByteArray(),
-              proof.account().toByteArray(),
-              proof.gameSession().originalOwnerReadback().toByteArray(),
-              proof.world().toByteArray(),
-              proof.entitySource().canonicalBytes());
-          var candidates =
-              tx.fetch(
-                  "SELECT * FROM entity_character_create_operations WHERE (target_namespace = ? AND operation_id = ?) OR (tenant_uuid = ? AND playable_state_namespace_id = ? AND account_uuid = ? AND create_character_request_id = ?) FOR UPDATE",
-                  workloadNamespace,
-                  operation,
-                  tenant,
-                  namespace,
-                  account,
-                  requestId);
-          if (candidates.size() != 1) throw EntityCharacterCreateBindings.conflict();
-          Record row = candidates.getFirst();
-          requireSameProof(row, proof);
-          if (!"PENDING".equals(row.get("status", String.class))) return terminal(row);
+              requestId);
+      if (candidates.size() != 1) throw EntityCharacterCreateBindings.conflict();
+      Record row = candidates.getFirst();
+      requireSameProof(row, proof);
+      if (!"PENDING".equals(row.get("status", String.class))) return terminal(row);
 
-          // Match the existing canonical assignment writer's real tenant row lock before
-          // zero-roster
-          // observation, then lock the exact account/namespace roster scope. No identity is
-          // derived.
-          tx.execute(
-              "INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?) ON CONFLICT DO NOTHING",
-              tenant);
-          var tenantRow =
-              tx.fetchOne(
-                  "SELECT entity_tenant_row_id FROM entity_tenant_identities WHERE canonical_tenant_uuid = ? FOR UPDATE",
-                  tenant);
-          if (tenantRow == null)
-            throw new IllegalStateException("Entity tenant identity unavailable");
-          tx.execute(
-              "INSERT INTO entity_character_create_roster_guards (tenant_uuid, playable_state_namespace_id, account_uuid) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-              tenant,
-              namespace,
-              account);
+      // Match the existing canonical assignment writer's real tenant row lock before
+      // zero-roster
+      // observation, then lock the exact account/namespace roster scope. No identity is
+      // derived.
+      tx.execute(
+          "INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?) ON CONFLICT DO NOTHING",
+          tenant);
+      var tenantRow =
           tx.fetchOne(
-              "SELECT account_uuid FROM entity_character_create_roster_guards WHERE tenant_uuid = ? AND playable_state_namespace_id = ? AND account_uuid = ? FOR UPDATE",
-              tenant,
-              namespace,
-              account);
-          UUID character = null;
-          if (abortRequestId == null) {
-            // Recheck expiry after every potentially blocking lock and immediately before
-            // allocation.
-            requireCurrentAuthority(action.expectedVersion().connectScopeExpiresAt());
-            if (!tx.fetch(
-                    "SELECT character_uuid FROM characters WHERE tenant_uuid = ? AND playable_state_namespace_id = ? AND account_uuid = ? FOR UPDATE",
-                    tenant,
-                    namespace,
-                    account)
-                .isEmpty()) {
-              throw Status.FAILED_PRECONDITION
-                  .withDescription("PLAYER_CREATED roster is not empty")
-                  .asRuntimeException();
-            }
-            requireCurrentAuthority(action.expectedVersion().connectScopeExpiresAt());
-            character = UUID.randomUUID();
-            String core = action.mutation().authoredSource().core().canonicalJson();
-            int inserted =
-                tx.execute(
-                    "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest) VALUES (?, ?, ?, ?, ?, 'OWNER_RESOLVED', NULL, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 'PLAYER_CREATED', ?, ?, ?) ON CONFLICT DO NOTHING",
-                    character,
-                    account,
-                    tenant,
-                    namespace,
-                    scope,
-                    tenantRow.get(0, Long.class),
-                    new AuthoredCore(core).displayName(),
-                    workloadNamespace,
-                    operation,
-                    core,
-                    action.mutation().authoredSource().descriptor().canonicalJson(),
-                    action.mutation().authoredSource().descriptor().digest());
-            if (inserted != 1)
-              throw Status.FAILED_PRECONDITION
-                  .withDescription("Canonical roster changed before creation")
-                  .asRuntimeException();
-          }
-          var builder =
-              EntityCharacterCreateTerminal.newBuilder()
-                  .setOriginalRequest(proof.request())
-                  .setAccountOriginal(proof.original())
-                  .setOriginalAccountProtection(proof.account().toByteString())
-                  .setOriginalGameSessionProtection(proof.gameSession().originalOwnerReadback())
-                  .setOriginalWorldProtection(proof.world().toByteString())
-                  .setEntityIntakeRequestId(proof.entitySource().intakeRequestId().toString())
-                  .setEntitySourceReceiptDigest(proof.entitySource().receiptDigest())
-                  .setOutcome(
-                      character == null
-                          ? EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_ABORTED
-                          : EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED)
-                  .setTerminalId(UUID.randomUUID().toString())
-                  .setTerminalFence(1L)
-                  .setCompletedAt(clock.instant().toString());
-          if (character != null) builder.setCharacterId(character.toString());
-          if (abortRequestId != null) builder.setAbortRequestId(abortRequestId);
-          var terminal = builder.build();
-          EntityCharacterCreateBindings.requireBound(
-              terminal, EntityCharacterCreateBindings.MAX_TERMINAL_BYTES);
-          int updated =
-              tx.execute(
-                  "UPDATE entity_character_create_operations SET status = ?, terminal_bytes = ?, character_uuid = ? WHERE target_namespace = ? AND operation_id = ? AND status = 'PENDING'",
-                  character == null ? "ABORTED" : "COMMITTED",
-                  terminal.toByteArray(),
-                  character,
-                  workloadNamespace,
-                  operation);
-          if (updated != 1)
-            throw new IllegalStateException("Creation terminal serialization failed");
-          if (character != null) {
-            new EntityPlayerCreatedRuntimeProjectionRepository()
-                .allocateFreshCreation(tx, terminal, action);
-          }
-          return terminal;
-        });
+              "SELECT entity_tenant_row_id FROM entity_tenant_identities WHERE canonical_tenant_uuid = ? FOR UPDATE",
+              tenant);
+      if (tenantRow == null) throw new IllegalStateException("Entity tenant identity unavailable");
+      tx.execute(
+          "INSERT INTO entity_character_create_roster_guards (tenant_uuid, playable_state_namespace_id, account_uuid) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+          tenant,
+          namespace,
+          account);
+      tx.fetchOne(
+          "SELECT account_uuid FROM entity_character_create_roster_guards WHERE tenant_uuid = ? AND playable_state_namespace_id = ? AND account_uuid = ? FOR UPDATE",
+          tenant,
+          namespace,
+          account);
+      UUID character = null;
+      if (abortRequestId == null) {
+        // Recheck expiry after every potentially blocking lock and immediately before
+        // allocation.
+        requireCurrentAuthority(action.expectedVersion().connectScopeExpiresAt());
+        if (!tx.fetch(
+                "SELECT character_uuid FROM characters WHERE tenant_uuid = ? AND playable_state_namespace_id = ? AND account_uuid = ? FOR UPDATE",
+                tenant,
+                namespace,
+                account)
+            .isEmpty()) {
+          throw Status.FAILED_PRECONDITION
+              .withDescription("PLAYER_CREATED roster is not empty")
+              .asRuntimeException();
+        }
+        requireCurrentAuthority(action.expectedVersion().connectScopeExpiresAt());
+        character = UUID.randomUUID();
+        String core = action.mutation().authoredSource().core().canonicalJson();
+        int inserted =
+            tx.execute(
+                "INSERT INTO characters (character_uuid, account_uuid, tenant_uuid, playable_state_namespace_id, playable_state_scope, actor_identity_status, actor_identity_quarantine_reason, tenant_id, account_id, playable_state_key, name, level, experience, strength, agility, intelligence, stamina, health, mana, body_layout_key, creation_target_namespace, creation_operation_id, actor_entry_policy, authored_initial_core_json, creation_descriptor_json, creation_descriptor_digest) VALUES (?, ?, ?, ?, ?, 'OWNER_RESOLVED', NULL, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 'PLAYER_CREATED', ?, ?, ?) ON CONFLICT DO NOTHING",
+                character,
+                account,
+                tenant,
+                namespace,
+                scope,
+                tenantRow.get(0, Long.class),
+                new AuthoredCore(core).displayName(),
+                workloadNamespace,
+                operation,
+                core,
+                action.mutation().authoredSource().descriptor().canonicalJson(),
+                action.mutation().authoredSource().descriptor().digest());
+        if (inserted != 1)
+          throw Status.FAILED_PRECONDITION
+              .withDescription("Canonical roster changed before creation")
+              .asRuntimeException();
+      }
+      var builder =
+          EntityCharacterCreateTerminal.newBuilder()
+              .setOriginalRequest(proof.request())
+              .setAccountOriginal(proof.original())
+              .setOriginalAccountProtection(proof.account().toByteString())
+              .setOriginalGameSessionProtection(proof.gameSession().originalOwnerReadback())
+              .setOriginalWorldProtection(proof.world().toByteString())
+              .setEntityIntakeRequestId(proof.entitySource().intakeRequestId().toString())
+              .setEntitySourceReceiptDigest(proof.entitySource().receiptDigest())
+              .setOutcome(
+                  character == null
+                      ? EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_ABORTED
+                      : EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_COMMITTED)
+              .setTerminalId(UUID.randomUUID().toString())
+              .setTerminalFence(1L)
+              .setCompletedAt(clock.instant().toString());
+      if (character != null) builder.setCharacterId(character.toString());
+      if (abortRequestId != null) builder.setAbortRequestId(abortRequestId);
+      var terminal = builder.build();
+      EntityCharacterCreateBindings.requireBound(
+          terminal, EntityCharacterCreateBindings.MAX_TERMINAL_BYTES);
+      int updated =
+          tx.execute(
+              "UPDATE entity_character_create_operations SET status = ?, terminal_bytes = ?, character_uuid = ? WHERE target_namespace = ? AND operation_id = ? AND status = 'PENDING'",
+              character == null ? "ABORTED" : "COMMITTED",
+              terminal.toByteArray(),
+              character,
+              workloadNamespace,
+              operation);
+      if (updated != 1) throw new IllegalStateException("Creation terminal serialization failed");
+      if (character != null) {
+        new EntityPlayerCreatedRuntimeProjectionRepository()
+            .allocateFreshCreation(tx, terminal, action);
+      }
+      return terminal;
+    });
   }
 
   private void requireCurrentAuthority(Instant connectScopeExpiresAt) {

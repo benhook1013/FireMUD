@@ -118,10 +118,8 @@ class AuthoredInitialActorCoreProjectionTest {
         json.replace(TENANT.toString(), "99999999-9999-4999-8999-999999999999")
             .getBytes(StandardCharsets.UTF_8);
     assertRejected(changedTenant, projection.digest());
-    assertThatThrownBy(
-            () ->
-                AuthoredInitialActorCoreProjection.fromStored(
-                    projection.canonicalBytes(), digest('0')))
+    assertThatThrownBy(() ->
+            AuthoredInitialActorCoreProjection.fromStored(projection.canonicalBytes(), digest('0')))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest differs");
 
@@ -428,15 +426,14 @@ class AuthoredInitialActorCoreProjectionTest {
     snapshot.put(
         "entries",
         entries.stream()
-            .map(
-                entry ->
-                    Map.of(
-                        "family", entry.family().name(),
-                        "definitionJson", GameplayRuleManifest.canonical(entry.definition()),
-                        "sourceBindingJson", entry.sourceBinding().canonicalJson(),
-                        "sourceBindingDigest", entry.sourceBinding().digest(),
-                        "revisionOrder", entry.revisionOrder(),
-                        "revisionId", entry.revisionId().toString()))
+            .map(entry ->
+                Map.of(
+                    "family", entry.family().name(),
+                    "definitionJson", GameplayRuleManifest.canonical(entry.definition()),
+                    "sourceBindingJson", entry.sourceBinding().canonicalJson(),
+                    "sourceBindingDigest", entry.sourceBinding().digest(),
+                    "revisionOrder", entry.revisionOrder(),
+                    "revisionId", entry.revisionId().toString()))
             .toList());
     return CommandSource.canonical(snapshot);
   }

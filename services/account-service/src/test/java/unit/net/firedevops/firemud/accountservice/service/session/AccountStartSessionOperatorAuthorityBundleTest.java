@@ -120,10 +120,9 @@ class AccountStartSessionOperatorAuthorityBundleTest {
         new LinkedHashMap<>(object(withAssurance.get("issuanceEvidence")));
     assuranceArm.put("assurance", Map.of("level", "step-up"));
     withAssurance.put("issuanceEvidence", assuranceArm);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionOperatorAuthorityBundle.decode(
-                    AccountControlUiAuthority.canonical(withAssurance)))
+    assertThatThrownBy(() ->
+            AccountStartSessionOperatorAuthorityBundle.decode(
+                AccountControlUiAuthority.canonical(withAssurance)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("missing or unsupported fields");
 
@@ -132,10 +131,9 @@ class AccountStartSessionOperatorAuthorityBundleTest {
         new LinkedHashMap<>(object(globalArm.get("issuanceEvidence")));
     substituted.put("role", "platformAdmin");
     globalArm.put("issuanceEvidence", substituted);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionOperatorAuthorityBundle.decode(
-                    AccountControlUiAuthority.canonical(globalArm)))
+    assertThatThrownBy(() ->
+            AccountStartSessionOperatorAuthorityBundle.decode(
+                AccountControlUiAuthority.canonical(globalArm)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("tenantAdmin");
   }
@@ -155,14 +153,13 @@ class AccountStartSessionOperatorAuthorityBundleTest {
     var substitutedSource =
         fixture.source(fixture.actorId, fixture.tenantId, 8L, new byte[] {8}, 2L);
 
-    assertThatThrownBy(
-            () ->
-                bundle.requireCurrent(
-                    substitutedSource,
-                    fixture.issuance,
-                    fixture.tuple,
-                    bundle.referenceForCapture(capture),
-                    ISSUED_AT.plusSeconds(1)))
+    assertThatThrownBy(() ->
+            bundle.requireCurrent(
+                substitutedSource,
+                fixture.issuance,
+                fixture.tuple,
+                bundle.referenceForCapture(capture),
+                ISSUED_AT.plusSeconds(1)))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -180,27 +177,25 @@ class AccountStartSessionOperatorAuthorityBundleTest {
             ISSUED_AT.plusSeconds(60));
     var reference = bundle.referenceForCapture(capture);
 
-    assertThatThrownBy(
-            () ->
-                bundle.requireCurrent(
-                    fixture.source,
-                    fixture.issuance,
-                    fixture.tuple,
-                    reference,
-                    ISSUED_AT.plusSeconds(60)))
+    assertThatThrownBy(() ->
+            bundle.requireCurrent(
+                fixture.source,
+                fixture.issuance,
+                fixture.tuple,
+                reference,
+                ISSUED_AT.plusSeconds(60)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("expired");
 
     var changedTenantAuthority =
         fixture.source(fixture.actorId, fixture.tenantId, 8L, new byte[] {8}, 2L);
-    assertThatThrownBy(
-            () ->
-                bundle.requireCurrent(
-                    changedTenantAuthority,
-                    fixture.issuance,
-                    fixture.tuple,
-                    reference,
-                    ISSUED_AT.plusSeconds(1)))
+    assertThatThrownBy(() ->
+            bundle.requireCurrent(
+                changedTenantAuthority,
+                fixture.issuance,
+                fixture.tuple,
+                reference,
+                ISSUED_AT.plusSeconds(1)))
         .isInstanceOf(IllegalStateException.class);
 
     assertThatThrownBy(() -> AccountStartSessionOperatorAuthorityBundle.decode(new byte[] {0x01}))
@@ -230,18 +225,16 @@ class AccountStartSessionOperatorAuthorityBundleTest {
             originalReference.sourceVersion(),
             originalReference.sourceFence(),
             "123457");
-    assertThatThrownBy(
-            () ->
-                bundle.requireCurrentSnapshotForExactReplay(
-                    fixture.source, fixture.issuance, fixture.tuple, substitutedTransaction))
+    assertThatThrownBy(() ->
+            bundle.requireCurrentSnapshotForExactReplay(
+                fixture.source, fixture.issuance, fixture.tuple, substitutedTransaction))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("source differs");
 
     var changedSource = fixture.source(fixture.actorId, fixture.tenantId, 8L, new byte[] {8}, 2L);
-    assertThatThrownBy(
-            () ->
-                bundle.requireCurrentSnapshotForExactReplay(
-                    changedSource, fixture.issuance, fixture.tuple, originalReference))
+    assertThatThrownBy(() ->
+            bundle.requireCurrentSnapshotForExactReplay(
+                changedSource, fixture.issuance, fixture.tuple, originalReference))
         .isInstanceOf(IllegalStateException.class);
   }
 

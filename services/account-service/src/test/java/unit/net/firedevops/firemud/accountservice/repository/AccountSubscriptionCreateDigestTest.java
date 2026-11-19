@@ -62,19 +62,14 @@ class AccountSubscriptionCreateDigestTest {
   @Test
   void missingCanonicalIdentityCannotBecomeRequestEvidence() {
     for (UUID identity : new UUID[] {null, new UUID(0, 0)}) {
-      assertThatThrownBy(
-              () ->
-                  AccountSubscriptionCreateDigest.encode(
-                      identity, OWNER, "basic-hosting", INSTRUMENT))
+      assertThatThrownBy(() ->
+              AccountSubscriptionCreateDigest.encode(identity, OWNER, "basic-hosting", INSTRUMENT))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  AccountSubscriptionCreateDigest.encode(
-                      TENANT, identity, "basic-hosting", INSTRUMENT))
+      assertThatThrownBy(() ->
+              AccountSubscriptionCreateDigest.encode(TENANT, identity, "basic-hosting", INSTRUMENT))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  AccountSubscriptionCreateDigest.encode(TENANT, OWNER, "basic-hosting", identity))
+      assertThatThrownBy(() ->
+              AccountSubscriptionCreateDigest.encode(TENANT, OWNER, "basic-hosting", identity))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

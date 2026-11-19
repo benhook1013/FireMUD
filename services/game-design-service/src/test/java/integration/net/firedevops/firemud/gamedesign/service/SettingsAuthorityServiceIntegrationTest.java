@@ -143,25 +143,21 @@ class SettingsAuthorityServiceIntegrationTest {
     CountDownLatch releaseFirstTransaction = new CountDownLatch(1);
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<?> firstTransaction =
-          executor.submit(
-              () ->
-                  transactionTemplate.executeWithoutResult(
-                      status -> {
-                        repository.findReconnectionRowsByTenantIdForUpdate("lock-tenant");
-                        firstLockAcquired.countDown();
-                        awaitLatch(releaseFirstTransaction);
-                      }));
+          executor.submit(() ->
+              transactionTemplate.executeWithoutResult(status -> {
+                repository.findReconnectionRowsByTenantIdForUpdate("lock-tenant");
+                firstLockAcquired.countDown();
+                awaitLatch(releaseFirstTransaction);
+              }));
 
       assertThat(firstLockAcquired.await(5, TimeUnit.SECONDS)).isTrue();
       Future<?> secondTransaction =
-          executor.submit(
-              () ->
-                  transactionTemplate.executeWithoutResult(
-                      status -> {
-                        secondTransactionStarted.countDown();
-                        repository.findReconnectionRowsByTenantIdForUpdate("lock-tenant");
-                        secondLockAcquired.countDown();
-                      }));
+          executor.submit(() ->
+              transactionTemplate.executeWithoutResult(status -> {
+                secondTransactionStarted.countDown();
+                repository.findReconnectionRowsByTenantIdForUpdate("lock-tenant");
+                secondLockAcquired.countDown();
+              }));
 
       assertThat(secondTransactionStarted.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(secondLockAcquired.await(250, TimeUnit.MILLISECONDS)).isFalse();

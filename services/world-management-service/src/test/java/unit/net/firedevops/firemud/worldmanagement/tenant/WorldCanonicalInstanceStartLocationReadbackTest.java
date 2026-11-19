@@ -40,12 +40,11 @@ class WorldCanonicalInstanceStartLocationReadbackTest {
     AtomicReference<String> query = new AtomicReference<>();
     AtomicReference<Object[]> bindings = new AtomicReference<>();
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              query.set(invocation.getArgument(0));
-              bindings.set((Object[]) invocation.getRawArguments()[1]);
-              return row(originalRow(fixture));
-            });
+        .thenAnswer(invocation -> {
+          query.set(invocation.getArgument(0));
+          bindings.set((Object[]) invocation.getRawArguments()[1]);
+          return row(originalRow(fixture));
+        });
 
     WorldCanonicalInstanceStartLocationReadback.requireExactOriginalSelector(
         dsl, fixture.selector(), fixture.receipt(), fixture.graphBytes());
@@ -78,10 +77,9 @@ class WorldCanonicalInstanceStartLocationReadbackTest {
       var changedDsl = mock(DSLContext.class);
       when(changedDsl.fetchOne(anyString(), any(Object[].class))).thenReturn(row(changedRow));
 
-      assertThatThrownBy(
-              () ->
-                  WorldCanonicalInstanceStartLocationReadback.requireExactOriginalSelector(
-                      changedDsl, fixture.selector(), fixture.receipt(), fixture.graphBytes()))
+      assertThatThrownBy(() ->
+              WorldCanonicalInstanceStartLocationReadback.requireExactOriginalSelector(
+                  changedDsl, fixture.selector(), fixture.receipt(), fixture.graphBytes()))
           .as("changed original %s", changed.getKey())
           .isInstanceOf(
               WorldCanonicalInstanceStartLocationReadback.InvalidStartLocationReadbackException
@@ -99,12 +97,11 @@ class WorldCanonicalInstanceStartLocationReadbackTest {
     AtomicReference<String> query = new AtomicReference<>();
     AtomicReference<Object[]> bindings = new AtomicReference<>();
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              query.set(invocation.getArgument(0));
-              bindings.set((Object[]) invocation.getRawArguments()[1]);
-              return row(selected);
-            });
+        .thenAnswer(invocation -> {
+          query.set(invocation.getArgument(0));
+          bindings.set((Object[]) invocation.getRawArguments()[1]);
+          return row(selected);
+        });
 
     assertThat(
             WorldCanonicalInstanceStartLocationReadback.requireMappedRoom(
@@ -154,13 +151,12 @@ class WorldCanonicalInstanceStartLocationReadbackTest {
       var changedDsl = mock(DSLContext.class);
       when(changedDsl.fetchOne(anyString(), any(Object[].class))).thenReturn(row(changedRow));
 
-      assertThatThrownBy(
-              () ->
-                  WorldCanonicalInstanceStartLocationReadback.requireMappedRoom(
-                      changedDsl,
-                      association,
-                      fixture.receipt().startLocation(),
-                      fixture.selector().canonicalBytes()))
+      assertThatThrownBy(() ->
+              WorldCanonicalInstanceStartLocationReadback.requireMappedRoom(
+                  changedDsl,
+                  association,
+                  fixture.receipt().startLocation(),
+                  fixture.selector().canonicalBytes()))
           .as("changed mapped ROOM field %s", changed.getKey())
           .isInstanceOf(
               WorldCanonicalInstanceStartLocationReadback.InvalidStartLocationReadbackException
@@ -175,19 +171,17 @@ class WorldCanonicalInstanceStartLocationReadbackTest {
     var dsl = mock(DSLContext.class);
     when(dsl.fetchOne(anyString(), any(Object[].class))).thenThrow(storageFailure);
 
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceStartLocationReadback.requireMappedRoom(
-                    dsl,
-                    association(fixture),
-                    fixture.receipt().startLocation(),
-                    fixture.selector().canonicalBytes()))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceStartLocationReadback.requireMappedRoom(
+                dsl,
+                association(fixture),
+                fixture.receipt().startLocation(),
+                fixture.selector().canonicalBytes()))
         .isSameAs(storageFailure);
 
-    assertThatThrownBy(
-            () ->
-                WorldCanonicalInstanceStartLocationReadback.requireExactOriginalSelector(
-                    dsl, fixture.selector(), fixture.receipt(), fixture.graphBytes()))
+    assertThatThrownBy(() ->
+            WorldCanonicalInstanceStartLocationReadback.requireExactOriginalSelector(
+                dsl, fixture.selector(), fixture.receipt(), fixture.graphBytes()))
         .isSameAs(storageFailure);
   }
 

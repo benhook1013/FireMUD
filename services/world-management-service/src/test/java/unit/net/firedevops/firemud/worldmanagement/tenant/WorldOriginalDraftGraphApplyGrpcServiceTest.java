@@ -181,11 +181,10 @@ class WorldOriginalDraftGraphApplyGrpcServiceTest {
         .isEqualTo("World original apply owner did not accept the request")
         .doesNotContain("account-permission-sensitive");
     assertThat(List.of(unavailable, deadline, denied))
-        .allSatisfy(
-            response -> {
-              assertThat(response.value).isNull();
-              assertThat(response.completed).isFalse();
-            });
+        .allSatisfy(response -> {
+          assertThat(response.value).isNull();
+          assertThat(response.completed).isFalse();
+        });
   }
 
   @Test

@@ -32,12 +32,11 @@ class GameSessionRuntimeFamilyCatalogTest {
       """;
   private static final String GAPS =
       Arrays.stream(GapId.values())
-          .map(
-              id ->
-                  "{\"id\":\""
-                      + id.name()
-                      + "\",\"disposition\":\"UNRESOLVED_BLOCKING\","
-                      + "\"ownerConsequence\":\"Controlled known non-SQL gap, not a complete Redis census.\"}")
+          .map(id ->
+              "{\"id\":\""
+                  + id.name()
+                  + "\",\"disposition\":\"UNRESOLVED_BLOCKING\","
+                  + "\"ownerConsequence\":\"Controlled known non-SQL gap, not a complete Redis census.\"}")
           .collect(Collectors.joining(","));
   private static final String PREFIX =
       """
@@ -127,10 +126,8 @@ class GameSessionRuntimeFamilyCatalogTest {
           CATALOG.replace("sha256:" + "a".repeat(64), "sha256:" + "A".repeat(64)),
           CATALOG + "{}"
         }) {
-      assertThatThrownBy(
-              () ->
-                  GameSessionRuntimeFamilyCatalog.fromStored(
-                      invalid.getBytes(StandardCharsets.UTF_8)))
+      assertThatThrownBy(() ->
+              GameSessionRuntimeFamilyCatalog.fromStored(invalid.getBytes(StandardCharsets.UTF_8)))
           .as(invalid)
           .isInstanceOf(IllegalArgumentException.class);
     }
@@ -158,16 +155,13 @@ class GameSessionRuntimeFamilyCatalogTest {
           CATALOG.replace(GAPS, firstGap),
           CATALOG.replace("Namespace and replacement class unresolved; no clone.", "x".repeat(1025))
         }) {
-      assertThatThrownBy(
-              () ->
-                  GameSessionRuntimeFamilyCatalog.fromStored(
-                      invalid.getBytes(StandardCharsets.UTF_8)))
+      assertThatThrownBy(() ->
+              GameSessionRuntimeFamilyCatalog.fromStored(invalid.getBytes(StandardCharsets.UTF_8)))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                GameSessionRuntimeFamilyCatalog.fromStored(
-                    new byte[GameSessionRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
+    assertThatThrownBy(() ->
+            GameSessionRuntimeFamilyCatalog.fromStored(
+                new byte[GameSessionRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () -> GameSessionRuntimeFamilyCatalog.fromStored(new byte[] {(byte) 0xc3, 0x28}))
@@ -186,10 +180,9 @@ class GameSessionRuntimeFamilyCatalogTest {
             GameSessionRuntimeFamilyCatalogCodec.evidenceFromStored(
                 GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(evidence)))
         .isEqualTo(evidence);
-    assertThatThrownBy(
-            () ->
-                GameSessionRuntimeFamilyCatalog.fromStored(
-                    Arrays.copyOf(complete, complete.length + 1)))
+    assertThatThrownBy(() ->
+            GameSessionRuntimeFamilyCatalog.fromStored(
+                Arrays.copyOf(complete, complete.length + 1)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -211,10 +204,8 @@ class GameSessionRuntimeFamilyCatalogTest {
           complete.replace(FACT + "," + laterFact, FACT),
           complete.replace("\"familyId\":\"gameplay_command\"", "\"familyId\":\"other\"")
         }) {
-      assertThatThrownBy(
-              () ->
-                  GameSessionRuntimeFamilyCatalog.fromStored(
-                      invalid.getBytes(StandardCharsets.UTF_8)))
+      assertThatThrownBy(() ->
+              GameSessionRuntimeFamilyCatalog.fromStored(invalid.getBytes(StandardCharsets.UTF_8)))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

@@ -41,40 +41,32 @@ class WorldDraftTerminalOutcomeTest {
     DraftCommitBinding binding = binding(ids);
     byte[] accountBytes = accountBinding(binding, ids).canonicalBytes();
 
-    assertThatThrownBy(
-            () ->
-                operation(
-                    binding,
-                    accountBytes,
-                    new Ids(
-                        UUID.randomUUID(), ids.request(), ids.commit(), ids.fence(), ids.actor())))
+    assertThatThrownBy(() ->
+            operation(
+                binding,
+                accountBytes,
+                new Ids(UUID.randomUUID(), ids.request(), ids.commit(), ids.fence(), ids.actor())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("V57 Account binding");
-    assertThatThrownBy(
-            () ->
-                operation(
-                    binding,
-                    accountBytes,
-                    new Ids(
-                        ids.operation(),
-                        ids.request(),
-                        ids.commit(),
-                        UUID.randomUUID(),
-                        ids.actor())))
+    assertThatThrownBy(() ->
+            operation(
+                binding,
+                accountBytes,
+                new Ids(
+                    ids.operation(), ids.request(), ids.commit(), UUID.randomUUID(), ids.actor())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("V57 Account binding");
-    assertThatThrownBy(
-            () ->
-                new WorldDraftTerminalOperation(
-                    ids.operation(),
-                    ids.request(),
-                    ids.commit(),
-                    ids.fence(),
-                    UUID.randomUUID(),
-                    binding.target().canonicalVersionId(),
-                    binding,
-                    ownerBinding(binding),
-                    accountBytes))
+    assertThatThrownBy(() ->
+            new WorldDraftTerminalOperation(
+                ids.operation(),
+                ids.request(),
+                ids.commit(),
+                ids.fence(),
+                UUID.randomUUID(),
+                binding.target().canonicalVersionId(),
+                binding,
+                ownerBinding(binding),
+                accountBytes))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete Draft binding");
   }
@@ -100,27 +92,24 @@ class WorldDraftTerminalOutcomeTest {
     assertThat(replay.canonicalBytes()).containsExactly(outcome.canonicalBytes());
     assertThat(replay.digest()).isEqualTo(outcome.digest());
     assertThat(replay.observedEpochs()).isEqualTo(observed);
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalOutcome.create(
-                    operation, observed.subList(0, 1), outcome.recordedAt()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalOutcome.create(
+                operation, observed.subList(0, 1), outcome.recordedAt()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete affected set");
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalOutcome.fromStored(
-                    operation,
-                    outcome.canonicalBytes(),
-                    digest("substituted".getBytes(StandardCharsets.UTF_8)),
-                    outcome.recordedAt()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalOutcome.fromStored(
+                operation,
+                outcome.canonicalBytes(),
+                digest("substituted".getBytes(StandardCharsets.UTF_8)),
+                outcome.recordedAt()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not exact canonical evidence");
     byte[] trailing =
         java.util.Arrays.copyOf(outcome.canonicalBytes(), outcome.canonicalBytes().length + 1);
-    assertThatThrownBy(
-            () ->
-                WorldDraftTerminalOutcome.fromStored(
-                    operation, trailing, outcome.digest(), outcome.recordedAt()))
+    assertThatThrownBy(() ->
+            WorldDraftTerminalOutcome.fromStored(
+                operation, trailing, outcome.digest(), outcome.recordedAt()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

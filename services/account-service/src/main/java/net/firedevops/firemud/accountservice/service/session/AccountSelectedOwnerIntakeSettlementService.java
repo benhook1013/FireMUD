@@ -84,22 +84,21 @@ public final class AccountSelectedOwnerIntakeSettlementService {
     requireOriginalBinding(original);
 
     Lookup lookup =
-        ownerTransaction.execute(
-            ignored -> {
-              try {
-                repository.readFinalAuthorization(original);
-                Optional<AccountSelectedOwnerIntakeSettlementReceipt> prior =
-                    Objects.requireNonNull(
-                        repository.findSettlement(original),
-                        "Account settlement lookup returned no result");
-                return new Lookup(prior.orElse(null));
-              } catch (IllegalArgumentException absentOrChanged) {
-                throw Status.FAILED_PRECONDITION
-                    .withDescription("Exact finalized selected-owner authorization is unavailable")
-                    .withCause(absentOrChanged)
-                    .asRuntimeException();
-              }
-            });
+        ownerTransaction.execute(ignored -> {
+          try {
+            repository.readFinalAuthorization(original);
+            Optional<AccountSelectedOwnerIntakeSettlementReceipt> prior =
+                Objects.requireNonNull(
+                    repository.findSettlement(original),
+                    "Account settlement lookup returned no result");
+            return new Lookup(prior.orElse(null));
+          } catch (IllegalArgumentException absentOrChanged) {
+            throw Status.FAILED_PRECONDITION
+                .withDescription("Exact finalized selected-owner authorization is unavailable")
+                .withCause(absentOrChanged)
+                .asRuntimeException();
+          }
+        });
     if (lookup == null) {
       throw Status.FAILED_PRECONDITION
           .withDescription("Account authorization transaction returned no result")
@@ -211,21 +210,19 @@ public final class AccountSelectedOwnerIntakeSettlementService {
     requireNoAmbientTransaction();
     boolean entityOwner = original.owner() == Owner.ENTITY_MANAGEMENT;
     AccountSelectedOwnerIntakeSettlementReceipt readback =
-        ownerTransaction.execute(
-            ignored ->
-                Objects.requireNonNull(
-                        repository.findSettlement(original),
-                        entityOwner
-                            ? "Account lookup returned no result"
-                            : "Account settlement readback returned no result")
-                    .orElseThrow(
-                        () ->
-                            Status.FAILED_PRECONDITION
-                                .withDescription(
-                                    entityOwner
-                                        ? "Committed Account Entity settlement is not readable"
-                                        : "Committed Account settlement is not readable")
-                                .asRuntimeException()));
+        ownerTransaction.execute(ignored ->
+            Objects.requireNonNull(
+                    repository.findSettlement(original),
+                    entityOwner
+                        ? "Account lookup returned no result"
+                        : "Account settlement readback returned no result")
+                .orElseThrow(() ->
+                    Status.FAILED_PRECONDITION
+                        .withDescription(
+                            entityOwner
+                                ? "Committed Account Entity settlement is not readable"
+                                : "Committed Account settlement is not readable")
+                        .asRuntimeException()));
     requireSettlement(readback, original, exactOwnerTerminal);
     if (!sameSettlement(committed, readback)) {
       throw Status.FAILED_PRECONDITION

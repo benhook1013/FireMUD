@@ -207,10 +207,9 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
 
     RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> wrongNamespace =
         new RecordingObserver<>();
-    withGameDesign(
-        () ->
-            grpcService.readAuthoredWorldSourceIntakeById(
-                request.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
+    withGameDesign(() ->
+        grpcService.readAuthoredWorldSourceIntakeById(
+            request.toBuilder().setTargetNamespace("other").build(), wrongNamespace));
     assertThat(Status.fromThrowable(wrongNamespace.error).getCode())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
 
@@ -323,10 +322,9 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
         new RecordingObserver<>();
     ReadAuthoredWorldSourceIntakeRequest crossNamespaceReadRequest =
         readRequest().toBuilder().setTargetNamespace("other").build();
-    withGameDesign(
-        () ->
-            grpcService.readAuthoredWorldSourceIntake(
-                crossNamespaceReadRequest, wrongReadTargetNamespace));
+    withGameDesign(() ->
+        grpcService.readAuthoredWorldSourceIntake(
+            crossNamespaceReadRequest, wrongReadTargetNamespace));
     assertThat(Status.fromThrowable(wrongReadTargetNamespace.error).getCode())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     assertThat(wrongReadTargetNamespace.values).isEmpty();
@@ -341,14 +339,12 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
 
     SessionContext.setContext("account", List.of(), java.util.Map.of());
     try {
-      withGameDesign(
-          () ->
-              grpcService.intakeAuthoredWorldSource(
-                  intakeRequest().toBuilder().setSchemaVersion(2).build(), intakeObserver));
-      withGameDesign(
-          () ->
-              grpcService.readAuthoredWorldSourceIntake(
-                  readRequest().toBuilder().setRequestId("not-a-uuid").build(), readObserver));
+      withGameDesign(() ->
+          grpcService.intakeAuthoredWorldSource(
+              intakeRequest().toBuilder().setSchemaVersion(2).build(), intakeObserver));
+      withGameDesign(() ->
+          grpcService.readAuthoredWorldSourceIntake(
+              readRequest().toBuilder().setRequestId("not-a-uuid").build(), readObserver));
     } finally {
       SessionContext.clear();
     }

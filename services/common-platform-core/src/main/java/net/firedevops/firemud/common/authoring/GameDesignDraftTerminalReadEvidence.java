@@ -11,22 +11,20 @@ public record GameDesignDraftTerminalReadEvidence(
   public GameDesignDraftTerminalReadEvidence {
     Objects.requireNonNull(request, "request");
     ownerReadback = Objects.requireNonNull(ownerReadback, "ownerReadback");
-    ownerReadback.ifPresent(
-        value -> {
-          if (value.owner() != DraftAuthorizationFenceBinding.Owner.GAME_DESIGN
-              || (value.outcome() != DraftAuthorizationFenceBinding.Outcome.COMMITTED
-                  && value.outcome()
-                      != DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED)) {
-            throw new IllegalArgumentException(
-                "Game Design readback must be a committed or definitive-abort owner result");
-          }
-          value.requireBinding(request.accountBinding());
-          if (!Arrays.equals(value.fullBinding(), request.originalAccountBinding())
-              || value.result().length == 0) {
-            throw new IllegalArgumentException(
-                "Game Design readback differs from the original binding or lacks result bytes");
-          }
-        });
+    ownerReadback.ifPresent(value -> {
+      if (value.owner() != DraftAuthorizationFenceBinding.Owner.GAME_DESIGN
+          || (value.outcome() != DraftAuthorizationFenceBinding.Outcome.COMMITTED
+              && value.outcome() != DraftAuthorizationFenceBinding.Outcome.DEFINITIVELY_ABORTED)) {
+        throw new IllegalArgumentException(
+            "Game Design readback must be a committed or definitive-abort owner result");
+      }
+      value.requireBinding(request.accountBinding());
+      if (!Arrays.equals(value.fullBinding(), request.originalAccountBinding())
+          || value.result().length == 0) {
+        throw new IllegalArgumentException(
+            "Game Design readback differs from the original binding or lacks result bytes");
+      }
+    });
   }
 
   /** The canonical original Account binding and a separate fresh caller-owned read identity. */

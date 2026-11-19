@@ -35,10 +35,9 @@ class AccountPublicationAuthorizationReadClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var plaintext = tls(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AccountPublicationAuthorizationReadClient(
-                    new ServiceEndpointsProperties(), plaintext, factory, "test"))
+    assertThatThrownBy(() ->
+            new AccountPublicationAuthorizationReadClient(
+                new ServiceEndpointsProperties(), plaintext, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
 
@@ -47,15 +46,14 @@ class AccountPublicationAuthorizationReadClientTest {
             new ServiceEndpointsProperties(), tls(directory), factory, "test");
     try {
       var request = AccountPublicationAuthorizationReadGrpcCodecTest.request();
-      assertThatThrownBy(
-              () ->
-                  client.read(
-                      new AccountPublicationAuthorizationReadEvidence.Request(
-                          request.schemaVersion(),
-                          "other",
-                          request.readRequestId(),
-                          request.originalPublicationAuthorizationBinding(),
-                          request.publicationAuthorizationDigest())))
+      assertThatThrownBy(() ->
+              client.read(
+                  new AccountPublicationAuthorizationReadEvidence.Request(
+                      request.schemaVersion(),
+                      "other",
+                      request.readRequestId(),
+                      request.originalPublicationAuthorizationBinding(),
+                      request.publicationAuthorizationDigest())))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("configured workload namespace");
       assertThatThrownBy(() -> client.read(request))

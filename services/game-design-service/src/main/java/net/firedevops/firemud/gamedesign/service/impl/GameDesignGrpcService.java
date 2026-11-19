@@ -661,17 +661,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     try {
       AdminRoleGuard.requireAdminRole();
       var versions = versionService.listVersions(request.getTenantId());
-      versions.forEach(
-          v ->
-              builder.addVersions(
-                  net.firedevops.firemud.gamedesign.v1.Version.newBuilder()
-                      .setId(v.id())
-                      .setVersionNumber(v.versionNumber())
-                      .setScriptPatchVersion(
-                          v.scriptPatchVersion() == null ? "" : v.scriptPatchVersion())
-                      .setIsScriptOnly(v.scriptOnly())
-                      .setNotes(v.notes() == null ? "" : v.notes())
-                      .build()));
+      versions.forEach(v ->
+          builder.addVersions(
+              net.firedevops.firemud.gamedesign.v1.Version.newBuilder()
+                  .setId(v.id())
+                  .setVersionNumber(v.versionNumber())
+                  .setScriptPatchVersion(
+                      v.scriptPatchVersion() == null ? "" : v.scriptPatchVersion())
+                  .setIsScriptOnly(v.scriptOnly())
+                  .setNotes(v.notes() == null ? "" : v.notes())
+                  .build()));
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -2019,43 +2018,39 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     return new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
         .WorldGenerationSubtreeMutationDto(
         request.getGenerationRulesList().stream()
-            .map(
-                rule ->
-                    new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
-                        .GenerationRuleMutationDto(rule.getName(), rule.getValue()))
+            .map(rule ->
+                new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                    .GenerationRuleMutationDto(rule.getName(), rule.getValue()))
             .toList(),
         request.getRoomsList().stream()
-            .map(
-                room ->
-                    new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
-                        .GeneratedRoomMutationDto(
-                        room.getClientRef(),
-                        room.getName(),
-                        room.getDescription(),
-                        room.getZoneId(),
-                        room.getNameLocalizedVariantsJson(),
-                        room.getDescriptionLocalizedVariantsJson()))
+            .map(room ->
+                new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                    .GeneratedRoomMutationDto(
+                    room.getClientRef(),
+                    room.getName(),
+                    room.getDescription(),
+                    room.getZoneId(),
+                    room.getNameLocalizedVariantsJson(),
+                    room.getDescriptionLocalizedVariantsJson()))
             .toList(),
         request.getRoomExitsList().stream()
-            .map(
-                exit ->
-                    new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
-                        .GeneratedRoomExitMutationDto(
-                        exit.getFromRoomRef(),
-                        exit.getToRoomRef(),
-                        exit.getDirection(),
-                        exit.getCost()))
+            .map(exit ->
+                new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                    .GeneratedRoomExitMutationDto(
+                    exit.getFromRoomRef(),
+                    exit.getToRoomRef(),
+                    exit.getDirection(),
+                    exit.getCost()))
             .toList(),
         request.getWorldEntitySpawnBindingsList().stream()
-            .map(
-                binding ->
-                    new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
-                        .GeneratedWorldEntitySpawnBindingMutationDto(
-                        binding.getRoomRef(),
-                        binding.getEntityTemplateType().name(),
-                        binding.getEntityTemplateId(),
-                        binding.getSpawnCount(),
-                        binding.getRespawnDelaySeconds()))
+            .map(binding ->
+                new net.firedevops.firemud.gamedesign.dto.WorldDesignMutationRevisionDto
+                    .GeneratedWorldEntitySpawnBindingMutationDto(
+                    binding.getRoomRef(),
+                    binding.getEntityTemplateType().name(),
+                    binding.getEntityTemplateId(),
+                    binding.getSpawnCount(),
+                    binding.getRespawnDelaySeconds()))
             .toList());
   }
 

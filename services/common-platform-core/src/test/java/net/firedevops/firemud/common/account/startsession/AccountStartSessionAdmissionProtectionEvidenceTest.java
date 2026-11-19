@@ -118,31 +118,29 @@ class AccountStartSessionAdmissionProtectionEvidenceTest {
     byte[] substitutedProjection = expectedProjection.clone();
     substitutedProjection[substitutedProjection.length - 2] ^= 1;
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionRequest.create(
-                    tuple.canonicalBytes(),
-                    substitutedProjection,
-                    GAME_SESSION_MUTATION,
-                    GAME_SESSION_ATTEMPT,
-                    1L,
-                    ORIGINAL_LEASE_EXPIRY,
-                    ACCOUNT_PARTICIPATION,
-                    2L,
-                    hold(tuple)))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionRequest.create(
+                tuple.canonicalBytes(),
+                substitutedProjection,
+                GAME_SESSION_MUTATION,
+                GAME_SESSION_ATTEMPT,
+                1L,
+                ORIGINAL_LEASE_EXPIRY,
+                ACCOUNT_PARTICIPATION,
+                2L,
+                hold(tuple)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionRequest.create(
-                    tuple.canonicalBytes(),
-                    expectedProjection,
-                    GAME_SESSION_MUTATION,
-                    GAME_SESSION_ATTEMPT,
-                    1L,
-                    ORIGINAL_LEASE_EXPIRY.plusNanos(1),
-                    ACCOUNT_PARTICIPATION,
-                    2L,
-                    hold(tuple)))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionRequest.create(
+                tuple.canonicalBytes(),
+                expectedProjection,
+                GAME_SESSION_MUTATION,
+                GAME_SESSION_ATTEMPT,
+                1L,
+                ORIGINAL_LEASE_EXPIRY.plusNanos(1),
+                ACCOUNT_PARTICIPATION,
+                2L,
+                hold(tuple)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("microsecond");
 
@@ -153,9 +151,8 @@ class AccountStartSessionAdmissionProtectionEvidenceTest {
         .isInstanceOf(IllegalArgumentException.class);
     Map<String, Object> alternateFraction = readObject(request(tuple).canonicalBytes());
     alternateFraction.put("originalLeaseExpiresAt", "2026-10-09T10:20:30.45678Z");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionRequest.decode(canonical(alternateFraction)))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionRequest.decode(canonical(alternateFraction)))
         .isInstanceOf(IllegalArgumentException.class);
     Map<String, Object> alternateOffset = readObject(request(tuple).canonicalBytes());
     alternateOffset.put("originalLeaseExpiresAt", "2026-10-09T10:20:30.456789+00:00");
@@ -165,18 +162,17 @@ class AccountStartSessionAdmissionProtectionEvidenceTest {
 
     WorldCanonicalInitialAdmissionHold.HoldIdentity wrongNamespace =
         hold(tuple, TENANT, "another-world-runtime");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionRequest.create(
-                    tuple.canonicalBytes(),
-                    expectedProjection,
-                    GAME_SESSION_MUTATION,
-                    GAME_SESSION_ATTEMPT,
-                    1L,
-                    ORIGINAL_LEASE_EXPIRY,
-                    ACCOUNT_PARTICIPATION,
-                    2L,
-                    wrongNamespace))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionRequest.create(
+                tuple.canonicalBytes(),
+                expectedProjection,
+                GAME_SESSION_MUTATION,
+                GAME_SESSION_ATTEMPT,
+                1L,
+                ORIGINAL_LEASE_EXPIRY,
+                ACCOUNT_PARTICIPATION,
+                2L,
+                wrongNamespace))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("World hold scope");
 
@@ -194,10 +190,9 @@ class AccountStartSessionAdmissionProtectionEvidenceTest {
     extra.put("opaqueAuthorizationReference", "must-not-be-retained");
     assertThatThrownBy(() -> AccountStartSessionAdmissionProtectionRequest.decode(canonical(extra)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionRequest.decode(
-                    withDuplicateSchema(request(tuple).canonicalBytes())))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionRequest.decode(
+                withDuplicateSchema(request(tuple).canonicalBytes())))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -225,37 +220,34 @@ class AccountStartSessionAdmissionProtectionEvidenceTest {
         .containsExactly(changedSource.canonicalBytes());
 
     byte[] wrongReference = captureReference(tuple, "18", "23", "18446744073709551615");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionEvidence.create(
-                    request,
-                    ACCOUNT_PROTECTION,
-                    4L,
-                    wrongReference,
-                    sha256(wrongReference),
-                    List.of(originalSource)))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionEvidence.create(
+                request,
+                ACCOUNT_PROTECTION,
+                4L,
+                wrongReference,
+                sha256(wrongReference),
+                List.of(originalSource)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("original tuple bundle");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionEvidence.create(
-                    request,
-                    ACCOUNT_PROTECTION,
-                    4L,
-                    captureBytes,
-                    "0".repeat(64),
-                    List.of(originalSource)))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionEvidence.create(
+                request,
+                ACCOUNT_PROTECTION,
+                4L,
+                captureBytes,
+                "0".repeat(64),
+                List.of(originalSource)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest differs");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionEvidence.create(
-                    request,
-                    ACCOUNT_PROTECTION,
-                    4L,
-                    captureBytes,
-                    digest,
-                    List.of(originalSource, originalSource)))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionEvidence.create(
+                request,
+                ACCOUNT_PROTECTION,
+                4L,
+                captureBytes,
+                digest,
+                List.of(originalSource, originalSource)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate source keys");
   }
@@ -288,10 +280,9 @@ class AccountStartSessionAdmissionProtectionEvidenceTest {
     assertThatThrownBy(
             () -> AccountStartSessionAdmissionProtectionEvidence.decode(canonical(extra)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionAdmissionProtectionEvidence.decode(
-                    withDuplicateSchema(evidence.canonicalBytes())))
+    assertThatThrownBy(() ->
+            AccountStartSessionAdmissionProtectionEvidence.decode(
+                withDuplicateSchema(evidence.canonicalBytes())))
         .isInstanceOf(IllegalArgumentException.class);
     byte[] trailing =
         Arrays.copyOf(evidence.canonicalBytes(), evidence.canonicalBytes().length + 1);

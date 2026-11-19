@@ -77,13 +77,12 @@ class InitialGameplayLoginRedisAttemptClosureTest {
         .thenReturn(Optional.of(InitialGameplayLoginContextState.closed(ORIGINAL)));
     doThrow(new IllegalStateException("qualification lost")).when(held).requireCurrent();
     var adapter = new InitialGameplayLoginRedisAttemptClosure(client);
-    assertThatThrownBy(
-            () ->
-                adapter.withAcknowledgedClosure(
-                    ORIGINAL,
-                    receipt -> {
-                      throw new AssertionError("No dispatch");
-                    }))
+    assertThatThrownBy(() ->
+            adapter.withAcknowledgedClosure(
+                ORIGINAL,
+                receipt -> {
+                  throw new AssertionError("No dispatch");
+                }))
         .isInstanceOf(IllegalStateException.class);
     verify(held).close();
   }
@@ -97,14 +96,13 @@ class InitialGameplayLoginRedisAttemptClosureTest {
     when(client.closeOriginal(ORIGINAL, held))
         .thenReturn(Optional.of(InitialGameplayLoginContextState.closed(ORIGINAL)));
     var adapter = new InitialGameplayLoginRedisAttemptClosure(client);
-    assertThatThrownBy(
-            () ->
-                adapter.withAcknowledgedClosure(
-                    ORIGINAL,
-                    receipt -> {
-                      calls.incrementAndGet();
-                      throw new IllegalStateException("Account unavailable");
-                    }))
+    assertThatThrownBy(() ->
+            adapter.withAcknowledgedClosure(
+                ORIGINAL,
+                receipt -> {
+                  calls.incrementAndGet();
+                  throw new IllegalStateException("Account unavailable");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Account unavailable");
     assertThat(calls).hasValue(1);

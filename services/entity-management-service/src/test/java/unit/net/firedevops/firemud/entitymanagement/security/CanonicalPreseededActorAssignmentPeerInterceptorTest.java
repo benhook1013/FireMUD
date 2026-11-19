@@ -52,15 +52,14 @@ class CanonicalPreseededActorAssignmentPeerInterceptorTest {
             CanonicalPreseededActorAssignmentPeerInterceptor.METHOD_NAME, peerSession(EXACT_PEER));
     ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
     when(next.startCall(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              var peer = CanonicalPreseededActorAssignmentPeerInterceptor.currentVerifiedPeer();
-              assertThat(peer).isNotNull();
-              assertThat(peer.uri()).isEqualTo(EXACT_PEER);
-              assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
-              assertThat(SessionContext.isInternalService()).isFalse();
-              return new ServerCall.Listener<>() {};
-            });
+        .thenAnswer(invocation -> {
+          var peer = CanonicalPreseededActorAssignmentPeerInterceptor.currentVerifiedPeer();
+          assertThat(peer).isNotNull();
+          assertThat(peer.uri()).isEqualTo(EXACT_PEER);
+          assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+          assertThat(SessionContext.isInternalService()).isFalse();
+          return new ServerCall.Listener<>() {};
+        });
 
     interceptor.interceptCall(call, new Metadata(), next);
 
@@ -76,16 +75,14 @@ class CanonicalPreseededActorAssignmentPeerInterceptorTest {
             peerSession(EXACT_WORLD_PEER));
     ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
     when(next.startCall(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              var peer =
-                  CanonicalPreseededActorAssignmentPeerInterceptor.currentVerifiedWorldPeer();
-              assertThat(peer).isNotNull();
-              assertThat(peer.uri()).isEqualTo(EXACT_WORLD_PEER);
-              assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
-              assertThat(SessionContext.isInternalService()).isFalse();
-              return new ServerCall.Listener<>() {};
-            });
+        .thenAnswer(invocation -> {
+          var peer = CanonicalPreseededActorAssignmentPeerInterceptor.currentVerifiedWorldPeer();
+          assertThat(peer).isNotNull();
+          assertThat(peer.uri()).isEqualTo(EXACT_WORLD_PEER);
+          assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+          assertThat(SessionContext.isInternalService()).isFalse();
+          return new ServerCall.Listener<>() {};
+        });
 
     interceptor.interceptCall(call, new Metadata(), next);
 
@@ -101,22 +98,18 @@ class CanonicalPreseededActorAssignmentPeerInterceptorTest {
             peerSession(EXACT_PEER));
     ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
     when(next.startCall(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedRuntimeReferencePeer(
-                  NAMESPACE);
-              assertThatThrownBy(
-                      () ->
-                          CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedWorldPeer(
-                              NAMESPACE))
-                  .isInstanceOf(io.grpc.StatusRuntimeException.class);
-              assertThatThrownBy(
-                      () ->
-                          CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedPeer(
-                              NAMESPACE))
-                  .isInstanceOf(io.grpc.StatusRuntimeException.class);
-              return new ServerCall.Listener<>() {};
-            });
+        .thenAnswer(invocation -> {
+          CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedRuntimeReferencePeer(
+              NAMESPACE);
+          assertThatThrownBy(() ->
+                  CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedWorldPeer(
+                      NAMESPACE))
+              .isInstanceOf(io.grpc.StatusRuntimeException.class);
+          assertThatThrownBy(() ->
+                  CanonicalPreseededActorAssignmentPeerInterceptor.requireVerifiedPeer(NAMESPACE))
+              .isInstanceOf(io.grpc.StatusRuntimeException.class);
+          return new ServerCall.Listener<>() {};
+        });
     interceptor.interceptCall(readCall, new Metadata(), next);
     verify(next).startCall(any(), any());
     for (String uri :

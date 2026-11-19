@@ -34,13 +34,12 @@ class EntityEmptySelectedSourceIntakeServiceTest {
   @Test
   void rejectsInvalidConfiguredNamespaceAtConstruction() {
     DSLContext dsl = mock(DSLContext.class);
-    assertThatThrownBy(
-            () ->
-                new EntityEmptySelectedSourceIntakeService(
-                    "Invalid_Namespace",
-                    new EntityEmptySelectedSourceIntakeRepository(dsl),
-                    mock(SelectedOwnerIntakeAuthorizationReadClient.class),
-                    mock(SelectedOwnerWorldInventoryReadClient.class)))
+    assertThatThrownBy(() ->
+            new EntityEmptySelectedSourceIntakeService(
+                "Invalid_Namespace",
+                new EntityEmptySelectedSourceIntakeRepository(dsl),
+                mock(SelectedOwnerIntakeAuthorizationReadClient.class),
+                mock(SelectedOwnerWorldInventoryReadClient.class)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Configured Entity namespace");
   }

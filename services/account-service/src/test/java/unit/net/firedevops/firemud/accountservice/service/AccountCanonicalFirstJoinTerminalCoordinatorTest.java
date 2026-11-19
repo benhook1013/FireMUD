@@ -193,10 +193,9 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     Fixture fixture = new Fixture();
     fixture.startWritableTransaction();
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalJoin(
-                    null, REQUEST_ID, CALLER_BINDING, null, null, null))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalJoin(
+                null, REQUEST_ID, CALLER_BINDING, null, null, null))
         .isInstanceOf(NullPointerException.class)
         .hasMessage("canonical JOIN scope is required");
     verifyNoInteractions(
@@ -216,18 +215,16 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     fixture.startWritableTransaction();
 
     for (String requestId : new String[] {null, "", " ", "x".repeat(129)}) {
-      assertThatThrownBy(
-              () ->
-                  fixture.coordinator.commitCanonicalJoin(
-                      fixture.scope, requestId, CALLER_BINDING, null, null, null))
+      assertThatThrownBy(() ->
+              fixture.coordinator.commitCanonicalJoin(
+                  fixture.scope, requestId, CALLER_BINDING, null, null, null))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("canonical JOIN request ID");
     }
     for (String callerBinding : new String[] {null, "", " ", "x".repeat(129)}) {
-      assertThatThrownBy(
-              () ->
-                  fixture.coordinator.commitCanonicalJoin(
-                      fixture.scope, REQUEST_ID, callerBinding, null, null, null))
+      assertThatThrownBy(() ->
+              fixture.coordinator.commitCanonicalJoin(
+                  fixture.scope, REQUEST_ID, callerBinding, null, null, null))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("verified caller binding");
     }
@@ -333,10 +330,9 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .thenReturn(Optional.of(Fixture.committed(fixture.operation, fixture.expectedProof)));
     fixture.startWritableTransaction();
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalJoin(
-                    fixture.scope, requestId, callerBinding, null, null, null))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalJoin(
+                fixture.scope, requestId, callerBinding, null, null, null))
         .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class)
         .hasMessage("Canonical JOIN intent conflicts");
     verifyNoInteractions(
@@ -354,16 +350,14 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     fixture.arrangePending();
     fixture.startWritableTransaction();
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalFirstJoin(
-                    fixture.scope, REQUEST_ID, "different-caller-binding"))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalFirstJoin(
+                fixture.scope, REQUEST_ID, "different-caller-binding"))
         .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class)
         .hasMessage("Canonical JOIN intent conflicts")
-        .satisfies(
-            exception ->
-                assertThat(exception.getMessage())
-                    .doesNotContain(CALLER_BINDING, ACCOUNT_ID.toString()));
+        .satisfies(exception ->
+            assertThat(exception.getMessage())
+                .doesNotContain(CALLER_BINDING, ACCOUNT_ID.toString()));
     verify(fixture.memberships, never()).createFreshMembershipForJoin(any(), any());
     verify(fixture.eventProducer, never())
         .publishCanonicalFirstJoinMembershipChange(any(), anyString(), anyString());
@@ -381,16 +375,13 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .thenReturn(Optional.of(otherAccount));
     fixture.startWritableTransaction();
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalFirstJoin(
-                    otherScope, REQUEST_ID, CALLER_BINDING))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalFirstJoin(otherScope, REQUEST_ID, CALLER_BINDING))
         .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class)
         .hasMessage("Canonical JOIN intent conflicts")
-        .satisfies(
-            exception ->
-                assertThat(exception.getMessage())
-                    .doesNotContain(ACCOUNT_ID.toString(), OTHER_ACCOUNT_ID.toString()));
+        .satisfies(exception ->
+            assertThat(exception.getMessage())
+                .doesNotContain(ACCOUNT_ID.toString(), OTHER_ACCOUNT_ID.toString()));
     verify(fixture.memberships, never()).createFreshMembershipForJoin(any(), any());
     verify(fixture.eventProducer, never())
         .publishCanonicalFirstJoinMembershipChange(any(), anyString(), anyString());
@@ -406,10 +397,8 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .thenThrow(new IllegalStateException("fresh membership already exists"));
     fixture.startWritableTransaction();
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalFirstJoin(
-                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("fresh membership already exists");
     verify(fixture.eventProducer, never())
@@ -428,10 +417,8 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     when(fixture.outbox.findEvent(EVENT_STREAM, 1L)).thenReturn(Optional.of(changed));
     fixture.startWritableTransaction();
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalFirstJoin(
-                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Canonical first-JOIN event differs from checkpoint");
     verify(fixture.audit, never())
@@ -449,10 +436,8 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
             Optional.of(fixture.positivePair(fixture.event.eventId(), "sha256:" + "f".repeat(64))));
     fixture.startWritableTransaction();
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalFirstJoin(
-                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Canonical first-JOIN pair differs from its event");
     verify(fixture.audit, never())
@@ -471,10 +456,8 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .thenReturn(Optional.of(wrongTenant));
     fixture.startWritableTransaction();
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalFirstJoin(
-                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Canonical JOIN audit envelope differs from its receipt");
     verify(fixture.operations, never())
@@ -487,10 +470,8 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalFirstJoin(
-                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable Account owner transaction");
     verifyNoInteractions(
@@ -508,10 +489,8 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
   void inactiveTransactionIsRejectedBeforeOwnerRepositoriesAreTouched() {
     Fixture fixture = new Fixture();
 
-    assertThatThrownBy(
-            () ->
-                fixture.coordinator.commitCanonicalFirstJoin(
-                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+    assertThatThrownBy(() ->
+            fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable Account owner transaction");
     verifyNoInteractions(
@@ -548,16 +527,15 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     Fixture fixture = new Fixture();
     Event changed = fixture.event("other-global-request");
 
-    assertThatThrownBy(
-            () ->
-                AccountCanonicalFirstJoinTerminalCoordinator.canonicalAuditPayload(
-                    fixture.scope,
-                    REQUEST_ID,
-                    fixture.operation.intentDigest(),
-                    fixture.operation.requestDigest(),
-                    5L,
-                    fixture.checkpoint,
-                    changed))
+    assertThatThrownBy(() ->
+            AccountCanonicalFirstJoinTerminalCoordinator.canonicalAuditPayload(
+                fixture.scope,
+                REQUEST_ID,
+                fixture.operation.intentDigest(),
+                fixture.operation.requestDigest(),
+                5L,
+                fixture.checkpoint,
+                changed))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact event checkpoint");
   }

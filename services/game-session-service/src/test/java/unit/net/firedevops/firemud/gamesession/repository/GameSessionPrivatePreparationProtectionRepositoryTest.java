@@ -142,13 +142,12 @@ class GameSessionPrivatePreparationProtectionRepositoryTest {
           .when(() -> PrivateWorldPreparationReadGrpcCodec.stableBytes(source))
           .thenReturn(new byte[] {1});
       context.cancel(null);
-      context.run(
-          () ->
-              assertThatThrownBy(() -> owner.acquire(UUID.randomUUID(), source))
-                  .isInstanceOf(
-                      GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException
-                          .class)
-                  .hasMessageContaining("cancelled"));
+      context.run(() ->
+          assertThatThrownBy(() -> owner.acquire(UUID.randomUUID(), source))
+              .isInstanceOf(
+                  GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException
+                      .class)
+              .hasMessageContaining("cancelled"));
     }
     verifyNoInteractions(dsl, transactions);
   }
@@ -167,18 +166,16 @@ class GameSessionPrivatePreparationProtectionRepositoryTest {
           .when(() -> PrivateWorldPreparationReadGrpcCodec.stableBytes(source))
           .thenReturn(new byte[] {1});
       when(dsl.fetchOne(anyString(), any(Object[].class)))
-          .thenAnswer(
-              call -> {
-                context.cancel(null);
-                throw new IllegalStateException(new java.sql.SQLException("retry", "40001"));
-              });
-      context.run(
-          () ->
-              assertThatThrownBy(() -> owner.acquire(UUID.randomUUID(), source))
-                  .isInstanceOf(
-                      GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException
-                          .class)
-                  .hasMessageContaining("cancelled"));
+          .thenAnswer(call -> {
+            context.cancel(null);
+            throw new IllegalStateException(new java.sql.SQLException("retry", "40001"));
+          });
+      context.run(() ->
+          assertThatThrownBy(() -> owner.acquire(UUID.randomUUID(), source))
+              .isInstanceOf(
+                  GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException
+                      .class)
+              .hasMessageContaining("cancelled"));
     }
     verify(transactions).getTransaction(any());
     verify(transactions).rollback(status);
@@ -205,22 +202,20 @@ class GameSessionPrivatePreparationProtectionRepositoryTest {
                 GameSessionPrivateWorldPreparationSourceReader.class,
                 (mock, construction) ->
                     when(mock.read(any()))
-                        .thenAnswer(
-                            call -> {
-                              context.cancel(null);
-                              return source;
-                            }))) {
+                        .thenAnswer(call -> {
+                          context.cancel(null);
+                          return source;
+                        }))) {
       codec
           .when(() -> PrivateWorldPreparationReadGrpcCodec.stableBytes(source))
           .thenReturn(new byte[] {1});
       var owner = new GameSessionPrivatePreparationProtectionRepository(dsl, transactions);
-      context.run(
-          () ->
-              assertThatThrownBy(() -> owner.acquire(UUID.randomUUID(), source))
-                  .isInstanceOf(
-                      GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException
-                          .class)
-                  .hasMessageContaining("cancelled"));
+      context.run(() ->
+          assertThatThrownBy(() -> owner.acquire(UUID.randomUUID(), source))
+              .isInstanceOf(
+                  GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException
+                      .class)
+              .hasMessageContaining("cancelled"));
       verify(reader.constructed().getFirst()).read(any());
     }
     verify(transactions).getTransaction(any());

@@ -192,12 +192,11 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
     DemoTenant tenant = f.demo("changing", true);
     f.targetReads(List.of(tenant.target()), List.of(tenant.target()));
     AtomicReference<Map<String, String>> afterMutation = new AtomicReference<>();
-    f.clock.afterNextObservation.set(
-        () -> {
-          DemoTenantEntitlementSnapshot updated = f.update(tenant, false);
-          assertThat(updated.entitlementVersion()).isEqualTo(2L);
-          afterMutation.set(f.snapshot());
-        });
+    f.clock.afterNextObservation.set(() -> {
+      DemoTenantEntitlementSnapshot updated = f.update(tenant, false);
+      assertThat(updated.entitlementVersion()).isEqualTo(2L);
+      afterMutation.set(f.snapshot());
+    });
 
     assertCode("ENTITLEMENT_UNAVAILABLE", () -> f.worlds.listWorlds(f.token));
 
@@ -237,12 +236,11 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
             .sorted(
                 Comparator.comparing((DemoTenant tenant) -> tenant.target().worldSlug())
                     .thenComparing(tenant -> tenant.target().tenantSlug()))
-            .map(
-                tenant ->
-                    new BootstrapWorldDto(
-                        tenant.target().tenantSlug(),
-                        tenant.target().worldSlug(),
-                        tenant.target().worldDisplayName()))
+            .map(tenant ->
+                new BootstrapWorldDto(
+                    tenant.target().tenantSlug(),
+                    tenant.target().worldSlug(),
+                    tenant.target().worldDisplayName()))
             .toList();
 
     assertThat(f.worlds.listWorlds(f.token)).containsExactlyElementsOf(expected);
@@ -357,12 +355,11 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
     assertThat(row.get("snapshot_digest", String.class))
         .isEqualTo(AccountJoinDigest.scopeV2(scope));
     Map<String, String> after = f.snapshot();
-    before.forEach(
-        (table, original) -> {
-          if (!table.equals("account_connect_scope_records")) {
-            assertThat(after.get(table)).as("unchanged %s", table).isEqualTo(original);
-          }
-        });
+    before.forEach((table, original) -> {
+      if (!table.equals("account_connect_scope_records")) {
+        assertThat(after.get(table)).as("unchanged %s", table).isEqualTo(original);
+      }
+    });
     assertThat(
             Objects.requireNonNull(
                     f.dsl.fetchOne("SELECT COUNT(*) FROM account_connect_scope_records"))
@@ -725,12 +722,11 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
               "NEW_GAME_ROW",
               GameTenantCreationDigest.evidenceDigest(
                   NAMESPACE, requestId, operationId, digest, tenantId, rowId, key, "NEW_GAME_ROW"));
-      return inTransaction(
-          () -> {
-            tenants.importVerified(source);
-            generations.initializeTenantIfAbsent(tenantId);
-            return source;
-          });
+      return inTransaction(() -> {
+        tenants.importVerified(source);
+        generations.initializeTenantIfAbsent(tenantId);
+        return source;
+      });
     }
 
     private CanonicalJoinScopeV2 issueScope(String worldSlug) {
@@ -751,10 +747,8 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
     }
 
     private DemoTenantEntitlementSnapshot update(DemoTenant tenant, boolean available) {
-      return inTransaction(
-          () ->
-              demos.provision(
-                  request(tenant.source(), tenant.snapshot(), available), tenant.source()));
+      return inTransaction(() ->
+          demos.provision(request(tenant.source(), tenant.snapshot(), available), tenant.source()));
     }
 
     private <T> T inTransaction(Supplier<T> operation) {
@@ -763,20 +757,19 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
 
     private void targetReads(List<Target> first, List<Target> second) {
       when(targets.listVisiblePublicProductionAdmissionTargets(any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-                int read = targetReadCount.incrementAndGet();
-                if (read == 2) onSecondTargetRead.run();
-                List<Target> values = read == 1 ? first : second;
-                DiscoveryRequest request =
-                    new DiscoveryRequest(invocation.getArgument(0, UUID.class), NAMESPACE);
-                return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
-                    request,
-                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
-                        request, values));
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+            int read = targetReadCount.incrementAndGet();
+            if (read == 2) onSecondTargetRead.run();
+            List<Target> values = read == 1 ? first : second;
+            DiscoveryRequest request =
+                new DiscoveryRequest(invocation.getArgument(0, UUID.class), NAMESPACE);
+            return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                request,
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                    request, values));
+          });
     }
 
     private Map<String, String> snapshot() {

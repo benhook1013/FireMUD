@@ -218,10 +218,9 @@ class StartSessionRedeemedOperationProjectionClientTest {
 
     assertThatThrownBy(() -> client.read(fixture.postTuple(), OWNER_ATTEMPT_ID, OWNER_FENCE))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                    .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+        .satisfies(failure ->
+            assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
     assertThat(applicationCalls).hasValue(1);
   }
 

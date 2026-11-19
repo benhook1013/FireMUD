@@ -56,29 +56,24 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
   void ownerCompositionIsAbsentWhenTheOptInIsMissingOrFalse() {
     contextRunner()
         .withUserConfiguration(AccountStartSessionOperatorAuthorizationConfiguration.class)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context)
-                  .doesNotHaveBean(AccountStartSessionOperatorAuthorizationService.class);
-              assertThat(context)
-                  .doesNotHaveBean(AccountOperatorAuthorizationFingerprintKeyring.class);
-              assertThat(context).doesNotHaveBean(AccountResponseEnvelopeCryptography.class);
-              assertThat(context)
-                  .doesNotHaveBean(AccountStartSessionAuthorityCaptureRepository.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context)
+              .doesNotHaveBean(AccountStartSessionOperatorAuthorizationService.class);
+          assertThat(context).doesNotHaveBean(AccountOperatorAuthorizationFingerprintKeyring.class);
+          assertThat(context).doesNotHaveBean(AccountResponseEnvelopeCryptography.class);
+          assertThat(context).doesNotHaveBean(AccountStartSessionAuthorityCaptureRepository.class);
+        });
 
     contextRunner()
         .withUserConfiguration(AccountStartSessionOperatorAuthorizationConfiguration.class)
         .withPropertyValues(OPT_IN + "=false")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context)
-                  .doesNotHaveBean(AccountStartSessionOperatorAuthorizationService.class);
-              assertThat(context)
-                  .doesNotHaveBean(AccountStartSessionAuthorityCaptureRepository.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context)
+              .doesNotHaveBean(AccountStartSessionOperatorAuthorizationService.class);
+          assertThat(context).doesNotHaveBean(AccountStartSessionAuthorityCaptureRepository.class);
+        });
   }
 
   @Test
@@ -117,55 +112,48 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
             "firemud.account.start-session-operator-authorization.fingerprint-post-expiry-retention=PT24H",
             OPERATOR_KEYRING_PATH + "=/run/test/operator-response",
             GENERAL_KEYRING_PATH + "=/run/test/general-response")
-        .run(
-            context -> {
-              assertThat(context).hasFailed();
-              assertThat(rootCause(context.getStartupFailure()))
-                  .hasMessageContaining(AccountControlUiActorService.class.getName());
-            });
+        .run(context -> {
+          assertThat(context).hasFailed();
+          assertThat(rootCause(context.getStartupFailure()))
+              .hasMessageContaining(AccountControlUiActorService.class.getName());
+        });
   }
 
   @Test
   void explicitOptInUsesSuppliedCollaboratorsAndQualifiedOperatorCryptography() {
     enabledContext()
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context)
-                  .hasSingleBean(AccountStartSessionOperatorAuthorizationService.class);
-              assertThat(context).hasSingleBean(DSLContext.class);
-              assertThat(context)
-                  .hasSingleBean(AccountStartSessionAuthorityCaptureRepository.class);
-              assertThat(context)
-                  .hasSingleBean(AccountOperatorAuthorizationFingerprintKeyring.class);
-              assertThat(context.getBeansOfType(AccountResponseEnvelopeCryptography.class))
-                  .hasSize(2)
-                  .containsKeys(
-                      "genericAccountResponseEnvelopeCryptography",
-                      OPERATOR_RESPONSE_CRYPTOGRAPHY_BEAN);
-              assertThat(
-                      ReflectionTestUtils.getField(
-                          context.getBean(AccountStartSessionAuthorityCaptureRepository.class),
-                          "dsl"))
-                  .isSameAs(context.getBean(DSLContext.class));
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).hasSingleBean(AccountStartSessionOperatorAuthorizationService.class);
+          assertThat(context).hasSingleBean(DSLContext.class);
+          assertThat(context).hasSingleBean(AccountStartSessionAuthorityCaptureRepository.class);
+          assertThat(context).hasSingleBean(AccountOperatorAuthorizationFingerprintKeyring.class);
+          assertThat(context.getBeansOfType(AccountResponseEnvelopeCryptography.class))
+              .hasSize(2)
+              .containsKeys(
+                  "genericAccountResponseEnvelopeCryptography",
+                  OPERATOR_RESPONSE_CRYPTOGRAPHY_BEAN);
+          assertThat(
+                  ReflectionTestUtils.getField(
+                      context.getBean(AccountStartSessionAuthorityCaptureRepository.class), "dsl"))
+              .isSameAs(context.getBean(DSLContext.class));
 
-              AccountResponseEnvelopeCryptography genericCryptography =
-                  context.getBean(
-                      "genericAccountResponseEnvelopeCryptography",
-                      AccountResponseEnvelopeCryptography.class);
-              AccountResponseEnvelopeCryptography operatorCryptography =
-                  context.getBean(
-                      OPERATOR_RESPONSE_CRYPTOGRAPHY_BEAN,
-                      AccountResponseEnvelopeCryptography.class);
-              assertThat(operatorCryptography).isNotSameAs(genericCryptography);
-              assertThat(ReflectionTestUtils.getField(operatorCryptography, "keyring"))
-                  .isNotSameAs(ReflectionTestUtils.getField(genericCryptography, "keyring"));
-              assertThat(
-                      ReflectionTestUtils.getField(
-                          context.getBean(AccountStartSessionOperatorAuthorizationService.class),
-                          "responseCryptography"))
-                  .isSameAs(operatorCryptography);
-            });
+          AccountResponseEnvelopeCryptography genericCryptography =
+              context.getBean(
+                  "genericAccountResponseEnvelopeCryptography",
+                  AccountResponseEnvelopeCryptography.class);
+          AccountResponseEnvelopeCryptography operatorCryptography =
+              context.getBean(
+                  OPERATOR_RESPONSE_CRYPTOGRAPHY_BEAN, AccountResponseEnvelopeCryptography.class);
+          assertThat(operatorCryptography).isNotSameAs(genericCryptography);
+          assertThat(ReflectionTestUtils.getField(operatorCryptography, "keyring"))
+              .isNotSameAs(ReflectionTestUtils.getField(genericCryptography, "keyring"));
+          assertThat(
+                  ReflectionTestUtils.getField(
+                      context.getBean(AccountStartSessionOperatorAuthorizationService.class),
+                      "responseCryptography"))
+              .isSameAs(operatorCryptography);
+        });
   }
 
   @Test
@@ -208,12 +196,11 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
             RESPONSE_RECOVERY_WINDOW + "=PT30S",
             "firemud.account.start-session-operator-authorization.fingerprint-post-expiry-retention=PT24H",
             GENERAL_KEYRING_PATH + "=/run/test/general-response")
-        .run(
-            context -> {
-              assertThat(context).hasFailed();
-              assertThat(rootCause(context.getStartupFailure()))
-                  .hasMessageContaining("Absolute operator response keyring mount is required");
-            });
+        .run(context -> {
+          assertThat(context).hasFailed();
+          assertThat(rootCause(context.getStartupFailure()))
+              .hasMessageContaining("Absolute operator response keyring mount is required");
+        });
 
     assertStartupFailure(
         enabledContext(
@@ -223,12 +210,10 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
 
   private static void assertStartupFailure(
       ApplicationContextRunner runner, String expectedRootCause) {
-    runner.run(
-        context -> {
-          assertThat(context).hasFailed();
-          assertThat(rootCause(context.getStartupFailure()))
-              .hasMessageContaining(expectedRootCause);
-        });
+    runner.run(context -> {
+      assertThat(context).hasFailed();
+      assertThat(rootCause(context.getStartupFailure())).hasMessageContaining(expectedRootCause);
+    });
   }
 
   private static Throwable rootCause(Throwable failure) {
@@ -268,9 +253,8 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
 
   private static ApplicationContextRunner contextRunner() {
     return new ApplicationContextRunner()
-        .withInitializer(
-            context ->
-                context.getBeanFactory().setConversionService(new ApplicationConversionService()));
+        .withInitializer(context ->
+            context.getBeanFactory().setConversionService(new ApplicationConversionService()));
   }
 
   @TestConfiguration(proxyBeanMethods = false)

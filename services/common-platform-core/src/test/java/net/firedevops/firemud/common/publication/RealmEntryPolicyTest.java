@@ -147,101 +147,95 @@ class RealmEntryPolicyTest {
 
   @Test
   void directPolicyConstructionCannotBypassVersionPolicyDescriptorPairing() {
-    assertThatThrownBy(
-            () ->
-                new RealmEntryPolicy(
-                    1,
-                    "world",
-                    "World",
-                    "realm",
-                    "Realm",
-                    true,
-                    true,
-                    StateScope.SHARED,
-                    EntryPolicy.PLAYER_CREATED,
-                    null,
-                    null,
-                    "{}"))
+    assertThatThrownBy(() ->
+            new RealmEntryPolicy(
+                1,
+                "world",
+                "World",
+                "realm",
+                "Realm",
+                true,
+                true,
+                StateScope.SHARED,
+                EntryPolicy.PLAYER_CREATED,
+                null,
+                null,
+                "{}"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new RealmEntryPolicy(
-                    1,
-                    "world",
-                    "World",
-                    "realm",
-                    "Realm",
-                    true,
-                    true,
-                    StateScope.SHARED,
-                    EntryPolicy.PRESEEDED_ONLY,
-                    PlayerCreationDescriptor.parse(descriptor()),
-                    null,
-                    "{}"))
+    assertThatThrownBy(() ->
+            new RealmEntryPolicy(
+                1,
+                "world",
+                "World",
+                "realm",
+                "Realm",
+                true,
+                true,
+                StateScope.SHARED,
+                EntryPolicy.PRESEEDED_ONLY,
+                PlayerCreationDescriptor.parse(descriptor()),
+                null,
+                "{}"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new RealmEntryPolicy(
-                    2,
-                    "world",
-                    "World",
-                    "realm",
-                    "Realm",
-                    true,
-                    true,
-                    StateScope.SHARED,
-                    EntryPolicy.PRESEEDED_ONLY,
-                    null,
-                    null,
-                    "{}"))
+    assertThatThrownBy(() ->
+            new RealmEntryPolicy(
+                2,
+                "world",
+                "World",
+                "realm",
+                "Realm",
+                true,
+                true,
+                StateScope.SHARED,
+                EntryPolicy.PRESEEDED_ONLY,
+                null,
+                null,
+                "{}"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new RealmEntryPolicy(
-                    2,
-                    "world",
-                    "World",
-                    "realm",
-                    "Realm",
-                    true,
-                    true,
-                    StateScope.SHARED,
-                    EntryPolicy.PLAYER_CREATED,
-                    null,
-                    null,
-                    "{}"))
+    assertThatThrownBy(() ->
+            new RealmEntryPolicy(
+                2,
+                "world",
+                "World",
+                "realm",
+                "Realm",
+                true,
+                true,
+                StateScope.SHARED,
+                EntryPolicy.PLAYER_CREATED,
+                null,
+                null,
+                "{}"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new RealmEntryPolicy(
-                    3,
-                    "world",
-                    "World",
-                    "realm",
-                    "Realm",
-                    true,
-                    true,
-                    StateScope.SHARED,
-                    EntryPolicy.PRESEEDED_ONLY,
-                    null,
-                    null,
-                    "{}"))
+    assertThatThrownBy(() ->
+            new RealmEntryPolicy(
+                3,
+                "world",
+                "World",
+                "realm",
+                "Realm",
+                true,
+                true,
+                StateScope.SHARED,
+                EntryPolicy.PRESEEDED_ONLY,
+                null,
+                null,
+                "{}"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new RealmEntryPolicy(
-                    3,
-                    "world",
-                    "World",
-                    "realm",
-                    "Realm",
-                    true,
-                    true,
-                    StateScope.SHARED,
-                    EntryPolicy.PLAYER_CREATED,
-                    PlayerCreationDescriptor.parse(descriptor()),
-                    null,
-                    "{}"))
+    assertThatThrownBy(() ->
+            new RealmEntryPolicy(
+                3,
+                "world",
+                "World",
+                "realm",
+                "Realm",
+                true,
+                true,
+                StateScope.SHARED,
+                EntryPolicy.PLAYER_CREATED,
+                PlayerCreationDescriptor.parse(descriptor()),
+                null,
+                "{}"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

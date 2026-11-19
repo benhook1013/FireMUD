@@ -79,26 +79,23 @@ class RuntimeFamilyCatalogValidationTest {
     var component = new FamilyComponent("runtime", "state");
     RuntimeFamilyCatalogValidation.requireComplete(
         List.of(root, component), List.of(column, table));
-    assertThatThrownBy(
-            () ->
-                RuntimeFamilyCatalogValidation.requireComplete(
-                    List.of(component), List.of(column, table)))
+    assertThatThrownBy(() ->
+            RuntimeFamilyCatalogValidation.requireComplete(
+                List.of(component), List.of(column, table)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Every installed table");
-    assertThatThrownBy(
-            () ->
-                RuntimeFamilyCatalogValidation.requireComplete(
-                    List.of(root, component), List.of(table)))
+    assertThatThrownBy(() ->
+            RuntimeFamilyCatalogValidation.requireComplete(
+                List.of(root, component), List.of(table)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Missing family component");
     assertThatThrownBy(
             () -> RuntimeFamilyCatalogValidation.requireComplete(List.of(root), List.of(column)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Missing family table");
-    assertThatThrownBy(
-            () ->
-                RuntimeFamilyCatalogValidation.requireComplete(
-                    List.of(root), List.of(table, new SchemaFact("TABLE", "unknown", DIGEST))))
+    assertThatThrownBy(() ->
+            RuntimeFamilyCatalogValidation.requireComplete(
+                List.of(root), List.of(table, new SchemaFact("TABLE", "unknown", DIGEST))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Every installed table");
   }

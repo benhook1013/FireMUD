@@ -187,33 +187,30 @@ class CompleteLaunchBindingServiceIntegrationTest {
     Map<String, String> secondBefore = rowVersions(second);
     UUID absentCanonicalTenant = UUID.randomUUID();
 
-    assertDenied(
-        () ->
-            completeLaunchBindingService.getCompleteLaunchBinding(
-                first.readRequestId(),
-                second.canonicalTenantId(),
-                second.source().worldSlug(),
-                first.controlPlaneRequestId(),
-                first.descriptor().authoredWorldBinding().requestDigest(),
-                first.descriptor().authoredWorldBinding().resultDigest()));
-    assertDenied(
-        () ->
-            completeLaunchBindingService.getCompleteLaunchBinding(
-                first.readRequestId(),
-                first.canonicalTenantId(),
-                second.source().worldSlug(),
-                first.controlPlaneRequestId(),
-                first.descriptor().authoredWorldBinding().requestDigest(),
-                first.descriptor().authoredWorldBinding().resultDigest()));
-    assertDenied(
-        () ->
-            completeLaunchBindingService.getCompleteLaunchBinding(
-                first.readRequestId(),
-                absentCanonicalTenant,
-                first.source().worldSlug(),
-                first.controlPlaneRequestId(),
-                first.descriptor().authoredWorldBinding().requestDigest(),
-                first.descriptor().authoredWorldBinding().resultDigest()));
+    assertDenied(() ->
+        completeLaunchBindingService.getCompleteLaunchBinding(
+            first.readRequestId(),
+            second.canonicalTenantId(),
+            second.source().worldSlug(),
+            first.controlPlaneRequestId(),
+            first.descriptor().authoredWorldBinding().requestDigest(),
+            first.descriptor().authoredWorldBinding().resultDigest()));
+    assertDenied(() ->
+        completeLaunchBindingService.getCompleteLaunchBinding(
+            first.readRequestId(),
+            first.canonicalTenantId(),
+            second.source().worldSlug(),
+            first.controlPlaneRequestId(),
+            first.descriptor().authoredWorldBinding().requestDigest(),
+            first.descriptor().authoredWorldBinding().resultDigest()));
+    assertDenied(() ->
+        completeLaunchBindingService.getCompleteLaunchBinding(
+            first.readRequestId(),
+            absentCanonicalTenant,
+            first.source().worldSlug(),
+            first.controlPlaneRequestId(),
+            first.descriptor().authoredWorldBinding().requestDigest(),
+            first.descriptor().authoredWorldBinding().resultDigest()));
 
     PublishedReleaseBundle swappedCanonicalSource = new PublishedReleaseBundle();
     swappedCanonicalSource.setTenantId(first.privateTenantKey());
@@ -248,17 +245,15 @@ class CompleteLaunchBindingServiceIntegrationTest {
     readCommitted.setReadOnly(true);
     readCommitted.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 
-    assertThatThrownBy(
-            () ->
-                readCommitted.execute(
-                    status ->
-                        launchDescriptorService.getLaunchDescriptorInOwnerSnapshot(
-                            fixture.readRequestId(),
-                            fixture.canonicalTenantId(),
-                            fixture.source().worldSlug(),
-                            fixture.controlPlaneRequestId(),
-                            fixture.descriptor().authoredWorldBinding().requestDigest(),
-                            fixture.descriptor().authoredWorldBinding().resultDigest())))
+    assertThatThrownBy(() ->
+            readCommitted.execute(status ->
+                launchDescriptorService.getLaunchDescriptorInOwnerSnapshot(
+                    fixture.readRequestId(),
+                    fixture.canonicalTenantId(),
+                    fixture.source().worldSlug(),
+                    fixture.controlPlaneRequestId(),
+                    fixture.descriptor().authoredWorldBinding().requestDigest(),
+                    fixture.descriptor().authoredWorldBinding().resultDigest())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("read-only REPEATABLE_READ");
 
@@ -350,15 +345,14 @@ class CompleteLaunchBindingServiceIntegrationTest {
 
     AuthoredWorldSourceEvidence source =
         new TransactionTemplate(transactionManager)
-            .execute(
-                status ->
-                    authoredWorldSourceRepository.register(
-                        NAMESPACE,
-                        UUID.randomUUID(),
-                        persistedGame.getCanonicalTenantId(),
-                        "tenant-" + suffix,
-                        "world-" + suffix,
-                        "Synthetic Complete Binding World"));
+            .execute(status ->
+                authoredWorldSourceRepository.register(
+                    NAMESPACE,
+                    UUID.randomUUID(),
+                    persistedGame.getCanonicalTenantId(),
+                    "tenant-" + suffix,
+                    "world-" + suffix,
+                    "Synthetic Complete Binding World"));
 
     Version version = new Version();
     version.setTenantId(privateTenantKey);
@@ -500,16 +494,15 @@ class CompleteLaunchBindingServiceIntegrationTest {
 
   private void advanceVersion(Fixture fixture, VersionLifecycleState state, long epoch) {
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
-    transaction.execute(
-        status -> {
-          Version current =
-              versionRepository
-                  .findByTenantIdAndId(fixture.privateTenantKey(), fixture.version().getId())
-                  .orElseThrow();
-          current.setVersionState(state);
-          current.setVersionStateEpoch(epoch);
-          return versionRepository.save(current);
-        });
+    transaction.execute(status -> {
+      Version current =
+          versionRepository
+              .findByTenantIdAndId(fixture.privateTenantKey(), fixture.version().getId())
+              .orElseThrow();
+      current.setVersionState(state);
+      current.setVersionStateEpoch(epoch);
+      return versionRepository.save(current);
+    });
   }
 
   private Map<String, String> rowVersions(Fixture fixture) {

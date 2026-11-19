@@ -256,11 +256,10 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
                     requestBinding)
                 .get(0, Long.class))
         .isEqualTo(1L);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
-                    operation))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM entity_canonical_roster_admissions WHERE operation_uuid = ?",
+                operation))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
 
     migrate(dataSource, schema, ENTITY.locations(), null);
@@ -294,13 +293,12 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
     List<String> targetRowsAt1019 = retainedEntitySnapshotTargets(dataSource);
     List<String> historyAt1019 = history(dataSource);
     assertThat(historyAt1019)
-        .anySatisfy(
-            row ->
-                assertThat(row)
-                    .contains(
-                        "1019",
-                        "V1019__canonical_roster_snapshot_retirement_seals.sql",
-                        "\"success\": true"));
+        .anySatisfy(row ->
+            assertThat(row)
+                .contains(
+                    "1019",
+                    "V1019__canonical_roster_snapshot_retirement_seals.sql",
+                    "\"success\": true"));
 
     migrate(dataSource, schema, ENTITY.locations(), null);
     List<String> historyAt1020 = history(dataSource);
@@ -385,17 +383,16 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
 
   private void classifyRetainedDependencies(DriverManagerDataSource dataSource, int limit) {
     new TransactionTemplate(new DataSourceTransactionManager(dataSource))
-        .execute(
-            status -> {
-              new net.firedevops.firemud.entitymanagement.repository
-                      .CanonicalGameplayRosterRetentionRepository(
-                      DSL.using(
-                          new org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy(
-                              dataSource),
-                          SQLDialect.POSTGRES))
-                  .classifyRetainedDependencies(limit);
-              return null;
-            });
+        .execute(status -> {
+          new net.firedevops.firemud.entitymanagement.repository
+                  .CanonicalGameplayRosterRetentionRepository(
+                  DSL.using(
+                      new org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy(
+                          dataSource),
+                      SQLDialect.POSTGRES))
+              .classifyRetainedDependencies(limit);
+          return null;
+        });
   }
 
   private void assertTypedCreatedTarget(
@@ -561,11 +558,10 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
                 .get(0, Boolean.class))
         .isTrue();
     assertThat(retainedEntitySnapshotTargets(dataSource)).isEmpty();
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM entity_canonical_roster_retired_targets WHERE snapshot_uuid = ?",
-                    sealSnapshot))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM entity_canonical_roster_retired_targets WHERE snapshot_uuid = ?",
+                sealSnapshot))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThat(entitySealPurgeable(dsl, sealDigest)).isFalse();
 
@@ -616,11 +612,10 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
                 .get(0, Long.class))
         .isEqualTo(2L);
     assertThat(entitySealPurgeable(dsl, sealDigest)).isFalse();
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM entity_canonical_roster_retired_targets WHERE snapshot_uuid = ?",
-                    sealSnapshot))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "DELETE FROM entity_canonical_roster_retired_targets WHERE snapshot_uuid = ?",
+                sealSnapshot))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
   }
 
@@ -789,13 +784,12 @@ class CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest {
 
   private void assertMigrationPresent(List<String> history, String version, String script) {
     assertThat(history)
-        .anySatisfy(
-            row ->
-                assertThat(row)
-                    .contains(
-                        "\"version\": \"" + version + "\"",
-                        "\"script\": \"" + script + "\"",
-                        "\"success\": true"));
+        .anySatisfy(row ->
+            assertThat(row)
+                .contains(
+                    "\"version\": \"" + version + "\"",
+                    "\"script\": \"" + script + "\"",
+                    "\"success\": true"));
   }
 
   private DriverManagerDataSource dataSource(String schema) {

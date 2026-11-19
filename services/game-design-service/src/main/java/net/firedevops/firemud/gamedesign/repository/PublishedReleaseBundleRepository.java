@@ -168,13 +168,12 @@ public class PublishedReleaseBundleRepository {
       throw new IllegalStateException(
           "Published release bundle is immutable; read the stored row instead of saving it again");
     }
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          LocalDateTime publishedAt =
-              bundle.getPublishedAt() == null ? LocalDateTime.now() : bundle.getPublishedAt();
-          return insertNewBundle(tx, bundle, publishedAt);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      LocalDateTime publishedAt =
+          bundle.getPublishedAt() == null ? LocalDateTime.now() : bundle.getPublishedAt();
+      return insertNewBundle(tx, bundle, publishedAt);
+    });
   }
 
   private PublishedReleaseBundle insertNewBundle(

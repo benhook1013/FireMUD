@@ -36,12 +36,11 @@ public final class RuntimeFamilyCatalogFraming {
   }
 
   public byte[] requestBytes(int magic, UUID requestId, String namespace) {
-    return encode(
-        out -> {
-          out.writeInt(magic);
-          uuid(out, requestId);
-          bytes(out, namespace.getBytes(StandardCharsets.US_ASCII));
-        });
+    return encode(out -> {
+      out.writeInt(magic);
+      uuid(out, requestId);
+      bytes(out, namespace.getBytes(StandardCharsets.US_ASCII));
+    });
   }
 
   public RequestFrame readRequest(
@@ -64,14 +63,13 @@ public final class RuntimeFamilyCatalogFraming {
       byte[] catalog,
       String oversizedMessage) {
     byte[] result =
-        encode(
-            out -> {
-              out.writeInt(magic);
-              bytes(out, request);
-              uuid(out, snapshotId);
-              bytes(out, digest.getBytes(StandardCharsets.US_ASCII));
-              bytes(out, catalog);
-            });
+        encode(out -> {
+          out.writeInt(magic);
+          bytes(out, request);
+          uuid(out, snapshotId);
+          bytes(out, digest.getBytes(StandardCharsets.US_ASCII));
+          bytes(out, catalog);
+        });
     if (result.length > maximumResponseBytes) throw new IllegalArgumentException(oversizedMessage);
     return result;
   }

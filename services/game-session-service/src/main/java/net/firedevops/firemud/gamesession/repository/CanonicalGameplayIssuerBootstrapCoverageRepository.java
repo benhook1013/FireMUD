@@ -57,101 +57,96 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     CanonicalGameplayIssuerBootstrapPartitionWork work = readback.work();
     requireNoAmbientTransaction();
     ProofInput input = proofInput(readback);
-    dsl.transaction(
-        configuration -> {
-          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-          CanonicalGameplayIssuerPartitionBuildPlan currentPlan =
-              new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                  .readPreparedPlanInTransaction(
-                      transaction,
-                      work.buildPlan().bootstrapIntent().operationId(),
-                      work.buildPlan().bootstrapIntent().requestId());
-          requireSamePlan(currentPlan, work.buildPlan());
-          requireProofContext(input, currentPlan);
-          Record existing =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + PROOF
-                      + " WHERE bootstrap_operation_id = ? AND partition_id = ? FOR UPDATE",
-                  currentPlan.bootstrapIntent().operationId(),
-                  input.partitionId());
-          if (existing != null) {
-            requireSameProof(existing, input);
-            CanonicalGameplayIssuerPartitionMutationRepository
-                .recordInitialPhysicalReadbackInTransaction(
-                    transaction,
-                    work.buildPlan().bootstrapIntent().operationId(),
-                    input.partitionId(),
-                    work.initialPhysicalRevision(),
-                    input.fieldSetBytes());
-            return;
-          }
-          int inserted =
-              transaction.execute(
-                  "INSERT INTO "
-                      + PROOF
-                      + " ("
-                      + "build_operation_id, bootstrap_operation_id, bootstrap_request_id, issuer_id, "
-                      + "build_plan_digest, bootstrap_operation_fence, bootstrap_coverage_fence, "
-                      + "issuer_inventory_snapshot_revision, layout_version, partition_count, "
-                      + "partition_capacity, mapping_identity, layout_descriptor_bytes, "
-                      + "layout_descriptor_digest, source_checkpoint_bytes, source_checkpoint_digest, "
-                      + "source_event_bytes, source_event_digest, incarnation_bytes, incarnation_digest, "
-                      + "partition_id, initial_physical_mutation_revision, exact_metadata_bytes, "
-                      + "exact_physical_field_set_bytes, "
-                      + "exact_physical_field_set_digest, physical_field_count, physical_reservation_count, "
-                      + "physical_binding_count, physical_counted_capacity_count, "
-                      + "planned_aggregate_capacity_count, proof_state) VALUES ("
-                      + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EXACT_PHYSICAL_READBACK')",
-                  input.buildOperationId(),
-                  input.bootstrapOperationId(),
-                  input.bootstrapRequestId(),
-                  ISSUER,
-                  input.planDigest(),
-                  input.operationFence(),
-                  input.coverageFence(),
-                  input.snapshotRevision(),
-                  input.layoutVersion(),
-                  input.partitionCount(),
-                  input.partitionCapacity(),
-                  input.mappingIdentity(),
-                  input.layoutDescriptorBytes(),
-                  input.layoutDescriptorDigest(),
-                  input.sourceCheckpointBytes(),
-                  input.sourceCheckpointDigest(),
-                  input.sourceEventBytes(),
-                  input.sourceEventDigest(),
-                  input.incarnationBytes(),
-                  input.incarnationDigest(),
-                  input.partitionId(),
-                  input.initialPhysicalRevision(),
-                  input.metadataBytes(),
-                  input.fieldSetBytes(),
-                  input.fieldSetDigest(),
-                  input.fieldCount(),
-                  input.reservationCount(),
-                  input.bindingCount(),
-                  input.countedCapacityCount(),
-                  input.aggregateCountedCapacity());
-          if (inserted != 1) throw conflict("Exact partition proof did not persist");
-          Record saved =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + PROOF
-                      + " WHERE bootstrap_operation_id = ? AND partition_id = ?",
-                  input.bootstrapOperationId(),
-                  input.partitionId());
-          if (saved == null)
-            throw conflict("Exact partition proof is unreadable after persistence");
-          requireSameProof(saved, input);
-          CanonicalGameplayIssuerPartitionMutationRepository
-              .recordInitialPhysicalReadbackInTransaction(
+    dsl.transaction(configuration -> {
+      DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+      CanonicalGameplayIssuerPartitionBuildPlan currentPlan =
+          new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+              .readPreparedPlanInTransaction(
                   transaction,
                   work.buildPlan().bootstrapIntent().operationId(),
-                  input.partitionId(),
-                  work.initialPhysicalRevision(),
-                  input.fieldSetBytes());
-        });
+                  work.buildPlan().bootstrapIntent().requestId());
+      requireSamePlan(currentPlan, work.buildPlan());
+      requireProofContext(input, currentPlan);
+      Record existing =
+          transaction.fetchOne(
+              "SELECT * FROM "
+                  + PROOF
+                  + " WHERE bootstrap_operation_id = ? AND partition_id = ? FOR UPDATE",
+              currentPlan.bootstrapIntent().operationId(),
+              input.partitionId());
+      if (existing != null) {
+        requireSameProof(existing, input);
+        CanonicalGameplayIssuerPartitionMutationRepository
+            .recordInitialPhysicalReadbackInTransaction(
+                transaction,
+                work.buildPlan().bootstrapIntent().operationId(),
+                input.partitionId(),
+                work.initialPhysicalRevision(),
+                input.fieldSetBytes());
+        return;
+      }
+      int inserted =
+          transaction.execute(
+              "INSERT INTO "
+                  + PROOF
+                  + " ("
+                  + "build_operation_id, bootstrap_operation_id, bootstrap_request_id, issuer_id, "
+                  + "build_plan_digest, bootstrap_operation_fence, bootstrap_coverage_fence, "
+                  + "issuer_inventory_snapshot_revision, layout_version, partition_count, "
+                  + "partition_capacity, mapping_identity, layout_descriptor_bytes, "
+                  + "layout_descriptor_digest, source_checkpoint_bytes, source_checkpoint_digest, "
+                  + "source_event_bytes, source_event_digest, incarnation_bytes, incarnation_digest, "
+                  + "partition_id, initial_physical_mutation_revision, exact_metadata_bytes, "
+                  + "exact_physical_field_set_bytes, "
+                  + "exact_physical_field_set_digest, physical_field_count, physical_reservation_count, "
+                  + "physical_binding_count, physical_counted_capacity_count, "
+                  + "planned_aggregate_capacity_count, proof_state) VALUES ("
+                  + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EXACT_PHYSICAL_READBACK')",
+              input.buildOperationId(),
+              input.bootstrapOperationId(),
+              input.bootstrapRequestId(),
+              ISSUER,
+              input.planDigest(),
+              input.operationFence(),
+              input.coverageFence(),
+              input.snapshotRevision(),
+              input.layoutVersion(),
+              input.partitionCount(),
+              input.partitionCapacity(),
+              input.mappingIdentity(),
+              input.layoutDescriptorBytes(),
+              input.layoutDescriptorDigest(),
+              input.sourceCheckpointBytes(),
+              input.sourceCheckpointDigest(),
+              input.sourceEventBytes(),
+              input.sourceEventDigest(),
+              input.incarnationBytes(),
+              input.incarnationDigest(),
+              input.partitionId(),
+              input.initialPhysicalRevision(),
+              input.metadataBytes(),
+              input.fieldSetBytes(),
+              input.fieldSetDigest(),
+              input.fieldCount(),
+              input.reservationCount(),
+              input.bindingCount(),
+              input.countedCapacityCount(),
+              input.aggregateCountedCapacity());
+      if (inserted != 1) throw conflict("Exact partition proof did not persist");
+      Record saved =
+          transaction.fetchOne(
+              "SELECT * FROM " + PROOF + " WHERE bootstrap_operation_id = ? AND partition_id = ?",
+              input.bootstrapOperationId(),
+              input.partitionId());
+      if (saved == null) throw conflict("Exact partition proof is unreadable after persistence");
+      requireSameProof(saved, input);
+      CanonicalGameplayIssuerPartitionMutationRepository.recordInitialPhysicalReadbackInTransaction(
+          transaction,
+          work.buildPlan().bootstrapIntent().operationId(),
+          input.partitionId(),
+          work.initialPhysicalRevision(),
+          input.fieldSetBytes());
+    });
   }
 
   Optional<CanonicalGameplayIssuerInstalledAnchor> readInstalledAnchor(
@@ -162,31 +157,29 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     Objects.requireNonNull(bootstrapRequestId, "bootstrapRequestId");
     Objects.requireNonNull(currentState, "currentState");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          Record anchorProbe =
-              transaction.fetchOne(
-                  "SELECT issuer_id FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
-          if (anchorProbe == null) return Optional.empty();
-          CanonicalGameplayIssuerPartitionBuildRepository buildRepository =
-              new CanonicalGameplayIssuerPartitionBuildRepository(transaction);
-          CanonicalGameplayIssuerPartitionBuildPlan plan =
-              buildRepository.readInstalledPlanForAnchorInTransaction(
-                  transaction, bootstrapOperationId, bootstrapRequestId);
-          requireCurrentState(currentState, plan.bootstrapIntent());
-          Record row =
-              transaction.fetchOne(
-                  "SELECT * FROM " + ANCHOR + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
-          if (row == null) return Optional.empty();
-          CanonicalGameplayIssuerInstalledAnchor installed = loadAnchor(row);
-          requireAnchorMatchesPlan(installed, plan, currentState);
-          requireProofSummaryMatchesAnchor(
-              verifyCompleteProof(transaction, plan, installed.incarnationBytes()), installed);
-          requireCounterCoversAnchor(transaction, installed);
-          return Optional.of(installed);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      Record anchorProbe =
+          transaction.fetchOne("SELECT issuer_id FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
+      if (anchorProbe == null) return Optional.empty();
+      CanonicalGameplayIssuerPartitionBuildRepository buildRepository =
+          new CanonicalGameplayIssuerPartitionBuildRepository(transaction);
+      CanonicalGameplayIssuerPartitionBuildPlan plan =
+          buildRepository.readInstalledPlanForAnchorInTransaction(
+              transaction, bootstrapOperationId, bootstrapRequestId);
+      requireCurrentState(currentState, plan.bootstrapIntent());
+      Record row =
+          transaction.fetchOne(
+              "SELECT * FROM " + ANCHOR + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+      if (row == null) return Optional.empty();
+      CanonicalGameplayIssuerInstalledAnchor installed = loadAnchor(row);
+      requireAnchorMatchesPlan(installed, plan, currentState);
+      requireProofSummaryMatchesAnchor(
+          verifyCompleteProof(transaction, plan, installed.incarnationBytes()), installed);
+      requireCounterCoversAnchor(transaction, installed);
+      return Optional.of(installed);
+    });
   }
 
   /**
@@ -450,27 +443,24 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     CanonicalGameplayIssuerBootstrapPartitionWork work = readback.work();
     ProofInput input = proofInput(readback);
     requireNoAmbientTransaction();
-    dsl.transaction(
-        configuration -> {
-          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-          CanonicalGameplayIssuerPartitionBuildPlan currentPlan =
-              new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
-                  .readPreparedPlanInTransaction(
-                      transaction,
-                      work.buildPlan().bootstrapIntent().operationId(),
-                      work.buildPlan().bootstrapIntent().requestId());
-          requireSamePlan(currentPlan, work.buildPlan());
-          requireProofContext(input, currentPlan);
-          Record row =
-              transaction.fetchOne(
-                  "SELECT * FROM "
-                      + PROOF
-                      + " WHERE bootstrap_operation_id = ? AND partition_id = ?",
-                  input.bootstrapOperationId(),
-                  input.partitionId());
-          if (row == null) throw conflict("Installed anchor is missing an exact partition proof");
-          requireSameProof(row, input);
-        });
+    dsl.transaction(configuration -> {
+      DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+      CanonicalGameplayIssuerPartitionBuildPlan currentPlan =
+          new CanonicalGameplayIssuerPartitionBuildRepository(transaction)
+              .readPreparedPlanInTransaction(
+                  transaction,
+                  work.buildPlan().bootstrapIntent().operationId(),
+                  work.buildPlan().bootstrapIntent().requestId());
+      requireSamePlan(currentPlan, work.buildPlan());
+      requireProofContext(input, currentPlan);
+      Record row =
+          transaction.fetchOne(
+              "SELECT * FROM " + PROOF + " WHERE bootstrap_operation_id = ? AND partition_id = ?",
+              input.bootstrapOperationId(),
+              input.partitionId());
+      if (row == null) throw conflict("Installed anchor is missing an exact partition proof");
+      requireSameProof(row, input);
+    });
   }
 
   CanonicalGameplayIssuerInstalledAnchor installInitialAnchor(
@@ -481,111 +471,108 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     Objects.requireNonNull(bootstrapRequestId, "bootstrapRequestId");
     Objects.requireNonNull(currentState, "currentState");
     requireNoAmbientTransaction();
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          CanonicalGameplayIssuerPartitionBuildRepository buildRepository =
-              new CanonicalGameplayIssuerPartitionBuildRepository(transaction);
-          Record anchorProbe =
-              transaction.fetchOne(
-                  "SELECT issuer_id FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
-          CanonicalGameplayIssuerPartitionBuildPlan plan =
-              anchorProbe == null
-                  ? buildRepository.readPreparedPlanInTransaction(
-                      transaction, bootstrapOperationId, bootstrapRequestId)
-                  : buildRepository.readInstalledPlanForAnchorInTransaction(
-                      transaction, bootstrapOperationId, bootstrapRequestId);
-          CanonicalGameplayIssuerLayoutBootstrapIntent intent = plan.bootstrapIntent();
-          requireCurrentState(currentState, intent);
-          Record existing =
-              transaction.fetchOne(
-                  "SELECT * FROM " + ANCHOR + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
-          if (existing != null) {
-            CanonicalGameplayIssuerInstalledAnchor installed = loadAnchor(existing);
-            requireAnchorMatchesPlan(installed, plan, currentState);
-            requireProofSummaryMatchesAnchor(
-                verifyCompleteProof(transaction, plan, installed.incarnationBytes()), installed);
-            requireCounterCoversAnchor(transaction, installed);
-            return installed;
-          }
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      CanonicalGameplayIssuerPartitionBuildRepository buildRepository =
+          new CanonicalGameplayIssuerPartitionBuildRepository(transaction);
+      Record anchorProbe =
+          transaction.fetchOne("SELECT issuer_id FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
+      CanonicalGameplayIssuerPartitionBuildPlan plan =
+          anchorProbe == null
+              ? buildRepository.readPreparedPlanInTransaction(
+                  transaction, bootstrapOperationId, bootstrapRequestId)
+              : buildRepository.readInstalledPlanForAnchorInTransaction(
+                  transaction, bootstrapOperationId, bootstrapRequestId);
+      CanonicalGameplayIssuerLayoutBootstrapIntent intent = plan.bootstrapIntent();
+      requireCurrentState(currentState, intent);
+      Record existing =
+          transaction.fetchOne(
+              "SELECT * FROM " + ANCHOR + " WHERE issuer_id = ? FOR UPDATE", ISSUER);
+      if (existing != null) {
+        CanonicalGameplayIssuerInstalledAnchor installed = loadAnchor(existing);
+        requireAnchorMatchesPlan(installed, plan, currentState);
+        requireProofSummaryMatchesAnchor(
+            verifyCompleteProof(transaction, plan, installed.incarnationBytes()), installed);
+        requireCounterCoversAnchor(transaction, installed);
+        return installed;
+      }
 
-          ProofSummary proof =
-              verifyCompleteProof(
-                  transaction,
-                  plan,
-                  CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(
-                      currentState.incarnation()));
-          BigInteger generation = allocateGlobalCoverageGeneration(transaction);
-          CanonicalGameplayIssuerInstalledAnchor anchor =
-              createAnchor(plan, currentState, generation, proof);
-          int inserted =
-              transaction.execute(
-                  "INSERT INTO "
-                      + ANCHOR
-                      + " ("
-                      + "issuer_id, bootstrap_operation_id, bootstrap_request_id, build_operation_id, "
-                      + "build_plan_digest, control_epoch, issuer_coverage_operation_id, operation_fence, "
-                      + "coverage_fence, issuer_inventory_snapshot_revision, layout_version, partition_count, "
-                      + "partition_capacity, mapping_identity, layout_descriptor_bytes, layout_descriptor_digest, "
-                      + "issuer_auth_generation, source_checkpoint_bytes, source_checkpoint_digest, "
-                      + "source_event_bytes, source_event_digest, incarnation_bytes, incarnation_digest, "
-                      + "global_coverage_generation, partition_proof_count, physical_reservation_count, "
-                      + "physical_binding_count, aggregate_counted_capacity, partition_proof_root_digest, "
-                      + "exact_anchor_bytes, exact_anchor_digest, anchor_state) "
-                      + "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INITIAL_INSTALLED' "
-                      + "FROM "
-                      + CONTROL
-                      + " c WHERE c.issuer_id = ? AND c.state = 'INITIAL_BOOTSTRAP_INTENT' "
-                      + "AND c.control_epoch = ? AND c.current_operation_id = ? "
-                      + "AND c.current_operation_fence = ? AND c.current_coverage_fence = ? "
-                      + "AND NOT EXISTS (SELECT 1 FROM "
-                      + ANCHOR
-                      + " a WHERE a.issuer_id = c.issuer_id)",
-                  anchor.issuerId(),
-                  anchor.bootstrapOperationId(),
-                  anchor.bootstrapRequestId(),
-                  plan.buildOperationId(),
-                  plan.planDigest(),
-                  anchor.controlEpoch(),
-                  anchor.issuerCoverageOperationId(),
-                  anchor.operationFence(),
-                  anchor.coverageFence(),
-                  anchor.issuerInventorySnapshotRevision(),
-                  anchor.layoutVersion(),
-                  anchor.partitionCount(),
-                  anchor.partitionCapacity(),
-                  anchor.mappingIdentity(),
-                  anchor.layoutDescriptorBytes(),
-                  anchor.layoutDescriptorDigest(),
-                  anchor.issuerAuthGeneration(),
-                  anchor.sourceCheckpointBytes(),
-                  anchor.sourceCheckpointDigest(),
-                  anchor.sourceEventBytes(),
-                  anchor.sourceEventDigest(),
-                  anchor.incarnationBytes(),
-                  anchor.incarnationDigest(),
-                  anchor.globalCoverageGeneration(),
-                  anchor.partitionProofCount(),
-                  anchor.physicalReservationCount(),
-                  anchor.physicalBindingCount(),
-                  anchor.aggregateCountedCapacity(),
-                  anchor.partitionProofRootDigest(),
-                  anchor.exactAnchorBytes(),
-                  anchor.exactAnchorDigest(),
-                  ISSUER,
-                  intent.controlEpoch(),
-                  intent.operationId(),
-                  intent.operationFence(),
-                  intent.coverageFence());
-          if (inserted != 1) throw conflict("Exact initial issuer anchor compare-and-set refused");
-          Record saved =
-              transaction.fetchOne("SELECT * FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
-          if (saved == null) throw conflict("Installed issuer anchor is unreadable after its CAS");
-          CanonicalGameplayIssuerInstalledAnchor result = loadAnchor(saved);
-          requireSameAnchor(result, anchor);
-          return result;
-        });
+      ProofSummary proof =
+          verifyCompleteProof(
+              transaction,
+              plan,
+              CanonicalGameplayIssuerInstalledAnchor.encodeIncarnation(currentState.incarnation()));
+      BigInteger generation = allocateGlobalCoverageGeneration(transaction);
+      CanonicalGameplayIssuerInstalledAnchor anchor =
+          createAnchor(plan, currentState, generation, proof);
+      int inserted =
+          transaction.execute(
+              "INSERT INTO "
+                  + ANCHOR
+                  + " ("
+                  + "issuer_id, bootstrap_operation_id, bootstrap_request_id, build_operation_id, "
+                  + "build_plan_digest, control_epoch, issuer_coverage_operation_id, operation_fence, "
+                  + "coverage_fence, issuer_inventory_snapshot_revision, layout_version, partition_count, "
+                  + "partition_capacity, mapping_identity, layout_descriptor_bytes, layout_descriptor_digest, "
+                  + "issuer_auth_generation, source_checkpoint_bytes, source_checkpoint_digest, "
+                  + "source_event_bytes, source_event_digest, incarnation_bytes, incarnation_digest, "
+                  + "global_coverage_generation, partition_proof_count, physical_reservation_count, "
+                  + "physical_binding_count, aggregate_counted_capacity, partition_proof_root_digest, "
+                  + "exact_anchor_bytes, exact_anchor_digest, anchor_state) "
+                  + "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INITIAL_INSTALLED' "
+                  + "FROM "
+                  + CONTROL
+                  + " c WHERE c.issuer_id = ? AND c.state = 'INITIAL_BOOTSTRAP_INTENT' "
+                  + "AND c.control_epoch = ? AND c.current_operation_id = ? "
+                  + "AND c.current_operation_fence = ? AND c.current_coverage_fence = ? "
+                  + "AND NOT EXISTS (SELECT 1 FROM "
+                  + ANCHOR
+                  + " a WHERE a.issuer_id = c.issuer_id)",
+              anchor.issuerId(),
+              anchor.bootstrapOperationId(),
+              anchor.bootstrapRequestId(),
+              plan.buildOperationId(),
+              plan.planDigest(),
+              anchor.controlEpoch(),
+              anchor.issuerCoverageOperationId(),
+              anchor.operationFence(),
+              anchor.coverageFence(),
+              anchor.issuerInventorySnapshotRevision(),
+              anchor.layoutVersion(),
+              anchor.partitionCount(),
+              anchor.partitionCapacity(),
+              anchor.mappingIdentity(),
+              anchor.layoutDescriptorBytes(),
+              anchor.layoutDescriptorDigest(),
+              anchor.issuerAuthGeneration(),
+              anchor.sourceCheckpointBytes(),
+              anchor.sourceCheckpointDigest(),
+              anchor.sourceEventBytes(),
+              anchor.sourceEventDigest(),
+              anchor.incarnationBytes(),
+              anchor.incarnationDigest(),
+              anchor.globalCoverageGeneration(),
+              anchor.partitionProofCount(),
+              anchor.physicalReservationCount(),
+              anchor.physicalBindingCount(),
+              anchor.aggregateCountedCapacity(),
+              anchor.partitionProofRootDigest(),
+              anchor.exactAnchorBytes(),
+              anchor.exactAnchorDigest(),
+              ISSUER,
+              intent.controlEpoch(),
+              intent.operationId(),
+              intent.operationFence(),
+              intent.coverageFence());
+      if (inserted != 1) throw conflict("Exact initial issuer anchor compare-and-set refused");
+      Record saved =
+          transaction.fetchOne("SELECT * FROM " + ANCHOR + " WHERE issuer_id = ?", ISSUER);
+      if (saved == null) throw conflict("Installed issuer anchor is unreadable after its CAS");
+      CanonicalGameplayIssuerInstalledAnchor result = loadAnchor(saved);
+      requireSameAnchor(result, anchor);
+      return result;
+    });
   }
 
   private CanonicalGameplayIssuerInstalledAnchor createAnchor(
@@ -1286,11 +1273,10 @@ final class CanonicalGameplayIssuerBootstrapCoverageRepository {
     if (entries.isEmpty() || entries.size() > MAX_LOCAL_PHYSICAL_FIELD_COUNT) {
       throw conflict("Physical field proof count is outside its bound");
     }
-    entries.sort(
-        (left, right) ->
-            compareUnsigned(
-                left.getKey().getBytes(StandardCharsets.UTF_8),
-                right.getKey().getBytes(StandardCharsets.UTF_8)));
+    entries.sort((left, right) ->
+        compareUnsigned(
+            left.getKey().getBytes(StandardCharsets.UTF_8),
+            right.getKey().getBytes(StandardCharsets.UTF_8)));
     try {
       ByteArrayOutputStream bytes = new ByteArrayOutputStream();
       try (DataOutputStream output = new DataOutputStream(bytes)) {

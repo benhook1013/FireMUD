@@ -629,12 +629,11 @@ class ScriptWorkItemExecutionServiceImplTest {
             Mockito.any(Pageable.class)))
         .thenReturn(List.of(item));
     when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
-        .thenAnswer(
-            invocation -> {
-              transactionDefinitions.add(invocation.getArgument(0));
-              nextTransactionId.incrementAndGet();
-              return transactionStatus;
-            });
+        .thenAnswer(invocation -> {
+          transactionDefinitions.add(invocation.getArgument(0));
+          nextTransactionId.incrementAndGet();
+          return transactionStatus;
+        });
     Mockito.doAnswer(
             invocation -> {
               committedStatuses.add(item.getStatus());
@@ -690,11 +689,10 @@ class ScriptWorkItemExecutionServiceImplTest {
         .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
     assertThat(
             transactionDefinitions.stream()
-                .filter(
-                    definition ->
-                        definition.getPropagationBehavior()
-                                == TransactionDefinition.PROPAGATION_REQUIRES_NEW
-                            && definition.isReadOnly())
+                .filter(definition ->
+                    definition.getPropagationBehavior()
+                            == TransactionDefinition.PROPAGATION_REQUIRES_NEW
+                        && definition.isReadOnly())
                 .count())
         .isEqualTo(2);
     assertThat(nextTransactionId).hasValue(4);
@@ -723,15 +721,14 @@ class ScriptWorkItemExecutionServiceImplTest {
             Mockito.any(Pageable.class)))
         .thenReturn(List.of(item));
     when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
-        .thenAnswer(
-            invocation -> {
-              if (transactionCount.incrementAndGet() == 3) {
-                throw new CannotCreateTransactionException(
-                    "plugin fence transaction unavailable",
-                    new SQLTransientConnectionException("offline"));
-              }
-              return transactionStatus;
-            });
+        .thenAnswer(invocation -> {
+          if (transactionCount.incrementAndGet() == 3) {
+            throw new CannotCreateTransactionException(
+                "plugin fence transaction unavailable",
+                new SQLTransientConnectionException("offline"));
+          }
+          return transactionStatus;
+        });
     Mockito.doAnswer(
             invocation -> {
               item.setStatus("EVALUATING");
@@ -1119,13 +1116,12 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptEventAudit audit = new ScriptEventAudit();
     when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
-        .thenAnswer(
-            invocation -> {
-              // Model the exhausted outage budget reached during the evaluated handoff fence.
-              item.setAuthorityUnavailableSince(Instant.now().minus(Duration.ofMinutes(11)));
-              item.setAuthorityUnavailableCount(9);
-              return Optional.of(definition);
-            });
+        .thenAnswer(invocation -> {
+          // Model the exhausted outage budget reached during the evaluated handoff fence.
+          item.setAuthorityUnavailableSince(Instant.now().minus(Duration.ofMinutes(11)));
+          item.setAuthorityUnavailableCount(9);
+          return Optional.of(definition);
+        });
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -1545,12 +1541,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
     verify(auditRepository, Mockito.times(2)).save(auditCaptor.capture());
     assertThat(auditCaptor.getAllValues())
-        .allSatisfy(
-            audit -> {
-              assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
-              assertThat(audit.getFinalOutcome()).isEqualTo("completed_no_commands");
-              assertThat(audit.getFinalReason()).isEqualTo("script_emitted_no_commands");
-            });
+        .allSatisfy(audit -> {
+          assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+          assertThat(audit.getFinalOutcome()).isEqualTo("completed_no_commands");
+          assertThat(audit.getFinalReason()).isEqualTo("script_emitted_no_commands");
+        });
     Mockito.verifyNoInteractions(handoffService);
     verify(workItemService).claimPendingForEvaluation(List.of(99L), 9);
     verify(workItemService).claimPendingForEvaluation(9);
@@ -1738,12 +1733,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     fallback.setStatus("PENDING_EVALUATION");
 
     when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(transactionActive.compareAndSet(false, true)).isTrue();
-              currentTransactionId.set(nextTransactionId.incrementAndGet());
-              return transactionStatus;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(transactionActive.compareAndSet(false, true)).isTrue();
+          currentTransactionId.set(nextTransactionId.incrementAndGet());
+          return transactionStatus;
+        });
     Mockito.doAnswer(
             invocation -> {
               int committedTransactionId = currentTransactionId.get();
@@ -1775,13 +1769,12 @@ class ScriptWorkItemExecutionServiceImplTest {
             Mockito.eq("PENDING_EVALUATION"),
             Mockito.any(Instant.class),
             Mockito.any(Pageable.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(transactionActive).isFalse();
-              // The durable scan returns both rows. Claiming rejects the indexed row because it
-              // is no longer PENDING_EVALUATION, while its sibling remains eligible.
-              return List.of(indexed, fallback);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(transactionActive).isFalse();
+          // The durable scan returns both rows. Claiming rejects the indexed row because it
+          // is no longer PENDING_EVALUATION, while its sibling remains eligible.
+          return List.of(indexed, fallback);
+        });
     Mockito.doAnswer(
             invocation -> {
               assertThat(transactionActive).isTrue();
@@ -1808,13 +1801,12 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(runtimeStateResponse());
     when(handoffService.handoff(Mockito.eq(indexed), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(transactionActive).isFalse();
-              remoteEffectAccepted.set(true);
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ACCEPTED", "command-1", "", "", "");
-            });
+        .thenAnswer(invocation -> {
+          assertThat(transactionActive).isFalse();
+          remoteEffectAccepted.set(true);
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              true, "ACCEPTED", "command-1", "", "", "");
+        });
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(auditRepository.findByWorkItemId(100L)).thenReturn(Optional.of(new ScriptEventAudit()));
@@ -1890,12 +1882,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     fallback.setStatus("PENDING_EVALUATION");
 
     when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(transactionActive.compareAndSet(false, true)).isTrue();
-              currentTransactionId.set(nextTransactionId.incrementAndGet());
-              return transactionStatus;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(transactionActive.compareAndSet(false, true)).isTrue();
+          currentTransactionId.set(nextTransactionId.incrementAndGet());
+          return transactionStatus;
+        });
     Mockito.doAnswer(
             invocation -> {
               int completedTransactionId = currentTransactionId.get();
@@ -1925,11 +1916,10 @@ class ScriptWorkItemExecutionServiceImplTest {
             Mockito.eq("PENDING_EVALUATION"),
             Mockito.any(Instant.class),
             Mockito.any(Pageable.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(transactionActive).isFalse();
-              return List.of(indexed, fallback);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(transactionActive).isFalse();
+          return List.of(indexed, fallback);
+        });
     Mockito.doAnswer(
             invocation -> {
               assertThat(transactionActive).isTrue();
@@ -1956,13 +1946,12 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(runtimeStateResponse());
     when(handoffService.handoff(Mockito.eq(indexed), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(transactionActive).isFalse();
-              remoteEffectAccepted.set(true);
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ACCEPTED", "command-1", "", "", "");
-            });
+        .thenAnswer(invocation -> {
+          assertThat(transactionActive).isFalse();
+          remoteEffectAccepted.set(true);
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              true, "ACCEPTED", "command-1", "", "", "");
+        });
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(auditRepository.findByWorkItemId(Mockito.anyLong()))
@@ -2046,12 +2035,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              item.setStatus("HANDED_OFF");
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ENQUEUED", "auto-1", "", "", "");
-            });
+        .thenAnswer(invocation -> {
+          item.setStatus("HANDED_OFF");
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              true, "ENQUEUED", "auto-1", "", "", "");
+        });
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -2778,12 +2766,11 @@ class ScriptWorkItemExecutionServiceImplTest {
         item.setNextEligibleAt(Instant.parse("2026-09-01T00:01:00Z"));
       }
       when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
-          .thenAnswer(
-              invocation -> {
-                operations.add(
-                    "runtime:" + TransactionSynchronizationManager.isActualTransactionActive());
-                return runtimeStateResponse();
-              });
+          .thenAnswer(invocation -> {
+            operations.add(
+                "runtime:" + TransactionSynchronizationManager.isActualTransactionActive());
+            return runtimeStateResponse();
+          });
       item.setStatus("PENDING_EVALUATION");
       when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
               Mockito.eq("PENDING_EVALUATION"),
@@ -3104,19 +3091,17 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptGameplayCommandHandoffService.EmittedCommand command =
-                  invocation.getArgument(1);
-              attemptedOrdinals.add(command.ordinal());
-              item.setStatus("HANDOFF_IN_FLIGHT");
-              if (command.ordinal() == 0) {
-                return new ScriptGameplayCommandHandoffService.HandoffResult(
-                    true, "ENQUEUED", "auto-1", "", "", "");
-              }
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  false, "HANDOFF_IN_FLIGHT", "", "", "", "HANDOFF_IN_FLIGHT");
-            });
+        .thenAnswer(invocation -> {
+          ScriptGameplayCommandHandoffService.EmittedCommand command = invocation.getArgument(1);
+          attemptedOrdinals.add(command.ordinal());
+          item.setStatus("HANDOFF_IN_FLIGHT");
+          if (command.ordinal() == 0) {
+            return new ScriptGameplayCommandHandoffService.HandoffResult(
+                true, "ENQUEUED", "auto-1", "", "", "");
+          }
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              false, "HANDOFF_IN_FLIGHT", "", "", "", "HANDOFF_IN_FLIGHT");
+        });
 
     ScriptWorkItemExecutionService service =
         pluginFenceService(
@@ -3162,20 +3147,18 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptGameplayCommandHandoffService.EmittedCommand command =
-                  invocation.getArgument(1);
-              attemptedOrdinals.add(command.ordinal());
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  false,
-                  ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE,
-                  "",
-                  "",
-                  "",
-                  "UNAVAILABLE",
-                  errorMessage);
-            });
+        .thenAnswer(invocation -> {
+          ScriptGameplayCommandHandoffService.EmittedCommand command = invocation.getArgument(1);
+          attemptedOrdinals.add(command.ordinal());
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              false,
+              ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE,
+              "",
+              "",
+              "",
+              "UNAVAILABLE",
+              errorMessage);
+        });
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -3232,24 +3215,22 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptGameplayCommandHandoffService.EmittedCommand command =
-                  invocation.getArgument(1);
-              attemptedOrdinals.add(command.ordinal());
-              if (command.ordinal() == 0) {
-                return new ScriptGameplayCommandHandoffService.HandoffResult(
-                    false,
-                    "REMOTE_REJECTED",
-                    "",
-                    "",
-                    "",
-                    "UNAVAILABLE",
-                    "handoff preparation unavailable");
-              }
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ENQUEUED", "auto-" + command.ordinal(), "", "", "");
-            });
+        .thenAnswer(invocation -> {
+          ScriptGameplayCommandHandoffService.EmittedCommand command = invocation.getArgument(1);
+          attemptedOrdinals.add(command.ordinal());
+          if (command.ordinal() == 0) {
+            return new ScriptGameplayCommandHandoffService.HandoffResult(
+                false,
+                "REMOTE_REJECTED",
+                "",
+                "",
+                "",
+                "UNAVAILABLE",
+                "handoff preparation unavailable");
+          }
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              true, "ENQUEUED", "auto-" + command.ordinal(), "", "", "");
+        });
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -3299,16 +3280,15 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(handoffService.handoff(Mockito.any(), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptWorkItem item = invocation.getArgument(0);
-              if (item == first) {
-                throw new IllegalStateException("unexpected handoff failure");
-              }
-              second.setStatus("HANDED_OFF");
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ENQUEUED", "auto-2", "", "", "");
-            });
+        .thenAnswer(invocation -> {
+          ScriptWorkItem item = invocation.getArgument(0);
+          if (item == first) {
+            throw new IllegalStateException("unexpected handoff failure");
+          }
+          second.setStatus("HANDED_OFF");
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              true, "ENQUEUED", "auto-2", "", "", "");
+        });
 
     ScriptWorkItemExecutionService service =
         new ScriptWorkItemExecutionServiceImpl(
@@ -3372,12 +3352,11 @@ class ScriptWorkItemExecutionServiceImplTest {
             new ScriptGameplayCommandHandoffService.HandoffResult(
                 false, outcome, "", "", "", errorCode));
     when(workItemRepository.save(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptWorkItem saved = invocation.getArgument(0);
-              operations.add("save:" + saved.getStatus());
-              return saved;
-            });
+        .thenAnswer(invocation -> {
+          ScriptWorkItem saved = invocation.getArgument(0);
+          operations.add("save:" + saved.getStatus());
+          return saved;
+        });
     Mockito.doAnswer(
             invocation -> {
               operations.add("refresh");
@@ -3472,29 +3451,27 @@ class ScriptWorkItemExecutionServiceImplTest {
             Mockito.any(Pageable.class)))
         .thenReturn(List.of(item));
     when(workItemService.claimPendingForEvaluation(Mockito.anyList(), Mockito.eq(1)))
-        .thenAnswer(
-            invocation -> {
-              item.setStatus("EVALUATING");
-              return List.of(item);
-            });
+        .thenAnswer(invocation -> {
+          item.setStatus("EVALUATING");
+          return List.of(item);
+        });
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(runtimeStateResponse());
     List<RetryStateSnapshot> savedRetryStates = new ArrayList<>();
     when(workItemRepository.save(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptWorkItem saved = invocation.getArgument(0);
-              savedRetryStates.add(
-                  new RetryStateSnapshot(
-                      saved.getAuthorityUnavailableSince(),
-                      saved.getAuthorityUnavailableCount(),
-                      saved.getNextEligibleAt(),
-                      saved.getRowVersion()));
-              saved.setRowVersion(saved.getRowVersion() + 1);
-              return saved;
-            });
+        .thenAnswer(invocation -> {
+          ScriptWorkItem saved = invocation.getArgument(0);
+          savedRetryStates.add(
+              new RetryStateSnapshot(
+                  saved.getAuthorityUnavailableSince(),
+                  saved.getAuthorityUnavailableCount(),
+                  saved.getNextEligibleAt(),
+                  saved.getRowVersion()));
+          saved.setRowVersion(saved.getRowVersion() + 1);
+          return saved;
+        });
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     ScriptWorkItemExecutionService service =
         new ScriptWorkItemExecutionServiceImpl(
@@ -3602,30 +3579,27 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(workItemRepository.save(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptWorkItem saved = invocation.getArgument(0);
-              saved.setRowVersion(saved.getRowVersion() + 1);
-              return saved;
-            });
+        .thenAnswer(invocation -> {
+          ScriptWorkItem saved = invocation.getArgument(0);
+          saved.setRowVersion(saved.getRowVersion() + 1);
+          return saved;
+        });
     List<ScriptHandoffEvent> savedHandoffs = new ArrayList<>();
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
-        .thenAnswer(
-            invocation ->
-                savedHandoffs.isEmpty() ? Optional.empty() : Optional.of(savedHandoffs.getLast()));
+        .thenAnswer(invocation ->
+            savedHandoffs.isEmpty() ? Optional.empty() : Optional.of(savedHandoffs.getLast()));
     when(handoffEventRepository.save(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptHandoffEvent saved = invocation.getArgument(0);
-              if (saved.getId() == null) {
-                saved.setId(44L);
-                saved.setRowVersion(0);
-              } else {
-                saved.setRowVersion(saved.getRowVersion() + 1);
-              }
-              savedHandoffs.add(saved);
-              return saved;
-            });
+        .thenAnswer(invocation -> {
+          ScriptHandoffEvent saved = invocation.getArgument(0);
+          if (saved.getId() == null) {
+            saved.setId(44L);
+            saved.setRowVersion(0);
+          } else {
+            saved.setRowVersion(saved.getRowVersion() + 1);
+          }
+          savedHandoffs.add(saved);
+          return saved;
+        });
 
     ScriptGameplayCommandHandoffServiceImpl handoffService =
         new ScriptGameplayCommandHandoffServiceImpl(
@@ -3700,13 +3674,12 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              item.setStatus("CANCELED");
-              item.setRowVersion(8);
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  false, "REMOTE_REJECTED", "", "", "", "QUEUE_UNAVAILABLE");
-            });
+        .thenAnswer(invocation -> {
+          item.setStatus("CANCELED");
+          item.setRowVersion(8);
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              false, "REMOTE_REJECTED", "", "", "", "QUEUE_UNAVAILABLE");
+        });
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -3748,12 +3721,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              item.setStatus("HANDOFF_IN_FLIGHT");
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  false, "REMOTE_REJECTED", "", "", "", "QUEUE_UNAVAILABLE");
-            });
+        .thenAnswer(invocation -> {
+          item.setStatus("HANDOFF_IN_FLIGHT");
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              false, "REMOTE_REJECTED", "", "", "", "QUEUE_UNAVAILABLE");
+        });
 
     ScriptWorkItemExecutionService service =
         new ScriptWorkItemExecutionServiceImpl(
@@ -3851,20 +3823,18 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-2"))
         .thenReturn(Optional.of(siblingDefinition));
     when(pluginRepository.findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1"))
-        .thenAnswer(
-            invocation ->
-                pluginFenceReadCount.getAndIncrement() < 2 + acceptedChildren
-                    ? Optional.of(current)
-                    : Optional.empty());
+        .thenAnswer(invocation ->
+            pluginFenceReadCount.getAndIncrement() < 2 + acceptedChildren
+                ? Optional.of(current)
+                : Optional.empty());
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              if (acceptedChildren > 0) {
-                item.setStatus("HANDOFF_IN_FLIGHT");
-              }
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ENQUEUED", "auto-1", "", "", "");
-            });
+        .thenAnswer(invocation -> {
+          if (acceptedChildren > 0) {
+            item.setStatus("HANDOFF_IN_FLIGHT");
+          }
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              true, "ENQUEUED", "auto-1", "", "", "");
+        });
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -3955,16 +3925,15 @@ class ScriptWorkItemExecutionServiceImplTest {
         .thenAnswer(
             invocation -> Optional.ofNullable(handoffEvents.get(invocation.getArgument(2))));
     when(handoffEventRepository.save(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptHandoffEvent event = invocation.getArgument(0);
-              if (event.getId() == null) {
-                event.setId((long) event.getCommandOrdinal() + 44L);
-              }
-              event.setRowVersion(event.getRowVersion() + 1);
-              handoffEvents.put(event.getCommandOrdinal(), event);
-              return event;
-            });
+        .thenAnswer(invocation -> {
+          ScriptHandoffEvent event = invocation.getArgument(0);
+          if (event.getId() == null) {
+            event.setId((long) event.getCommandOrdinal() + 44L);
+          }
+          event.setRowVersion(event.getRowVersion() + 1);
+          handoffEvents.put(event.getCommandOrdinal(), event);
+          return event;
+        });
     ScriptGameplayCommandHandoffService handoffService =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -4121,17 +4090,15 @@ class ScriptWorkItemExecutionServiceImplTest {
             Optional.of(enabled),
             Optional.of(disabled));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptGameplayCommandHandoffService.EmittedCommand command =
-                  invocation.getArgument(1);
-              if (command.ordinal() == 0) {
-                return new ScriptGameplayCommandHandoffService.HandoffResult(
-                    true, "ENQUEUED", "auto-1", "", "", "");
-              }
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  false, "REJECTED", "", "", "", "REMOTE_RESPONSE_INVALID");
-            });
+        .thenAnswer(invocation -> {
+          ScriptGameplayCommandHandoffService.EmittedCommand command = invocation.getArgument(1);
+          if (command.ordinal() == 0) {
+            return new ScriptGameplayCommandHandoffService.HandoffResult(
+                true, "ENQUEUED", "auto-1", "", "", "");
+          }
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              false, "REJECTED", "", "", "", "REMOTE_RESPONSE_INVALID");
+        });
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -4557,21 +4524,19 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptGameplayCommandHandoffService.EmittedCommand command =
-                  invocation.getArgument(1);
-              if (command.ordinal() == 0) {
-                return new ScriptGameplayCommandHandoffService.HandoffResult(
-                    false, "RUNTIME_SCOPE_CHANGED", "", "", "", "RUNTIME_SCOPE_CHANGED");
-              }
-              if (command.ordinal() == 1) {
-                return new ScriptGameplayCommandHandoffService.HandoffResult(
-                    false, "REMOTE_REJECTED", "", "", "", "AUTHORITY_UNAVAILABLE");
-              }
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ENQUEUED", "auto-" + command.ordinal(), "", "", "");
-            });
+        .thenAnswer(invocation -> {
+          ScriptGameplayCommandHandoffService.EmittedCommand command = invocation.getArgument(1);
+          if (command.ordinal() == 0) {
+            return new ScriptGameplayCommandHandoffService.HandoffResult(
+                false, "RUNTIME_SCOPE_CHANGED", "", "", "", "RUNTIME_SCOPE_CHANGED");
+          }
+          if (command.ordinal() == 1) {
+            return new ScriptGameplayCommandHandoffService.HandoffResult(
+                false, "REMOTE_REJECTED", "", "", "", "AUTHORITY_UNAVAILABLE");
+          }
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              true, "ENQUEUED", "auto-" + command.ordinal(), "", "", "");
+        });
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -4645,12 +4610,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              item.setStatus("HANDED_OFF");
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ENQUEUED", "auto-1", "", "", "");
-            });
+        .thenAnswer(invocation -> {
+          item.setStatus("HANDED_OFF");
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              true, "ENQUEUED", "auto-1", "", "", "");
+        });
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -4714,12 +4678,11 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              item.setStatus("HANDED_OFF");
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "REMOTE_SCHEDULED", "", "coord-1", "followup-1", "");
-            });
+        .thenAnswer(invocation -> {
+          item.setStatus("HANDED_OFF");
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              true, "REMOTE_SCHEDULED", "", "coord-1", "followup-1", "");
+        });
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -4781,18 +4744,17 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation ->
-                new ScriptGameplayCommandHandoffService.HandoffResult(
-                    true,
-                    "ENQUEUED",
-                    "auto-"
-                        + invocation
-                            .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
-                            .ordinal(),
-                    "",
-                    "",
-                    ""));
+        .thenAnswer(invocation ->
+            new ScriptGameplayCommandHandoffService.HandoffResult(
+                true,
+                "ENQUEUED",
+                "auto-"
+                    + invocation
+                        .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
+                        .ordinal(),
+                "",
+                "",
+                ""));
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -4855,18 +4817,17 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation ->
-                new ScriptGameplayCommandHandoffService.HandoffResult(
-                    true,
-                    "ENQUEUED",
-                    "auto-"
-                        + invocation
-                            .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
-                            .ordinal(),
-                    "",
-                    "",
-                    ""));
+        .thenAnswer(invocation ->
+            new ScriptGameplayCommandHandoffService.HandoffResult(
+                true,
+                "ENQUEUED",
+                "auto-"
+                    + invocation
+                        .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
+                        .ordinal(),
+                "",
+                "",
+                ""));
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -5139,18 +5100,17 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation ->
-                new ScriptGameplayCommandHandoffService.HandoffResult(
-                    true,
-                    "ENQUEUED",
-                    "auto-"
-                        + invocation
-                            .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
-                            .ordinal(),
-                    "",
-                    "",
-                    ""));
+        .thenAnswer(invocation ->
+            new ScriptGameplayCommandHandoffService.HandoffResult(
+                true,
+                "ENQUEUED",
+                "auto-"
+                    + invocation
+                        .<ScriptGameplayCommandHandoffService.EmittedCommand>getArgument(1)
+                        .ordinal(),
+                "",
+                "",
+                ""));
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -6198,19 +6158,17 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              item.setStatus("HANDOFF_IN_FLIGHT");
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  false, "HANDOFF_IN_FLIGHT", "", "", "", "HANDOFF_IN_FLIGHT");
-            });
+        .thenAnswer(invocation -> {
+          item.setStatus("HANDOFF_IN_FLIGHT");
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              false, "HANDOFF_IN_FLIGHT", "", "", "", "HANDOFF_IN_FLIGHT");
+        });
     when(workItemRepository.save(Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              ScriptWorkItem persisted = invocation.getArgument(0);
-              persisted.setRowVersion(persisted.getRowVersion() + 1);
-              return persisted;
-            });
+        .thenAnswer(invocation -> {
+          ScriptWorkItem persisted = invocation.getArgument(0);
+          persisted.setRowVersion(persisted.getRowVersion() + 1);
+          return persisted;
+        });
 
     ScriptWorkItemExecutionService service =
         new ScriptWorkItemExecutionServiceImpl(
@@ -6264,16 +6222,15 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              item.setStatus(terminalStatus);
-              item.setCancelReason(reason);
-              audit.setFinalStage("HANDOFF");
-              audit.setFinalOutcome(finalOutcome);
-              audit.setFinalReason(reason);
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  false, reason, "", "", "", reason);
-            });
+        .thenAnswer(invocation -> {
+          item.setStatus(terminalStatus);
+          item.setCancelReason(reason);
+          audit.setFinalStage("HANDOFF");
+          audit.setFinalOutcome(finalOutcome);
+          audit.setFinalReason(reason);
+          return new ScriptGameplayCommandHandoffService.HandoffResult(
+              false, reason, "", "", "", reason);
+        });
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));

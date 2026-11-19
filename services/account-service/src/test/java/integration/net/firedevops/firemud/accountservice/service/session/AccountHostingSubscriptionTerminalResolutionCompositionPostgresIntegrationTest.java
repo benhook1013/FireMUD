@@ -270,23 +270,17 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
               .tx(() -> generations.read(AuthorityScope.account(hosting.accountUuid())));
       hosting
           .transport()
-          .duringRead(
-              () ->
-                  issued
-                      .sources()
-                      .tx(
-                          () -> {
-                            var account =
-                                issued
-                                    .sources()
-                                    .accounts
-                                    .findById(hosting.accountId())
-                                    .orElseThrow();
-                            account.setRole("admin");
-                            // Generic authority events lack the closed operation receipt required
-                            // by current-source readback, so this advance must fail closed there.
-                            return issued.sources().accounts.save(account);
-                          }));
+          .duringRead(() ->
+              issued
+                  .sources()
+                  .tx(() -> {
+                    var account =
+                        issued.sources().accounts.findById(hosting.accountId()).orElseThrow();
+                    account.setRole("admin");
+                    // Generic authority events lack the closed operation receipt required
+                    // by current-source readback, so this advance must fail closed there.
+                    return issued.sources().accounts.save(account);
+                  }));
       assertThatThrownBy(() -> resolve(failed, issued.account().getEmail(), OTP))
           .isExactlyInstanceOf(SourceEvidenceUnavailableException.class)
           .hasMessage("Account authority source evidence is unavailable or inconsistent");

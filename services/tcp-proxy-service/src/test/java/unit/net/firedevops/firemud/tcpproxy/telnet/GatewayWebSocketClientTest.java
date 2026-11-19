@@ -586,18 +586,17 @@ class GatewayWebSocketClientTest {
     HttpClient initialClient = (HttpClient) client.clientIdentity();
     CompletableFuture<Boolean> readiness = client.isReadyAsync();
     CompletableFuture<Void> completionObserver =
-        readiness.thenAccept(
-            ignored -> {
-              completionObserverEntered.countDown();
-              try {
-                if (!releaseCompletionObserver.await(5, TimeUnit.SECONDS)) {
-                  throw new AssertionError("completion observer was not released");
-                }
-              } catch (InterruptedException error) {
-                Thread.currentThread().interrupt();
-                throw new AssertionError("completion observer was interrupted", error);
-              }
-            });
+        readiness.thenAccept(ignored -> {
+          completionObserverEntered.countDown();
+          try {
+            if (!releaseCompletionObserver.await(5, TimeUnit.SECONDS)) {
+              throw new AssertionError("completion observer was not released");
+            }
+          } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("completion observer was interrupted", error);
+          }
+        });
 
     try {
       assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));

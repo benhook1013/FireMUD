@@ -132,12 +132,11 @@ class GameLogicIntakeTerminalReadGrpcTest {
       GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
       when(channelFactory.buildChannel(
               any(String.class), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
-          .thenAnswer(
-              invocation -> {
-                ManagedChannel channel = mock(ManagedChannel.class);
-                channels.add(channel);
-                return channel;
-              });
+          .thenAnswer(invocation -> {
+            ManagedChannel channel = mock(ManagedChannel.class);
+            channels.add(channel);
+            return channel;
+          });
       ClientHandle handle = kind.create(endpoints, tls, channelFactory);
       client = handle.client();
       handle.initialize().run();
@@ -372,10 +371,9 @@ class GameLogicIntakeTerminalReadGrpcTest {
     client.init();
     assertThatThrownBy(() -> client.read(large.request()))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.UNAUTHENTICATED));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.UNAUTHENTICATED));
     assertThat(headers).hasValue(0);
     assertThat(bodies).hasValue(0);
   }
@@ -445,13 +443,12 @@ class GameLogicIntakeTerminalReadGrpcTest {
   private static void assertSanitizedUnavailable(ThrowingCallable operation) {
     assertThatThrownBy(operation)
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure -> {
-              var status = Status.fromThrowable(failure);
-              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-              assertThat(status.getDescription()).isNull();
-              assertThat(failure.getCause()).isNull();
-            });
+        .satisfies(failure -> {
+          var status = Status.fromThrowable(failure);
+          assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+          assertThat(status.getDescription()).isNull();
+          assertThat(failure.getCause()).isNull();
+        });
   }
 
   /** These canonical bytes are deliberately synthetic transport evidence, not owner provenance. */

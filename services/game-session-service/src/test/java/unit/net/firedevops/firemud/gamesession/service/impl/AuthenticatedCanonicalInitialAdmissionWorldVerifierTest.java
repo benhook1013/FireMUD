@@ -60,14 +60,13 @@ class AuthenticatedCanonicalInitialAdmissionWorldVerifierTest {
     when(fixtures.worldClient.readIdentity(retained.holdRequest()))
         .thenReturn(retained.holdIdentity());
     when(fixtures.worldClient.readState(any(), any()))
-        .thenAnswer(
-            invocation ->
-                worldState(
-                    invocation.getArgument(0),
-                    invocation.getArgument(1),
-                    HoldStatus.PENDING,
-                    "ACTIVE",
-                    2L));
+        .thenAnswer(invocation ->
+            worldState(
+                invocation.getArgument(0),
+                invocation.getArgument(1),
+                HoldStatus.PENDING,
+                "ACTIVE",
+                2L));
 
     CanonicalInitialAdmissionWorldProof proof = fixtures.verifier.verify(expected);
 
@@ -218,11 +217,10 @@ class AuthenticatedCanonicalInitialAdmissionWorldVerifierTest {
     CanonicalInitialAdmissionIntentSnapshot retained = attachedSnapshot();
     when(fixtures.repository.read(NAMESPACE, "request-1")).thenReturn(Optional.of(retained));
     when(fixtures.worldClient.readIdentity(retained.holdRequest()))
-        .thenAnswer(
-            invocation -> {
-              TransactionSynchronizationManager.setActualTransactionActive(true);
-              return retained.holdIdentity();
-            });
+        .thenAnswer(invocation -> {
+          TransactionSynchronizationManager.setActualTransactionActive(true);
+          return retained.holdIdentity();
+        });
 
     assertThatThrownBy(() -> fixtures.verifier.verify(expectedRequest()))
         .isInstanceOf(IllegalStateException.class)
@@ -254,14 +252,13 @@ class AuthenticatedCanonicalInitialAdmissionWorldVerifierTest {
     when(fixtures.worldClient.readIdentity(retained.holdRequest()))
         .thenReturn(retained.holdIdentity());
     when(fixtures.worldClient.readState(any(), any()))
-        .thenAnswer(
-            invocation ->
-                worldState(
-                    invocation.getArgument(0),
-                    invocation.getArgument(1),
-                    status,
-                    lifecycleStatus,
-                    lifecycleEpoch));
+        .thenAnswer(invocation ->
+            worldState(
+                invocation.getArgument(0),
+                invocation.getArgument(1),
+                status,
+                lifecycleStatus,
+                lifecycleEpoch));
     return fixtures;
   }
 

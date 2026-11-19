@@ -113,10 +113,9 @@ class TenantIdentityGrpcServiceTest {
     GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(ACCOUNT_URI).orElseThrow();
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-        .run(
-            () ->
-                unconfigured.resolveFreshTenantCreation(
-                    request(REQUEST_ID.toString(), REQUEST_DIGEST), observer));
+        .run(() ->
+            unconfigured.resolveFreshTenantCreation(
+                request(REQUEST_ID.toString(), REQUEST_DIGEST), observer));
     assertThat(status(observer)).isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(repository);
   }

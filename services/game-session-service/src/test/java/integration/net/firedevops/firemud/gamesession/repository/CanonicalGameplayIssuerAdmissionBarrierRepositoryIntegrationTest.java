@@ -380,14 +380,13 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             target.closedValue().initializer());
     writePhysicalValue(target.key(), newerClosed);
     byte[] newerBytes = newerClosed.exactBytes();
-    assertThatThrownBy(
-            () ->
-                state
-                    .owner()
-                    .closeAndRead(
-                        cutoffOperationId,
-                        target.closedValue().tenantId(),
-                        target.closedValue().playableStateNamespaceId()))
+    assertThatThrownBy(() ->
+            state
+                .owner()
+                .closeAndRead(
+                    cutoffOperationId,
+                    target.closedValue().tenantId(),
+                    target.closedValue().playableStateNamespaceId()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(administratorCommands.hget(bytes(target.key()), bytes("payload")))
         .containsExactly(newerBytes);
@@ -892,43 +891,32 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             ? "gs_issuer_admission_cohort_guard"
             : "gs_issuer_admission_cutoff_target_guard";
     RuntimeException rollback = new IllegalStateException("Controlled corruption rollback");
-    assertThatThrownBy(
-            () ->
-                dsl.transaction(
-                    configuration -> {
-                      var transaction = DSL.using(configuration);
-                      transaction.execute(
-                          "ALTER TABLE "
-                              + EVIDENCE_PREFIX
-                              + family
-                              + " DISABLE TRIGGER "
-                              + trigger);
-                      assertThat(transaction.execute(mutation, cutoffOperationId)).isPositive();
-                      String expectedMessage =
-                          switch (corruption) {
-                            case "SOURCE_BYTES" ->
-                                "cohort source digest differs from its stored JSON";
-                            case "MISSING_SOURCE" ->
-                                "cohort no longer matches its frozen complete digest";
-                            case "MISSING_TARGET" ->
-                                "target set differs from its complete frozen cohort";
-                            case "TARGET_DIGEST" ->
-                                "target differs from its immutable captured source";
-                            default -> throw new IllegalArgumentException(corruption);
-                          };
-                      assertThatThrownBy(
-                              () ->
-                                  new CanonicalGameplayIssuerAdmissionControlRepository(transaction)
-                                      .verifyCurrentCutoffTarget(
-                                          transaction,
-                                          pending,
-                                          target.closedValue().tenantId(),
-                                          target.closedValue().playableStateNamespaceId(),
-                                          target.closedValue().exactBytes()))
-                          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-                          .hasMessageContaining(expectedMessage);
-                      throw rollback;
-                    }))
+    assertThatThrownBy(() ->
+            dsl.transaction(configuration -> {
+              var transaction = DSL.using(configuration);
+              transaction.execute(
+                  "ALTER TABLE " + EVIDENCE_PREFIX + family + " DISABLE TRIGGER " + trigger);
+              assertThat(transaction.execute(mutation, cutoffOperationId)).isPositive();
+              String expectedMessage =
+                  switch (corruption) {
+                    case "SOURCE_BYTES" -> "cohort source digest differs from its stored JSON";
+                    case "MISSING_SOURCE" -> "cohort no longer matches its frozen complete digest";
+                    case "MISSING_TARGET" -> "target set differs from its complete frozen cohort";
+                    case "TARGET_DIGEST" -> "target differs from its immutable captured source";
+                    default -> throw new IllegalArgumentException(corruption);
+                  };
+              assertThatThrownBy(() ->
+                      new CanonicalGameplayIssuerAdmissionControlRepository(transaction)
+                          .verifyCurrentCutoffTarget(
+                              transaction,
+                              pending,
+                              target.closedValue().tenantId(),
+                              target.closedValue().playableStateNamespaceId(),
+                              target.closedValue().exactBytes()))
+                  .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+                  .hasMessageContaining(expectedMessage);
+              throw rollback;
+            }))
         .isSameAs(rollback);
     assertThat(retainedEvidenceImage(dsl)).isEqualTo(before);
     assertThat(
@@ -1324,30 +1312,28 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     var dsl = state.fixture().dsl();
     var before = liveControlEvidenceImage(dsl);
     AtomicBoolean allocationExecuted = new AtomicBoolean();
-    assertThatThrownBy(
-            () ->
-                dsl.transaction(
-                    configuration -> {
-                      DSLContext transaction = DSL.using(configuration);
-                      assertThat(
-                              transaction.execute(
-                                  "UPDATE "
-                                      + EVIDENCE_PREFIX
-                                      + "epoch_counter"
-                                      + " SET last_live_barrier_epoch = last_live_barrier_epoch + 1"))
-                          .isEqualTo(1);
-                      assertThat(
-                              transaction
-                                  .fetchSingle(
-                                      "SELECT counter.last_live_barrier_epoch - control.live_barrier_epoch FROM "
-                                          + EVIDENCE_PREFIX
-                                          + "epoch_counter counter JOIN "
-                                          + EVIDENCE_PREFIX
-                                          + "control control USING (issuer_id)")
-                                  .get(0, BigInteger.class))
-                          .isEqualTo(ONE);
-                      allocationExecuted.set(true);
-                    }))
+    assertThatThrownBy(() ->
+            dsl.transaction(configuration -> {
+              DSLContext transaction = DSL.using(configuration);
+              assertThat(
+                      transaction.execute(
+                          "UPDATE "
+                              + EVIDENCE_PREFIX
+                              + "epoch_counter"
+                              + " SET last_live_barrier_epoch = last_live_barrier_epoch + 1"))
+                  .isEqualTo(1);
+              assertThat(
+                      transaction
+                          .fetchSingle(
+                              "SELECT counter.last_live_barrier_epoch - control.live_barrier_epoch FROM "
+                                  + EVIDENCE_PREFIX
+                                  + "epoch_counter counter JOIN "
+                                  + EVIDENCE_PREFIX
+                                  + "control control USING (issuer_id)")
+                          .get(0, BigInteger.class))
+                  .isEqualTo(ONE);
+              allocationExecuted.set(true);
+            }))
         .hasStackTraceContaining("Live issuer admission epoch counter and control");
     assertThat(allocationExecuted).isTrue();
     assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
@@ -1380,11 +1366,10 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
           }
           var before = liveControlEvidenceImage(dsl);
           var historyBefore = migrationHistoryImage(dsl);
-          assertThatThrownBy(
-                  () ->
-                      CanonicalGameplayAdmissionAbortCompositionFixture
-                          .upgradeWithDefaultGameSessionMigrations(
-                              MigrationVersion.fromVersion("1047.2"), dataSource))
+          assertThatThrownBy(() ->
+                  CanonicalGameplayAdmissionAbortCompositionFixture
+                      .upgradeWithDefaultGameSessionMigrations(
+                          MigrationVersion.fromVersion("1047.2"), dataSource))
               .hasStackTraceContaining("Live issuer admission epoch counter and control");
           assertThat(liveControlEvidenceImage(dsl)).isEqualTo(before);
           assertThat(migrationHistoryImage(dsl)).containsExactlyElementsOf(historyBefore);
@@ -1520,39 +1505,36 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     var dsl = state.fixture().dsl();
     var current = state.currentState().get();
     var anchor =
-        dsl.transactionResult(
-            configuration -> {
-              var transaction = org.jooq.impl.DSL.using(configuration);
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              return CanonicalGameplayIssuerBootstrapCoverageRepository
-                  .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
-            });
+        dsl.transactionResult(configuration -> {
+          var transaction = org.jooq.impl.DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          return CanonicalGameplayIssuerBootstrapCoverageRepository
+              .readInstalledAnchorForBindingPreparationInTransaction(transaction, current);
+        });
     AtomicBoolean sourceCalled = new AtomicBoolean();
     CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource source =
         () -> {
           sourceCalled.set(true);
           return current;
         };
-    dsl.transaction(
-        configuration -> {
-          var transaction = org.jooq.impl.DSL.using(configuration);
-          var repository =
-              new CanonicalGameplayIssuerAdmissionBarrierRepository(
-                  transaction,
-                  new CanonicalGameplayTenantGameplayTagRepository(
-                      transaction, state.fixture().target().targetNamespace(), 1),
-                  source);
-          assertThatThrownBy(
-                  () -> repository.readPreparedInitializer(state.fixture().originalOperationId()))
-              .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-              .hasMessageContaining("jOOQ transaction");
-          assertThatThrownBy(
-                  () ->
-                      new CanonicalGameplayIssuerAdmissionControlRepository(transaction)
-                          .installInitialOpen(anchor, source))
-              .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-              .hasMessageContaining("jOOQ transaction");
-        });
+    dsl.transaction(configuration -> {
+      var transaction = org.jooq.impl.DSL.using(configuration);
+      var repository =
+          new CanonicalGameplayIssuerAdmissionBarrierRepository(
+              transaction,
+              new CanonicalGameplayTenantGameplayTagRepository(
+                  transaction, state.fixture().target().targetNamespace(), 1),
+              source);
+      assertThatThrownBy(
+              () -> repository.readPreparedInitializer(state.fixture().originalOperationId()))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessageContaining("jOOQ transaction");
+      assertThatThrownBy(() ->
+              new CanonicalGameplayIssuerAdmissionControlRepository(transaction)
+                  .installInitialOpen(anchor, source))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessageContaining("jOOQ transaction");
+    });
     assertThat(sourceCalled).isFalse();
     assertThat(
             dsl.fetchCount(
@@ -1685,13 +1667,12 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
   private static CanonicalGameplayIssuerInstalledAnchor readInstalledAnchor(
       DSLContext dsl,
       CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState currentState) {
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          return CanonicalGameplayIssuerBootstrapCoverageRepository
-              .readInstalledAnchorForBindingPreparationInTransaction(transaction, currentState);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+      return CanonicalGameplayIssuerBootstrapCoverageRepository
+          .readInstalledAnchorForBindingPreparationInTransaction(transaction, currentState);
+    });
   }
 
   private static List<String> migrationHistoryImage(DSLContext dsl) {

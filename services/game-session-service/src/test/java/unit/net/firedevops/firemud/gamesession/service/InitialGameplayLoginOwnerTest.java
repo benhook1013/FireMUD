@@ -131,20 +131,18 @@ class InitialGameplayLoginOwnerTest {
     var success = successfulOutcome();
     var outcome = success.outcome();
     var value =
-        outcome.withOwnedPrivateResult(
-            result -> {
-              assertThat(result).isSameAs(success.result());
-              assertThatThrownBy(outcome::close).isInstanceOf(IllegalStateException.class);
-              assertThatThrownBy(result::close).isInstanceOf(IllegalStateException.class);
-              assertThat(result.compactJwtBytes()).isNotEmpty();
-              assertThatThrownBy(outcome::takePrivateResult)
-                  .isInstanceOf(IllegalStateException.class);
-              assertThatThrownBy(outcome::abandonOriginalAfterCustodyLoss)
-                  .isInstanceOf(IllegalStateException.class);
-              assertThatThrownBy(() -> outcome.withOwnedPrivateResult(nested -> true))
-                  .isInstanceOf(IllegalStateException.class);
-              return "non-admitting";
-            });
+        outcome.withOwnedPrivateResult(result -> {
+          assertThat(result).isSameAs(success.result());
+          assertThatThrownBy(outcome::close).isInstanceOf(IllegalStateException.class);
+          assertThatThrownBy(result::close).isInstanceOf(IllegalStateException.class);
+          assertThat(result.compactJwtBytes()).isNotEmpty();
+          assertThatThrownBy(outcome::takePrivateResult).isInstanceOf(IllegalStateException.class);
+          assertThatThrownBy(outcome::abandonOriginalAfterCustodyLoss)
+              .isInstanceOf(IllegalStateException.class);
+          assertThatThrownBy(() -> outcome.withOwnedPrivateResult(nested -> true))
+              .isInstanceOf(IllegalStateException.class);
+          return "non-admitting";
+        });
     assertThat(value).isEqualTo("non-admitting");
     assertThat(success.result().compactJwtBytes()).isNotEmpty();
     verify(success.fixture().cleanup, never()).abandonAndRetire(any());
@@ -160,12 +158,10 @@ class InitialGameplayLoginOwnerTest {
   void callbackFailureReleasesBorrowWithoutTransferringOrRetiringTheResult() {
     var success = successfulOutcome();
     var outcome = success.outcome();
-    assertThatThrownBy(
-            () ->
-                outcome.withOwnedPrivateResult(
-                    result -> {
-                      throw new IllegalStateException("controlled callback failure");
-                    }))
+    assertThatThrownBy(() ->
+            outcome.withOwnedPrivateResult(result -> {
+              throw new IllegalStateException("controlled callback failure");
+            }))
         .hasMessage("controlled callback failure");
     assertThat(outcome.<Boolean>withOwnedPrivateResult(result -> result == success.result()))
         .isTrue();
@@ -185,28 +181,25 @@ class InitialGameplayLoginOwnerTest {
     var closing = new CountDownLatch(1);
     try (var executor = Executors.newFixedThreadPool(2)) {
       var borrowed =
-          executor.submit(
-              () ->
-                  outcome.withOwnedPrivateResult(
-                      result -> {
-                        entered.countDown();
-                        try {
-                          if (!release.await(5, TimeUnit.SECONDS))
-                            throw new IllegalStateException("test timeout");
-                        } catch (InterruptedException interrupted) {
-                          Thread.currentThread().interrupt();
-                          throw new IllegalStateException(interrupted);
-                        }
-                        return result == success.result();
-                      }));
+          executor.submit(() ->
+              outcome.withOwnedPrivateResult(result -> {
+                entered.countDown();
+                try {
+                  if (!release.await(5, TimeUnit.SECONDS))
+                    throw new IllegalStateException("test timeout");
+                } catch (InterruptedException interrupted) {
+                  Thread.currentThread().interrupt();
+                  throw new IllegalStateException(interrupted);
+                }
+                return result == success.result();
+              }));
       try {
         assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
         var closed =
-            executor.submit(
-                () -> {
-                  closing.countDown();
-                  outcome.close();
-                });
+            executor.submit(() -> {
+              closing.countDown();
+              outcome.close();
+            });
         assertThat(closing.await(5, TimeUnit.SECONDS)).isTrue();
         assertThatThrownBy(() -> closed.get(100, TimeUnit.MILLISECONDS))
             .isInstanceOf(TimeoutException.class);
@@ -234,31 +227,28 @@ class InitialGameplayLoginOwnerTest {
     byte[] expected = success.result().compactJwtBytes();
     try (var executor = Executors.newFixedThreadPool(2)) {
       var borrowed =
-          executor.submit(
-              () ->
-                  outcome.withOwnedPrivateResult(
-                      result -> {
-                        assertThat(result).isSameAs(success.result());
-                        entered.countDown();
-                        await(release);
-                        assertThat(result.compactJwtBytes()).containsExactly(expected);
-                        return true;
-                      }));
+          executor.submit(() ->
+              outcome.withOwnedPrivateResult(result -> {
+                assertThat(result).isSameAs(success.result());
+                entered.countDown();
+                await(release);
+                assertThat(result.compactJwtBytes()).containsExactly(expected);
+                return true;
+              }));
       try {
         assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
         var mutation =
-            executor.submit(
-                () -> {
-                  lifecycleThread.set(Thread.currentThread());
-                  return switch (operation) {
-                    case "transfer" -> outcome.takePrivateResult().orElseThrow();
-                    case "abandon" -> outcome.abandonOriginalAfterCustodyLoss();
-                    default -> {
-                      success.result().close();
-                      yield true;
-                    }
-                  };
-                });
+            executor.submit(() -> {
+              lifecycleThread.set(Thread.currentThread());
+              return switch (operation) {
+                case "transfer" -> outcome.takePrivateResult().orElseThrow();
+                case "abandon" -> outcome.abandonOriginalAfterCustodyLoss();
+                default -> {
+                  success.result().close();
+                  yield true;
+                }
+              };
+            });
         awaitWaiting(lifecycleThread);
         assertThatThrownBy(() -> outcome.withOwnedPrivateResult(result -> true))
             .isInstanceOf(IllegalStateException.class);
@@ -297,15 +287,14 @@ class InitialGameplayLoginOwnerTest {
     var accessed = new AtomicBoolean();
     try (var executor = Executors.newSingleThreadExecutor()) {
       when(success.fixture().cleanup.abandonAndRetire(outcome.coordinates()))
-          .thenAnswer(
-              call -> {
-                assertThatThrownBy(outcome::close).isInstanceOf(IllegalStateException.class);
-                accessed.set(
-                    executor
-                        .submit(() -> outcome.custodyLossCleanup().isEmpty())
-                        .get(5, TimeUnit.SECONDS));
-                return held(outcome.coordinates());
-              });
+          .thenAnswer(call -> {
+            assertThatThrownBy(outcome::close).isInstanceOf(IllegalStateException.class);
+            accessed.set(
+                executor
+                    .submit(() -> outcome.custodyLossCleanup().isEmpty())
+                    .get(5, TimeUnit.SECONDS));
+            return held(outcome.coordinates());
+          });
       outcome.close();
       assertThat(accessed).isTrue();
       assertThat(outcome.custodyLossCleanup().orElseThrow().status())
@@ -346,18 +335,16 @@ class InitialGameplayLoginOwnerTest {
     var success = successfulOutcome();
     success
         .result()
-        .withLivePrivateResult(
-            result -> {
-              assertThatThrownBy(success.outcome()::close)
-                  .isInstanceOf(IllegalStateException.class);
-              assertThatThrownBy(success.outcome()::takePrivateResult)
-                  .isInstanceOf(IllegalStateException.class);
-              assertThatThrownBy(success.outcome()::abandonOriginalAfterCustodyLoss)
-                  .isInstanceOf(IllegalStateException.class);
-              assertThat(result.compactJwtBytes()).isNotEmpty();
-              verify(success.fixture().cleanup, never()).abandonAndRetire(any());
-              return true;
-            });
+        .withLivePrivateResult(result -> {
+          assertThatThrownBy(success.outcome()::close).isInstanceOf(IllegalStateException.class);
+          assertThatThrownBy(success.outcome()::takePrivateResult)
+              .isInstanceOf(IllegalStateException.class);
+          assertThatThrownBy(success.outcome()::abandonOriginalAfterCustodyLoss)
+              .isInstanceOf(IllegalStateException.class);
+          assertThat(result.compactJwtBytes()).isNotEmpty();
+          verify(success.fixture().cleanup, never()).abandonAndRetire(any());
+          return true;
+        });
     assertThat(
             success.outcome().<Boolean>withOwnedPrivateResult(result -> result == success.result()))
         .isTrue();
@@ -382,43 +369,40 @@ class InitialGameplayLoginOwnerTest {
     // Daemon workers keep this logical-deadlock regression bounded even if the cycle returns.
     Thread.ofPlatform()
         .daemon()
-        .start(
-            () -> {
-              try {
-                borrowed.complete(
-                    success
-                        .result()
-                        .withLivePrivateResult(
-                            result -> {
-                              entered.countDown();
-                              await(attemptLifecycle);
-                              assertThatThrownBy(success.outcome()::close)
-                                  .isInstanceOf(IllegalStateException.class);
-                              assertThatThrownBy(success.outcome()::takePrivateResult)
-                                  .isInstanceOf(IllegalStateException.class);
-                              assertThatThrownBy(success.outcome()::abandonOriginalAfterCustodyLoss)
-                                  .isInstanceOf(IllegalStateException.class);
-                              assertThat(result.compactJwtBytes()).isNotEmpty();
-                              return true;
-                            }));
-              } catch (Throwable failure) {
-                borrowed.completeExceptionally(failure);
-              }
-            });
+        .start(() -> {
+          try {
+            borrowed.complete(
+                success
+                    .result()
+                    .withLivePrivateResult(result -> {
+                      entered.countDown();
+                      await(attemptLifecycle);
+                      assertThatThrownBy(success.outcome()::close)
+                          .isInstanceOf(IllegalStateException.class);
+                      assertThatThrownBy(success.outcome()::takePrivateResult)
+                          .isInstanceOf(IllegalStateException.class);
+                      assertThatThrownBy(success.outcome()::abandonOriginalAfterCustodyLoss)
+                          .isInstanceOf(IllegalStateException.class);
+                      assertThat(result.compactJwtBytes()).isNotEmpty();
+                      return true;
+                    }));
+          } catch (Throwable failure) {
+            borrowed.completeExceptionally(failure);
+          }
+        });
     assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
     Thread.ofPlatform()
         .daemon()
-        .start(
-            () -> {
-              closingThread.set(Thread.currentThread());
-              try {
-                if (transferred) success.outcome().abandonOriginalAfterCustodyLoss();
-                else success.outcome().close();
-                closed.complete(null);
-              } catch (Throwable failure) {
-                closed.completeExceptionally(failure);
-              }
-            });
+        .start(() -> {
+          closingThread.set(Thread.currentThread());
+          try {
+            if (transferred) success.outcome().abandonOriginalAfterCustodyLoss();
+            else success.outcome().close();
+            closed.complete(null);
+          } catch (Throwable failure) {
+            closed.completeExceptionally(failure);
+          }
+        });
     try {
       awaitWaiting(closingThread);
       assertThat(closed).isNotDone();
@@ -456,21 +440,18 @@ class InitialGameplayLoginOwnerTest {
     var credentials = presentation(secret);
     var result = new AtomicReference<CanonicalGameplayLoginResult>();
     when(fixture.account.authenticate(any(AuthenticateRequest.class), any()))
-        .thenAnswer(
-            invocation -> {
-              fixture.accountRequest = invocation.getArgument(0);
-              var retained = spy(controlledPrivateResult(fixture.coordinates));
-              result.set(retained);
-              return retained;
-            });
+        .thenAnswer(invocation -> {
+          fixture.accountRequest = invocation.getArgument(0);
+          var retained = spy(controlledPrivateResult(fixture.coordinates));
+          result.set(retained);
+          return retained;
+        });
     when(fixture.contexts.createPending(any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
+        .thenAnswer(invocation ->
+            Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
     when(fixture.cleanup.recordVerifiedResult(any(), any()))
-        .thenAnswer(
-            invocation ->
-                snapshotWithWitness(invocation.getArgument(0), invocation.getArgument(1)));
+        .thenAnswer(invocation ->
+            snapshotWithWitness(invocation.getArgument(0), invocation.getArgument(1)));
     when(fixture.contexts.install(any(), any()))
         .thenAnswer(invocation -> Optional.of(installed(invocation.getArgument(0))));
     when(fixture.cleanup.abandonAndRetire(any()))
@@ -519,9 +500,8 @@ class InitialGameplayLoginOwnerTest {
     var fixture = new Fixture();
     var secret = "transient-secret".toCharArray();
     when(fixture.contexts.createPending(any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
+        .thenAnswer(invocation ->
+            Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
     when(fixture.account.authenticate(any(AuthenticateRequest.class), any()))
         .thenThrow(Status.UNAVAILABLE.asRuntimeException());
     when(fixture.cleanup.abandonAndRetire(any()))
@@ -541,9 +521,8 @@ class InitialGameplayLoginOwnerTest {
     var fixture = new Fixture();
     var credentials = presentation("transient-secret".toCharArray());
     when(fixture.contexts.createPending(any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
+        .thenAnswer(invocation ->
+            Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
     when(fixture.account.authenticate(any(AuthenticateRequest.class), any()))
         .thenThrow(Status.CANCELLED.asRuntimeException());
     when(fixture.cleanup.abandonAndRetire(any()))
@@ -561,15 +540,13 @@ class InitialGameplayLoginOwnerTest {
     var fixture = new Fixture();
     var credentials = presentation("transient-secret".toCharArray());
     when(fixture.contexts.createPending(any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
+        .thenAnswer(invocation ->
+            Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
     when(fixture.account.authenticate(any(AuthenticateRequest.class), any()))
-        .thenAnswer(
-            invocation -> {
-              credentials.close();
-              throw Status.CANCELLED.asRuntimeException();
-            });
+        .thenAnswer(invocation -> {
+          credentials.close();
+          throw Status.CANCELLED.asRuntimeException();
+        });
     when(fixture.cleanup.abandonAndRetire(any()))
         .thenAnswer(invocation -> held(invocation.getArgument(0)));
 
@@ -587,19 +564,16 @@ class InitialGameplayLoginOwnerTest {
     var result = mock(CanonicalGameplayLoginResult.class);
     when(result.evidence()).thenAnswer(invocation -> evidence(fixture.coordinates));
     when(fixture.contexts.createPending(any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
+        .thenAnswer(invocation ->
+            Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
     when(fixture.account.authenticate(any(AuthenticateRequest.class), any()))
-        .thenAnswer(
-            invocation -> {
-              credentials.close();
-              return result;
-            });
+        .thenAnswer(invocation -> {
+          credentials.close();
+          return result;
+        });
     when(fixture.cleanup.recordVerifiedResult(any(), any()))
-        .thenAnswer(
-            invocation ->
-                snapshotWithWitness(invocation.getArgument(0), invocation.getArgument(1)));
+        .thenAnswer(invocation ->
+            snapshotWithWitness(invocation.getArgument(0), invocation.getArgument(1)));
     when(fixture.cleanup.abandonAndRetire(any()))
         .thenAnswer(invocation -> held(invocation.getArgument(0)));
 
@@ -621,9 +595,8 @@ class InitialGameplayLoginOwnerTest {
     var result = mock(CanonicalGameplayLoginResult.class);
     when(result.evidence()).thenAnswer(invocation -> evidence(fixture.coordinates));
     when(fixture.contexts.createPending(any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
+        .thenAnswer(invocation ->
+            Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
     when(fixture.account.authenticate(any(AuthenticateRequest.class), any())).thenReturn(result);
     when(fixture.cleanup.recordVerifiedResult(any(), any()))
         .thenThrow(new IllegalStateException("journal readback unavailable"));
@@ -647,14 +620,12 @@ class InitialGameplayLoginOwnerTest {
     var result = mock(CanonicalGameplayLoginResult.class);
     when(result.evidence()).thenAnswer(invocation -> evidence(fixture.coordinates));
     when(fixture.contexts.createPending(any()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
+        .thenAnswer(invocation ->
+            Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
     when(fixture.account.authenticate(any(AuthenticateRequest.class), any())).thenReturn(result);
     when(fixture.cleanup.recordVerifiedResult(any(), any()))
-        .thenAnswer(
-            invocation ->
-                snapshotWithWitness(invocation.getArgument(0), invocation.getArgument(1)));
+        .thenAnswer(invocation ->
+            snapshotWithWitness(invocation.getArgument(0), invocation.getArgument(1)));
     when(fixture.contexts.install(any(), any())).thenReturn(Optional.empty());
     when(fixture.cleanup.abandonAndRetire(any()))
         .thenAnswer(invocation -> held(invocation.getArgument(0)));
@@ -742,17 +713,15 @@ class InitialGameplayLoginOwnerTest {
 
     private Fixture() {
       when(cleanup.reserve(any()))
-          .thenAnswer(
-              invocation -> {
-                coordinates = invocation.getArgument(0);
-                return snapshot(coordinates);
-              });
+          .thenAnswer(invocation -> {
+            coordinates = invocation.getArgument(0);
+            return snapshot(coordinates);
+          });
       when(account.authenticate(any(AuthenticateRequest.class), any()))
-          .thenAnswer(
-              invocation -> {
-                accountRequest = invocation.getArgument(0);
-                return null;
-              });
+          .thenAnswer(invocation -> {
+            accountRequest = invocation.getArgument(0);
+            return null;
+          });
     }
   }
 

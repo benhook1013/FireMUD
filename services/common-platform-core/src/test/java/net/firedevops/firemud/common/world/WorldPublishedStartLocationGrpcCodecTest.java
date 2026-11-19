@@ -45,49 +45,43 @@ class WorldPublishedStartLocationGrpcCodecTest {
     ReadWorldPublishedStartLocationResponse response =
         WorldPublishedStartLocationGrpcCodec.toResponse(evidence.request(), evidence);
 
-    assertThatThrownBy(
-            () ->
-                WorldPublishedStartLocationGrpcCodec.fromResponse(
-                    evidence.request(),
-                    response.toBuilder()
-                        .setPublicationFence(
-                            uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd").toString())
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedStartLocationGrpcCodec.fromResponse(
+                evidence.request(),
+                response.toBuilder()
+                    .setPublicationFence(uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd").toString())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed exact selection");
 
-    assertThatThrownBy(
-            () ->
-                WorldPublishedStartLocationGrpcCodec.fromResponse(
-                    evidence.request(),
-                    response.toBuilder()
-                        .setSelectorReceiptBytes(ByteString.copyFrom(new byte[] {1}))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedStartLocationGrpcCodec.fromResponse(
+                evidence.request(),
+                response.toBuilder()
+                    .setSelectorReceiptBytes(ByteString.copyFrom(new byte[] {1}))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldPublishedStartLocationGrpcCodec.fromResponse(
-                    evidence.request(),
-                    response.toBuilder()
-                        .setOriginalAccountBindingBytes(ByteString.copyFrom(new byte[] {1}))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedStartLocationGrpcCodec.fromResponse(
+                evidence.request(),
+                response.toBuilder()
+                    .setOriginalAccountBindingBytes(ByteString.copyFrom(new byte[] {1}))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldPublishedStartLocationGrpcCodec.fromResponse(
-                    evidence.request(),
-                    response.toBuilder()
-                        .setAppliedResultBytes(ByteString.copyFrom(new byte[] {1}))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldPublishedStartLocationGrpcCodec.fromResponse(
+                evidence.request(),
+                response.toBuilder()
+                    .setAppliedResultBytes(ByteString.copyFrom(new byte[] {1}))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedStartLocationEvidence(
-                    evidence.request(),
-                    evidence.selectorReceiptBytes(),
-                    evidence.originalAccountBindingBytes(),
-                    new byte[] {1}))
+    assertThatThrownBy(() ->
+            new WorldPublishedStartLocationEvidence(
+                evidence.request(),
+                evidence.selectorReceiptBytes(),
+                evidence.originalAccountBindingBytes(),
+                new byte[] {1}))
         .isInstanceOf(IllegalArgumentException.class);
 
     var changedIntake =
@@ -105,13 +99,12 @@ class WorldPublishedStartLocationGrpcCodecTest {
             evidence.request().contentDigest(),
             evidence.request().digestSchemaVersion(),
             evidence.request().worldAffectedTuples());
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedStartLocationEvidence(
-                    changedIntake,
-                    evidence.selectorReceiptBytes(),
-                    evidence.originalAccountBindingBytes(),
-                    evidence.appliedResultBytes()))
+    assertThatThrownBy(() ->
+            new WorldPublishedStartLocationEvidence(
+                changedIntake,
+                evidence.selectorReceiptBytes(),
+                evidence.originalAccountBindingBytes(),
+                evidence.appliedResultBytes()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("intake request");
   }
@@ -167,15 +160,14 @@ class WorldPublishedStartLocationGrpcCodecTest {
 
   private static void assertInvalidExpectedEpoch(
       WorldPublishedStartLocationEvidence.OwnedAffectedTuple template, String expectedEpoch) {
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                    template.owner(),
-                    template.aggregateType(),
-                    template.aggregateId(),
-                    template.scopeType(),
-                    template.scopeId(),
-                    expectedEpoch))
+    assertThatThrownBy(() ->
+            new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                template.owner(),
+                template.aggregateType(),
+                template.aggregateId(),
+                template.scopeType(),
+                template.scopeId(),
+                expectedEpoch))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical non-negative decimal");
   }

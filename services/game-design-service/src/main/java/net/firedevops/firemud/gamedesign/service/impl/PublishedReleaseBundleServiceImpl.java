@@ -116,10 +116,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     var identitySource =
         versionRepository
             .findByTenantIdAndId(version.tenantId(), version.id())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "published release canonical identity source missing"));
+            .orElseThrow(() ->
+                new IllegalStateException("published release canonical identity source missing"));
     UUID canonicalTenantId = identitySource.getCanonicalTenantId();
     UUID canonicalVersionId = identitySource.getCanonicalVersionId();
     if (!version.id().equals(identitySource.getId())

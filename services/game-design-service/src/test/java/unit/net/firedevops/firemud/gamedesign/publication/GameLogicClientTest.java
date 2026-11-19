@@ -130,10 +130,8 @@ class GameLogicClientTest {
     assertThatThrownBy(
             () -> clientAndStub.client().getDraftDesignDigestForVersion(publication, receipt))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE));
+        .satisfies(failure ->
+            assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAVAILABLE));
     verify(clientAndStub.stub()).getDraftDesignDigest(any(GetDraftDesignDigestRequest.class));
   }
 
@@ -217,9 +215,8 @@ class GameLogicClientTest {
             publication.publishRequestId() + "-different");
     var clientAndStub = client(tlsDirectory);
 
-    assertThatThrownBy(
-            () ->
-                clientAndStub.client().getDraftDesignDigestForVersion(changedPublication, receipt))
+    assertThatThrownBy(() ->
+            clientAndStub.client().getDraftDesignDigestForVersion(changedPublication, receipt))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("differs from immutable selected Game Logic receipt");
     verifyNoInteractions(clientAndStub.stub());
@@ -303,11 +300,10 @@ class GameLogicClientTest {
     var clientAndStub = client(tlsDirectory);
     TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
-      assertThatThrownBy(
-              () ->
-                  clientAndStub
-                      .client()
-                      .getDraftDesignDigestForVersion(publicationBinding(receipt), receipt))
+      assertThatThrownBy(() ->
+              clientAndStub
+                  .client()
+                  .getDraftDesignDigestForVersion(publicationBinding(receipt), receipt))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("no ambient SQL transaction");
     } finally {
@@ -322,11 +318,10 @@ class GameLogicClientTest {
     var clientAndStub = client(tlsDirectory);
     TransactionSynchronizationManager.initSynchronization();
     try {
-      assertThatThrownBy(
-              () ->
-                  clientAndStub
-                      .client()
-                      .getDraftDesignDigestForVersion(publicationBinding(receipt), receipt))
+      assertThatThrownBy(() ->
+              clientAndStub
+                  .client()
+                  .getDraftDesignDigestForVersion(publicationBinding(receipt), receipt))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("no ambient SQL transaction");
     } finally {

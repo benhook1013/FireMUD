@@ -72,42 +72,40 @@ public final class AccountTenantCreationCurrentAuthorizationOwner {
     var environment = terms.captureCurrentEnvironmentBoundary();
     Authorization observed =
         Objects.requireNonNull(
-            transactions.execute(
-                status -> {
-                  Original original = read(binding);
-                  same(first, original);
-                  // Actual Account-first capture precedes issuer/issuance/source locking. No
-                  // network in SQL.
-                  var checked =
-                      AccountTenantCreationOwnerChecks.captureCurrent(
-                          capture,
-                          orders,
-                          original.intent,
-                          original.admitted,
-                          original.issuance,
-                          original.holder,
-                          environment,
-                          original.recent,
-                          accepted,
-                          AccountTenantCreationCurrentAuthorizationOwner::denied);
-                  Instant deadline =
-                      AccountTenantCreationOwnerChecks.currentValidBefore(
-                          original.admitted.binding(), checked.captured());
-                  Instant dispatchDeadline = Instant.ofEpochMilli(original.dispatchDeadline);
-                  if (dispatchDeadline.isBefore(deadline)) deadline = dispatchDeadline;
-                  long validBefore = deadline.toEpochMilli();
-                  requireTime(original, validBefore);
-                  return new Authorization(binding, validBefore);
-                }));
+            transactions.execute(status -> {
+              Original original = read(binding);
+              same(first, original);
+              // Actual Account-first capture precedes issuer/issuance/source locking. No
+              // network in SQL.
+              var checked =
+                  AccountTenantCreationOwnerChecks.captureCurrent(
+                      capture,
+                      orders,
+                      original.intent,
+                      original.admitted,
+                      original.issuance,
+                      original.holder,
+                      environment,
+                      original.recent,
+                      accepted,
+                      AccountTenantCreationCurrentAuthorizationOwner::denied);
+              Instant deadline =
+                  AccountTenantCreationOwnerChecks.currentValidBefore(
+                      original.admitted.binding(), checked.captured());
+              Instant dispatchDeadline = Instant.ofEpochMilli(original.dispatchDeadline);
+              if (dispatchDeadline.isBefore(deadline)) deadline = dispatchDeadline;
+              long validBefore = deadline.toEpochMilli();
+              requireTime(original, validBefore);
+              return new Authorization(binding, validBefore);
+            }));
     // Independently read the committed original and still-pending holder before transport reply.
     return Objects.requireNonNull(
-        transactions.execute(
-            status -> {
-              Original committed = read(binding);
-              same(first, committed);
-              requireTime(committed, observed.validBeforeEpochMillis());
-              return observed;
-            }));
+        transactions.execute(status -> {
+          Original committed = read(binding);
+          same(first, committed);
+          requireTime(committed, observed.validBeforeEpochMillis());
+          return observed;
+        }));
   }
 
   private Original read(Binding binding) {
@@ -196,13 +194,12 @@ public final class AccountTenantCreationCurrentAuthorizationOwner {
   private void requireOwnerTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw denied();
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED)
-            throw denied();
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED)
+        throw denied();
+    });
   }
 
   private static IllegalStateException denied() {

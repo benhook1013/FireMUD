@@ -741,24 +741,22 @@ class RuntimeProfileServiceTest {
   @Test
   void canonicalTcpProxyServicePassesForPublicAndPrivateModes() {
     var publicPlan = planner.plan("pr-42");
-    assertDoesNotThrow(
-        () ->
-            validateTcpProxyService(
-                publicPlan,
-                previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
-                tcpProxyService("NodePort", 32002)));
+    assertDoesNotThrow(() ->
+        validateTcpProxyService(
+            publicPlan,
+            previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
+            tcpProxyService("NodePort", 32002)));
 
     var privatePlan = planner.plan("pr-42");
-    assertDoesNotThrow(
-        () ->
-            validateTcpProxyService(
-                privatePlan,
-                previewRuntimeNamespace(
-                    "a".repeat(40),
-                    "a".repeat(40),
-                    null,
-                    HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE),
-                tcpProxyService("ClusterIP", null)));
+    assertDoesNotThrow(() ->
+        validateTcpProxyService(
+            privatePlan,
+            previewRuntimeNamespace(
+                "a".repeat(40),
+                "a".repeat(40),
+                null,
+                HostedIdentityContract.PRIVATE_PREVIEW_EXPOSURE_MODE),
+            tcpProxyService("ClusterIP", null)));
   }
 
   @Test
@@ -770,12 +768,11 @@ class RuntimeProfileServiceTest {
             32002,
             new ServicePortBuilder().withName("tcp-2323").withPort(2323).build());
 
-    assertDoesNotThrow(
-        () ->
-            validateTcpProxyService(
-                plan,
-                previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
-                defaultedPortService));
+    assertDoesNotThrow(() ->
+        validateTcpProxyService(
+            plan,
+            previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
+            defaultedPortService));
   }
 
   @Test

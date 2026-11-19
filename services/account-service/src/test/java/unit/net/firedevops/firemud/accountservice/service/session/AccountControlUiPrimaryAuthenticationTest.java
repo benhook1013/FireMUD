@@ -89,10 +89,9 @@ class AccountControlUiPrimaryAuthenticationTest {
             () -> primary.authenticateControlUiPrimaryIdentity(account.getEmail(), "wrong-secret"))
         .isInstanceOf(RuntimeException.class);
     account.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
-    assertThatThrownBy(
-            () ->
-                primary.authenticateControlUiPrimaryIdentity(
-                    account.getEmail(), "test-only-primary-secret"))
+    assertThatThrownBy(() ->
+            primary.authenticateControlUiPrimaryIdentity(
+                account.getEmail(), "test-only-primary-secret"))
         .isInstanceOf(RuntimeException.class);
   }
 
@@ -139,10 +138,9 @@ class AccountControlUiPrimaryAuthenticationTest {
                 "USER",
                 false));
 
-    assertThatThrownBy(
-            () ->
-                primary.authenticateControlUiPrimaryIdentity(
-                    account.getEmail(), "test-only-primary-secret"))
+    assertThatThrownBy(() ->
+            primary.authenticateControlUiPrimaryIdentity(
+                account.getEmail(), "test-only-primary-secret"))
         .isExactlyInstanceOf(AuthenticationException.class);
     assertThat(
             primary
@@ -159,10 +157,9 @@ class AccountControlUiPrimaryAuthenticationTest {
     current.setEmail("reassigned@example.test");
     select(account, current);
 
-    assertThatThrownBy(
-            () ->
-                primary.authenticateControlUiPrimaryIdentity(
-                    account.getEmail(), "test-only-primary-secret"))
+    assertThatThrownBy(() ->
+            primary.authenticateControlUiPrimaryIdentity(
+                account.getEmail(), "test-only-primary-secret"))
         .isExactlyInstanceOf(AuthenticationException.class);
     verify(mapper, never()).toDto(current);
   }
@@ -216,10 +213,8 @@ class AccountControlUiPrimaryAuthenticationTest {
     when(accounts.findByUsername(account.getUsername())).thenReturn(Optional.of(account));
     when(accounts.findByIdForUpdate(account.getId())).thenReturn(Optional.of(current));
 
-    assertThatThrownBy(
-            () ->
-                primary.authenticateControlUiPrimaryIdentity(
-                    account.getUsername(), "test-only-otp"))
+    assertThatThrownBy(() ->
+            primary.authenticateControlUiPrimaryIdentity(account.getUsername(), "test-only-otp"))
         .isExactlyInstanceOf(AuthenticationException.class);
     verifyPrimaryAuthenticationDidNotStart();
   }
@@ -250,17 +245,15 @@ class AccountControlUiPrimaryAuthenticationTest {
   @Test
   void missingAndReadOnlyTransactionDenyBeforeCredentialAccess() {
     TransactionSynchronizationManager.clear();
-    assertThatThrownBy(
-            () ->
-                primary.authenticateControlUiPrimaryIdentity(
-                    account.getEmail(), "test-only-primary-secret"))
+    assertThatThrownBy(() ->
+            primary.authenticateControlUiPrimaryIdentity(
+                account.getEmail(), "test-only-primary-secret"))
         .isInstanceOf(IllegalStateException.class);
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
-    assertThatThrownBy(
-            () ->
-                primary.authenticateControlUiPrimaryIdentity(
-                    account.getEmail(), "test-only-primary-secret"))
+    assertThatThrownBy(() ->
+            primary.authenticateControlUiPrimaryIdentity(
+                account.getEmail(), "test-only-primary-secret"))
         .isInstanceOf(IllegalStateException.class);
   }
 

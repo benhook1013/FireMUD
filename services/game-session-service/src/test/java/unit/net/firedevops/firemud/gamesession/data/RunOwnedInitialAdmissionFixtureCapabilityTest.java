@@ -96,13 +96,12 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertInvalid(
         validJson().replace("\"stateScope\": \"SHARED\"", "\"stateScope\": \"ISOLATED\""));
     assertInvalid(validJson().replace(LEAF_SHA, "c".repeat(64)));
-    assertThatThrownBy(
-            () ->
-                RunOwnedInitialAdmissionFixtureCapability.parseAndValidate(
-                    validJson().getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    RUN_ID,
-                    "other-project",
-                    pins()))
+    assertThatThrownBy(() ->
+            RunOwnedInitialAdmissionFixtureCapability.parseAndValidate(
+                validJson().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                RUN_ID,
+                "other-project",
+                pins()))
         .isInstanceOf(RunOwnedInitialAdmissionFixtureCapability.InvalidCapabilityException.class);
   }
 
@@ -578,23 +577,23 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
                 seal.requestDigest(),
                 seal.evidenceDigest());
     return """
-        {%n\
-          "schema": "%s",%n\
-          "runId": "%s",%n\
-          "composeProjectName": "%s",%n\
-          "fixtureOperationId": "%s",%n\
-          "ownerService": "%s",%n\
-          "gameSessionUriSan": "%s",%n\
-          "gameSessionLeafSha256": "%s",%n\
-          "caCertificateSha256": "%s",%n\
-          "worldManagementUriSan": "%s",%n\
-          "worldManagementLeafSha256": "%s",%n\
-          "sourceEvidence": %s,%n\
-          "launchReadEvidence": %s,%n\
-          "creationEvidence": %s,%n\
-          "fixturePolicySeal": %s%n\
-        }%n\
-        """
+    {%n\
+      "schema": "%s",%n\
+      "runId": "%s",%n\
+      "composeProjectName": "%s",%n\
+      "fixtureOperationId": "%s",%n\
+      "ownerService": "%s",%n\
+      "gameSessionUriSan": "%s",%n\
+      "gameSessionLeafSha256": "%s",%n\
+      "caCertificateSha256": "%s",%n\
+      "worldManagementUriSan": "%s",%n\
+      "worldManagementLeafSha256": "%s",%n\
+      "sourceEvidence": %s,%n\
+      "launchReadEvidence": %s,%n\
+      "creationEvidence": %s,%n\
+      "fixturePolicySeal": %s%n\
+    }%n\
+    """
         .formatted(
             RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_SCHEMA,
             RUN_ID,
@@ -715,8 +714,8 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
       net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState,
       LaunchDescriptor descriptor) {
     return """
-        {"schema":"%s","gameTemplateId":17,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"}%n\
-        """
+    {"schema":"%s","gameTemplateId":17,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"}%n\
+    """
         .formatted(
             RunOwnedInitialAdmissionLaunchEvidence.SCHEMA,
             encode(bundle.toByteArray()),
@@ -826,31 +825,31 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
 
   private static String validJson() {
     return """
-        {%n\
-          "schema": "%s",%n\
-          "runId": "%s",%n\
-          "composeProjectName": "%s",%n\
-          "operationId": "%s",%n\
-          "tenantId": 7,%n\
-          "gameTemplateId": 17,%n\
-          "ownerAccountId": 27,%n\
-          "worldSlug": "demo",%n\
-          "worldDisplayName": "Demo World",%n\
-          "realmSlug": "production",%n\
-          "realmDisplayName": "Live Realm",%n\
-          "visible": true,%n\
-          "publicProductionRealm": true,%n\
-          "requiresCharacterSelection": false,%n\
-          "stateScope": "SHARED",%n\
-          "characterCreationPolicy": "ALLOW_NEW",%n\
-          "gameSessionLeafSha256": "%s",%n\
-          "gameSessionUriSan": "%s",%n\
-          "caCertificateSha256": "%s",%n\
-          "worldManagementUriSan": "%s",%n\
-          "worldManagementLeafSha256": "%s",%n\
-          "claimDigest": "%s"%n\
-        }%n\
-        """
+    {%n\
+      "schema": "%s",%n\
+      "runId": "%s",%n\
+      "composeProjectName": "%s",%n\
+      "operationId": "%s",%n\
+      "tenantId": 7,%n\
+      "gameTemplateId": 17,%n\
+      "ownerAccountId": 27,%n\
+      "worldSlug": "demo",%n\
+      "worldDisplayName": "Demo World",%n\
+      "realmSlug": "production",%n\
+      "realmDisplayName": "Live Realm",%n\
+      "visible": true,%n\
+      "publicProductionRealm": true,%n\
+      "requiresCharacterSelection": false,%n\
+      "stateScope": "SHARED",%n\
+      "characterCreationPolicy": "ALLOW_NEW",%n\
+      "gameSessionLeafSha256": "%s",%n\
+      "gameSessionUriSan": "%s",%n\
+      "caCertificateSha256": "%s",%n\
+      "worldManagementUriSan": "%s",%n\
+      "worldManagementLeafSha256": "%s",%n\
+      "claimDigest": "%s"%n\
+    }%n\
+    """
         .formatted(
             RunOwnedInitialAdmissionFixtureCapability.CAPABILITY_SCHEMA,
             RUN_ID,
@@ -879,13 +878,12 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
   }
 
   private static void assertInvalid(String json) {
-    assertThatThrownBy(
-            () ->
-                RunOwnedInitialAdmissionFixtureCapability.parseAndValidate(
-                    json.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    RUN_ID,
-                    PROJECT_NAME,
-                    pins()))
+    assertThatThrownBy(() ->
+            RunOwnedInitialAdmissionFixtureCapability.parseAndValidate(
+                json.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                RUN_ID,
+                PROJECT_NAME,
+                pins()))
         .isInstanceOf(RunOwnedInitialAdmissionFixtureCapability.InvalidCapabilityException.class);
   }
 
@@ -895,19 +893,17 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
 
   private static void assertInvalidSourceReceipt(Supplier<String> receiptJson) {
     byte[] bytes = receiptJson.get().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    assertThatThrownBy(
-            () ->
-                RunOwnedInitialAdmissionFixtureCapability.parseSourceReceipt(
-                    bytes, RUN_ID, PROJECT_NAME, capability(), pins()))
+    assertThatThrownBy(() ->
+            RunOwnedInitialAdmissionFixtureCapability.parseSourceReceipt(
+                bytes, RUN_ID, PROJECT_NAME, capability(), pins()))
         .isInstanceOf(
             RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
   }
 
   private static void assertInvalidSourceReceiptBytes(byte[] bytes) {
-    assertThatThrownBy(
-            () ->
-                RunOwnedInitialAdmissionFixtureCapability.parseSourceReceipt(
-                    bytes, RUN_ID, PROJECT_NAME, capability(), pins()))
+    assertThatThrownBy(() ->
+            RunOwnedInitialAdmissionFixtureCapability.parseSourceReceipt(
+                bytes, RUN_ID, PROJECT_NAME, capability(), pins()))
         .isInstanceOf(
             RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
   }
@@ -926,11 +922,10 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
         Path displaced,
         SeekableByteChannel openedChannel) {
       mockedFiles
-          .when(
-              () ->
-                  Files.newByteChannel(
-                      org.mockito.ArgumentMatchers.eq(receipt),
-                      org.mockito.ArgumentMatchers.any(java.nio.file.OpenOption[].class)))
+          .when(() ->
+              Files.newByteChannel(
+                  org.mockito.ArgumentMatchers.eq(receipt),
+                  org.mockito.ArgumentMatchers.any(java.nio.file.OpenOption[].class)))
           .thenAnswer(
               new Answer<>() {
                 @Override

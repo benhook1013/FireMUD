@@ -65,17 +65,15 @@ class ScriptPatchReadinessSingletonIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<?> first =
-          executor.submit(
-              () -> {
-                await(start);
-                beginInTransaction(transactionalDsl, transactionTemplate, "patch-a");
-              });
+          executor.submit(() -> {
+            await(start);
+            beginInTransaction(transactionalDsl, transactionTemplate, "patch-a");
+          });
       Future<?> second =
-          executor.submit(
-              () -> {
-                await(start);
-                beginInTransaction(transactionalDsl, transactionTemplate, "patch-b");
-              });
+          executor.submit(() -> {
+            await(start);
+            beginInTransaction(transactionalDsl, transactionTemplate, "patch-b");
+          });
       start.countDown();
       first.get(10, TimeUnit.SECONDS);
       second.get(10, TimeUnit.SECONDS);
@@ -125,39 +123,34 @@ class ScriptPatchReadinessSingletonIntegrationTest {
             new ScriptPatchReadinessProjectionRepository(transactionalDsl),
             Mockito.mock(ScriptWorkItemRepository.class),
             transactionalDsl);
-    transactionTemplate.executeWithoutResult(
-        status ->
-            service.beginPatchReadiness("tenant-generation-race", 7L, "patch-old", List.of("a")));
+    transactionTemplate.executeWithoutResult(status ->
+        service.beginPatchReadiness("tenant-generation-race", 7L, "patch-old", List.of("a")));
 
     CountDownLatch oldApplyEntered = new CountDownLatch(1);
     CountDownLatch releaseOldApply = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<Boolean> oldApply =
-          executor.submit(
-              () ->
-                  transactionTemplate.execute(
-                      status ->
-                          service.applyIfCurrent(
-                              "tenant-generation-race",
-                              "patch-old",
-                              List.of("a"),
-                              ignored -> {
-                                transactionalDsl.execute(
-                                    "insert into readiness_downstream_effects "
-                                        + "(patch_version, effect) values ('patch-old', 'applied')");
-                                oldApplyEntered.countDown();
-                                await(releaseOldApply);
-                              })));
+          executor.submit(() ->
+              transactionTemplate.execute(status ->
+                  service.applyIfCurrent(
+                      "tenant-generation-race",
+                      "patch-old",
+                      List.of("a"),
+                      ignored -> {
+                        transactionalDsl.execute(
+                            "insert into readiness_downstream_effects "
+                                + "(patch_version, effect) values ('patch-old', 'applied')");
+                        oldApplyEntered.countDown();
+                        await(releaseOldApply);
+                      })));
       assertThat(oldApplyEntered.await(5, TimeUnit.SECONDS)).isTrue();
 
       Future<?> newerBegin =
-          executor.submit(
-              () ->
-                  transactionTemplate.executeWithoutResult(
-                      status ->
-                          service.beginPatchReadiness(
-                              "tenant-generation-race", 8L, "patch-new", List.of("b"))));
+          executor.submit(() ->
+              transactionTemplate.executeWithoutResult(status ->
+                  service.beginPatchReadiness(
+                      "tenant-generation-race", 8L, "patch-new", List.of("b"))));
       awaitAdvisoryLockWait(dsl);
       assertThat(newerBegin.isDone()).isFalse();
 
@@ -171,13 +164,12 @@ class ScriptPatchReadinessSingletonIntegrationTest {
 
     AtomicBoolean oldRegistryRebuilt = new AtomicBoolean();
     boolean oldRebuildAccepted =
-        transactionTemplate.execute(
-            status ->
-                service.rebuildRegistryIfCurrent(
-                    "tenant-generation-race",
-                    "patch-old",
-                    List.of("a"),
-                    () -> oldRegistryRebuilt.set(true)));
+        transactionTemplate.execute(status ->
+            service.rebuildRegistryIfCurrent(
+                "tenant-generation-race",
+                "patch-old",
+                List.of("a"),
+                () -> oldRegistryRebuilt.set(true)));
     assertThat(oldRebuildAccepted).isFalse();
     assertThat(oldRegistryRebuilt.get()).isFalse();
     assertThat(
@@ -206,13 +198,12 @@ class ScriptPatchReadinessSingletonIntegrationTest {
 
     AtomicBoolean staleApplyRan = new AtomicBoolean();
     boolean staleApplyAccepted =
-        transactionTemplate.execute(
-            status ->
-                service.applyIfCurrent(
-                    "tenant-generation-race",
-                    "patch-old",
-                    List.of("a"),
-                    ignored -> staleApplyRan.set(true)));
+        transactionTemplate.execute(status ->
+            service.applyIfCurrent(
+                "tenant-generation-race",
+                "patch-old",
+                List.of("a"),
+                ignored -> staleApplyRan.set(true)));
     assertThat(staleApplyAccepted).isFalse();
     assertThat(staleApplyRan.get()).isFalse();
   }
@@ -233,30 +224,26 @@ class ScriptPatchReadinessSingletonIntegrationTest {
             new ScriptPatchReadinessProjectionRepository(transactionalDsl),
             Mockito.mock(ScriptWorkItemRepository.class),
             transactionalDsl);
-    transactionTemplate.executeWithoutResult(
-        status ->
-            service.beginPatchReadiness(
-                "tenant-downstream-rollback", 7L, "patch-retry", List.of("a")));
+    transactionTemplate.executeWithoutResult(status ->
+        service.beginPatchReadiness("tenant-downstream-rollback", 7L, "patch-retry", List.of("a")));
 
-    assertThatThrownBy(
-            () ->
-                transactionTemplate.executeWithoutResult(
-                    status ->
-                        service.applyIfCurrent(
-                            "tenant-downstream-rollback",
-                            "patch-retry",
-                            List.of("a"),
-                            ignored -> {
-                              transactionalDsl.execute(
-                                  "insert into readiness_downstream_effects "
-                                      + "(patch_version, effect) values "
-                                      + "('patch-retry', 'schedule-refresh')");
-                              transactionalDsl.execute(
-                                  "insert into readiness_downstream_effects "
-                                      + "(patch_version, effect) values "
-                                      + "('patch-retry', 'instance-reconciliation')");
-                              throw new IllegalStateException("simulated downstream failure");
-                            })))
+    assertThatThrownBy(() ->
+            transactionTemplate.executeWithoutResult(status ->
+                service.applyIfCurrent(
+                    "tenant-downstream-rollback",
+                    "patch-retry",
+                    List.of("a"),
+                    ignored -> {
+                      transactionalDsl.execute(
+                          "insert into readiness_downstream_effects "
+                              + "(patch_version, effect) values "
+                              + "('patch-retry', 'schedule-refresh')");
+                      transactionalDsl.execute(
+                          "insert into readiness_downstream_effects "
+                              + "(patch_version, effect) values "
+                              + "('patch-retry', 'instance-reconciliation')");
+                      throw new IllegalStateException("simulated downstream failure");
+                    })))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("simulated downstream failure");
 
@@ -278,17 +265,16 @@ class ScriptPatchReadinessSingletonIntegrationTest {
         .isEqualTo(Boolean.FALSE);
 
     boolean retryAccepted =
-        transactionTemplate.execute(
-            status ->
-                service.applyIfCurrent(
-                    "tenant-downstream-rollback",
-                    "patch-retry",
-                    List.of("a"),
-                    ignored ->
-                        transactionalDsl.execute(
-                            "insert into readiness_downstream_effects "
-                                + "(patch_version, effect) values "
-                                + "('patch-retry', 'retry-reconciled')")));
+        transactionTemplate.execute(status ->
+            service.applyIfCurrent(
+                "tenant-downstream-rollback",
+                "patch-retry",
+                List.of("a"),
+                ignored ->
+                    transactionalDsl.execute(
+                        "insert into readiness_downstream_effects "
+                            + "(patch_version, effect) values "
+                            + "('patch-retry', 'retry-reconciled')")));
     assertThat(retryAccepted).isEqualTo(Boolean.TRUE);
     assertThat(
             dsl.fetch(
@@ -415,15 +401,14 @@ class ScriptPatchReadinessSingletonIntegrationTest {
 
   private void beginInTransaction(
       DSLContext dsl, TransactionTemplate transactionTemplate, String patchVersion) {
-    transactionTemplate.executeWithoutResult(
-        status -> {
-          ScriptPatchReadinessProjectionRepository repository =
-              new ScriptPatchReadinessProjectionRepository(dsl);
-          ScriptPatchReadinessProjectionServiceImpl service =
-              new ScriptPatchReadinessProjectionServiceImpl(
-                  repository, Mockito.mock(ScriptWorkItemRepository.class), dsl);
-          service.beginPatchReadiness("tenant-concurrent", 1L, patchVersion, List.of(patchVersion));
-        });
+    transactionTemplate.executeWithoutResult(status -> {
+      ScriptPatchReadinessProjectionRepository repository =
+          new ScriptPatchReadinessProjectionRepository(dsl);
+      ScriptPatchReadinessProjectionServiceImpl service =
+          new ScriptPatchReadinessProjectionServiceImpl(
+              repository, Mockito.mock(ScriptWorkItemRepository.class), dsl);
+      service.beginPatchReadiness("tenant-concurrent", 1L, patchVersion, List.of(patchVersion));
+    });
   }
 
   private DSLContext migrateToLatest() {

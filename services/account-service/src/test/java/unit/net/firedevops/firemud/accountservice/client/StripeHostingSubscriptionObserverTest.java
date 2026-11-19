@@ -464,20 +464,20 @@ class StripeHostingSubscriptionObserverTest {
 
   private static String validResponse() {
     return """
-        {"id":"sub_expected","object":"subscription","customer":"cus_expected",
-         "default_payment_method":"pm_expected","default_source":"src_ignored",
-         "livemode":false,"status":"active","cancel_at_period_end":false,"cancel_at":null,
-         "canceled_at":null,"ended_at":null,
-         "metadata":{"firemud_metadata_schema_version":"1",
-          "firemud_operation_type":"subscription_provisioning",
-          "firemud_operation_id":"4e2af076-4a10-4aaf-93a0-e5df29271310",
-          "firemud_subscription_id":"0c9ee07d-0e6d-4f66-9a87-54110acbc611",
-          "retained_marker":"evidence"},
-         "items":{"object":"list","data":[{"id":"si_expected","object":"subscription_item",
-          "subscription":"sub_expected","quantity":1,"current_period_start":1778000000,
-          "current_period_end":1780592000,"price":{"id":"price_expected","object":"price"}}],
-          "has_more":false}}
-        """;
+    {"id":"sub_expected","object":"subscription","customer":"cus_expected",
+     "default_payment_method":"pm_expected","default_source":"src_ignored",
+     "livemode":false,"status":"active","cancel_at_period_end":false,"cancel_at":null,
+     "canceled_at":null,"ended_at":null,
+     "metadata":{"firemud_metadata_schema_version":"1",
+      "firemud_operation_type":"subscription_provisioning",
+      "firemud_operation_id":"4e2af076-4a10-4aaf-93a0-e5df29271310",
+      "firemud_subscription_id":"0c9ee07d-0e6d-4f66-9a87-54110acbc611",
+      "retained_marker":"evidence"},
+     "items":{"object":"list","data":[{"id":"si_expected","object":"subscription_item",
+      "subscription":"sub_expected","quantity":1,"current_period_start":1778000000,
+      "current_period_end":1780592000,"price":{"id":"price_expected","object":"price"}}],
+      "has_more":false}}
+    """;
   }
 
   private static String singleItemData() {

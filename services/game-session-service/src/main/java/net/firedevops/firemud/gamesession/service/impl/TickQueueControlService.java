@@ -197,17 +197,16 @@ public class TickQueueControlService {
     RuntimeRegionStatus status =
         runtimeRegionStatusRepository
             .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-            .orElseGet(
-                () -> {
-                  RuntimeRegionStatus created = new RuntimeRegionStatus();
-                  created.setTenantId(tenantId);
-                  created.setGameInstanceId(gameInstanceId);
-                  created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
-                  created.setRegionEpoch(1L);
-                  created.setExecutorFence(tickLease.token());
-                  created.setPaused(false);
-                  return created;
-                });
+            .orElseGet(() -> {
+              RuntimeRegionStatus created = new RuntimeRegionStatus();
+              created.setTenantId(tenantId);
+              created.setGameInstanceId(gameInstanceId);
+              created.setRegionId(defaultCurrentBoundaryRegionId(gameInstanceId));
+              created.setRegionEpoch(1L);
+              created.setExecutorFence(tickLease.token());
+              created.setPaused(false);
+              return created;
+            });
     RuntimeRegionStatus baseline;
     if (status.getId() == null) {
       status.setOwnerService(runtimeIdentity.service());
@@ -225,10 +224,8 @@ public class TickQueueControlService {
                 runtimeIdentity.serviceInstanceId(),
                 tickLease.token(),
                 now)
-            .orElseThrow(
-                () ->
-                    new StaleOwnershipException(
-                        "Runtime ownership changed during lease-backed claim"));
+            .orElseThrow(() ->
+                new StaleOwnershipException("Runtime ownership changed during lease-backed claim"));
     tickLease.requireOwned();
     return new OwnershipSnapshot(
         saved.getRegionId(),
@@ -257,10 +254,9 @@ public class TickQueueControlService {
         maybeContext
             .map(SessionContext::tenantId)
             .filter(tenant -> tenant != null && tenant > 0)
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "No session context found for sessionId=" + sessionId));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "No session context found for sessionId=" + sessionId));
     Object state = redisTemplate.opsForValue().get(stateKey(tenantId, sessionId));
     return state != null ? state.toString() : "{}";
   }
@@ -318,30 +314,27 @@ public class TickQueueControlService {
     }
     return runtimeRegionStatusRepository
         .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-        .orElseThrow(
-            () ->
-                new StaleOwnershipException(
-                    "Missing runtime ownership for tenantId=%d gameInstanceId=%d regionId=%s"
-                        .formatted(tenantId, gameInstanceId, regionId)));
+        .orElseThrow(() ->
+            new StaleOwnershipException(
+                "Missing runtime ownership for tenantId=%d gameInstanceId=%d regionId=%s"
+                    .formatted(tenantId, gameInstanceId, regionId)));
   }
 
   RuntimeRegionStatus advanceLastCommittedTickId(RuntimeRegionStatus expectedOwnership) {
     return runtimeRegionStatusRepository
         .advanceLastCommittedTickId(expectedOwnership)
-        .orElseThrow(
-            () ->
-                new StaleOwnershipException(
-                    "Runtime ownership changed before tick progress could be committed"));
+        .orElseThrow(() ->
+            new StaleOwnershipException(
+                "Runtime ownership changed before tick progress could be committed"));
   }
 
   RuntimeRegionStatus commitDrainedBatch(
       RuntimeRegionStatus expectedOwnership, String tickBatchId) {
     return runtimeRegionStatusRepository
         .commitDrainedBatch(expectedOwnership, tickBatchId)
-        .orElseThrow(
-            () ->
-                new StaleOwnershipException(
-                    "Runtime ownership changed before drained batch could be committed"));
+        .orElseThrow(() ->
+            new StaleOwnershipException(
+                "Runtime ownership changed before drained batch could be committed"));
   }
 
   String queueKey(Long tenantId, Long sessionId) {

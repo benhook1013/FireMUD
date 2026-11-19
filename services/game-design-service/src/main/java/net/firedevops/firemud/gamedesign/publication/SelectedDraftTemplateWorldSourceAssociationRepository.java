@@ -90,10 +90,9 @@ public final class SelectedDraftTemplateWorldSourceAssociationRepository {
           rows.stream()
               .filter(value -> Objects.equals(value.get("template_id", Long.class), templateId))
               .findFirst()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "SELECTED_TEMPLATE_WORLD_SOURCE_ASSOCIATION_ENTRY_MISSING"));
+              .orElseThrow(() ->
+                  new IllegalStateException(
+                      "SELECTED_TEMPLATE_WORLD_SOURCE_ASSOCIATION_ENTRY_MISSING"));
       Association retained = decode(operation, capture, entry, row);
       requireRowMatches(retained, row);
       result.add(retained);
@@ -108,10 +107,9 @@ public final class SelectedDraftTemplateWorldSourceAssociationRepository {
     Objects.requireNonNull(operation, "operation");
     Objects.requireNonNull(capture, "capture");
     return capture.snapshot().entries().stream()
-        .map(
-            entry ->
-                SelectedDraftTemplateWorldSourceAssociation.create(
-                    operation, capture, entry, sourceRead))
+        .map(entry ->
+            SelectedDraftTemplateWorldSourceAssociation.create(
+                operation, capture, entry, sourceRead))
         .toList();
   }
 

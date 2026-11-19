@@ -96,10 +96,9 @@ public class ChatServiceImpl implements ChatService {
     enforceChatPolicy(request.tenantId(), request.senderAccountId());
     String filtered = profanityFilter.filter(request.content());
     if (!filtered.equals(request.content())) {
-      runAfterCommit(
-          () ->
-              safeReportModeration(
-                  request.tenantId(), request.senderAccountId(), "Filtered profanity"));
+      runAfterCommit(() ->
+          safeReportModeration(
+              request.tenantId(), request.senderAccountId(), "Filtered profanity"));
     }
 
     ChatMessage message = new ChatMessage();
@@ -124,21 +123,20 @@ public class ChatServiceImpl implements ChatService {
           .map(mapper::toDto)
           .orElseThrow(() -> ex);
     }
-    runAfterCommit(
-        () -> {
-          publishCounter.increment();
-          try {
-            String key = historyKey(request);
-            ChatProperties.ChatCacheSettings settings = settingsFor(request);
+    runAfterCommit(() -> {
+      publishCounter.increment();
+      try {
+        String key = historyKey(request);
+        ChatProperties.ChatCacheSettings settings = settingsFor(request);
 
-            redisTemplate.opsForList().leftPush(key, saved.getContent());
-            redisTemplate.expire(key, java.time.Duration.ofSeconds(settings.historyTtlSeconds()));
-            redisTemplate.opsForList().trim(key, 0, settings.maxMessages() - 1);
-          } catch (Exception e) {
-            redisErrorCounter.increment();
-            logger.warn("Failed to publish chat message to Redis", e);
-          }
-        });
+        redisTemplate.opsForList().leftPush(key, saved.getContent());
+        redisTemplate.expire(key, java.time.Duration.ofSeconds(settings.historyTtlSeconds()));
+        redisTemplate.opsForList().trim(key, 0, settings.maxMessages() - 1);
+      } catch (Exception e) {
+        redisErrorCounter.increment();
+        logger.warn("Failed to publish chat message to Redis", e);
+      }
+    });
     return mapper.toDto(saved);
   }
 

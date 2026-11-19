@@ -206,9 +206,8 @@ class GameSessionWebSocketHandlerTest {
             null);
     verify(session)
         .sendMessage(
-            argThat(
-                message ->
-                    "ERROR INVALID_CREDENTIALS Invalid credentials".equals(message.getPayload())));
+            argThat(message ->
+                "ERROR INVALID_CREDENTIALS Invalid credentials".equals(message.getPayload())));
     verify(session, never()).close(any());
     Mockito.verifyNoInteractions(
         interpreter, sessionAuthenticationService, sessionContextService, authenticatedSessions);
@@ -296,10 +295,9 @@ class GameSessionWebSocketHandlerTest {
 
     verify(session)
         .close(
-            argThat(
-                status ->
-                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
-                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
+            argThat(status ->
+                status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
+                    && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
     verify(firstPartyConnectContextRegistry, never()).register(Mockito.anyLong(), Mockito.any());
     verify(sessionContextService, never()).save(Mockito.any());
   }
@@ -395,10 +393,9 @@ class GameSessionWebSocketHandlerTest {
 
     verify(session)
         .close(
-            argThat(
-                status ->
-                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
-                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
+            argThat(status ->
+                status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
+                    && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
     verify(interpreter, never())
         .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
     verify(session, never()).sendMessage(any());
@@ -427,10 +424,9 @@ class GameSessionWebSocketHandlerTest {
 
     verify(session)
         .close(
-            argThat(
-                status ->
-                    status.getCode() == 1013
-                        && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
+            argThat(status ->
+                status.getCode() == 1013
+                    && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
     verify(activeTransportSessionRegistry, never()).register(41L, session);
     verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
   }
@@ -457,10 +453,9 @@ class GameSessionWebSocketHandlerTest {
 
     verify(session)
         .close(
-            argThat(
-                status ->
-                    status.getCode() == 1013
-                        && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
+            argThat(status ->
+                status.getCode() == 1013
+                    && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
     verify(interpreter, never())
         .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
     verify(session, never()).sendMessage(any());
@@ -485,10 +480,8 @@ class GameSessionWebSocketHandlerTest {
 
       verify(session)
           .close(
-              argThat(
-                  status ->
-                      status.getCode() == 1013
-                          && "backend_unavailable".equals(status.getReason())));
+              argThat(status ->
+                  status.getCode() == 1013 && "backend_unavailable".equals(status.getReason())));
       verify(activeTransportSessionRegistry, never()).register(41L, session);
       verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
       verify(sessionContextService, never()).save(Mockito.any());
@@ -531,10 +524,8 @@ class GameSessionWebSocketHandlerTest {
 
       verify(session)
           .close(
-              argThat(
-                  status ->
-                      status.getCode() == 1013
-                          && "backend_unavailable".equals(status.getReason())));
+              argThat(status ->
+                  status.getCode() == 1013 && "backend_unavailable".equals(status.getReason())));
       verify(parser, never()).parse(Mockito.anyString());
       verify(interpreter, never())
           .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
@@ -588,15 +579,14 @@ class GameSessionWebSocketHandlerTest {
 
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.bootstrapGameInstanceId() == 7L
-                        && "demo".equals(context.worldSlug())
-                        && "production".equals(context.realmSlug())
-                        && context.pointerVersion() == 3L
-                        && "SHARED".equals(context.playableStateScope())));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.bootstrapGameInstanceId() == 7L
+                    && "demo".equals(context.worldSlug())
+                    && "production".equals(context.realmSlug())
+                    && context.pointerVersion() == 3L
+                    && "SHARED".equals(context.playableStateScope())));
     verify(activeTransportSessionRegistry).register(41L, session);
   }
 
@@ -636,14 +626,13 @@ class GameSessionWebSocketHandlerTest {
 
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.bootstrapGameInstanceId() == 7L
-                        && "demo".equals(context.worldSlug())
-                        && "production".equals(context.realmSlug())
-                        && context.pointerVersion() == 8L));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.bootstrapGameInstanceId() == 7L
+                    && "demo".equals(context.worldSlug())
+                    && "production".equals(context.realmSlug())
+                    && context.pointerVersion() == 8L));
     verify(activeTransportSessionRegistry).register(41L, session);
   }
 
@@ -689,18 +678,17 @@ class GameSessionWebSocketHandlerTest {
 
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.characterId() == 0L
-                        && context.characterName() == null
-                        && context.gameInstanceId() == 0L
-                        && context.roomInstanceId() == null
-                        && context.bootstrapGameInstanceId() == 7L
-                        && context.worldSlug() == null
-                        && context.realmSlug() == null
-                        && context.pointerVersion() == 0L));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.characterId() == 0L
+                    && context.characterName() == null
+                    && context.gameInstanceId() == 0L
+                    && context.roomInstanceId() == null
+                    && context.bootstrapGameInstanceId() == 7L
+                    && context.worldSlug() == null
+                    && context.realmSlug() == null
+                    && context.pointerVersion() == 0L));
   }
 
   @Test
@@ -752,18 +740,17 @@ class GameSessionWebSocketHandlerTest {
 
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.characterId() == 0L
-                        && context.characterName() == null
-                        && context.gameInstanceId() == 0L
-                        && context.roomInstanceId() == null
-                        && context.bootstrapGameInstanceId() == 7L
-                        && context.worldSlug() == null
-                        && context.realmSlug() == null
-                        && context.pointerVersion() == 0L));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.characterId() == 0L
+                    && context.characterName() == null
+                    && context.gameInstanceId() == 0L
+                    && context.roomInstanceId() == null
+                    && context.bootstrapGameInstanceId() == 7L
+                    && context.worldSlug() == null
+                    && context.realmSlug() == null
+                    && context.pointerVersion() == 0L));
   }
 
   @Test
@@ -877,15 +864,14 @@ class GameSessionWebSocketHandlerTest {
 
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.bootstrapGameInstanceId() == 7L
-                        && context.worldSlug() == null
-                        && context.realmSlug() == null
-                        && context.pointerVersion() == 0L
-                        && context.playableStateScope() == null));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.bootstrapGameInstanceId() == 7L
+                    && context.worldSlug() == null
+                    && context.realmSlug() == null
+                    && context.pointerVersion() == 0L
+                    && context.playableStateScope() == null));
   }
 
   @Test
@@ -912,14 +898,13 @@ class GameSessionWebSocketHandlerTest {
 
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.bootstrapGameInstanceId() == 7L
-                        && context.worldSlug() == null
-                        && context.realmSlug() == null
-                        && context.pointerVersion() == 0L));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.bootstrapGameInstanceId() == 7L
+                    && context.worldSlug() == null
+                    && context.realmSlug() == null
+                    && context.pointerVersion() == 0L));
   }
 
   @Test
@@ -974,16 +959,15 @@ class GameSessionWebSocketHandlerTest {
         .clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.accountId() == null
-                        && context.bootstrapGameInstanceId() == 7L
-                        && "demo".equals(context.worldSlug())
-                        && "production".equals(context.realmSlug())
-                        && context.pointerVersion() == 2L
-                        && "SHARED".equals(context.playableStateScope())));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.accountId() == null
+                    && context.bootstrapGameInstanceId() == 7L
+                    && "demo".equals(context.worldSlug())
+                    && "production".equals(context.realmSlug())
+                    && context.pointerVersion() == 2L
+                    && "SHARED".equals(context.playableStateScope())));
   }
 
   @Test
@@ -1051,15 +1035,14 @@ class GameSessionWebSocketHandlerTest {
         .clearGameplayBinding(existing, "BOOTSTRAP_ROUTE_CHANGED");
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.accountId() == null
-                        && context.bootstrapGameInstanceId() == 7L
-                        && context.worldSlug() == null
-                        && context.realmSlug() == null
-                        && context.pointerVersion() == 0L));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.accountId() == null
+                    && context.bootstrapGameInstanceId() == 7L
+                    && context.worldSlug() == null
+                    && context.realmSlug() == null
+                    && context.pointerVersion() == 0L));
   }
 
   @Test
@@ -1626,14 +1609,13 @@ class GameSessionWebSocketHandlerTest {
 
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.bootstrapGameInstanceId() == 7L
-                        && context.worldSlug() == null
-                        && context.realmSlug() == null
-                        && context.pointerVersion() == 0L));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.bootstrapGameInstanceId() == 7L
+                    && context.worldSlug() == null
+                    && context.realmSlug() == null
+                    && context.pointerVersion() == 0L));
     org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(sessionContextService, interpreter);
     inOrder.verify(sessionContextService).save(any(SessionContext.class));
     inOrder.verify(interpreter).interpret("41", command, false);
@@ -1699,15 +1681,14 @@ class GameSessionWebSocketHandlerTest {
 
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.bootstrapGameInstanceId() == 7L
-                        && "demo".equals(context.worldSlug())
-                        && "production".equals(context.realmSlug())
-                        && context.pointerVersion() == 8L
-                        && "SHARED".equals(context.playableStateScope())));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.bootstrapGameInstanceId() == 7L
+                    && "demo".equals(context.worldSlug())
+                    && "production".equals(context.realmSlug())
+                    && context.pointerVersion() == 8L
+                    && "SHARED".equals(context.playableStateScope())));
     org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(sessionContextService, interpreter);
     inOrder.verify(sessionContextService).save(any(SessionContext.class));
     inOrder.verify(interpreter).interpret("41", command, false);
@@ -1857,14 +1838,13 @@ class GameSessionWebSocketHandlerTest {
 
     verify(sessionContextService)
         .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.bootstrapGameInstanceId() == 7L
-                        && context.worldSlug() == null
-                        && context.realmSlug() == null
-                        && context.pointerVersion() == 0L));
+            argThat(context ->
+                context.sessionId() == 41L
+                    && context.tenantId() == 22L
+                    && context.bootstrapGameInstanceId() == 7L
+                    && context.worldSlug() == null
+                    && context.realmSlug() == null
+                    && context.pointerVersion() == 0L));
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(
@@ -1952,9 +1932,8 @@ class GameSessionWebSocketHandlerTest {
     order
         .verify(session)
         .close(
-            Mockito.argThat(
-                (CloseStatus status) ->
-                    status.getCode() == 1013 && "backend_unavailable".equals(status.getReason())));
+            Mockito.argThat((CloseStatus status) ->
+                status.getCode() == 1013 && "backend_unavailable".equals(status.getReason())));
     verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
     assertThat(saveFailure.getSuppressed()).isEmpty();
   }
@@ -1974,10 +1953,9 @@ class GameSessionWebSocketHandlerTest {
     order
         .verify(session)
         .close(
-            Mockito.argThat(
-                (CloseStatus status) ->
-                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
-                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
+            Mockito.argThat((CloseStatus status) ->
+                status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
+                    && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
     verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
     assertThat(saveFailure.getSuppressed()).isEmpty();
   }

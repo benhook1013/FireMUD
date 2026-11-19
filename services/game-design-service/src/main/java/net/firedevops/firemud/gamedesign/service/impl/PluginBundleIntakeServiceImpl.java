@@ -218,13 +218,12 @@ public class PluginBundleIntakeServiceImpl implements PluginBundleIntakeService 
       files.entrySet().stream()
           .filter(entry -> !"signatures.json".equals(entry.getKey()))
           .sorted(Comparator.comparing(Map.Entry::getKey))
-          .forEach(
-              entry -> {
-                digest.update(entry.getKey().getBytes(StandardCharsets.UTF_8));
-                digest.update((byte) 0);
-                digest.update(entry.getValue());
-                digest.update((byte) 0);
-              });
+          .forEach(entry -> {
+            digest.update(entry.getKey().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(entry.getValue());
+            digest.update((byte) 0);
+          });
       byte[] hash = digest.digest();
       StringBuilder builder = new StringBuilder(hash.length * 2);
       for (byte current : hash) {

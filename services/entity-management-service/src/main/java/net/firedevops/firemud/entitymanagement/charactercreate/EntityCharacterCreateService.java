@@ -61,10 +61,8 @@ public final class EntityCharacterCreateService {
     requireMutation(request.getCreation());
     var existing = repository.replay(request.getCreation());
     var terminal =
-        existing.orElseGet(
-            () ->
-                repository.settle(
-                    readAllOwners(request.getCreation()), request.getAbortRequestId()));
+        existing.orElseGet(() ->
+            repository.settle(readAllOwners(request.getCreation()), request.getAbortRequestId()));
     if (terminal.getOutcome()
             == EntityCharacterCreateOutcome.ENTITY_CHARACTER_CREATE_OUTCOME_ABORTED
         && !request.getAbortRequestId().equals(terminal.getAbortRequestId()))
@@ -83,11 +81,10 @@ public final class EntityCharacterCreateService {
       throw Status.PERMISSION_DENIED.asRuntimeException();
     return repository
         .read(request.getOriginal())
-        .orElseThrow(
-            () ->
-                Status.NOT_FOUND
-                    .withDescription("No definitive Entity creation terminal; absence is not abort")
-                    .asRuntimeException());
+        .orElseThrow(() ->
+            Status.NOT_FOUND
+                .withDescription("No definitive Entity creation terminal; absence is not abort")
+                .asRuntimeException());
   }
 
   private void requireMutation(CommitProtectedCharacterCreateRequest request) {

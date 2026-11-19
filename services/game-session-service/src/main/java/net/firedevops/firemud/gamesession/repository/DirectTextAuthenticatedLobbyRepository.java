@@ -191,31 +191,28 @@ public final class DirectTextAuthenticatedLobbyRepository {
   public DirectTextAuthenticatedLobbyScope readCommittedScope(
       DirectTextAuthenticatedLobbyScope expected) {
     requireNoTransaction();
-    return dsl.connectionResult(
-        connection -> {
-          requireConnection(connection, false);
-          var result =
-              requiredScope(DSL.using(connection, SQLDialect.POSTGRES), expected.recordId());
-          requireExact(expected, result);
-          return result;
-        });
+    return dsl.connectionResult(connection -> {
+      requireConnection(connection, false);
+      var result = requiredScope(DSL.using(connection, SQLDialect.POSTGRES), expected.recordId());
+      requireExact(expected, result);
+      return result;
+    });
   }
 
   public DirectTextAuthenticatedLobbyJoin readCommittedJoin(
       DirectTextAuthenticatedLobbyJoin expected) {
     requireNoTransaction();
-    return dsl.connectionResult(
-        connection -> {
-          requireConnection(connection, false);
-          var reader = DSL.using(connection, SQLDialect.POSTGRES);
-          var scope = requiredScope(reader, expected.scope().recordId());
-          requireExact(expected.scope(), scope);
-          Record row = joinRow(reader, scope.recordId());
-          if (row == null) throw unavailable();
-          var result = decodeJoin(scope, row);
-          requireSameRequest(expected, result);
-          return result;
-        });
+    return dsl.connectionResult(connection -> {
+      requireConnection(connection, false);
+      var reader = DSL.using(connection, SQLDialect.POSTGRES);
+      var scope = requiredScope(reader, expected.scope().recordId());
+      requireExact(expected.scope(), scope);
+      Record row = joinRow(reader, scope.recordId());
+      if (row == null) throw unavailable();
+      var result = decodeJoin(scope, row);
+      requireSameRequest(expected, result);
+      return result;
+    });
   }
 
   private void lockOriginal(
@@ -318,11 +315,10 @@ public final class DirectTextAuthenticatedLobbyRepository {
         || !Integer.valueOf(Connection.TRANSACTION_READ_COMMITTED)
             .equals(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel()))
       throw unavailable();
-    dsl.connectionResult(
-        connection -> {
-          requireConnection(connection, true);
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      requireConnection(connection, true);
+      return null;
+    });
   }
 
   private static void requireConnection(Connection connection, boolean mutation)

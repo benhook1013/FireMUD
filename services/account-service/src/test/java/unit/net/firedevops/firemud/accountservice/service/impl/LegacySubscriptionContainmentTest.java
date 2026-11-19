@@ -100,14 +100,13 @@ class LegacySubscriptionContainmentTest {
           Context.ROOT.withValue(
               GrpcPeerIdentity.CONTEXT_KEY,
               new GrpcPeerIdentity("spiffe://firemud/ns/test/sa/" + workload, "test", workload));
-      context.run(
-          () ->
-              rpc.getTenantEntitlementsForRuntime(
-                  GetTenantEntitlementsForRuntimeRequest.newBuilder()
-                      .setTenantId("7")
-                      .setRequestId("retained-is-not-authority")
-                      .build(),
-                  observer));
+      context.run(() ->
+          rpc.getTenantEntitlementsForRuntime(
+              GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                  .setTenantId("7")
+                  .setRequestId("retained-is-not-authority")
+                  .build(),
+              observer));
       assertThat(response.get()).isNotNull();
       assertThat(response.get().getError().getCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
       assertThat(response.get().getGameplayAvailable()).isFalse();

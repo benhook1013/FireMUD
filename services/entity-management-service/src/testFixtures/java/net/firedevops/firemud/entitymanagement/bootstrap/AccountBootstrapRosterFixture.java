@@ -65,19 +65,18 @@ public final class AccountBootstrapRosterFixture {
     var world = prepared.world().request();
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new GameDesignPublicationTerminalEvidence.Participant(
-                        owner,
-                        Long.toString(draft.target().gameDesignVersionRowId()),
-                        null,
-                        world.appliedCommitId(),
-                        owner.equals("WORLD_MANAGEMENT") ? world.contentDigest() : "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        owner.equals("GAME_LOGIC") ? "sha256:" + "a".repeat(64) : null,
-                        null,
-                        null))
+            .map(owner ->
+                new GameDesignPublicationTerminalEvidence.Participant(
+                    owner,
+                    Long.toString(draft.target().gameDesignVersionRowId()),
+                    null,
+                    world.appliedCommitId(),
+                    owner.equals("WORLD_MANAGEMENT") ? world.contentDigest() : "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    owner.equals("GAME_LOGIC") ? "sha256:" + "a".repeat(64) : null,
+                    null,
+                    null))
             .toList();
     var release =
         new GameDesignPublicationTerminalEvidence.ReleaseContent(
@@ -104,10 +103,10 @@ public final class AccountBootstrapRosterFixture {
     var policy =
         RealmEntryPolicy.parse(
             """
-        {"schemaVersion":1,"worldSlug":"earth","worldDisplayName":"Earth",
-        "realmSlug":"main","realmDisplayName":"Main","visible":true,
-        "publicProduction":true,"stateScope":"SHARED","entryPolicy":"PRESEEDED_ONLY"}
-        """,
+            {"schemaVersion":1,"worldSlug":"earth","worldDisplayName":"Earth",
+            "realmSlug":"main","realmDisplayName":"Main","visible":true,
+            "publicProduction":true,"stateScope":"SHARED","entryPolicy":"PRESEEDED_ONLY"}
+            """,
             JSON);
     UUID policyId = UUID.randomUUID();
     UUID revisionId = UUID.randomUUID();

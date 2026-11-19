@@ -65,11 +65,10 @@ public record OriginalNewCapacityExecution(
         "canonicalAttemptPayload",
         Base64.getEncoder().encodeToString(CapacityAdmissionDigest.preimage(request)));
     StringBuilder json = new StringBuilder("{");
-    fields.forEach(
-        (name, value) -> {
-          if (json.length() > 1) json.append(',');
-          json.append('"').append(name).append("\":\"").append(value).append('"');
-        });
+    fields.forEach((name, value) -> {
+      if (json.length() > 1) json.append(',');
+      json.append('"').append(name).append("\":\"").append(value).append('"');
+    });
     try {
       return Rfc8785CanonicalJson.canonicalizeUtf8(json.append('}').toString());
     } catch (java.io.IOException malformed) {

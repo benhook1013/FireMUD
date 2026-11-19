@@ -69,22 +69,21 @@ public final class AccountPaymentInstrumentAttachmentService {
     }
     Prepared prepared =
         Objects.requireNonNull(
-            transaction.execute(
-                status -> {
-                  AccountBillingCustomerRecord customer = lockCustomer(request.accountUuid());
-                  AccountPaymentInstrumentRecord currentInstrument =
-                      instruments
-                          .findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid())
-                          .orElse(null);
-                  AccountPaymentInstrumentRecord receipt =
-                      instruments.findAttachmentByRequestId(request.requestId()).orElse(null);
-                  if (receipt != null) {
-                    requireReceiptBinding(receipt, request, customer);
-                  } else {
-                    requireInstrumentAvailable(currentInstrument, request);
-                  }
-                  return new Prepared(customer, receipt);
-                }));
+            transaction.execute(status -> {
+              AccountBillingCustomerRecord customer = lockCustomer(request.accountUuid());
+              AccountPaymentInstrumentRecord currentInstrument =
+                  instruments
+                      .findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid())
+                      .orElse(null);
+              AccountPaymentInstrumentRecord receipt =
+                  instruments.findAttachmentByRequestId(request.requestId()).orElse(null);
+              if (receipt != null) {
+                requireReceiptBinding(receipt, request, customer);
+              } else {
+                requireInstrumentAvailable(currentInstrument, request);
+              }
+              return new Prepared(customer, receipt);
+            }));
     if (prepared.receipt() != null) {
       RetainedBinding retained = readCommitted(request, prepared.customer(), prepared.receipt());
       return new HistoricalAttachment(retained.receipt(), retained.current());
@@ -104,57 +103,56 @@ public final class AccountPaymentInstrumentAttachmentService {
     }
     CommitResult committed =
         Objects.requireNonNull(
-            transaction.execute(
-                status -> {
-                  AccountBillingCustomerRecord current = lockCustomer(request.accountUuid());
-                  if (!current.equals(prepared.customer())) {
-                    throw new IllegalStateException(
-                        "Confirmed customer changed during provider observation");
-                  }
-                  AccountPaymentInstrumentRecord currentInstrument =
-                      instruments
-                          .findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid())
-                          .orElse(null);
-                  AccountPaymentInstrumentRecord original =
-                      instruments.findAttachmentByRequestId(request.requestId()).orElse(null);
-                  if (original != null) {
-                    requireReceiptBinding(original, request, current);
-                    return new CommitResult(original, false);
-                  }
-                  requireInstrumentAvailable(currentInstrument, request);
-                  requireFresh(observed);
-                  if (!current.accountUuid().equals(observed.accountUuid())
-                      || !current
-                          .customerProvisioningRequestId()
-                          .equals(observed.customerProvisioningRequestId())
-                      || !current.providerCustomerId().equals(observed.providerCustomerId())
-                      || !request
-                          .providerPaymentMethodId()
-                          .equals(observed.providerPaymentMethodId())) {
-                    throw new IllegalStateException(
-                        "Provider observation changed the selected owner/customer/method");
-                  }
-                  AccountPaymentInstrumentRecord receipt =
-                      instruments.retainAttachment(
-                          new Attachment(
-                              request.requestId(),
-                              request.instrumentUuid(),
-                              observed.accountUuid(),
-                              observed.customerProvisioningRequestId(),
-                              observed.providerCustomerId(),
-                              observed.providerPaymentMethodId(),
-                              AccountPaymentInstrumentRecord.State.ATTACHABLE,
-                              observed.display(),
-                              observed.evidenceDigest()));
-                  requireReceiptBinding(receipt, request, current);
-                  if (receipt.state() != AccountPaymentInstrumentRecord.State.ATTACHABLE
-                      || !receipt.display().equals(observed.display())
-                      || !receipt.evidenceDigest().equals(observed.evidenceDigest())) {
-                    throw new IllegalStateException(
-                        "Retained attachment differs from independently observed facts");
-                  }
-                  return new CommitResult(receipt, true);
-                }));
+            transaction.execute(status -> {
+              AccountBillingCustomerRecord current = lockCustomer(request.accountUuid());
+              if (!current.equals(prepared.customer())) {
+                throw new IllegalStateException(
+                    "Confirmed customer changed during provider observation");
+              }
+              AccountPaymentInstrumentRecord currentInstrument =
+                  instruments
+                      .findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid())
+                      .orElse(null);
+              AccountPaymentInstrumentRecord original =
+                  instruments.findAttachmentByRequestId(request.requestId()).orElse(null);
+              if (original != null) {
+                requireReceiptBinding(original, request, current);
+                return new CommitResult(original, false);
+              }
+              requireInstrumentAvailable(currentInstrument, request);
+              requireFresh(observed);
+              if (!current.accountUuid().equals(observed.accountUuid())
+                  || !current
+                      .customerProvisioningRequestId()
+                      .equals(observed.customerProvisioningRequestId())
+                  || !current.providerCustomerId().equals(observed.providerCustomerId())
+                  || !request
+                      .providerPaymentMethodId()
+                      .equals(observed.providerPaymentMethodId())) {
+                throw new IllegalStateException(
+                    "Provider observation changed the selected owner/customer/method");
+              }
+              AccountPaymentInstrumentRecord receipt =
+                  instruments.retainAttachment(
+                      new Attachment(
+                          request.requestId(),
+                          request.instrumentUuid(),
+                          observed.accountUuid(),
+                          observed.customerProvisioningRequestId(),
+                          observed.providerCustomerId(),
+                          observed.providerPaymentMethodId(),
+                          AccountPaymentInstrumentRecord.State.ATTACHABLE,
+                          observed.display(),
+                          observed.evidenceDigest()));
+              requireReceiptBinding(receipt, request, current);
+              if (receipt.state() != AccountPaymentInstrumentRecord.State.ATTACHABLE
+                  || !receipt.display().equals(observed.display())
+                  || !receipt.evidenceDigest().equals(observed.evidenceDigest())) {
+                throw new IllegalStateException(
+                    "Retained attachment differs from independently observed facts");
+              }
+              return new CommitResult(receipt, true);
+            }));
     RetainedBinding retained = readCommitted(request, prepared.customer(), committed.receipt());
     if (!committed.newlyRecorded()) {
       return new HistoricalAttachment(retained.receipt(), retained.current());
@@ -167,43 +165,39 @@ public final class AccountPaymentInstrumentAttachmentService {
       AccountBillingCustomerRecord expected,
       AccountPaymentInstrumentRecord committed) {
     return Objects.requireNonNull(
-        transaction.execute(
-            status -> {
-              AccountBillingCustomerRecord customer = lockCustomer(request.accountUuid());
-              if (!customer.equals(expected)) {
-                throw new IllegalStateException("Committed attachment customer readback changed");
-              }
-              AccountPaymentInstrumentRecord current =
-                  instruments
-                      .findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid())
-                      .orElseThrow(
-                          () -> new IllegalStateException("Committed instrument disappeared"));
-              AccountPaymentInstrumentRecord receipt =
-                  instruments
-                      .findAttachmentByRequestId(request.requestId())
-                      .orElseThrow(
-                          () ->
-                              new IllegalStateException(
-                                  "Committed attachment receipt disappeared"));
-              requireReceiptBinding(receipt, request, customer);
-              if (!receipt.equals(committed)
-                  || !current.instrumentUuid().equals(receipt.instrumentUuid())
-                  || !current.accountUuid().equals(receipt.accountUuid())
-                  || !current
-                      .customerProvisioningRequestId()
-                      .equals(receipt.customerProvisioningRequestId())
-                  || !current.providerCustomerId().equals(receipt.providerCustomerId())
-                  || !current.providerPaymentMethodId().equals(receipt.providerPaymentMethodId())
-                  || !current.attachmentRequestId().equals(receipt.attachmentRequestId())
-                  || current.rowVersion() < receipt.rowVersion()
-                  || (current.rowVersion() == receipt.rowVersion() && !current.equals(receipt))) {
-                throw new IllegalStateException(
-                    "Committed historical receipt/current binding readback mismatch");
-              }
-              // Later availability versions are preserved; replay cannot restore the original
-              // state.
-              return new RetainedBinding(receipt, current);
-            }));
+        transaction.execute(status -> {
+          AccountBillingCustomerRecord customer = lockCustomer(request.accountUuid());
+          if (!customer.equals(expected)) {
+            throw new IllegalStateException("Committed attachment customer readback changed");
+          }
+          AccountPaymentInstrumentRecord current =
+              instruments
+                  .findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid())
+                  .orElseThrow(() -> new IllegalStateException("Committed instrument disappeared"));
+          AccountPaymentInstrumentRecord receipt =
+              instruments
+                  .findAttachmentByRequestId(request.requestId())
+                  .orElseThrow(
+                      () -> new IllegalStateException("Committed attachment receipt disappeared"));
+          requireReceiptBinding(receipt, request, customer);
+          if (!receipt.equals(committed)
+              || !current.instrumentUuid().equals(receipt.instrumentUuid())
+              || !current.accountUuid().equals(receipt.accountUuid())
+              || !current
+                  .customerProvisioningRequestId()
+                  .equals(receipt.customerProvisioningRequestId())
+              || !current.providerCustomerId().equals(receipt.providerCustomerId())
+              || !current.providerPaymentMethodId().equals(receipt.providerPaymentMethodId())
+              || !current.attachmentRequestId().equals(receipt.attachmentRequestId())
+              || current.rowVersion() < receipt.rowVersion()
+              || (current.rowVersion() == receipt.rowVersion() && !current.equals(receipt))) {
+            throw new IllegalStateException(
+                "Committed historical receipt/current binding readback mismatch");
+          }
+          // Later availability versions are preserved; replay cannot restore the original
+          // state.
+          return new RetainedBinding(receipt, current);
+        }));
   }
 
   private AccountBillingCustomerRecord lockCustomer(UUID accountUuid) {

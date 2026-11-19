@@ -81,38 +81,36 @@ class AccountTenantAuthorityHostingEventTest {
     Record version = mock(Record.class);
     when(version.get("next_version", Long.class)).thenReturn(8L);
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              if (sql.contains("FROM subscription_lifecycle_operations")) {
-                return operation;
-              }
-              if (sql.contains("FROM subscription_lifecycle_attempts")) {
-                return attempt;
-              }
-              if (sql.contains("FROM subscription WHERE")) {
-                return links;
-              }
-              if (sql.contains("FROM account_tenant_authority_source_records")) {
-                return sourceHead;
-              }
-              if (sql.startsWith("SELECT greatest(")) {
-                return version;
-              }
-              throw new AssertionError("Unexpected producer read: " + sql);
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          if (sql.contains("FROM subscription_lifecycle_operations")) {
+            return operation;
+          }
+          if (sql.contains("FROM subscription_lifecycle_attempts")) {
+            return attempt;
+          }
+          if (sql.contains("FROM subscription WHERE")) {
+            return links;
+          }
+          if (sql.contains("FROM account_tenant_authority_source_records")) {
+            return sourceHead;
+          }
+          if (sql.startsWith("SELECT greatest(")) {
+            return version;
+          }
+          throw new AssertionError("Unexpected producer read: " + sql);
+        });
     var receiptBindings = new AtomicReference<Object[]>();
     var reachedReceipt = new IllegalStateException("Stop after both actual event producers");
     when(dsl.execute(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              if (sql.startsWith("INSERT INTO subscription_lifecycle_receipts")) {
-                receiptBindings.set((Object[]) invocation.getRawArguments()[1]);
-                throw reachedReceipt;
-              }
-              return 1;
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          if (sql.startsWith("INSERT INTO subscription_lifecycle_receipts")) {
+            receiptBindings.set((Object[]) invocation.getRawArguments()[1]);
+            throw reachedReceipt;
+          }
+          return 1;
+        });
 
     UUID subscriptionId = UUID.fromString("55555555-5555-4555-8555-555555555555");
     var owner = new OwnerFence(ATTEMPT_ID, 1L, ATTEMPT_ID);
@@ -212,34 +210,32 @@ class AccountTenantAuthorityHostingEventTest {
                 AccountTenantEntitlementOutboxRepository.class,
                 (repository, context) ->
                     when(repository.appendHosting(any(), any(), any()))
-                        .thenAnswer(
-                            invocation -> {
-                              LongFunction<AccountHostingSubscriptionLifecycleEvidence.BillingEvent>
-                                  factory = invocation.getArgument(2);
-                              var event = factory.apply(7L);
-                              emittedBilling.set(event);
-                              return event;
-                            }));
+                        .thenAnswer(invocation -> {
+                          LongFunction<AccountHostingSubscriptionLifecycleEvidence.BillingEvent>
+                              factory = invocation.getArgument(2);
+                          var event = factory.apply(7L);
+                          emittedBilling.set(event);
+                          return event;
+                        }));
         var outboxMocks =
             mockConstruction(
                 AccountAuthorityOutboxRepository.class,
                 (repository, context) ->
                     when(repository.append(anyString(), anyString(), any()))
-                        .thenAnswer(
-                            invocation -> {
-                              LongFunction<AccountAuthorityOutboxRepository.EventEvidence> factory =
-                                  invocation.getArgument(2);
-                              var evidence = factory.apply(4L);
-                              emittedAuthority.set(
-                                  TenantAuthorityEventV1Codec.verify(evidence.payload()));
-                              return new AccountAuthorityOutboxRepository.Event(
-                                  invocation.getArgument(0),
-                                  invocation.getArgument(1),
-                                  4L,
-                                  evidence.eventId(),
-                                  evidence.eventDigest(),
-                                  evidence.payload());
-                            }))) {
+                        .thenAnswer(invocation -> {
+                          LongFunction<AccountAuthorityOutboxRepository.EventEvidence> factory =
+                              invocation.getArgument(2);
+                          var evidence = factory.apply(4L);
+                          emittedAuthority.set(
+                              TenantAuthorityEventV1Codec.verify(evidence.payload()));
+                          return new AccountAuthorityOutboxRepository.Event(
+                              invocation.getArgument(0),
+                              invocation.getArgument(1),
+                              4L,
+                              evidence.eventId(),
+                              evidence.eventDigest(),
+                              evidence.payload());
+                        }))) {
       var repository =
           new AccountHostingSubscriptionLifecycleRepository(
               dsl,

@@ -530,11 +530,10 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
     when(source.canonicalBytes()).thenReturn(bytes);
     when(source.digest()).thenReturn(sha256(bytes));
     when(inputs.gameDesign().read(any(AuthoredInitialActorCoreReadEvidence.ReadRequest.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return source;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return source;
+        });
   }
 
   private static AttemptSnapshot snapshot(TestInputs inputs, UUID mutationId) {

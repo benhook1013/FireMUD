@@ -157,25 +157,23 @@ final class AccountTenantCreationCoordinator {
   }
 
   private void settleNegative(Original original, VerifiedTerminal terminal) {
-    transactions.executeWithoutResult(
-        status -> {
-          var actual =
-              orders
-                  .readOriginal(original.intent().creationOperationId())
-                  .orElseThrow(AccountTenantCreationCoordinator::inconsistent);
-          if (!Arrays.equals(actual.canonicalBytes(), original.holder().canonicalBytes())
-              || !actual.outcomeBinding().equals(terminal.binding())) throw inconsistent();
-          orders.settleLocked(actual, terminal);
-        });
-    transactions.executeWithoutResult(
-        status -> {
-          var actual =
-              orders
-                  .readSettlement(original.intent().creationOperationId())
-                  .orElseThrow(AccountTenantCreationCoordinator::inconsistent);
-          if (!Arrays.equals(actual.canonicalBytes(), terminal.evidence().canonicalBytes()))
-            throw inconsistent();
-        });
+    transactions.executeWithoutResult(status -> {
+      var actual =
+          orders
+              .readOriginal(original.intent().creationOperationId())
+              .orElseThrow(AccountTenantCreationCoordinator::inconsistent);
+      if (!Arrays.equals(actual.canonicalBytes(), original.holder().canonicalBytes())
+          || !actual.outcomeBinding().equals(terminal.binding())) throw inconsistent();
+      orders.settleLocked(actual, terminal);
+    });
+    transactions.executeWithoutResult(status -> {
+      var actual =
+          orders
+              .readSettlement(original.intent().creationOperationId())
+              .orElseThrow(AccountTenantCreationCoordinator::inconsistent);
+      if (!Arrays.equals(actual.canonicalBytes(), terminal.evidence().canonicalBytes()))
+        throw inconsistent();
+    });
   }
 
   private static void requireExactRequest(OriginalIntent original, Request request) {

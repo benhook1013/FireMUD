@@ -128,11 +128,10 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       Request request, String presentedInitialLoginJwt) {
     VerifiedCaller caller = verifyCaller(request, presentedInitialLoginJwt);
     Prepared prepared =
-        inSourceTransaction(
-            () -> {
-              CurrentPlayer player = readCurrentPlayer(request, caller);
-              return new Prepared(player, sources.readCurrentSourceSelection(request.tenantId()));
-            });
+        inSourceTransaction(() -> {
+          CurrentPlayer player = readCurrentPlayer(request, caller);
+          return new Prepared(player, sources.readCurrentSourceSelection(request.tenantId()));
+        });
     requireCurrentTimes(prepared.player(), now());
     RuntimePlayerAdmissionEntitlementEvidence evidence =
         switch (prepared.selection().kind()) {
@@ -151,132 +150,129 @@ public final class AccountPlayerAdmissionEntitlementOwner {
   private RuntimePlayerAdmissionEntitlementEvidence capturePaidSources(
       Request request, VerifiedCaller caller, Prepared prepared) {
     var fence =
-        inSourceTransaction(
-            () -> {
-              try {
-                return hosting.prepareCurrentRead(request.tenantId());
-              } catch (FenceRejectedException rejected) {
-                throw unavailable();
-              }
-            });
-    requireNoAmbientTransaction();
-    var observation = observer.observe(fence.binding());
-    PublishedRealmEvidence target = readProtectedTarget(request, prepared.player().scope());
-    return inSourceTransaction(
-        () -> {
-          CurrentPlayer player = readCurrentPlayer(request, caller);
-          if (!prepared.player().scope().equals(player.scope())) throw unavailable();
-          requireSameHead(request, prepared.selection());
-          final AccountHostingSubscriptionCurrentReceipt receipt;
+        inSourceTransaction(() -> {
           try {
-            receipt = hosting.readCurrent(fence, observation);
+            return hosting.prepareCurrentRead(request.tenantId());
           } catch (FenceRejectedException rejected) {
             throw unavailable();
           }
-          Instant evaluatedAt = now();
-          requireFreshReceipt(request, receipt, evaluatedAt);
-          var event = receipt.tenantAuthorityEvent();
-          if (!prepared.selection().matches(event)) throw unavailable();
-          requireTenantSource(
-              player.snapshot(),
-              event.tenantId(),
-              event.tenantAuthorityGeneration(),
-              receipt.tenantBillingSequence(),
-              event.outboxStreamKey(),
-              event.outboxSequence(),
-              event.eventId(),
-              event.eventDigest());
-          if (!receipt.billingEventId().equals(event.tenantBillingEventId())
-              || !receipt.billingEventDigest().equals(event.tenantBillingEventDigest())
-              || receipt.tenantBillingSequence() != event.tenantBillingSequence()) {
-            throw unavailable();
-          }
-          requireCurrentTimes(player, evaluatedAt);
-          var quote = receipt.current().planQuote();
-          return capture(
-              request,
-              player,
-              target,
-              facts(
-                  "PAID_HOSTING",
-                  receipt.subscriptionStatus().storageValue(),
-                  receipt.gameplayAvailable(),
-                  receipt.allowPublicJoin(),
-                  receipt.allowNewGameplayBindings(),
-                  receipt.allowNewInstanceStarts(),
-                  quote.maxActiveSessions(),
-                  quote.maxConcurrentGameInstances(),
-                  quote.maxStorageBytes(),
-                  receipt.entitlementVersion(),
-                  receipt.tenantBillingSequence(),
-                  event.tenantAuthorityGeneration()),
-              RuntimePlayerAdmissionEntitlementEvidence.digest(
-                  Map.of(
-                      "receiptRequestId", receipt.receiptRequestId().toString(),
-                      "subscriptionId", receipt.current().subscriptionId().toString(),
-                      "subscriptionRowVersion", Long.toString(receipt.current().rowVersion()),
-                      "billingEventId", receipt.billingEventId().toString(),
-                      "billingEventDigest", receipt.billingEventDigest(),
-                      "tenantAuthorityEventDigest", event.eventDigest())),
-              evaluatedAt,
-              receipt.validUntil());
         });
+    requireNoAmbientTransaction();
+    var observation = observer.observe(fence.binding());
+    PublishedRealmEvidence target = readProtectedTarget(request, prepared.player().scope());
+    return inSourceTransaction(() -> {
+      CurrentPlayer player = readCurrentPlayer(request, caller);
+      if (!prepared.player().scope().equals(player.scope())) throw unavailable();
+      requireSameHead(request, prepared.selection());
+      final AccountHostingSubscriptionCurrentReceipt receipt;
+      try {
+        receipt = hosting.readCurrent(fence, observation);
+      } catch (FenceRejectedException rejected) {
+        throw unavailable();
+      }
+      Instant evaluatedAt = now();
+      requireFreshReceipt(request, receipt, evaluatedAt);
+      var event = receipt.tenantAuthorityEvent();
+      if (!prepared.selection().matches(event)) throw unavailable();
+      requireTenantSource(
+          player.snapshot(),
+          event.tenantId(),
+          event.tenantAuthorityGeneration(),
+          receipt.tenantBillingSequence(),
+          event.outboxStreamKey(),
+          event.outboxSequence(),
+          event.eventId(),
+          event.eventDigest());
+      if (!receipt.billingEventId().equals(event.tenantBillingEventId())
+          || !receipt.billingEventDigest().equals(event.tenantBillingEventDigest())
+          || receipt.tenantBillingSequence() != event.tenantBillingSequence()) {
+        throw unavailable();
+      }
+      requireCurrentTimes(player, evaluatedAt);
+      var quote = receipt.current().planQuote();
+      return capture(
+          request,
+          player,
+          target,
+          facts(
+              "PAID_HOSTING",
+              receipt.subscriptionStatus().storageValue(),
+              receipt.gameplayAvailable(),
+              receipt.allowPublicJoin(),
+              receipt.allowNewGameplayBindings(),
+              receipt.allowNewInstanceStarts(),
+              quote.maxActiveSessions(),
+              quote.maxConcurrentGameInstances(),
+              quote.maxStorageBytes(),
+              receipt.entitlementVersion(),
+              receipt.tenantBillingSequence(),
+              event.tenantAuthorityGeneration()),
+          RuntimePlayerAdmissionEntitlementEvidence.digest(
+              Map.of(
+                  "receiptRequestId", receipt.receiptRequestId().toString(),
+                  "subscriptionId", receipt.current().subscriptionId().toString(),
+                  "subscriptionRowVersion", Long.toString(receipt.current().rowVersion()),
+                  "billingEventId", receipt.billingEventId().toString(),
+                  "billingEventDigest", receipt.billingEventDigest(),
+                  "tenantAuthorityEventDigest", event.eventDigest())),
+          evaluatedAt,
+          receipt.validUntil());
+    });
   }
 
   private RuntimePlayerAdmissionEntitlementEvidence captureDemoSources(
       Request request, VerifiedCaller caller, Prepared prepared) {
     PublishedRealmEvidence target = readProtectedTarget(request, prepared.player().scope());
-    return inSourceTransaction(
-        () -> {
-          CurrentPlayer player = readCurrentPlayer(request, caller);
-          if (!prepared.player().scope().equals(player.scope())) throw unavailable();
-          requireSameHead(request, prepared.selection());
-          DemoTenantEntitlementSnapshot demo = demos.readCurrent(request.tenantId());
-          var head = prepared.selection().checkpoint();
-          if (!demo.tenantAuthorityEventId().equals(head.eventId())
-              || !demo.tenantAuthorityEventDigest().equals(head.eventDigest())
-              || !demo.canonicalTenantId().equals(head.tenantId())
-              || demo.tenantAuthorityGeneration() != head.tenantAuthorityGeneration()
-              || !demo.tenantAuthorityOutboxStreamKey().equals(head.outboxStreamKey())
-              || demo.tenantAuthorityOutboxSequence() != head.outboxSequence()
-              || demo.tenantBillingSequence() != head.tenantBillingSequence()
-              || !demo.eventId().equals(head.tenantBillingEventId())
-              || !demo.eventDigest().equals(head.tenantBillingEventDigest())
-              || demo.tenantAuthoritySourceVersion() != head.tenantAuthoritySourceVersion()) {
-            throw unavailable();
-          }
-          requireTenantSource(
-              player.snapshot(),
-              demo.canonicalTenantId(),
-              demo.tenantAuthorityGeneration(),
+    return inSourceTransaction(() -> {
+      CurrentPlayer player = readCurrentPlayer(request, caller);
+      if (!prepared.player().scope().equals(player.scope())) throw unavailable();
+      requireSameHead(request, prepared.selection());
+      DemoTenantEntitlementSnapshot demo = demos.readCurrent(request.tenantId());
+      var head = prepared.selection().checkpoint();
+      if (!demo.tenantAuthorityEventId().equals(head.eventId())
+          || !demo.tenantAuthorityEventDigest().equals(head.eventDigest())
+          || !demo.canonicalTenantId().equals(head.tenantId())
+          || demo.tenantAuthorityGeneration() != head.tenantAuthorityGeneration()
+          || !demo.tenantAuthorityOutboxStreamKey().equals(head.outboxStreamKey())
+          || demo.tenantAuthorityOutboxSequence() != head.outboxSequence()
+          || demo.tenantBillingSequence() != head.tenantBillingSequence()
+          || !demo.eventId().equals(head.tenantBillingEventId())
+          || !demo.eventDigest().equals(head.tenantBillingEventDigest())
+          || demo.tenantAuthoritySourceVersion() != head.tenantAuthoritySourceVersion()) {
+        throw unavailable();
+      }
+      requireTenantSource(
+          player.snapshot(),
+          demo.canonicalTenantId(),
+          demo.tenantAuthorityGeneration(),
+          demo.tenantBillingSequence(),
+          demo.tenantAuthorityOutboxStreamKey(),
+          demo.tenantAuthorityOutboxSequence(),
+          demo.tenantAuthorityEventId(),
+          demo.tenantAuthorityEventDigest());
+      Instant capturedAt = now();
+      requireCurrentTimes(player, capturedAt);
+      return capture(
+          request,
+          player,
+          target,
+          facts(
+              "NON_PAID_DEMO",
+              null,
+              demo.gameplayAvailable(),
+              demo.allowPublicJoin(),
+              demo.allowNewGameplayBindings(),
+              demo.allowNewInstanceStarts(),
+              demo.quotas().maxActiveSessions(),
+              demo.quotas().maxConcurrentGameInstances(),
+              demo.quotas().maxStorageBytes(),
+              demo.entitlementVersion(),
               demo.tenantBillingSequence(),
-              demo.tenantAuthorityOutboxStreamKey(),
-              demo.tenantAuthorityOutboxSequence(),
-              demo.tenantAuthorityEventId(),
-              demo.tenantAuthorityEventDigest());
-          Instant capturedAt = now();
-          requireCurrentTimes(player, capturedAt);
-          return capture(
-              request,
-              player,
-              target,
-              facts(
-                  "NON_PAID_DEMO",
-                  null,
-                  demo.gameplayAvailable(),
-                  demo.allowPublicJoin(),
-                  demo.allowNewGameplayBindings(),
-                  demo.allowNewInstanceStarts(),
-                  demo.quotas().maxActiveSessions(),
-                  demo.quotas().maxConcurrentGameInstances(),
-                  demo.quotas().maxStorageBytes(),
-                  demo.entitlementVersion(),
-                  demo.tenantBillingSequence(),
-                  demo.tenantAuthorityGeneration()),
-              demo.snapshotIdentity(),
-              capturedAt,
-              null);
-        });
+              demo.tenantAuthorityGeneration()),
+          demo.snapshotIdentity(),
+          capturedAt,
+          null);
+    });
   }
 
   private VerifiedCaller verifyCaller(Request request, String token) {
@@ -316,27 +312,25 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     var expectedCutoff =
         authority
             .accountSecurityCutoff()
-            .map(
-                cutoff ->
-                    Map.of(
-                        "accountAuthorityGeneration",
-                        cutoff.accountAuthorityGeneration(),
-                        "outboxStreamKey",
-                        cutoff.outboxStreamKey(),
-                        "outboxSequence",
-                        cutoff.outboxSequence()));
+            .map(cutoff ->
+                Map.of(
+                    "accountAuthorityGeneration",
+                    cutoff.accountAuthorityGeneration(),
+                    "outboxStreamKey",
+                    cutoff.outboxStreamKey(),
+                    "outboxSequence",
+                    cutoff.outboxSequence()));
     var actualCutoff =
         tuple
             .accountSecurityCutoff()
-            .map(
-                cutoff ->
-                    Map.of(
-                        "accountAuthorityGeneration",
-                        cutoff.accountAuthorityGeneration(),
-                        "outboxStreamKey",
-                        cutoff.outboxStreamKey(),
-                        "outboxSequence",
-                        cutoff.outboxSequence()));
+            .map(cutoff ->
+                Map.of(
+                    "accountAuthorityGeneration",
+                    cutoff.accountAuthorityGeneration(),
+                    "outboxStreamKey",
+                    cutoff.outboxStreamKey(),
+                    "outboxSequence",
+                    cutoff.outboxSequence()));
     if (!ISSUER.equals(snapshot.issuerId())
         || !accountId.toString().equals(snapshot.accountId())
         || !request.tenantId().toString().equals(snapshot.tenantId())
@@ -398,12 +392,11 @@ public final class AccountPlayerAdmissionEntitlementOwner {
             .filter(Map.of(tenant, cutoff)::equals)
             .isPresent()
         || snapshot.sourceEvidence().stream()
-            .noneMatch(
-                source ->
-                    stream.equals(source.outboxStreamKey())
-                        && Long.toString(sequence).equals(source.outboxSequence())
-                        && eventId.toString().equals(source.eventId())
-                        && eventDigest.equals(source.eventDigest()))) {
+            .noneMatch(source ->
+                stream.equals(source.outboxStreamKey())
+                    && Long.toString(sequence).equals(source.outboxSequence())
+                    && eventId.toString().equals(source.eventId())
+                    && eventDigest.equals(source.eventDigest()))) {
       throw unavailable();
     }
   }
@@ -433,22 +426,19 @@ public final class AccountPlayerAdmissionEntitlementOwner {
   private <T> T inSourceTransaction(Supplier<T> action) {
     requireNoAmbientTransaction();
     return Objects.requireNonNull(
-        transaction.execute(
-            status -> {
-              if (!TransactionSynchronizationManager.isActualTransactionActive()
-                  || TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                throw unavailable();
-              dsl.connection(
-                  connection -> {
-                    if (connection.getAutoCommit()
-                        || connection.isReadOnly()
-                        || connection.getTransactionIsolation()
-                            != Connection.TRANSACTION_SERIALIZABLE) {
-                      throw unavailable();
-                    }
-                  });
-              return Objects.requireNonNull(action.get());
-            }));
+        transaction.execute(status -> {
+          if (!TransactionSynchronizationManager.isActualTransactionActive()
+              || TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+            throw unavailable();
+          dsl.connection(connection -> {
+            if (connection.getAutoCommit()
+                || connection.isReadOnly()
+                || connection.getTransactionIsolation() != Connection.TRANSACTION_SERIALIZABLE) {
+              throw unavailable();
+            }
+          });
+          return Objects.requireNonNull(action.get());
+        }));
   }
 
   private Instant now() {
@@ -497,10 +487,9 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       if (connectScopeId == null || connectScopeId.isBlank() || connectScopeId.length() > 16384)
         throw new IllegalArgumentException("Bounded opaque connect scope is required");
       GrpcPeerIdentity.parseUri(authenticatedCallerWorkload)
-          .filter(
-              peer ->
-                  peer.uri().equals(authenticatedCallerWorkload)
-                      && "game-session-service".equals(peer.service()))
+          .filter(peer ->
+              peer.uri().equals(authenticatedCallerWorkload)
+                  && "game-session-service".equals(peer.service()))
           .orElseThrow(
               () -> new IllegalArgumentException("Exact Game Session workload is required"));
     }

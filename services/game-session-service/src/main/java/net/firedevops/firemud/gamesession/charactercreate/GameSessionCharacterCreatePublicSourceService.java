@@ -109,10 +109,9 @@ public final class GameSessionCharacterCreatePublicSourceService {
     if (visible == null || visible.stream().anyMatch(Objects::isNull)) throw missing();
     var selected =
         visible.stream()
-            .filter(
-                route ->
-                    request.getWorldSlug().equals(route.worldSlug())
-                        && request.getRealmSlug().equals(route.realmSlug()))
+            .filter(route ->
+                request.getWorldSlug().equals(route.worldSlug())
+                    && request.getRealmSlug().equals(route.realmSlug()))
             .toList();
     if (selected.size() != 1) throw missing();
     CanonicalPlayableTarget discovery = selected.getFirst();
@@ -478,18 +477,17 @@ public final class GameSessionCharacterCreatePublicSourceService {
         || !sourceRelease.commandDefinitions().equals(worldRelease.commandDefinitions())
         || !sourceRelease.generationConfigRevision().equals(worldRelease.generationConfigRevision())
         || !sourceRelease.participantDigests().stream()
-            .map(
-                value ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        value.participantKey(),
-                        value.scopeValue(),
-                        value.baseVersionId() != null,
-                        value.baseVersionId(),
-                        value.appliedCommitId(),
-                        value.contentDigest(),
-                        value.digestSchemaVersion(),
-                        value.abilitySchemaDigest() != null,
-                        value.abilitySchemaDigest()))
+            .map(value ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    value.participantKey(),
+                    value.scopeValue(),
+                    value.baseVersionId() != null,
+                    value.baseVersionId(),
+                    value.appliedCommitId(),
+                    value.contentDigest(),
+                    value.digestSchemaVersion(),
+                    value.abilitySchemaDigest() != null,
+                    value.abilitySchemaDigest()))
             .toList()
             .equals(worldRelease.participantDigests())
         || !Arrays.equals(
@@ -501,10 +499,9 @@ public final class GameSessionCharacterCreatePublicSourceService {
         || set.versionNumber() != bundle.getVersionNumber()) throw missing();
     var matches =
         set.policies().stream()
-            .filter(
-                evidence ->
-                    evidence.policy().worldSlug().equals(route.worldSlug())
-                        && evidence.policy().realmSlug().equals(route.realmSlug()))
+            .filter(evidence ->
+                evidence.policy().worldSlug().equals(route.worldSlug())
+                    && evidence.policy().realmSlug().equals(route.realmSlug()))
             .toList();
     if (matches.size() != 1) throw missing();
     var evidence = matches.getFirst().requireValidDigest(set);
@@ -724,11 +721,10 @@ public final class GameSessionCharacterCreatePublicSourceService {
       AuthoredInitialActorCoreReadEvidence.ReadResult source) {
     var selected =
         source.projections().stream()
-            .filter(
-                projection ->
-                    RealmEntryPolicy.parseCanonical(projection.policy().canonicalJson(), JSON)
-                        .realmSlug()
-                        .equals(route.realmSlug()))
+            .filter(projection ->
+                RealmEntryPolicy.parseCanonical(projection.policy().canonicalJson(), JSON)
+                    .realmSlug()
+                    .equals(route.realmSlug()))
             .toList();
     if (selected.size() != 1) throw missing();
     var projection = selected.getFirst();

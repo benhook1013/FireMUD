@@ -82,13 +82,11 @@ class AccountStartSessionActivationProtectionSettlementServiceTest {
             7L);
     when(repository.findHistoricalExact(
             input.accountProtectionId(), input.accountProtectionFence()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                  .isFalse();
-              return Optional.empty();
-            });
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+          return Optional.empty();
+        });
 
     withWorldPeer(() -> assertCode(Status.Code.FAILED_PRECONDITION, () -> service.settle(input)));
 

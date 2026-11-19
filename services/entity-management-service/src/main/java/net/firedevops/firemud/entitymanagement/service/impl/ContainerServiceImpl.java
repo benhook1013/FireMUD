@@ -420,17 +420,16 @@ public class ContainerServiceImpl implements ContainerService {
         itemStackRepository
             .findByTenantIdAndContainerInstance_IdAndItem_IdAndCompatibilityFingerprint(
                 tenantId, containerInstance.getId(), item.getId(), compatibilityFingerprint)
-            .orElseGet(
-                () -> {
-                  ItemStack created = new ItemStack();
-                  created.setTenantId(tenantId);
-                  created.setContainerInstance(containerInstance);
-                  created.setItem(item);
-                  created.setStackFamilyKey(source.getStackFamilyKey());
-                  created.setCompatibilityFingerprint(compatibilityFingerprint);
-                  created.setQuantity(0);
-                  return created;
-                });
+            .orElseGet(() -> {
+              ItemStack created = new ItemStack();
+              created.setTenantId(tenantId);
+              created.setContainerInstance(containerInstance);
+              created.setItem(item);
+              created.setStackFamilyKey(source.getStackFamilyKey());
+              created.setCompatibilityFingerprint(compatibilityFingerprint);
+              created.setQuantity(0);
+              return created;
+            });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
     itemTransferAuditWriter.recordStackTransfer(
@@ -467,17 +466,16 @@ public class ContainerServiceImpl implements ContainerService {
         itemStackRepository
             .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
                 tenantId, character.getId(), item.getId(), compatibilityFingerprint)
-            .orElseGet(
-                () -> {
-                  ItemStack created = new ItemStack();
-                  created.setTenantId(tenantId);
-                  created.setCharacter(character);
-                  created.setItem(item);
-                  created.setStackFamilyKey(source.getStackFamilyKey());
-                  created.setCompatibilityFingerprint(compatibilityFingerprint);
-                  created.setQuantity(0);
-                  return created;
-                });
+            .orElseGet(() -> {
+              ItemStack created = new ItemStack();
+              created.setTenantId(tenantId);
+              created.setCharacter(character);
+              created.setItem(item);
+              created.setStackFamilyKey(source.getStackFamilyKey());
+              created.setCompatibilityFingerprint(compatibilityFingerprint);
+              created.setQuantity(0);
+              return created;
+            });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
     itemTransferAuditWriter.recordStackTransfer(
@@ -519,10 +517,9 @@ public class ContainerServiceImpl implements ContainerService {
     }
     if (stackFamilyKey != null) {
       return stacks.stream()
-          .filter(
-              stack ->
-                  stackFamilyKey.equals(
-                      stackableItemSupport.normalizeStackFamilyKey(stack.getStackFamilyKey())))
+          .filter(stack ->
+              stackFamilyKey.equals(
+                  stackableItemSupport.normalizeStackFamilyKey(stack.getStackFamilyKey())))
           .findFirst()
           .orElseThrow(() -> new IllegalArgumentException(notFoundMessage));
     }

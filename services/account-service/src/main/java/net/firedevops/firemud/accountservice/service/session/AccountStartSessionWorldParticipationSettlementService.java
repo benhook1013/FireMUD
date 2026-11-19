@@ -63,27 +63,25 @@ public final class AccountStartSessionWorldParticipationSettlementService {
 
     Lookup lookup =
         Objects.requireNonNull(
-            ownerTransaction.execute(
-                ignored -> {
-                  StoredParticipation participation =
-                      repository
-                          .findHistoricalExact(participationId, participationFence)
-                          .orElseThrow(
-                              () ->
-                                  Status.FAILED_PRECONDITION
-                                      .withDescription(
-                                          "Exact historical World participation is unavailable")
-                                      .asRuntimeException());
-                  if (!workloadNamespace.equals(participation.targetNamespace())) {
-                    throw Status.PERMISSION_DENIED
-                        .withDescription(
-                            "World participation target namespace differs from authenticated peer")
-                        .asRuntimeException();
-                  }
-                  Optional<StoredSettlement> settled =
-                      repository.findSettlementExact(participationId, participationFence);
-                  return new Lookup(participation, settled.orElse(null));
-                }),
+            ownerTransaction.execute(ignored -> {
+              StoredParticipation participation =
+                  repository
+                      .findHistoricalExact(participationId, participationFence)
+                      .orElseThrow(() ->
+                          Status.FAILED_PRECONDITION
+                              .withDescription(
+                                  "Exact historical World participation is unavailable")
+                              .asRuntimeException());
+              if (!workloadNamespace.equals(participation.targetNamespace())) {
+                throw Status.PERMISSION_DENIED
+                    .withDescription(
+                        "World participation target namespace differs from authenticated peer")
+                    .asRuntimeException();
+              }
+              Optional<StoredSettlement> settled =
+                  repository.findSettlementExact(participationId, participationFence);
+              return new Lookup(participation, settled.orElse(null));
+            }),
             "Account participation lookup transaction returned no result");
     if (lookup.settlement() != null) return lookup.settlement();
 
@@ -113,16 +111,13 @@ public final class AccountStartSessionWorldParticipationSettlementService {
     requireNoAmbientTransaction();
     StoredSettlement readback =
         Objects.requireNonNull(
-            ownerTransaction.execute(
-                ignored ->
-                    repository
-                        .findSettlementExact(participationId, participationFence)
-                        .orElseThrow(
-                            () ->
-                                Status.FAILED_PRECONDITION
-                                    .withDescription(
-                                        "Committed World terminal settlement is not readable")
-                                    .asRuntimeException())),
+            ownerTransaction.execute(ignored ->
+                repository
+                    .findSettlementExact(participationId, participationFence)
+                    .orElseThrow(() ->
+                        Status.FAILED_PRECONDITION
+                            .withDescription("Committed World terminal settlement is not readable")
+                            .asRuntimeException())),
             "Account terminal settlement readback transaction returned no receipt");
     if (!sameSettlement(committed, readback)) {
       throw Status.FAILED_PRECONDITION

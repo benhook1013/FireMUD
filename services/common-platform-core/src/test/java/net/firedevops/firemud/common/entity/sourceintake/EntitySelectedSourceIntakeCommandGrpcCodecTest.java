@@ -82,37 +82,33 @@ class EntitySelectedSourceIntakeCommandGrpcCodecTest {
 
     var request = Request.create(NAMESPACE, fixture.authorization(), freeze);
     var wire = EntitySelectedSourceIntakeCommandGrpcCodec.toRequest(request);
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    wire.toBuilder().setIntakeAuthorizationDigest("0".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                wire.toBuilder().setIntakeAuthorizationDigest("0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest");
 
     byte[] changedBinding = fixture.authorization().canonicalBytes();
     changedBinding[changedBinding.length - 1] ^= 1;
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    wire.toBuilder()
-                        .setOriginalIntakeAuthorizationBinding(ByteString.copyFrom(changedBinding))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                wire.toBuilder()
+                    .setOriginalIntakeAuthorizationBinding(ByteString.copyFrom(changedBinding))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var changedFreezeRequest =
         wire.getFreezeRequest().toBuilder().setRequestDigest("0".repeat(64)).build();
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    wire.toBuilder().setFreezeRequest(changedFreezeRequest).build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                wire.toBuilder().setFreezeRequest(changedFreezeRequest).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("freeze");
     var changedFreezeAck =
         wire.getFreezeAcknowledgement().toBuilder().setAppliedCommitId("0".repeat(36)).build();
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    wire.toBuilder().setFreezeAcknowledgement(changedFreezeAck).build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                wire.toBuilder().setFreezeAcknowledgement(changedFreezeAck).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("freeze");
   }
@@ -126,61 +122,54 @@ class EntitySelectedSourceIntakeCommandGrpcCodecTest {
         UnknownFieldSet.newBuilder()
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    requestWire.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                requestWire.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unknown");
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    requestWire.toBuilder()
-                        .setFreezeAcknowledgement(
-                            requestWire.getFreezeAcknowledgement().toBuilder()
-                                .setUnknownFields(unknown)
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                requestWire.toBuilder()
+                    .setFreezeAcknowledgement(
+                        requestWire.getFreezeAcknowledgement().toBuilder()
+                            .setUnknownFields(unknown)
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    RetainSelectedEntitySourceRequest.newBuilder()
-                        .setOriginalIntakeAuthorizationBinding(
-                            ByteString.copyFrom(
-                                new byte
-                                    [EntitySelectedSourceIntakeCommandGrpcCodec
-                                            .MAX_REQUEST_WIRE_BYTES
-                                        + 1]))
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                RetainSelectedEntitySourceRequest.newBuilder()
+                    .setOriginalIntakeAuthorizationBinding(
+                        ByteString.copyFrom(
+                            new byte
+                                [EntitySelectedSourceIntakeCommandGrpcCodec.MAX_REQUEST_WIRE_BYTES
+                                    + 1]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire budget");
 
     var response =
         EntitySelectedSourceIntakeCommandGrpcCodec.toResponse(
             new EntitySelectedSourceIntakeCommandEvidence(request, fixture.receipt()));
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(
-                            response.getRequest().toBuilder()
-                                .setTransportRequestId(UUID.randomUUID().toString())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(
+                        response.getRequest().toBuilder()
+                            .setTransportRequestId(UUID.randomUUID().toString())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed");
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromResponse(
-                    request, response.toBuilder().setReceiptDigest("0".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromResponse(
+                request, response.toBuilder().setReceiptDigest("0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest");
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromResponse(
-                    request, response.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromResponse(
+                request, response.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unknown");
 
@@ -195,18 +184,15 @@ class EntitySelectedSourceIntakeCommandGrpcCodecTest {
   void transportCorrelationMustBeCanonicalNonzeroAndNotReuseRetainedIdentity() {
     var freeze = fixture.inputs().worldInventoryReadEvidence().request().freezeEvidence();
     var binding = fixture.authorization();
-    assertThatThrownBy(
-            () ->
-                new Request(
-                    Request.SCHEMA_VERSION, NAMESPACE, binding.operationId(), binding, freeze))
+    assertThatThrownBy(() ->
+            new Request(Request.SCHEMA_VERSION, NAMESPACE, binding.operationId(), binding, freeze))
         .isInstanceOf(IllegalArgumentException.class);
     var valid = Request.create(NAMESPACE, binding, freeze);
-    assertThatThrownBy(
-            () ->
-                EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    EntitySelectedSourceIntakeCommandGrpcCodec.toRequest(valid).toBuilder()
-                        .setTransportRequestId("00000000-0000-0000-0000-000000000000")
-                        .build()))
+    assertThatThrownBy(() ->
+            EntitySelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                EntitySelectedSourceIntakeCommandGrpcCodec.toRequest(valid).toBuilder()
+                    .setTransportRequestId("00000000-0000-0000-0000-000000000000")
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("UUID");
   }

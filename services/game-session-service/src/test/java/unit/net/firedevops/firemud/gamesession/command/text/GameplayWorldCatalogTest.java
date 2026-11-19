@@ -769,11 +769,10 @@ class GameplayWorldCatalogTest {
   void browseViewUsesOneWorldSnapshotForDefaultRealmAndCardinalityChecks() {
     AtomicInteger supplierCalls = new AtomicInteger();
     GameplayWorldCatalog catalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () ->
-                supplierCalls.getAndIncrement() == 0
-                    ? List.of(worldWithRealm("demo", "production", 7L, true))
-                    : List.of(worldWithRealm("demo", "preview", 7L, false)));
+        GameplayWorldCatalog.forWorldSupplier(() ->
+            supplierCalls.getAndIncrement() == 0
+                ? List.of(worldWithRealm("demo", "production", 7L, true))
+                : List.of(worldWithRealm("demo", "preview", 7L, false)));
 
     assertThat(catalog.browseView().worlds())
         .extracting(
@@ -806,11 +805,10 @@ class GameplayWorldCatalogTest {
         new AtomicReference<>(List.of(visible, hidden));
     AtomicInteger reads = new AtomicInteger();
     when(authorityService.listPointers())
-        .thenAnswer(
-            invocation -> {
-              reads.incrementAndGet();
-              return source.get();
-            });
+        .thenAnswer(invocation -> {
+          reads.incrementAndGet();
+          return source.get();
+        });
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     GameplayWorldCatalog.DiscoverySnapshot original = catalog.discoverySnapshot();
@@ -848,11 +846,10 @@ class GameplayWorldCatalogTest {
   void discoverySnapshotReadsItsSourceOnce() {
     AtomicInteger supplierCalls = new AtomicInteger();
     GameplayWorldCatalog catalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () -> {
-              supplierCalls.incrementAndGet();
-              return List.of(worldWithRealm("demo", "production", 7L, true));
-            });
+        GameplayWorldCatalog.forWorldSupplier(() -> {
+          supplierCalls.incrementAndGet();
+          return List.of(worldWithRealm("demo", "production", 7L, true));
+        });
 
     GameplayWorldCatalog.DiscoverySnapshot snapshot = catalog.discoverySnapshot();
 
@@ -874,11 +871,10 @@ class GameplayWorldCatalogTest {
                 realmView("preview", "Preview Realm", 7L, 12L, 2L, true, false, "ALLOW_NEW"),
                 realmView("hidden", "Hidden Realm", 7L, 13L, 3L, false, false, "ALLOW_NEW")));
     GameplayWorldCatalog catalog =
-        GameplayWorldCatalog.forWorldSupplier(
-            () -> {
-              supplierCalls.incrementAndGet();
-              return List.of(selectedWorld);
-            });
+        GameplayWorldCatalog.forWorldSupplier(() -> {
+          supplierCalls.incrementAndGet();
+          return List.of(selectedWorld);
+        });
     GameplayWorldCatalog.DiscoverySnapshot discovery = catalog.discoverySnapshot();
     assertThat(supplierCalls).hasValue(1);
 

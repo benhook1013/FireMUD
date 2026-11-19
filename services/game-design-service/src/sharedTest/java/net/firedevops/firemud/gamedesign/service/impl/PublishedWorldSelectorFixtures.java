@@ -133,21 +133,20 @@ public final class PublishedWorldSelectorFixtures {
         .AuthoredWorldReleaseAttestationEvidence
         .requiredParticipantOrder()
         .stream()
-        .map(
-            owner ->
-                new net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto(
-                    owner,
-                    Long.toString(versionId),
-                    null,
-                    evidence.request().appliedCommitId(),
-                    "WORLD_MANAGEMENT".equals(owner)
-                        ? evidence.request().contentDigest()
-                        : "c".repeat(64),
-                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                        owner, attestationSchemaVersion),
-                    "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
-                    null,
-                    null))
+        .map(owner ->
+            new net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto(
+                owner,
+                Long.toString(versionId),
+                null,
+                evidence.request().appliedCommitId(),
+                "WORLD_MANAGEMENT".equals(owner)
+                    ? evidence.request().contentDigest()
+                    : "c".repeat(64),
+                AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                    owner, attestationSchemaVersion),
+                "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
+                null,
+                null))
         .toList();
   }
 
@@ -173,15 +172,14 @@ public final class PublishedWorldSelectorFixtures {
                     .thenComparing(AffectedUnit::scopeType)
                     .thenComparing(AffectedUnit::scopeId)
                     .thenComparing(AffectedUnit::expectedEpoch))
-            .map(
-                u ->
-                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                        u.owner().name(),
-                        u.aggregateType(),
-                        u.aggregateId(),
-                        u.scopeType(),
-                        u.scopeId(),
-                        u.expectedEpoch()))
+            .map(u ->
+                new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                    u.owner().name(),
+                    u.aggregateType(),
+                    u.aggregateId(),
+                    u.scopeType(),
+                    u.scopeId(),
+                    u.expectedEpoch()))
             .toList();
     var request =
         new WorldPublishedStartLocationEvidence.Request(
@@ -284,23 +282,22 @@ public final class PublishedWorldSelectorFixtures {
     result.put(
         "appliedEpochs",
         draft.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    Map.of(
-                        "aggregateType",
-                        unit.aggregateType(),
-                        "aggregateId",
-                        unit.aggregateId(),
-                        "scopeType",
-                        unit.scopeType(),
-                        "scopeId",
-                        unit.scopeId(),
-                        "expectedEpoch",
-                        unit.expectedEpoch(),
-                        "resultingEpoch",
-                        new java.math.BigInteger(unit.expectedEpoch())
-                            .add(java.math.BigInteger.ONE)
-                            .toString()))
+            .map(unit ->
+                Map.of(
+                    "aggregateType",
+                    unit.aggregateType(),
+                    "aggregateId",
+                    unit.aggregateId(),
+                    "scopeType",
+                    unit.scopeType(),
+                    "scopeId",
+                    unit.scopeId(),
+                    "expectedEpoch",
+                    unit.expectedEpoch(),
+                    "resultingEpoch",
+                    new java.math.BigInteger(unit.expectedEpoch())
+                        .add(java.math.BigInteger.ONE)
+                        .toString()))
             .toList());
     return new DraftAuthorizationFenceBinding.OwnerReadback(
         Owner.WORLD,

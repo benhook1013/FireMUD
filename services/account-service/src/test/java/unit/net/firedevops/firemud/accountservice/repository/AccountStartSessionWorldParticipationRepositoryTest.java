@@ -198,10 +198,9 @@ class AccountStartSessionWorldParticipationRepositoryTest {
             fixture.candidate().gameSessionOwnerFence(),
             "{\"changed\":true}",
             digest("{\"changed\":true}"));
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationRepository.requireSameCandidate(
-                    changedPreparation, stored))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationRepository.requireSameCandidate(
+                changedPreparation, stored))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts");
   }
@@ -209,10 +208,9 @@ class AccountStartSessionWorldParticipationRepositoryTest {
   @Test
   void participationReadbackRejectsUnknownDatabaseColumns() {
     Fixture fixture = fixture();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationRepository.decodeParticipation(
-                    participationRow(fixture.candidate(), true), List.of(fixture.source())))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationRepository.decodeParticipation(
+                participationRow(fixture.candidate(), true), List.of(fixture.source())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("unavailable");
   }
@@ -230,15 +228,13 @@ class AccountStartSessionWorldParticipationRepositoryTest {
             "1",
             bytes("substituted evidence"));
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationRepository.requireExactSources(
-                    List.of(fixture.source()), List.of()))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationRepository.requireExactSources(
+                List.of(fixture.source()), List.of()))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationRepository.requireExactSources(
-                    List.of(fixture.source()), List.of(substituted)))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationRepository.requireExactSources(
+                List.of(fixture.source()), List.of(substituted)))
         .isInstanceOf(IllegalStateException.class);
     AccountStartSessionWorldParticipationRepository.requireExactSources(
         List.of(fixture.source()), List.of(fixture.source()));
@@ -257,10 +253,9 @@ class AccountStartSessionWorldParticipationRepositoryTest {
 
     WorldStartSessionExecutionTerminal changedAttempt =
         terminal(candidate, 41L, UUID.fromString("274c7a54-2f2a-409f-9eac-7b8a7733e590"), 8L);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionWorldParticipationRepository.requireTerminalMatches(
-                    stored, changedAttempt))
+    assertThatThrownBy(() ->
+            AccountStartSessionWorldParticipationRepository.requireTerminalMatches(
+                stored, changedAttempt))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts");
   }
@@ -427,10 +422,9 @@ class AccountStartSessionWorldParticipationRepositoryTest {
           mockedRepository(fixture, reads, writes, null, false, children);
       beginWritableTransaction();
 
-      assertThatThrownBy(
-              () ->
-                  repository.findHistoricalForOriginalTuple(
-                      fixture.candidate().originalPostAuthorizationTuple()))
+      assertThatThrownBy(() ->
+              repository.findHistoricalForOriginalTuple(
+                  fixture.candidate().originalPostAuthorizationTuple()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("evidence unavailable");
       assertThat(reads)
@@ -464,9 +458,8 @@ class AccountStartSessionWorldParticipationRepositoryTest {
         .anyMatch(sql -> sql.contains("account_start_session_authority_captures"))
         .anyMatch(sql -> sql.contains("account_start_session_world_participations"))
         .anyMatch(sql -> sql.contains("account_start_session_world_participation_sources"))
-        .anyMatch(
-            sql ->
-                sql.startsWith("INSERT INTO account_start_session_world_participation_settlements"))
+        .anyMatch(sql ->
+            sql.startsWith("INSERT INTO account_start_session_world_participation_settlements"))
         .anyMatch(sql -> sql.contains("account_start_session_world_participation_settlements"));
     assertThat(writes.get()).isNotNull().hasSize(5);
     assertThat(writes.get()[0]).isEqualTo(PARTICIPATION_ID);
@@ -606,40 +599,36 @@ class AccountStartSessionWorldParticipationRepositoryTest {
         .when(dsl)
         .connection(any(ConnectionRunnable.class));
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              sqlCalls.add(sql);
-              if (sql.contains("account_start_session_authority_captures")) {
-                return captureRow(fixture.candidate());
-              }
-              if (sql.contains("account_start_session_world_participations")) {
-                return missingParticipation ? null : participationRow(fixture.candidate());
-              }
-              if (sql.contains("account_start_session_world_participation_settlements")) {
-                return settlement == null ? null : settlementRow(settlement);
-              }
-              throw new AssertionError("Unexpected participation repository query: " + sql);
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          sqlCalls.add(sql);
+          if (sql.contains("account_start_session_authority_captures")) {
+            return captureRow(fixture.candidate());
+          }
+          if (sql.contains("account_start_session_world_participations")) {
+            return missingParticipation ? null : participationRow(fixture.candidate());
+          }
+          if (sql.contains("account_start_session_world_participation_settlements")) {
+            return settlement == null ? null : settlementRow(settlement);
+          }
+          throw new AssertionError("Unexpected participation repository query: " + sql);
+        });
     when(dsl.fetch(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              sqlCalls.add(sql);
-              if (!sql.contains("account_start_session_world_participation_sources")) {
-                throw new AssertionError(
-                    "Unexpected participation repository result query: " + sql);
-              }
-              return sourceRows(PARTICIPATION_ID, sourceChildren);
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          sqlCalls.add(sql);
+          if (!sql.contains("account_start_session_world_participation_sources")) {
+            throw new AssertionError("Unexpected participation repository result query: " + sql);
+          }
+          return sourceRows(PARTICIPATION_ID, sourceChildren);
+        });
     when(dsl.execute(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String sql = invocation.getArgument(0);
-              sqlCalls.add(sql);
-              writes.set((Object[]) invocation.getRawArguments()[1]);
-              return 1;
-            });
+        .thenAnswer(invocation -> {
+          String sql = invocation.getArgument(0);
+          sqlCalls.add(sql);
+          writes.set((Object[]) invocation.getRawArguments()[1]);
+          return 1;
+        });
     return new AccountStartSessionWorldParticipationRepository(dsl);
   }
 

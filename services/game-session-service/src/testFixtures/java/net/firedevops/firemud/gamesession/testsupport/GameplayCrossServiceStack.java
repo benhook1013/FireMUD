@@ -218,63 +218,57 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     TransactionTemplate baselineReset =
         new TransactionTemplate(gameSession.bean(PlatformTransactionManager.class));
     BaselineTruncateGuardStates originalGuardStates =
-        baselineReset.execute(
-            status -> {
-              BaselineTruncateGuardStates originalStates =
-                  new BaselineTruncateGuardStates(
-                      requireOriginalTruncateGuardState(
-                          jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH),
-                      requireOriginalTruncateGuardState(
-                          jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE),
-                      requireOriginalTruncateGuardState(
-                          jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION));
-              disableTruncateGuard(jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH);
-              requireTruncateGuardState(jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, "D");
-              disableTruncateGuard(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE);
-              requireTruncateGuardState(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE, "D");
-              disableTruncateGuard(jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION);
-              requireTruncateGuardState(jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION, "D");
-              jdbc.execute(
-                  """
-                  TRUNCATE TABLE
-                      game_session_canonical_human_runtime_completion,
-                      gs_original_start_session_authored_actor_core_retention,
-                      game_session_canonical_closed_admission_pointer_request,
-                      gameplay_initial_admission_bind_attempt,
-                      game_session_canonical_initial_admission_intent,
-                      game_session_canonical_initial_admission_attempt,
-                      gameplay_admission_pointer_event,
-                      gameplay_admission_pointer,
-                      game_session_canonical_instance_launch,
-                      game_instances
-                  RESTART IDENTITY
-                  """);
-              // PostgreSQL rolls back this transactional trigger change if TRUNCATE fails,
-              // preserving
-              // the real guard failure instead of masking it with a re-enable attempt on an aborted
-              // transaction.
-              restoreTruncateGuard(
-                  jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalStates.canonicalLaunch());
-              requireTruncateGuardState(
-                  jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalStates.canonicalLaunch());
-              restoreTruncateGuard(
-                  jdbc,
-                  BaselineTruncateGuard.AUTHORED_ACTOR_CORE,
-                  originalStates.authoredActorCore());
-              requireTruncateGuardState(
-                  jdbc,
-                  BaselineTruncateGuard.AUTHORED_ACTOR_CORE,
-                  originalStates.authoredActorCore());
-              restoreTruncateGuard(
-                  jdbc,
-                  BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION,
-                  originalStates.humanRuntimeCompletion());
-              requireTruncateGuardState(
-                  jdbc,
-                  BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION,
-                  originalStates.humanRuntimeCompletion());
-              return originalStates;
-            });
+        baselineReset.execute(status -> {
+          BaselineTruncateGuardStates originalStates =
+              new BaselineTruncateGuardStates(
+                  requireOriginalTruncateGuardState(jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH),
+                  requireOriginalTruncateGuardState(
+                      jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE),
+                  requireOriginalTruncateGuardState(
+                      jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION));
+          disableTruncateGuard(jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH);
+          requireTruncateGuardState(jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, "D");
+          disableTruncateGuard(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE);
+          requireTruncateGuardState(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE, "D");
+          disableTruncateGuard(jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION);
+          requireTruncateGuardState(jdbc, BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION, "D");
+          jdbc.execute(
+              """
+              TRUNCATE TABLE
+                  game_session_canonical_human_runtime_completion,
+                  gs_original_start_session_authored_actor_core_retention,
+                  game_session_canonical_closed_admission_pointer_request,
+                  gameplay_initial_admission_bind_attempt,
+                  game_session_canonical_initial_admission_intent,
+                  game_session_canonical_initial_admission_attempt,
+                  gameplay_admission_pointer_event,
+                  gameplay_admission_pointer,
+                  game_session_canonical_instance_launch,
+                  game_instances
+              RESTART IDENTITY
+              """);
+          // PostgreSQL rolls back this transactional trigger change if TRUNCATE fails,
+          // preserving
+          // the real guard failure instead of masking it with a re-enable attempt on an aborted
+          // transaction.
+          restoreTruncateGuard(
+              jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalStates.canonicalLaunch());
+          requireTruncateGuardState(
+              jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalStates.canonicalLaunch());
+          restoreTruncateGuard(
+              jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE, originalStates.authoredActorCore());
+          requireTruncateGuardState(
+              jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE, originalStates.authoredActorCore());
+          restoreTruncateGuard(
+              jdbc,
+              BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION,
+              originalStates.humanRuntimeCompletion());
+          requireTruncateGuardState(
+              jdbc,
+              BaselineTruncateGuard.HUMAN_RUNTIME_COMPLETION,
+              originalStates.humanRuntimeCompletion());
+          return originalStates;
+        });
     requireTruncateGuardState(
         jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalGuardStates.canonicalLaunch());
     requireTruncateGuardState(

@@ -46,17 +46,10 @@ class AccountPaymentInstrumentRepositoryTest {
     assertThatThrownBy(() -> instruments.findByOwnerForUpdate(ACCOUNT, INSTRUMENT))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("active writable Account transaction");
-    assertThatThrownBy(
-            () ->
-                instruments.recordAvailability(
-                    new AvailabilityObservation(
-                        UUID.randomUUID(),
-                        INSTRUMENT,
-                        ACCOUNT,
-                        1,
-                        State.UNAVAILABLE,
-                        DISPLAY,
-                        DIGEST)))
+    assertThatThrownBy(() ->
+            instruments.recordAvailability(
+                new AvailabilityObservation(
+                    UUID.randomUUID(), INSTRUMENT, ACCOUNT, 1, State.UNAVAILABLE, DISPLAY, DIGEST)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("active writable Account transaction");
   }
@@ -67,18 +60,17 @@ class AccountPaymentInstrumentRepositoryTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> attachment("pm_safe", "raw-provider-response"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Attachment(
-                    UUID.randomUUID(),
-                    new UUID(0L, 0L),
-                    ACCOUNT,
-                    UUID.randomUUID(),
-                    "cus_safe",
-                    "pm_safe",
-                    State.ATTACHABLE,
-                    DISPLAY,
-                    DIGEST))
+    assertThatThrownBy(() ->
+            new Attachment(
+                UUID.randomUUID(),
+                new UUID(0L, 0L),
+                ACCOUNT,
+                UUID.randomUUID(),
+                "cus_safe",
+                "pm_safe",
+                State.ATTACHABLE,
+                DISPLAY,
+                DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(dsl);
   }
@@ -95,16 +87,15 @@ class AccountPaymentInstrumentRepositoryTest {
     assertThatThrownBy(() -> new DisplayMetadata("arbitrary provider payload", "4242", 12, 2030))
         .isInstanceOf(IllegalArgumentException.class);
     for (long version : new long[] {0, -1, Long.MAX_VALUE}) {
-      assertThatThrownBy(
-              () ->
-                  new AvailabilityObservation(
-                      UUID.randomUUID(),
-                      INSTRUMENT,
-                      ACCOUNT,
-                      version,
-                      State.UNAVAILABLE,
-                      DISPLAY,
-                      DIGEST))
+      assertThatThrownBy(() ->
+              new AvailabilityObservation(
+                  UUID.randomUUID(),
+                  INSTRUMENT,
+                  ACCOUNT,
+                  version,
+                  State.UNAVAILABLE,
+                  DISPLAY,
+                  DIGEST))
           .isInstanceOf(IllegalArgumentException.class);
     }
     assertThat(State.values()).containsExactly(State.ATTACHABLE, State.UNAVAILABLE);

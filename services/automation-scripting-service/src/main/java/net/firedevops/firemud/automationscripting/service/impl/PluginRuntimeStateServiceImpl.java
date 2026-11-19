@@ -171,30 +171,29 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     requireText(pluginId, "plugin_id");
     return repository
         .findByTenantIdAndGameInstanceIdAndPluginId(tenantId, gameInstanceId, pluginId)
-        .map(
-            state -> {
-              try {
-                return toStatus(state, Map.of());
-              } catch (IllegalArgumentException ex) {
-                return new PluginRuntimeStatus(
-                    normalize(state.getActivePluginVersionId()),
-                    normalize(state.getPendingPluginVersionId()),
-                    normalize(state.getRuntimeRegionId()),
-                    zeroIfNull(state.getRuntimeRegionEpoch()),
-                    PluginState.PLUGIN_STATE_UNSPECIFIED,
-                    ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE,
-                    state.getLastChangedAt() == null ? 0L : state.getLastChangedAt().toEpochMilli(),
-                    normalize(state.getControlPlaneRequestId()),
-                    normalize(state.getActorPrincipal()),
-                    state.getLastPolicyCheckedAt() == null
-                        ? 0L
-                        : state.getLastPolicyCheckedAt().toEpochMilli(),
-                    null,
-                    null,
-                    state.getPluginActivationEpoch(),
-                    state.getLifecycleRevision());
-              }
-            });
+        .map(state -> {
+          try {
+            return toStatus(state, Map.of());
+          } catch (IllegalArgumentException ex) {
+            return new PluginRuntimeStatus(
+                normalize(state.getActivePluginVersionId()),
+                normalize(state.getPendingPluginVersionId()),
+                normalize(state.getRuntimeRegionId()),
+                zeroIfNull(state.getRuntimeRegionEpoch()),
+                PluginState.PLUGIN_STATE_UNSPECIFIED,
+                ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE,
+                state.getLastChangedAt() == null ? 0L : state.getLastChangedAt().toEpochMilli(),
+                normalize(state.getControlPlaneRequestId()),
+                normalize(state.getActorPrincipal()),
+                state.getLastPolicyCheckedAt() == null
+                    ? 0L
+                    : state.getLastPolicyCheckedAt().toEpochMilli(),
+                null,
+                null,
+                state.getPluginActivationEpoch(),
+                state.getLifecycleRevision());
+          }
+        });
   }
 
   @Override
@@ -416,10 +415,9 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
             .filter(
                 digest -> PARTICIPANT_KEY_AUTOMATION_SCRIPTING.equals(digest.getParticipantKey()))
             .findFirst()
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "PLUGIN_ABILITY_SCHEMA_MISMATCH: runtime ability schema digest is unavailable"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "PLUGIN_ABILITY_SCHEMA_MISMATCH: runtime ability schema digest is unavailable"));
     if (!automationDigest.getContentDigest().equals(pluginAbilitySchemaDigest)) {
       throw new IllegalArgumentException(
           "PLUGIN_ABILITY_SCHEMA_MISMATCH: plugin ability schema digest does not match runtime version");
@@ -446,29 +444,27 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
             PluginState.PLUGIN_STATE_ENABLED.name(), "", PageRequest.of(0, limit));
     List<PolicyDecision> policyDecisions =
         activeStates.stream()
-            .map(
-                state ->
-                    new PolicyDecision(
-                        state,
-                        disableReasonForCurrentPolicy(
-                            gameDesignControlPlaneClient.getPublishedPluginVersion(
-                                state.getTenantId(),
-                                state.getPluginId(),
-                                normalize(state.getActivePluginVersionId())))))
+            .map(state ->
+                new PolicyDecision(
+                    state,
+                    disableReasonForCurrentPolicy(
+                        gameDesignControlPlaneClient.getPublishedPluginVersion(
+                            state.getTenantId(),
+                            state.getPluginId(),
+                            normalize(state.getActivePluginVersionId())))))
             .toList();
     List<PolicyDecision> decisions =
         policyDecisions.stream()
-            .map(
-                decision -> {
-                  GetGameInstanceRuntimeStateResponse runtime =
-                      decision.disableReason().isEmpty()
-                          ? null
-                          : gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-                              decision.snapshot().getTenantId(),
-                              decision.snapshot().getGameInstanceId(),
-                              normalize(decision.snapshot().getRuntimeRegionId()));
-                  return new PolicyDecision(decision.snapshot(), decision.disableReason(), runtime);
-                })
+            .map(decision -> {
+              GetGameInstanceRuntimeStateResponse runtime =
+                  decision.disableReason().isEmpty()
+                      ? null
+                      : gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+                          decision.snapshot().getTenantId(),
+                          decision.snapshot().getGameInstanceId(),
+                          normalize(decision.snapshot().getRuntimeRegionId()));
+              return new PolicyDecision(decision.snapshot(), decision.disableReason(), runtime);
+            })
             .toList();
     Instant now = Instant.now();
     int disabledCount = 0;
@@ -555,17 +551,16 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
             state.getTenantId(), state.getPluginId(), activePluginVersionId);
     PluginPublicationLink publicationLink = toPublicationLink(activePluginVersionId, publication);
     return disableReasonForCurrentPolicy(publication)
-        .map(
-            reason ->
-                new PluginPolicyViolation(
-                    state.getGameInstanceId(),
-                    normalize(state.getRuntimeRegionId()),
-                    zeroIfNull(state.getRuntimeRegionEpoch()),
-                    state.getPluginId(),
-                    activePluginVersionId,
-                    reason,
-                    state.getLastChangedAt().toEpochMilli(),
-                    publicationLink));
+        .map(reason ->
+            new PluginPolicyViolation(
+                state.getGameInstanceId(),
+                normalize(state.getRuntimeRegionId()),
+                zeroIfNull(state.getRuntimeRegionEpoch()),
+                state.getPluginId(),
+                activePluginVersionId,
+                reason,
+                state.getLastChangedAt().toEpochMilli(),
+                publicationLink));
   }
 
   private Optional<String> disableReasonForCurrentPolicy(
@@ -714,10 +709,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
         repository
             .findByTenantIdAndGameInstanceIdAndPluginId(
                 command.tenantId(), command.gameInstanceId(), command.pluginId())
-            .orElseGet(
-                () ->
-                    newState(
-                        command.tenantId(), command.gameInstanceId(), command.pluginId(), now));
+            .orElseGet(() ->
+                newState(command.tenantId(), command.gameInstanceId(), command.pluginId(), now));
     String previous = normalize(state.getActivePluginVersionId());
     if (requestId.equals(normalize(state.getControlPlaneRequestId()))) {
       throw new IllegalArgumentException(

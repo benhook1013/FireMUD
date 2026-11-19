@@ -180,12 +180,11 @@ class SocialAccountUuidMigrationPostgresIntegrationTest {
       MailMessageRepository mails = new MailMessageRepository(dsl);
       mails.save(mail);
       assertThat(mails.save(mail).getRecipientAccountId()).isEqualTo(accountUuid(2L));
-      assertThatThrownBy(
-              () ->
-                  dsl.execute(
-                      "INSERT INTO friend_links (tenant_id, account_id, friend_account_id, status) VALUES (7, ?::uuid, ?::uuid, 'active')",
-                      "00000000-0000-0000-0000-000000000000",
-                      accountUuid(2L)))
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "INSERT INTO friend_links (tenant_id, account_id, friend_account_id, status) VALUES (7, ?::uuid, ?::uuid, 'active')",
+                  "00000000-0000-0000-0000-000000000000",
+                  accountUuid(2L)))
           .hasMessageContaining("ck_friend_account_uuid_non_nil");
       assertThatThrownBy(
               () -> members.findFirstByTenantIdAndGuildIdAndAccountId(7L, guild.getId(), "2"))

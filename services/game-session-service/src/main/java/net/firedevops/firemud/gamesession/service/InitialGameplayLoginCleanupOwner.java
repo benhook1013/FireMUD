@@ -165,14 +165,13 @@ public final class InitialGameplayLoginCleanupOwner {
         || !coordinates.callerContextId().equals(receipt.callerContextId())) {
       throw new JournalConflictException();
     }
-    previous.ifPresent(
-        value -> {
-          if (!value.disposalOperationId().equals(receipt.disposalOperationId())
-              || value.disposition() != InitialGameplayLoginDisposalResult.Disposition.PENDING
-                  && !value.equals(receipt)) {
-            throw new JournalConflictException();
-          }
-        });
+    previous.ifPresent(value -> {
+      if (!value.disposalOperationId().equals(receipt.disposalOperationId())
+          || value.disposition() != InitialGameplayLoginDisposalResult.Disposition.PENDING
+              && !value.equals(receipt)) {
+        throw new JournalConflictException();
+      }
+    });
   }
 
   private static void requireNoTransaction() {

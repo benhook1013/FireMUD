@@ -105,11 +105,10 @@ class AccountInitialAdmissionSettlementReadGrpcServiceTest {
       for (String alias : List.of("world", "foreign")) {
         ManagedChannel channel = channel(pki, alias, server.getPort());
         try {
-          assertThatThrownBy(
-                  () ->
-                      stub(channel)
-                          .getAccountInitialAdmissionSettlement(
-                              GetAccountInitialAdmissionSettlementRequest.getDefaultInstance()))
+          assertThatThrownBy(() ->
+                  stub(channel)
+                      .getAccountInitialAdmissionSettlement(
+                          GetAccountInitialAdmissionSettlementRequest.getDefaultInstance()))
               .isInstanceOfSatisfying(
                   StatusRuntimeException.class,
                   error ->
@@ -308,10 +307,8 @@ class AccountInitialAdmissionSettlementReadGrpcServiceTest {
         Context.current()
             .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(NAMESPACE, "account-service"));
     var request = AccountInitialAdmissionSettlementReadGrpcCodec.toRequest(input, NAMESPACE);
-    assertThatThrownBy(
-            () ->
-                context.run(
-                    () -> service().getAccountInitialAdmissionSettlement(request, observer)))
+    assertThatThrownBy(() ->
+            context.run(() -> service().getAccountInitialAdmissionSettlement(request, observer)))
         .isSameAs(failure);
     assertThat(callbacks)
         .containsExactlyElementsOf(failOnNext ? List.of("next") : List.of("next", "completed"));
@@ -330,23 +327,22 @@ class AccountInitialAdmissionSettlementReadGrpcServiceTest {
       GrpcPeerIdentity peer, GetAccountInitialAdmissionSettlementRequest request) {
     AtomicReference<Status> error = new AtomicReference<>();
     Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
-    context.run(
-        () ->
-            service()
-                .getAccountInitialAdmissionSettlement(
-                    request,
-                    new StreamObserver<>() {
-                      @Override
-                      public void onNext(GetAccountInitialAdmissionSettlementResponse value) {}
+    context.run(() ->
+        service()
+            .getAccountInitialAdmissionSettlement(
+                request,
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetAccountInitialAdmissionSettlementResponse value) {}
 
-                      @Override
-                      public void onError(Throwable failure) {
-                        error.set(Status.fromThrowable(failure));
-                      }
+                  @Override
+                  public void onError(Throwable failure) {
+                    error.set(Status.fromThrowable(failure));
+                  }
 
-                      @Override
-                      public void onCompleted() {}
-                    }));
+                  @Override
+                  public void onCompleted() {}
+                }));
     return error.get();
   }
 

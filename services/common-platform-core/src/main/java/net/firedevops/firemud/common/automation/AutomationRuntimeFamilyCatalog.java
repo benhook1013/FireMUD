@@ -278,10 +278,9 @@ public final class AutomationRuntimeFamilyCatalog {
     }
     RuntimeFamilyCatalogValidation.requireComplete(
         families.stream()
-            .map(
-                family ->
-                    new RuntimeFamilyCatalogValidation.FamilyComponent(
-                        family.relation(), family.component()))
+            .map(family ->
+                new RuntimeFamilyCatalogValidation.FamilyComponent(
+                    family.relation(), family.component()))
             .toList(),
         structuralFacts);
     array(root.get("nonSqlGaps"), MAX_NON_SQL_GAPS);

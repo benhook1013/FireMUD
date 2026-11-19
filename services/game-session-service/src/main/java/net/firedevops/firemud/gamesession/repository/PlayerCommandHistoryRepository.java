@@ -189,12 +189,11 @@ public class PlayerCommandHistoryRepository {
             PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID.asc(),
             PLAYER_COMMAND_HISTORY.CHARACTER_ID.asc())
         .limit(batchSize)
-        .fetch(
-            record ->
-                new HistoryScope(
-                    record.get(PLAYER_COMMAND_HISTORY.TENANT_ID),
-                    record.get(PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID),
-                    record.get(PLAYER_COMMAND_HISTORY.CHARACTER_ID)));
+        .fetch(record ->
+            new HistoryScope(
+                record.get(PLAYER_COMMAND_HISTORY.TENANT_ID),
+                record.get(PLAYER_COMMAND_HISTORY.GAME_INSTANCE_ID),
+                record.get(PLAYER_COMMAND_HISTORY.CHARACTER_ID)));
   }
 
   public void deleteByIds(Collection<Long> ids) {

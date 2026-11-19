@@ -114,31 +114,29 @@ class AccountStartSessionWorldParticipationSettlementServiceTest {
       when(repository.findSettlementExact(PARTICIPATION_ID, PARTICIPATION_FENCE))
           .thenReturn(Optional.empty(), Optional.of(expected));
       when(world.read(any()))
-          .thenAnswer(
-              call -> {
-                assertNoSql();
-                WorldStartSessionExecutionTerminalReadRequest request = call.getArgument(0);
-                assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
-                assertThat(request.originalPostAuthorizationTuple())
-                    .containsExactly(fixture.participation.originalPostAuthorizationTuple());
-                assertThat(request.accountWorldParticipationId()).isEqualTo(PARTICIPATION_ID);
-                assertThat(request.accountWorldParticipationFence()).isEqualTo(PARTICIPATION_FENCE);
-                assertThat(request.gameSessionOwnerAttemptId()).isEqualTo(GAME_SESSION_ATTEMPT_ID);
-                assertThat(request.gameSessionOwnerFence()).isEqualTo(GAME_SESSION_FENCE);
-                assertThat(request.canonicalGameInstanceId()).isEqualTo(GAME_INSTANCE_ID);
-                assertThat(request.preparationInputJson()).isEqualTo(PREPARATION_INPUT);
-                assertThat(request.preparationInputDigest())
-                    .isEqualTo(fixture.participation.preparationInputDigest());
-                return terminal;
-              });
+          .thenAnswer(call -> {
+            assertNoSql();
+            WorldStartSessionExecutionTerminalReadRequest request = call.getArgument(0);
+            assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+            assertThat(request.originalPostAuthorizationTuple())
+                .containsExactly(fixture.participation.originalPostAuthorizationTuple());
+            assertThat(request.accountWorldParticipationId()).isEqualTo(PARTICIPATION_ID);
+            assertThat(request.accountWorldParticipationFence()).isEqualTo(PARTICIPATION_FENCE);
+            assertThat(request.gameSessionOwnerAttemptId()).isEqualTo(GAME_SESSION_ATTEMPT_ID);
+            assertThat(request.gameSessionOwnerFence()).isEqualTo(GAME_SESSION_FENCE);
+            assertThat(request.canonicalGameInstanceId()).isEqualTo(GAME_INSTANCE_ID);
+            assertThat(request.preparationInputJson()).isEqualTo(PREPARATION_INPUT);
+            assertThat(request.preparationInputDigest())
+                .isEqualTo(fixture.participation.preparationInputDigest());
+            return terminal;
+          });
       when(repository.settleExact(any()))
-          .thenAnswer(
-              call -> {
-                assertWritableTransaction();
-                assertThat(call.getArgument(0, WorldStartSessionExecutionTerminal.class).outcome())
-                    .isEqualTo(outcome);
-                return expected;
-              });
+          .thenAnswer(call -> {
+            assertWritableTransaction();
+            assertThat(call.getArgument(0, WorldStartSessionExecutionTerminal.class).outcome())
+                .isEqualTo(outcome);
+            return expected;
+          });
 
       int priorCommits = transactions.commits;
       StoredSettlement actual =
@@ -222,11 +220,10 @@ class AccountStartSessionWorldParticipationSettlementServiceTest {
             41L,
             WorldStartSessionExecutionTerminal.Outcome.COMMITTED);
     when(world.read(any()))
-        .thenAnswer(
-            call -> {
-              assertNoSql();
-              return substituted;
-            });
+        .thenAnswer(call -> {
+          assertNoSql();
+          return substituted;
+        });
     assertThatThrownBy(
             () -> authorized(() -> service.settle(PARTICIPATION_ID, PARTICIPATION_FENCE)))
         .isInstanceOf(IllegalArgumentException.class)

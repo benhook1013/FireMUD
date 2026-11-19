@@ -158,16 +158,15 @@ class AuthenticatedDirectTextSessionsTest {
     connection.login(fixture.owner(), "player@example.test", secret);
     assertThat(secret).containsOnly('\0');
     assertThat(
-            connection.<Boolean>withLogin(
-                (original, result) -> {
-                  assertThat(result).isSameAs(fixture.result());
-                  assertThatThrownBy(() -> sessions.close(socket, CloseStatus.NORMAL))
-                      .isInstanceOf(IllegalStateException.class);
-                  assertThatThrownBy(sessions::closeAll).isInstanceOf(IllegalStateException.class);
-                  assertThat(sessions.require(socket)).isSameAs(connection);
-                  return connection.withCurrent(
-                      original, result, transport -> transport.transportSessionId().equals("42"));
-                }))
+            connection.<Boolean>withLogin((original, result) -> {
+              assertThat(result).isSameAs(fixture.result());
+              assertThatThrownBy(() -> sessions.close(socket, CloseStatus.NORMAL))
+                  .isInstanceOf(IllegalStateException.class);
+              assertThatThrownBy(sessions::closeAll).isInstanceOf(IllegalStateException.class);
+              assertThat(sessions.require(socket)).isSameAs(connection);
+              return connection.withCurrent(
+                  original, result, transport -> transport.transportSessionId().equals("42"));
+            }))
         .isTrue();
     assertThatThrownBy(
             () -> connection.withCurrent(fixture.original(), fixture.result(), transport -> true))
@@ -187,38 +186,33 @@ class AuthenticatedDirectTextSessionsTest {
     connection.login(fixture.owner(), "player@example.test", "secret".toCharArray());
 
     var unknown = new DirectTextWorldSelectionService.UnknownWorldSelectorException();
-    assertThatThrownBy(
-            () ->
-                connection.<Boolean>withLogin(
-                    (original, result) ->
-                        connection.withCurrent(
-                            original,
-                            result,
-                            transport -> {
-                              throw unknown;
-                            })))
+    assertThatThrownBy(() ->
+            connection.<Boolean>withLogin((original, result) ->
+                connection.withCurrent(
+                    original,
+                    result,
+                    transport -> {
+                      throw unknown;
+                    })))
         .isSameAs(unknown);
 
     var expired = new DirectTextWorldSelectionService.ExpiredWorldSelectionException();
-    assertThatThrownBy(
-            () ->
-                connection.<Boolean>withLogin(
-                    (original, result) ->
-                        connection.withCurrent(
-                            original,
-                            result,
-                            transport -> {
-                              throw expired;
-                            })))
+    assertThatThrownBy(() ->
+            connection.<Boolean>withLogin((original, result) ->
+                connection.withCurrent(
+                    original,
+                    result,
+                    transport -> {
+                      throw expired;
+                    })))
         .isSameAs(expired);
 
     assertThat(
-            connection.<Boolean>withLogin(
-                (original, result) -> {
-                  assertThat(result).isSameAs(fixture.result());
-                  return connection.withCurrent(
-                      original, result, transport -> transport.transportSessionId().equals("42"));
-                }))
+            connection.<Boolean>withLogin((original, result) -> {
+              assertThat(result).isSameAs(fixture.result());
+              return connection.withCurrent(
+                  original, result, transport -> transport.transportSessionId().equals("42"));
+            }))
         .isTrue();
 
     sessions.close(socket, CloseStatus.NORMAL);
@@ -236,14 +230,12 @@ class AuthenticatedDirectTextSessionsTest {
     var release = new CountDownLatch(1);
     try (var executor = Executors.newFixedThreadPool(2)) {
       var borrower =
-          executor.submit(
-              () ->
-                  connection.withLogin(
-                      (original, result) -> {
-                        entered.countDown();
-                        await(release);
-                        return true;
-                      }));
+          executor.submit(() ->
+              connection.withLogin((original, result) -> {
+                entered.countDown();
+                await(release);
+                return true;
+              }));
       assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
       var closer = executor.submit(() -> sessions.close(socket, CloseStatus.NORMAL));
       for (int i = 0; i < 1000 && connection.isCurrent(); i++) Thread.sleep(1);
@@ -274,14 +266,12 @@ class AuthenticatedDirectTextSessionsTest {
     var replacement = socket();
     try (var executor = Executors.newFixedThreadPool(2)) {
       var borrower =
-          executor.submit(
-              () ->
-                  connection.withLogin(
-                      (original, result) -> {
-                        entered.countDown();
-                        await(release);
-                        return true;
-                      }));
+          executor.submit(() ->
+              connection.withLogin((original, result) -> {
+                entered.countDown();
+                await(release);
+                return true;
+              }));
       assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
       var replacing = executor.submit(() -> sessions.open(replacement));
       for (int i = 0; i < 1000 && connection.isCurrent(); i++) Thread.sleep(1);
@@ -319,14 +309,12 @@ class AuthenticatedDirectTextSessionsTest {
     var latest = socket();
     try (var executor = Executors.newFixedThreadPool(3)) {
       var borrower =
-          executor.submit(
-              () ->
-                  originalConnection.withLogin(
-                      (coordinates, result) -> {
-                        entered.countDown();
-                        await(release);
-                        return true;
-                      }));
+          executor.submit(() ->
+              originalConnection.withLogin((coordinates, result) -> {
+                entered.countDown();
+                await(release);
+                return true;
+              }));
       assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
       var firstReplacement = executor.submit(() -> sessions.open(middle));
       for (int i = 0; i < 1000 && originalConnection.isCurrent(); i++) Thread.sleep(1);
@@ -376,14 +364,12 @@ class AuthenticatedDirectTextSessionsTest {
     var release = new CountDownLatch(1);
     try (var executor = Executors.newFixedThreadPool(2)) {
       var borrower =
-          executor.submit(
-              () ->
-                  firstConnection.withLogin(
-                      (original, result) -> {
-                        entered.countDown();
-                        await(release);
-                        return true;
-                      }));
+          executor.submit(() ->
+              firstConnection.withLogin((original, result) -> {
+                entered.countDown();
+                await(release);
+                return true;
+              }));
       assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
       var shutdown = executor.submit(sessions::closeAll);
       for (int i = 0; i < 1000 && firstConnection.isCurrent(); i++) Thread.sleep(1);

@@ -116,15 +116,13 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
     List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes =
         beginAndApplyOwners(binding, account, null);
 
-    fixture.inTransaction(
-        () -> {
-          fixture
-              .coordinator()
-              .advanceVisibilityFence(
-                  binding,
-                  new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
-          return null;
-        });
+    fixture.inTransaction(() -> {
+      fixture
+          .coordinator()
+          .advanceVisibilityFence(
+              binding, new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
+      return null;
+    });
 
     GameDesignDraftTerminalOutcome readback =
         new GameDesignDraftTerminalOutcomeRepository(fixture.dsl())
@@ -160,34 +158,29 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
             "changed-original-account-bytes");
     assertThatThrownBy(() -> storedOwnerReadback.requireBinding(changedAccount))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GameDesignDraftTerminalOutcomeRepository(fixture.dsl())
-                    .readAccountBound(changedAccount.canonicalBytes()))
+    assertThatThrownBy(() ->
+            new GameDesignDraftTerminalOutcomeRepository(fixture.dsl())
+                .readAccountBound(changedAccount.canonicalBytes()))
         .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class);
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () -> {
-                      fixture
-                          .dsl()
-                          .execute(
-                              "UPDATE game_design_draft_terminal_outcome "
-                                  + "SET terminal_evidence_digest = ? WHERE operation_id = ?",
-                              "sha256:" + "0".repeat(64),
-                              account.operationId());
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() -> {
+              fixture
+                  .dsl()
+                  .execute(
+                      "UPDATE game_design_draft_terminal_outcome "
+                          + "SET terminal_evidence_digest = ? WHERE operation_id = ?",
+                      "sha256:" + "0".repeat(64),
+                      account.operationId());
+              return null;
+            }))
         .isInstanceOf(RuntimeException.class);
-    fixture.inTransaction(
-        () -> {
-          fixture
-              .coordinator()
-              .advanceVisibilityFence(
-                  binding,
-                  new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
-          return null;
-        });
+    fixture.inTransaction(() -> {
+      fixture
+          .coordinator()
+          .advanceVisibilityFence(
+              binding, new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
+      return null;
+    });
     assertThat(
             new GameDesignDraftTerminalOutcomeRepository(fixture.dsl())
                 .readAccountBound(account.canonicalBytes())
@@ -208,11 +201,10 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
     byte[] abortEvidence =
         "stipulated exact final-abort producer evidence".getBytes(StandardCharsets.UTF_8);
 
-    fixture.inTransaction(
-        () -> {
-          fixture.coordinator().recordDefinitiveFinalAbort(binding, abortEvidence);
-          return null;
-        });
+    fixture.inTransaction(() -> {
+      fixture.coordinator().recordDefinitiveFinalAbort(binding, abortEvidence);
+      return null;
+    });
 
     GameDesignDraftTerminalOutcome readback =
         new GameDesignDraftTerminalOutcomeRepository(fixture.dsl())
@@ -245,34 +237,27 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
     assertThatThrownBy(
             () -> fixture.inTransaction(() -> fixture.coordinator().claim(binding, account)))
         .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitStateConflictException.class);
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture.coordinator().markOwnerInProgress(binding, Owner.WORLD_MANAGEMENT)))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(
+                () -> fixture.coordinator().markOwnerInProgress(binding, Owner.WORLD_MANAGEMENT)))
         .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitStateConflictException.class);
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture
-                            .coordinator()
-                            .recordOwnerOutcome(
-                                binding, appliedOutcome(binding, Owner.WORLD_MANAGEMENT))))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() ->
+                fixture
+                    .coordinator()
+                    .recordOwnerOutcome(binding, appliedOutcome(binding, Owner.WORLD_MANAGEMENT))))
         .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitStateConflictException.class);
     assertThatThrownBy(
             () -> fixture.inTransaction(() -> fixture.coordinator().claimApplicationSlot(binding)))
         .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitStateConflictException.class);
-    assertThatThrownBy(
-            () ->
-                fixture.inTransaction(
-                    () ->
-                        fixture
-                            .coordinator()
-                            .advanceVisibilityFence(
-                                binding,
-                                new DraftCommitCoordinatorRepository.CoordinatorProof(
-                                    binding, allAppliedOutcomes(binding)))))
+    assertThatThrownBy(() ->
+            fixture.inTransaction(() ->
+                fixture
+                    .coordinator()
+                    .advanceVisibilityFence(
+                        binding,
+                        new DraftCommitCoordinatorRepository.CoordinatorProof(
+                            binding, allAppliedOutcomes(binding)))))
         .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitStateConflictException.class);
   }
 
@@ -290,30 +275,25 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<FinalizeAttempt> commit =
-          executor.submit(
-              () -> {
-                awaitStart(ready, start);
-                return attempt(
-                    () ->
-                        fixture
-                            .coordinator()
-                            .advanceVisibilityFence(
-                                binding,
-                                new DraftCommitCoordinatorRepository.CoordinatorProof(
-                                    binding, outcomes)));
-              });
+          executor.submit(() -> {
+            awaitStart(ready, start);
+            return attempt(() ->
+                fixture
+                    .coordinator()
+                    .advanceVisibilityFence(
+                        binding,
+                        new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes)));
+          });
       Future<FinalizeAttempt> abort =
-          executor.submit(
-              () -> {
-                awaitStart(ready, start);
-                return attempt(
-                    () ->
-                        fixture
-                            .coordinator()
-                            .recordDefinitiveFinalAbort(
-                                binding,
-                                "stipulated race-abort evidence".getBytes(StandardCharsets.UTF_8)));
-              });
+          executor.submit(() -> {
+            awaitStart(ready, start);
+            return attempt(() ->
+                fixture
+                    .coordinator()
+                    .recordDefinitiveFinalAbort(
+                        binding,
+                        "stipulated race-abort evidence".getBytes(StandardCharsets.UTF_8)));
+          });
       await(ready);
       start.countDown();
       FinalizeAttempt commitResult = commit.get(20, TimeUnit.SECONDS);
@@ -345,15 +325,14 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
 
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture
-                  .coordinator()
-                  .advanceVisibilityFence(
-                      binding,
-                      new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
-              status.setRollbackOnly();
-            });
+        .executeWithoutResult(status -> {
+          fixture
+              .coordinator()
+              .advanceVisibilityFence(
+                  binding,
+                  new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
+          status.setRollbackOnly();
+        });
 
     assertThat(new GameDesignDraftTerminalOutcomeRepository(fixture.dsl()).read(operation))
         .isEmpty();
@@ -376,11 +355,10 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
 
     fixture
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture.coordinator().recordDefinitiveFinalAbort(binding, abortEvidence);
-              status.setRollbackOnly();
-            });
+        .executeWithoutResult(status -> {
+          fixture.coordinator().recordDefinitiveFinalAbort(binding, abortEvidence);
+          status.setRollbackOnly();
+        });
 
     assertThat(new GameDesignDraftTerminalOutcomeRepository(fixture.dsl()).read(operation))
         .isEmpty();
@@ -408,79 +386,78 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
     legacy.inTransaction(() -> legacy.coordinator().claim(binding));
     legacy
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              legacy
-                  .dsl()
-                  .execute(
-                      "UPDATE game_design_draft_commit SET workflow_state = 'APPLYING' "
-                          + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND request_id = ?",
-                      target.canonicalTenantId(),
-                      target.canonicalVersionId(),
-                      binding.requestId());
-              for (DraftCommitCoordinatorRepository.OwnerOutcome outcome : outcomes) {
-                legacy
-                    .dsl()
-                    .execute(
-                        "UPDATE game_design_draft_commit_owner_result SET status = 'IN_PROGRESS', "
-                            + "updated_at = CURRENT_TIMESTAMP WHERE canonical_tenant_id = ? "
-                            + "AND canonical_version_id = ? AND request_id = ? AND owner = ?",
-                        target.canonicalTenantId(),
-                        target.canonicalVersionId(),
-                        binding.requestId(),
-                        outcome.owner().name());
-                legacy
-                    .dsl()
-                    .execute(
-                        "UPDATE game_design_draft_commit_owner_result SET status = 'APPLIED', "
-                            + "result_commit_id = ?, result_binding_digest = ?, result_identity = ?, "
-                            + "result_bytes = ?, applied_units_json = ?, updated_at = CURRENT_TIMESTAMP "
-                            + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
-                            + "AND request_id = ? AND owner = ?",
-                        outcome.commitId(),
-                        outcome.bindingDigest(),
-                        outcome.resultIdentity(),
-                        outcome.resultBytes(),
-                        appliedEpochsJson(outcome.appliedEpochs()),
-                        target.canonicalTenantId(),
-                        target.canonicalVersionId(),
-                        binding.requestId(),
-                        outcome.owner().name());
-              }
-              String vector = ownerVectorJson(binding, outcomes);
-              legacy
-                  .dsl()
-                  .execute(
-                      "INSERT INTO game_design_draft_commit_visibility_fence "
-                          + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, "
-                          + "input_digest, result_vector_json) VALUES (?, ?, ?, ?, ?, ?)",
-                      target.canonicalTenantId(),
-                      target.canonicalVersionId(),
-                      binding.requestId(),
-                      binding.commitId(),
-                      binding.digest(),
-                      vector);
-              legacy
-                  .dsl()
-                  .execute(
-                      "INSERT INTO game_design_draft_commit_visibility "
-                          + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, input_digest) "
-                          + "VALUES (?, ?, ?, ?, ?)",
-                      target.canonicalTenantId(),
-                      target.canonicalVersionId(),
-                      binding.requestId(),
-                      binding.commitId(),
-                      binding.digest());
-              legacy
-                  .dsl()
-                  .execute(
-                      "UPDATE game_design_draft_commit SET workflow_state = 'SYNCHRONIZED', "
-                          + "updated_at = CURRENT_TIMESTAMP WHERE canonical_tenant_id = ? "
-                          + "AND canonical_version_id = ? AND request_id = ?",
-                      target.canonicalTenantId(),
-                      target.canonicalVersionId(),
-                      binding.requestId());
-            });
+        .executeWithoutResult(status -> {
+          legacy
+              .dsl()
+              .execute(
+                  "UPDATE game_design_draft_commit SET workflow_state = 'APPLYING' "
+                      + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND request_id = ?",
+                  target.canonicalTenantId(),
+                  target.canonicalVersionId(),
+                  binding.requestId());
+          for (DraftCommitCoordinatorRepository.OwnerOutcome outcome : outcomes) {
+            legacy
+                .dsl()
+                .execute(
+                    "UPDATE game_design_draft_commit_owner_result SET status = 'IN_PROGRESS', "
+                        + "updated_at = CURRENT_TIMESTAMP WHERE canonical_tenant_id = ? "
+                        + "AND canonical_version_id = ? AND request_id = ? AND owner = ?",
+                    target.canonicalTenantId(),
+                    target.canonicalVersionId(),
+                    binding.requestId(),
+                    outcome.owner().name());
+            legacy
+                .dsl()
+                .execute(
+                    "UPDATE game_design_draft_commit_owner_result SET status = 'APPLIED', "
+                        + "result_commit_id = ?, result_binding_digest = ?, result_identity = ?, "
+                        + "result_bytes = ?, applied_units_json = ?, updated_at = CURRENT_TIMESTAMP "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
+                        + "AND request_id = ? AND owner = ?",
+                    outcome.commitId(),
+                    outcome.bindingDigest(),
+                    outcome.resultIdentity(),
+                    outcome.resultBytes(),
+                    appliedEpochsJson(outcome.appliedEpochs()),
+                    target.canonicalTenantId(),
+                    target.canonicalVersionId(),
+                    binding.requestId(),
+                    outcome.owner().name());
+          }
+          String vector = ownerVectorJson(binding, outcomes);
+          legacy
+              .dsl()
+              .execute(
+                  "INSERT INTO game_design_draft_commit_visibility_fence "
+                      + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, "
+                      + "input_digest, result_vector_json) VALUES (?, ?, ?, ?, ?, ?)",
+                  target.canonicalTenantId(),
+                  target.canonicalVersionId(),
+                  binding.requestId(),
+                  binding.commitId(),
+                  binding.digest(),
+                  vector);
+          legacy
+              .dsl()
+              .execute(
+                  "INSERT INTO game_design_draft_commit_visibility "
+                      + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, input_digest) "
+                      + "VALUES (?, ?, ?, ?, ?)",
+                  target.canonicalTenantId(),
+                  target.canonicalVersionId(),
+                  binding.requestId(),
+                  binding.commitId(),
+                  binding.digest());
+          legacy
+              .dsl()
+              .execute(
+                  "UPDATE game_design_draft_commit SET workflow_state = 'SYNCHRONIZED', "
+                      + "updated_at = CURRENT_TIMESTAMP WHERE canonical_tenant_id = ? "
+                      + "AND canonical_version_id = ? AND request_id = ?",
+                  target.canonicalTenantId(),
+                  target.canonicalVersionId(),
+                  binding.requestId());
+        });
     legacy.migrateToLatest();
 
     var retained = legacy.coordinator().read(target, binding.requestId()).orElseThrow();
@@ -503,21 +480,19 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
     fixture.inTransaction(() -> fixture.coordinator().claim(binding, account));
     List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes =
         binding.requiredOwners().stream()
-            .map(
-                owner ->
-                    owner == rejectedOwner
-                        ? rejectedOutcome(binding, owner)
-                        : appliedOutcome(binding, owner))
+            .map(owner ->
+                owner == rejectedOwner
+                    ? rejectedOutcome(binding, owner)
+                    : appliedOutcome(binding, owner))
             .toList();
-    fixture.inTransaction(
-        () -> {
-          fixture.coordinator().claimApplicationSlot(binding);
-          for (DraftCommitCoordinatorRepository.OwnerOutcome outcome : outcomes) {
-            fixture.coordinator().markOwnerInProgress(binding, outcome.owner());
-            fixture.coordinator().recordOwnerOutcome(binding, outcome);
-          }
-          return null;
-        });
+    fixture.inTransaction(() -> {
+      fixture.coordinator().claimApplicationSlot(binding);
+      for (DraftCommitCoordinatorRepository.OwnerOutcome outcome : outcomes) {
+        fixture.coordinator().markOwnerInProgress(binding, outcome.owner());
+        fixture.coordinator().recordOwnerOutcome(binding, outcome);
+      }
+      return null;
+    });
     return outcomes;
   }
 
@@ -530,15 +505,14 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
       DraftCommitBinding binding, Owner owner) {
     List<DraftCommitCoordinatorRepository.AppliedEpoch> epochs =
         binding.affectedUnits(owner).stream()
-            .map(
-                unit ->
-                    new DraftCommitCoordinatorRepository.AppliedEpoch(
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch(),
-                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+            .map(unit ->
+                new DraftCommitCoordinatorRepository.AppliedEpoch(
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch(),
+                    new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
             .toList();
     return new DraftCommitCoordinatorRepository.OwnerOutcome(
         owner,
@@ -772,23 +746,22 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
       UUID canonicalVersionId = UUID.randomUUID();
       org.jooq.Record savedVersion =
           Objects.requireNonNull(
-              transaction.execute(
-                  status ->
-                      dsl.resultQuery(
-                              "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
-                                  + "identity_source_game_row_id, identity_source_game_tenant_key, "
-                                  + "identity_source_provenance_kind, version_number, version_state, "
-                                  + "version_state_epoch, script_patch_version, base_version_id, "
-                                  + "is_script_only, notes) SELECT g.tenant_id, ?, g.canonical_tenant_id, "
-                                  + "g.id, g.tenant_id, g.tenant_identity_provenance_kind, 1, 'DRAFT', "
-                                  + "1, NULL, NULL, FALSE, ? FROM game g WHERE g.id = ? RETURNING "
-                                  + "id, tenant_id, canonical_tenant_id, canonical_version_id, "
-                                  + "identity_source_game_row_id, identity_source_game_tenant_key, "
-                                  + "identity_source_provenance_kind",
-                              canonicalVersionId,
-                              "V50.4 retained status-only migration fixture",
-                              savedGame.getId())
-                          .fetchOne()));
+              transaction.execute(status ->
+                  dsl.resultQuery(
+                          "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
+                              + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                              + "identity_source_provenance_kind, version_number, version_state, "
+                              + "version_state_epoch, script_patch_version, base_version_id, "
+                              + "is_script_only, notes) SELECT g.tenant_id, ?, g.canonical_tenant_id, "
+                              + "g.id, g.tenant_id, g.tenant_identity_provenance_kind, 1, 'DRAFT', "
+                              + "1, NULL, NULL, FALSE, ? FROM game g WHERE g.id = ? RETURNING "
+                              + "id, tenant_id, canonical_tenant_id, canonical_version_id, "
+                              + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                              + "identity_source_provenance_kind",
+                          canonicalVersionId,
+                          "V50.4 retained status-only migration fixture",
+                          savedGame.getId())
+                      .fetchOne()));
       return new TargetProof(
           savedVersion.get("canonical_tenant_id", UUID.class),
           savedVersion.get("canonical_version_id", UUID.class),

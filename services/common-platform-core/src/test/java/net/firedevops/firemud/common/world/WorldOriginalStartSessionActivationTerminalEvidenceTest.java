@@ -119,10 +119,8 @@ class WorldOriginalStartSessionActivationTerminalEvidenceTest {
             null,
             nextActive(request.worldActivationRequest().preparing()));
 
-    assertThatThrownBy(
-            () ->
-                WorldOriginalStartSessionActivationTerminalEvidence.create(
-                    protection, committed, 0L))
+    assertThatThrownBy(() ->
+            WorldOriginalStartSessionActivationTerminalEvidence.create(protection, committed, 0L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("positive");
     var changedRequest =
@@ -135,10 +133,9 @@ class WorldOriginalStartSessionActivationTerminalEvidenceTest {
             WorldCanonicalInstanceActivation.Outcome.COMMITTED,
             null,
             nextActive(changedRequest.preparing()));
-    assertThatThrownBy(
-            () ->
-                WorldOriginalStartSessionActivationTerminalEvidence.create(
-                    protection, substitutedResult, WORLD_FENCE))
+    assertThatThrownBy(() ->
+            WorldOriginalStartSessionActivationTerminalEvidence.create(
+                protection, substitutedResult, WORLD_FENCE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("differs from the original Account-protected");
 
@@ -293,19 +290,18 @@ class WorldOriginalStartSessionActivationTerminalEvidenceTest {
             null);
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        selector.appliedCommitId(),
-                        selector.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "2".repeat(64) : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    Long.toString(descriptor.versionId()),
+                    false,
+                    null,
+                    selector.appliedCommitId(),
+                    selector.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "2".repeat(64) : null))
             .toList();
     var release =
         AuthoredWorldReleaseAttestationEvidence.create(

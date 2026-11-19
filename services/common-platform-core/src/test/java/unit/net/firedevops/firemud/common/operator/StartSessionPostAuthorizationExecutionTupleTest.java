@@ -53,34 +53,31 @@ class StartSessionPostAuthorizationExecutionTupleTest {
     byte[] bundle = bundle(pre, "17");
     StartSessionAuthorityEvidenceBundle.BundleReference reference = reference("17");
 
-    assertThatThrownBy(
-            () ->
-                StartSessionPostAuthorizationExecutionTuple.createHuman(
-                    pre,
-                    "spiffe://firemud/ns/another-runtime/sa/logging-admin-service",
-                    FINGERPRINT,
-                    RESERVATION_OWNER,
-                    19L,
-                    bundle,
-                    reference))
+    assertThatThrownBy(() ->
+            StartSessionPostAuthorizationExecutionTuple.createHuman(
+                pre,
+                "spiffe://firemud/ns/another-runtime/sa/logging-admin-service",
+                FINGERPRINT,
+                RESERVATION_OWNER,
+                19L,
+                bundle,
+                reference))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("same-namespace");
-    assertThatThrownBy(
-            () ->
-                StartSessionPostAuthorizationExecutionTuple.createHuman(
-                    pre,
-                    WORKLOAD,
-                    "sha256:" + "b".repeat(64),
-                    RESERVATION_OWNER,
-                    19L,
-                    bundle,
-                    reference))
+    assertThatThrownBy(() ->
+            StartSessionPostAuthorizationExecutionTuple.createHuman(
+                pre,
+                WORKLOAD,
+                "sha256:" + "b".repeat(64),
+                RESERVATION_OWNER,
+                19L,
+                bundle,
+                reference))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("fingerprint");
-    assertThatThrownBy(
-            () ->
-                StartSessionPostAuthorizationExecutionTuple.createHuman(
-                    pre, WORKLOAD, FINGERPRINT, RESERVATION_OWNER, 19L, bundle, reference("18")))
+    assertThatThrownBy(() ->
+            StartSessionPostAuthorizationExecutionTuple.createHuman(
+                pre, WORKLOAD, FINGERPRINT, RESERVATION_OWNER, 19L, bundle, reference("18")))
         .isInstanceOf(IllegalArgumentException.class);
 
     Map<String, Object> changed =
@@ -101,11 +98,9 @@ class StartSessionPostAuthorizationExecutionTupleTest {
     assertThat(tuple.canonicalBytes()[0]).isNotEqualTo((byte) '!');
     assertThat(tuple.authorityEvidenceBundleBytes()[0]).isNotEqualTo((byte) '!');
 
-    assertThatThrownBy(
-            () ->
-                StartSessionPostAuthorizationExecutionTuple.decode(
-                    (tuple.canonicalJson() + " ")
-                        .getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            StartSessionPostAuthorizationExecutionTuple.decode(
+                (tuple.canonicalJson() + " ").getBytes(java.nio.charset.StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
 
     Map<String, Object> unknown = JSON.readValue(tuple.canonicalBytes(), Map.class);

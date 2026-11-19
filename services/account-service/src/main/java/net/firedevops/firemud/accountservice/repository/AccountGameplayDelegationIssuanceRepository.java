@@ -908,17 +908,15 @@ public class AccountGameplayDelegationIssuanceRepository {
               .equals(correspondence.privatePromotionGenerationOperationId())
           || correspondence
               .durableActive()
-              .filter(
-                  active ->
-                      active.generation().equals(candidate.signerGeneration())
-                          && active.kid().equals(candidate.kid()))
+              .filter(active ->
+                  active.generation().equals(candidate.signerGeneration())
+                      && active.kid().equals(candidate.kid()))
               .isEmpty()
           || correspondence
               .publishedActive()
-              .filter(
-                  active ->
-                      active.generation().equals(candidate.signerGeneration())
-                          && active.kid().equals(candidate.kid()))
+              .filter(active ->
+                  active.generation().equals(candidate.signerGeneration())
+                      && active.kid().equals(candidate.kid()))
               .isEmpty()
           || correspondence
               .promotionPrivateObservedResourceVersion()
@@ -1750,12 +1748,11 @@ public class AccountGameplayDelegationIssuanceRepository {
         snapshot
             .account()
             .accountSecurityCutoff()
-            .map(
-                value ->
-                    new AccountSecurityCutoff(
-                        value.accountAuthorityGeneration(),
-                        value.outboxStreamKey(),
-                        value.outboxSequence()))
+            .map(value ->
+                new AccountSecurityCutoff(
+                    value.accountAuthorityGeneration(),
+                    value.outboxStreamKey(),
+                    value.outboxSequence()))
             .orElse(null);
     return new AccountAuthoritySnapshot(
         snapshot.account().scope().accountId(),

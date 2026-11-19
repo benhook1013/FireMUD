@@ -15,9 +15,8 @@ class AccountPostgresIntegrationFixtureTest {
 
   @Test
   void acceptsDurablePrimarySettings() {
-    assertThatCode(
-            () ->
-                AccountPostgresIntegrationFixture.validateDurablePrimarySettings(false, "on", "on"))
+    assertThatCode(() ->
+            AccountPostgresIntegrationFixture.validateDurablePrimarySettings(false, "on", "on"))
         .doesNotThrowAnyException();
   }
 
@@ -30,10 +29,9 @@ class AccountPostgresIntegrationFixtureTest {
 
   private static void assertRejectedSettings(
       boolean inRecovery, String fsync, String synchronousCommit) {
-    assertThatThrownBy(
-            () ->
-                AccountPostgresIntegrationFixture.validateDurablePrimarySettings(
-                    inRecovery, fsync, synchronousCommit))
+    assertThatThrownBy(() ->
+            AccountPostgresIntegrationFixture.validateDurablePrimarySettings(
+                inRecovery, fsync, synchronousCommit))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Durable PostgreSQL primary required");
   }

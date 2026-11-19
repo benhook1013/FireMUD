@@ -569,24 +569,19 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
             () -> insertPointer(dsl, 6L, 10L, "demo", "alternate", 111L, true, false, "SHARED"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("uq_gameplay_admission_pointer_runtime_target");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE gameplay_admission_pointer SET realm_id = ? WHERE id = 3",
-                    sharedRealmId))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE gameplay_admission_pointer SET realm_id = ? WHERE id = 3", sharedRealmId))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("uq_gameplay_admission_pointer_realm_id");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE gameplay_admission_pointer SET playable_state_namespace_id = NULL "
-                        + "WHERE id = 1"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE gameplay_admission_pointer SET playable_state_namespace_id = NULL "
+                    + "WHERE id = 1"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("gameplay_admission_pointer_identity_pair_complete");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE gameplay_admission_pointer SET catalog_revision = 0 WHERE id = 1"))
+    assertThatThrownBy(() ->
+            dsl.execute("UPDATE gameplay_admission_pointer SET catalog_revision = 0 WHERE id = 1"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("gameplay_admission_pointer_catalog_revision_positive");
 
@@ -632,18 +627,16 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     assertThat(boundEvent.get("realm_id", UUID.class)).isEqualTo(eventRealmId);
     assertThat(boundEvent.get("playable_state_namespace_id", UUID.class))
         .isEqualTo(eventNamespaceId);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE gameplay_admission_pointer_event SET catalog_revision = 0 "
-                        + "WHERE id = 9002"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE gameplay_admission_pointer_event SET catalog_revision = 0 "
+                    + "WHERE id = 9002"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("gameplay_admission_pointer_event_catalog_revision_positive");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE gameplay_admission_pointer_event SET playable_state_namespace_id = NULL "
-                        + "WHERE id = 9002"))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE gameplay_admission_pointer_event SET playable_state_namespace_id = NULL "
+                    + "WHERE id = 9002"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("gameplay_admission_pointer_event_identity_pair_complete");
   }
@@ -770,10 +763,9 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
                   row.get("playable_state_namespace_id", UUID.class)));
     }
     return realmsByWorld.entrySet().stream()
-        .map(
-            entry ->
-                new GameplayWorldCatalog.WorldView(
-                    entry.getKey(), displayNamesByWorld.get(entry.getKey()), entry.getValue()))
+        .map(entry ->
+            new GameplayWorldCatalog.WorldView(
+                entry.getKey(), displayNamesByWorld.get(entry.getKey()), entry.getValue()))
         .toList();
   }
 

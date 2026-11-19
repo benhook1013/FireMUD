@@ -334,10 +334,9 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
                 route.canonicalTenantId(),
                 route.realmId(),
                 route.canonicalGameInstanceId())
-            .orElseThrow(
-                () ->
-                    new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
-                        "Current launch source is absent"));
+            .orElseThrow(() ->
+                new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+                    "Current launch source is absent"));
     var association = launch.association();
     if (!workloadNamespace.equals(association.targetNamespace())
         || !route.canonicalTenantId().equals(association.canonicalTenantId())

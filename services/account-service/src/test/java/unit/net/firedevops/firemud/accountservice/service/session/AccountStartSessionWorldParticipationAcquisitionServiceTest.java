@@ -166,17 +166,15 @@ class AccountStartSessionWorldParticipationAcquisitionServiceTest {
     for (Function<Request, Request> substituteEcho : substitutedEchoes) {
       Harness harness = new Harness();
       when(harness.gameSessionClient.read(any(Request.class)))
-          .thenAnswer(
-              invocation -> {
-                assertNoSql();
-                harness.steps.add("remote-read");
-                Request expected = invocation.getArgument(0);
-                Request echoed = substituteEcho.apply(expected);
-                return echoed == null
-                    ? null
-                    : new Result(
-                        echoed, ORIGINAL_LEASE_EXPIRY, projection(harness.tuple, Map.of()));
-              });
+          .thenAnswer(invocation -> {
+            assertNoSql();
+            harness.steps.add("remote-read");
+            Request expected = invocation.getArgument(0);
+            Request echoed = substituteEcho.apply(expected);
+            return echoed == null
+                ? null
+                : new Result(echoed, ORIGINAL_LEASE_EXPIRY, projection(harness.tuple, Map.of()));
+          });
 
       assertCode(
           Status.Code.FAILED_PRECONDITION,
@@ -350,20 +348,19 @@ class AccountStartSessionWorldParticipationAcquisitionServiceTest {
     assertThat(harness.readbackTransactions.rollbacks).isEqualTo(1);
 
     when(harness.participationRepository.findHistoricalForOriginalTuple(any(byte[].class)))
-        .thenAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              byte[] lookupTuple = invocation.getArgument(0);
-              assertThat(lookupTuple).containsExactly(harness.tuple.canonicalBytes());
-              assertThat(harness.committedParticipation.originalPostAuthorizationTuple())
-                  .containsExactly(lookupTuple);
-              assertThat(harness.committedParticipation.sources()).hasSize(1);
-              assertThat(harness.committedParticipation.sources().get(0).canonicalBytes())
-                  .containsExactly(
-                      participationSource(sourceEvidence("current source")).canonicalBytes());
-              harness.steps.add("historical-tuple-readback");
-              return Optional.of(harness.committedParticipation);
-            });
+        .thenAnswer(invocation -> {
+          assertWritableReadCommittedTransaction();
+          byte[] lookupTuple = invocation.getArgument(0);
+          assertThat(lookupTuple).containsExactly(harness.tuple.canonicalBytes());
+          assertThat(harness.committedParticipation.originalPostAuthorizationTuple())
+              .containsExactly(lookupTuple);
+          assertThat(harness.committedParticipation.sources()).hasSize(1);
+          assertThat(harness.committedParticipation.sources().get(0).canonicalBytes())
+              .containsExactly(
+                  participationSource(sourceEvidence("current source")).canonicalBytes());
+          harness.steps.add("historical-tuple-readback");
+          return Optional.of(harness.committedParticipation);
+        });
     var historicalService =
         new AccountStartSessionWorldParticipationHistoricalReadService(
             harness.participationRepository, harness.readbackTransactions, NAMESPACE);
@@ -705,54 +702,49 @@ class AccountStartSessionWorldParticipationAcquisitionServiceTest {
           .withCurrentWorldReceivingParticipationCurrentness(
               any(byte[].class), eq(GAME_SESSION_ATTEMPT_ID), eq(GAME_SESSION_FENCE), any());
       when(participationRepository.createOrReadExact(any(Candidate.class)))
-          .thenAnswer(
-              invocation -> {
-                assertWritableReadCommittedTransaction();
-                steps.add("participation-write");
-                return committedParticipation;
-              });
+          .thenAnswer(invocation -> {
+            assertWritableReadCommittedTransaction();
+            steps.add("participation-write");
+            return committedParticipation;
+          });
       when(attemptEvidenceRepository.retainCurrentExact(
               any(StoredParticipation.class), any(Result.class)))
-          .thenAnswer(
-              invocation -> {
-                assertWritableReadCommittedTransaction();
-                steps.add("proof-write");
-                StoredParticipation exactParticipation = invocation.getArgument(0);
-                Result observation = invocation.getArgument(1);
-                StoredEvidence existing = retainedProof.get();
-                if (existing != null) return existing;
-                StoredEvidence created = storedEvidence(exactParticipation, observation);
-                retainedProof.set(created);
-                return created;
-              });
+          .thenAnswer(invocation -> {
+            assertWritableReadCommittedTransaction();
+            steps.add("proof-write");
+            StoredParticipation exactParticipation = invocation.getArgument(0);
+            Result observation = invocation.getArgument(1);
+            StoredEvidence existing = retainedProof.get();
+            if (existing != null) return existing;
+            StoredEvidence created = storedEvidence(exactParticipation, observation);
+            retainedProof.set(created);
+            return created;
+          });
       when(participationRepository.findCurrentExact(any(Candidate.class)))
-          .thenAnswer(
-              invocation -> {
-                assertWritableReadCommittedTransaction();
-                steps.add("participation-readback");
-                return participationMissingOnReadback
-                    ? Optional.empty()
-                    : Optional.of(participationReadback.get());
-              });
+          .thenAnswer(invocation -> {
+            assertWritableReadCommittedTransaction();
+            steps.add("participation-readback");
+            return participationMissingOnReadback
+                ? Optional.empty()
+                : Optional.of(participationReadback.get());
+          });
       when(attemptEvidenceRepository.findCurrentExact(
               any(StoredParticipation.class), any(Request.class)))
-          .thenAnswer(
-              invocation -> {
-                assertWritableReadCommittedTransaction();
-                steps.add("proof-readback");
-                return Optional.ofNullable(retainedProof.get());
-              });
+          .thenAnswer(invocation -> {
+            assertWritableReadCommittedTransaction();
+            steps.add("proof-readback");
+            return Optional.ofNullable(retainedProof.get());
+          });
     }
 
     void configureClientResult(byte[] projectionBytes) {
       when(gameSessionClient.read(any(Request.class)))
-          .thenAnswer(
-              invocation -> {
-                assertNoSql();
-                steps.add("remote-read");
-                Request read = invocation.getArgument(0);
-                return new Result(read, ORIGINAL_LEASE_EXPIRY, projectionBytes);
-              });
+          .thenAnswer(invocation -> {
+            assertNoSql();
+            steps.add("remote-read");
+            Request read = invocation.getArgument(0);
+            return new Result(read, ORIGINAL_LEASE_EXPIRY, projectionBytes);
+          });
     }
   }
 

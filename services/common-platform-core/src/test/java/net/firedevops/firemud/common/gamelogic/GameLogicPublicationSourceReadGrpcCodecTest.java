@@ -77,34 +77,27 @@ class GameLogicPublicationSourceReadGrpcCodecTest {
     GetDraftDesignDigestRequest request =
         GameLogicPublicationSourceReadGrpcCodec.toRequest(fixture.binding());
 
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromRequest(
-                    request.toBuilder().setDerivedWorkflowIdentity("publish:wrong").build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromRequest(
+                request.toBuilder().setDerivedWorkflowIdentity("publish:wrong").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromRequest(
-                    request.toBuilder().setRequestDigest("0".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromRequest(
+                request.toBuilder().setRequestDigest("0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromRequest(
-                    request.toBuilder().setScriptPatchVersion("patch-1").build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromRequest(
+                request.toBuilder().setScriptPatchVersion("patch-1").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromRequest(
-                    request.toBuilder().setSourceReadBindingDigest("sha256:changed").build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromRequest(
+                request.toBuilder().setSourceReadBindingDigest("sha256:changed").build()))
         .isInstanceOf(IllegalArgumentException.class);
     byte[] substituted = request.getSourceReadBinding().toByteArray();
     substituted[0] ^= 1;
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromRequest(
-                    request.toBuilder()
-                        .setSourceReadBinding(ByteString.copyFrom(substituted))
-                        .build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromRequest(
+                request.toBuilder().setSourceReadBinding(ByteString.copyFrom(substituted)).build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     GetDraftDesignDigestRequest requestWithUnknown =
@@ -128,28 +121,24 @@ class GameLogicPublicationSourceReadGrpcCodecTest {
             response.toBuilder().setBaseVersionId("42").build(),
             response.toBuilder().setScriptPatchVersion("patch-1").build(),
             response.toBuilder().setSourceReadBindingDigest("sha256:changed").build())) {
-      assertThatThrownBy(
-              () ->
-                  GameLogicPublicationSourceReadGrpcCodec.fromResponse(fixture.binding(), changed))
+      assertThatThrownBy(() ->
+              GameLogicPublicationSourceReadGrpcCodec.fromResponse(fixture.binding(), changed))
           .isInstanceOf(IllegalArgumentException.class);
     }
 
     byte[] substitutedBinding = response.getSourceReadBinding().toByteArray();
     substitutedBinding[substitutedBinding.length - 1] ^= 1;
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                    fixture.binding(),
-                    response.toBuilder()
-                        .setSourceReadBinding(ByteString.copyFrom(substitutedBinding))
-                        .build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                fixture.binding(),
+                response.toBuilder()
+                    .setSourceReadBinding(ByteString.copyFrom(substitutedBinding))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                    fixture.binding(),
-                    response.toBuilder().setUnknownFields(unknownField()).build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                fixture.binding(), response.toBuilder().setUnknownFields(unknownField()).build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -159,16 +148,14 @@ class GameLogicPublicationSourceReadGrpcCodecTest {
     GetDraftDesignDigestResponse response =
         GameLogicPublicationSourceReadGrpcCodec.toResponse(fixture.binding(), fixture.terminal());
 
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                    fixture.binding(),
-                    response.toBuilder().setRetainedIntakeTerminalDigest("sha256:changed").build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                fixture.binding(),
+                response.toBuilder().setRetainedIntakeTerminalDigest("sha256:changed").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                    fixture.binding(), response, "other"))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                fixture.binding(), response, "other"))
         .isInstanceOf(IllegalArgumentException.class);
 
     List<Fixture> substitutedBindings =
@@ -193,9 +180,8 @@ class GameLogicPublicationSourceReadGrpcCodecTest {
       GetDraftDesignDigestResponse changed =
           GameLogicPublicationSourceReadGrpcCodec.toResponse(
               substituted.binding(), substituted.terminal());
-      assertThatThrownBy(
-              () ->
-                  GameLogicPublicationSourceReadGrpcCodec.fromResponse(fixture.binding(), changed))
+      assertThatThrownBy(() ->
+              GameLogicPublicationSourceReadGrpcCodec.fromResponse(fixture.binding(), changed))
           .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -206,10 +192,9 @@ class GameLogicPublicationSourceReadGrpcCodecTest {
                   ByteString.copyFrom(substitutedTerminal.terminal().canonicalBytes()))
               .setRetainedIntakeTerminalDigest(substitutedTerminal.terminal().digest())
               .build();
-      assertThatThrownBy(
-              () ->
-                  GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                      fixture.binding(), changedTerminal))
+      assertThatThrownBy(() ->
+              GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                  fixture.binding(), changedTerminal))
           .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -217,10 +202,9 @@ class GameLogicPublicationSourceReadGrpcCodecTest {
     GetDraftDesignDigestResponse wrongNamespaceResponse =
         GameLogicPublicationSourceReadGrpcCodec.toResponse(
             wrongNamespace.binding(), wrongNamespace.terminal());
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                    wrongNamespace.binding(), wrongNamespaceResponse, NAMESPACE))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                wrongNamespace.binding(), wrongNamespaceResponse, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -230,46 +214,40 @@ class GameLogicPublicationSourceReadGrpcCodecTest {
     GetDraftDesignDigestResponse response =
         GameLogicPublicationSourceReadGrpcCodec.toResponse(fixture.binding(), fixture.terminal());
 
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                    fixture.binding(), response.toBuilder().clearRetainedIntakeTerminal().build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                fixture.binding(), response.toBuilder().clearRetainedIntakeTerminal().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                    fixture.binding(),
-                    response.toBuilder()
-                        .setRetainedIntakeTerminal(ByteString.copyFrom(new byte[] {1, 2, 3}))
-                        .build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                fixture.binding(),
+                response.toBuilder()
+                    .setRetainedIntakeTerminal(ByteString.copyFrom(new byte[] {1, 2, 3}))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                    fixture.binding(),
-                    response.toBuilder()
-                        .setRetainedIntakeTerminal(
-                            ByteString.copyFrom(
-                                new byte
-                                    [GameLogicPublicationSourceReadGrpcCodec.MAX_TERMINAL_BYTES
-                                        + 1]))
-                        .build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                fixture.binding(),
+                response.toBuilder()
+                    .setRetainedIntakeTerminal(
+                        ByteString.copyFrom(
+                            new byte
+                                [GameLogicPublicationSourceReadGrpcCodec.MAX_TERMINAL_BYTES + 1]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.fromResponse(
-                    fixture.binding(),
-                    response.toBuilder()
-                        .setError(ErrorDetail.newBuilder().setCode("FAILED_PRECONDITION").build())
-                        .build()))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.fromResponse(
+                fixture.binding(),
+                response.toBuilder()
+                    .setError(ErrorDetail.newBuilder().setCode("FAILED_PRECONDITION").build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                GameLogicPublicationSourceReadGrpcCodec.toResponse(
-                    fixture.binding(),
-                    GameLogicGameplayRuleIntakeTerminal.aborted(
-                        new GameLogicGameplayRuleIntakeOperation(
-                            NAMESPACE, fixture.binding().authorization()))))
+    assertThatThrownBy(() ->
+            GameLogicPublicationSourceReadGrpcCodec.toResponse(
+                fixture.binding(),
+                GameLogicGameplayRuleIntakeTerminal.aborted(
+                    new GameLogicGameplayRuleIntakeOperation(
+                        NAMESPACE, fixture.binding().authorization()))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -285,9 +263,8 @@ class GameLogicPublicationSourceReadGrpcCodecTest {
             response.toBuilder().setAbilitySchemaDigest("sha256:changed").build(),
             response.toBuilder().setDigestSchemaVersion(2).build(),
             response.toBuilder().setCanonicalization("OTHER").build())) {
-      assertThatThrownBy(
-              () ->
-                  GameLogicPublicationSourceReadGrpcCodec.fromResponse(fixture.binding(), changed))
+      assertThatThrownBy(() ->
+              GameLogicPublicationSourceReadGrpcCodec.fromResponse(fixture.binding(), changed))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

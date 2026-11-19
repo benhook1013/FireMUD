@@ -60,24 +60,23 @@ public final class GameDesignGameplayRuleSourceReadService {
       throw Status.FAILED_PRECONDITION
           .withDescription("Exact Account source permission required")
           .asRuntimeException();
-    return transaction.execute(
-        ignored -> {
-          var snapshot =
-              repository.requireCompleteForGameLogic(
-                  request.binding().target(), request.binding().commitId());
-          if (!snapshot.binding().equals(request.binding()))
-            throw Status.FAILED_PRECONDITION
-                .withDescription("Selected rule binding differs")
-                .asRuntimeException();
-          if (request.proof() instanceof GameplayRuleSourceReadEvidence.Finalized finalized
-              && !java.util.Arrays.equals(
-                  snapshot.canonicalBytes(), finalized.authorization().source().canonicalBytes()))
-            throw Status.FAILED_PRECONDITION
-                .withDescription("Finalized source differs")
-                .asRuntimeException();
-          return new GameplayRuleSourceReadEvidence(
-              request, new GameplayRuleSelectedSource(snapshot.canonicalJson()));
-        });
+    return transaction.execute(ignored -> {
+      var snapshot =
+          repository.requireCompleteForGameLogic(
+              request.binding().target(), request.binding().commitId());
+      if (!snapshot.binding().equals(request.binding()))
+        throw Status.FAILED_PRECONDITION
+            .withDescription("Selected rule binding differs")
+            .asRuntimeException();
+      if (request.proof() instanceof GameplayRuleSourceReadEvidence.Finalized finalized
+          && !java.util.Arrays.equals(
+              snapshot.canonicalBytes(), finalized.authorization().source().canonicalBytes()))
+        throw Status.FAILED_PRECONDITION
+            .withDescription("Finalized source differs")
+            .asRuntimeException();
+      return new GameplayRuleSourceReadEvidence(
+          request, new GameplayRuleSelectedSource(snapshot.canonicalJson()));
+    });
   }
 
   static void requirePeer(String namespace) {

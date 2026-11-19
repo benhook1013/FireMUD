@@ -62,11 +62,10 @@ class DirectTextWorldMenuRedisStoreTest {
   private final AtomicInteger catalogReads = new AtomicInteger();
   private final DirectTextWorldSelectionService selection =
       new DirectTextWorldSelectionService(
-          GameplayWorldCatalog.forWorldSupplier(
-              () -> {
-                catalogReads.incrementAndGet();
-                return List.of();
-              }),
+          GameplayWorldCatalog.forWorldSupplier(() -> {
+            catalogReads.incrementAndGet();
+            return List.of();
+          }),
           routes,
           CLOCK);
   private final StatefulRedisConnection<byte[], byte[]> connection = mockConnection();
@@ -96,12 +95,11 @@ class DirectTextWorldMenuRedisStoreTest {
     when(commands.exists(any(byte[].class)))
         .thenAnswer(invocation -> stored.get() == null ? 0L : 1L);
     when(commands.scriptLoad(any(byte[].class)))
-        .thenAnswer(
-            invocation ->
-                HexFormat.of()
-                    .formatHex(
-                        MessageDigest.getInstance("SHA-1")
-                            .digest(invocation.getArgument(0, byte[].class))));
+        .thenAnswer(invocation ->
+            HexFormat.of()
+                .formatHex(
+                    MessageDigest.getInstance("SHA-1")
+                        .digest(invocation.getArgument(0, byte[].class))));
     when(commands.evalsha(
             anyString(),
             eq(ScriptOutputType.STATUS),
@@ -111,30 +109,25 @@ class DirectTextWorldMenuRedisStoreTest {
             any(byte[].class),
             any(byte[].class),
             any(byte[].class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(
+        .thenAnswer(invocation -> {
+          assertThat(new String(invocation.getArgument(7, byte[].class), StandardCharsets.US_ASCII))
+              .isEqualTo(Long.toString(CLOCK.millis()));
+          boolean clear =
+              "CLEAR"
+                  .equals(
                       new String(
-                          invocation.getArgument(7, byte[].class), StandardCharsets.US_ASCII))
-                  .isEqualTo(Long.toString(CLOCK.millis()));
-              boolean clear =
-                  "CLEAR"
-                      .equals(
-                          new String(
-                              invocation.getArgument(3, byte[].class), StandardCharsets.US_ASCII));
-              assertThat(
-                      new String(
-                          invocation.getArgument(6, byte[].class), StandardCharsets.US_ASCII))
-                  .isEqualTo(clear ? "0" : Long.toString(CLOCK.millis() + 300_000L));
-              byte[] expected = invocation.getArgument(4, byte[].class);
-              if (!Arrays.equals(expected, stored.get() == null ? new byte[0] : stored.get())) {
-                return "PREIMAGE_MISMATCH";
-              }
-              if ("MENU_WRITTEN".equals(outcome.get())) {
-                stored.set(invocation.getArgument(5, byte[].class));
-              }
-              return outcome.get();
-            });
+                          invocation.getArgument(3, byte[].class), StandardCharsets.US_ASCII));
+          assertThat(new String(invocation.getArgument(6, byte[].class), StandardCharsets.US_ASCII))
+              .isEqualTo(clear ? "0" : Long.toString(CLOCK.millis() + 300_000L));
+          byte[] expected = invocation.getArgument(4, byte[].class);
+          if (!Arrays.equals(expected, stored.get() == null ? new byte[0] : stored.get())) {
+            return "PREIMAGE_MISMATCH";
+          }
+          if ("MENU_WRITTEN".equals(outcome.get())) {
+            stored.set(invocation.getArgument(5, byte[].class));
+          }
+          return outcome.get();
+        });
     store = new DirectTextWorldMenuRedisStore(selection, CLOCK, () -> connection, installed());
   }
 

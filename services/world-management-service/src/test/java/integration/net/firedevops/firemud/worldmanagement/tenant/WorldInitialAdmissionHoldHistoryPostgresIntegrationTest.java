@@ -92,23 +92,21 @@ class WorldInitialAdmissionHoldHistoryPostgresIntegrationTest {
 
     // Actual current repository reads of retained rows, not a canonical finalizer or owner call.
     var repository = new InitialAdmissionBindHoldRepository(sql);
-    beforeHold.forEach(
-        (id, before) -> {
-          var retained = repository.findByHoldId(id.toString()).orElseThrow();
-          assertThat(retained.status()).isEqualTo(before.get("status"));
-          assertThat(retained.rowVersion()).isEqualTo(before.get("row_version"));
-          assertThat(retained.ownerProofId()).isEqualTo(before.get("owner_proof_id"));
-          assertThat(retained.ownerProofDigest()).isEqualTo(before.get("owner_proof_digest"));
-          assertThat(retained.ownerPointerAuditId())
-              .isEqualTo(before.get("owner_pointer_audit_id"));
-          assertThat(retained.ownerPointerVersion()).isEqualTo(before.get("owner_pointer_version"));
-          assertThat(
-                  repository.findByTenantIdAndRequestId(
-                      retained.tenantId(), retained.initialAdmissionRequestId()))
-              .contains(retained);
-          assertThat(repository.hasNonterminalForRealm(retained.tenantId(), retained.realmUuid()))
-              .isEqualTo(List.of("PENDING", "RECONCILIATION_REQUIRED").contains(retained.status()));
-        });
+    beforeHold.forEach((id, before) -> {
+      var retained = repository.findByHoldId(id.toString()).orElseThrow();
+      assertThat(retained.status()).isEqualTo(before.get("status"));
+      assertThat(retained.rowVersion()).isEqualTo(before.get("row_version"));
+      assertThat(retained.ownerProofId()).isEqualTo(before.get("owner_proof_id"));
+      assertThat(retained.ownerProofDigest()).isEqualTo(before.get("owner_proof_digest"));
+      assertThat(retained.ownerPointerAuditId()).isEqualTo(before.get("owner_pointer_audit_id"));
+      assertThat(retained.ownerPointerVersion()).isEqualTo(before.get("owner_pointer_version"));
+      assertThat(
+              repository.findByTenantIdAndRequestId(
+                  retained.tenantId(), retained.initialAdmissionRequestId()))
+          .contains(retained);
+      assertThat(repository.hasNonterminalForRealm(retained.tenantId(), retained.realmUuid()))
+          .isEqualTo(List.of("PENDING", "RECONCILIATION_REQUIRED").contains(retained.status()));
+    });
     assertThat(repository.findNonterminal(256)).hasSize(2);
     assertPromotionDenied(sql, beforeHold.keySet().iterator().next());
     assertRetained(sql, after1020World, after1020Hold);
@@ -185,11 +183,10 @@ class WorldInitialAdmissionHoldHistoryPostgresIntegrationTest {
   }
 
   private void assertPromotionDenied(DSLContext sql, UUID holdId) {
-    assertThatThrownBy(
-            () ->
-                sql.execute(
-                    "UPDATE initial_admission_bind_hold SET canonical_target_namespace = 'forged-space' WHERE hold_id = ?",
-                    holdId))
+    assertThatThrownBy(() ->
+            sql.execute(
+                "UPDATE initial_admission_bind_hold SET canonical_target_namespace = 'forged-space' WHERE hold_id = ?",
+                holdId))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("Initial-admission hold acquisition identity is immutable");
   }

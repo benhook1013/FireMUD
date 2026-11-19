@@ -198,33 +198,29 @@ class AccountGameplayAdmissionLeaseClientTest {
       assertThat(acquireRequests.getFirst().getPresentedInitialGsaCompactJwt(0)).isEqualTo(JWT);
       assertThat(finalizeRequests)
           .singleElement()
-          .satisfies(
-              request -> {
-                assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
-                    .containsExactly(originalBytes);
-                assertThat(request.getBindingDecisionUuid(0)).isEqualTo(DECISION_ID.toString());
-              });
+          .satisfies(request -> {
+            assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
+                .containsExactly(originalBytes);
+            assertThat(request.getBindingDecisionUuid(0)).isEqualTo(DECISION_ID.toString());
+          });
       assertThat(readRequests)
           .singleElement()
-          .satisfies(
-              request ->
-                  assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
-                      .containsExactly(originalBytes));
+          .satisfies(request ->
+              assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
+                  .containsExactly(originalBytes));
       assertThat(abortRequests)
           .singleElement()
-          .satisfies(
-              request -> {
-                assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
-                    .containsExactly(originalBytes);
-                assertThat(request.getBindingDecisionUuidCount()).isZero();
-              });
+          .satisfies(request -> {
+            assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
+                .containsExactly(originalBytes);
+            assertThat(request.getBindingDecisionUuidCount()).isZero();
+          });
       assertThat(deadlines)
           .hasSize(4)
-          .allSatisfy(
-              deadline -> {
-                long remainingMillis = deadline.timeRemaining(TimeUnit.MILLISECONDS);
-                assertThat(remainingMillis).isPositive().isLessThanOrEqualTo(5_000L);
-              });
+          .allSatisfy(deadline -> {
+            long remainingMillis = deadline.timeRemaining(TimeUnit.MILLISECONDS);
+            assertThat(remainingMillis).isPositive().isLessThanOrEqualTo(5_000L);
+          });
       assertThat(acquired.toString()).doesNotContain(JWT);
     } finally {
       stop(server);
@@ -342,30 +338,27 @@ class AccountGameplayAdmissionLeaseClientTest {
       assertThat(observed).containsExactly(GAME_SESSION_PEER, GAME_SESSION_PEER);
       assertThat(issuedRequests)
           .singleElement()
-          .satisfies(
-              request -> {
-                assertThat(request.getPresentedInitialGsaCompactJwt(0)).isEqualTo(JWT);
-                assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
-                    .containsExactly(originalLease);
-              });
+          .satisfies(request -> {
+            assertThat(request.getPresentedInitialGsaCompactJwt(0)).isEqualTo(JWT);
+            assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
+                .containsExactly(originalLease);
+          });
       assertThat(confirmation.lineageId())
           .isEqualTo(UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
       assertThat(confirmation.continuityExpiresAtMillis()).isEqualTo(1_320_000L);
       assertThat(confirmationRequests)
           .singleElement()
-          .satisfies(
-              request -> {
-                assertThat(request.getPresentedInitialGsaCompactJwt(0)).isEqualTo(JWT);
-                assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
-                    .containsExactly(originalLease);
-              });
+          .satisfies(request -> {
+            assertThat(request.getPresentedInitialGsaCompactJwt(0)).isEqualTo(JWT);
+            assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
+                .containsExactly(originalLease);
+          });
       assertThat(deadlines)
           .hasSize(2)
-          .allSatisfy(
-              deadline -> {
-                long remainingMillis = deadline.timeRemaining(TimeUnit.MILLISECONDS);
-                assertThat(remainingMillis).isPositive().isLessThanOrEqualTo(5_000L);
-              });
+          .allSatisfy(deadline -> {
+            long remainingMillis = deadline.timeRemaining(TimeUnit.MILLISECONDS);
+            assertThat(remainingMillis).isPositive().isLessThanOrEqualTo(5_000L);
+          });
       received.close();
       java.util.Arrays.fill(originalLease, (byte) 0);
     } finally {
@@ -430,13 +423,12 @@ class AccountGameplayAdmissionLeaseClientTest {
               .isInstanceOf(IllegalStateException.class)
               .hasMessage("Account returned invalid original-new credential evidence")
               .hasCauseInstanceOf(IllegalArgumentException.class)
-              .satisfies(
-                  failure -> {
-                    assertThat(failure.getCause())
-                        .hasMessage("Account credential result changed its original lease");
-                    assertThat(throwableText(failure))
-                        .doesNotContain(JWT, signedJwt, HexFormat.of().formatHex(handle));
-                  });
+              .satisfies(failure -> {
+                assertThat(failure.getCause())
+                    .hasMessage("Account credential result changed its original lease");
+                assertThat(throwableText(failure))
+                    .doesNotContain(JWT, signedJwt, HexFormat.of().formatHex(handle));
+              });
           assertThatThrownBy(parsed::opaqueRebindHandle)
               .isInstanceOf(IllegalStateException.class)
               .hasMessage("Credential result is closed");
@@ -661,13 +653,12 @@ class AccountGameplayAdmissionLeaseClientTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Account returned invalid gameplay admission lease evidence")
           .hasCauseInstanceOf(IllegalArgumentException.class)
-          .satisfies(
-              failure -> {
-                assertThat(failure.getCause())
-                    .hasMessage("Unsupported Account admission lease schema")
-                    .hasNoCause();
-                assertThat(throwableText(failure)).doesNotContain(JWT);
-              });
+          .satisfies(failure -> {
+            assertThat(failure.getCause())
+                .hasMessage("Unsupported Account admission lease schema")
+                .hasNoCause();
+            assertThat(throwableText(failure)).doesNotContain(JWT);
+          });
     } finally {
       stop(server);
     }
@@ -678,19 +669,17 @@ class AccountGameplayAdmissionLeaseClientTest {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionLeaseClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionLeaseClient(
+                endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("requires workload mTLS");
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayAdmissionLeaseClient(
-                    endpoints,
-                    pki.clientProperties(directory, pki.identity("client")),
-                    new GrpcChannelFactory(),
-                    "bad namespace"))
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionLeaseClient(
+                endpoints,
+                pki.clientProperties(directory, pki.identity("client")),
+                new GrpcChannelFactory(),
+                "bad namespace"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("namespace");
 
@@ -782,14 +771,12 @@ class AccountGameplayAdmissionLeaseClientTest {
     assertThatThrownBy(operation::run)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage(expectedMessage)
-        .satisfies(
-            failure -> {
-              assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expectedCode);
-              assertThat(failure.getCause()).isInstanceOf(StatusRuntimeException.class);
-              assertThat(Status.fromThrowable(failure.getCause()).getCode())
-                  .isEqualTo(expectedCode);
-              assertThat(throwableText(failure)).doesNotContain(JWT);
-            });
+        .satisfies(failure -> {
+          assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expectedCode);
+          assertThat(failure.getCause()).isInstanceOf(StatusRuntimeException.class);
+          assertThat(Status.fromThrowable(failure.getCause()).getCode()).isEqualTo(expectedCode);
+          assertThat(throwableText(failure)).doesNotContain(JWT);
+        });
   }
 
   private static String throwableText(Throwable failure) {

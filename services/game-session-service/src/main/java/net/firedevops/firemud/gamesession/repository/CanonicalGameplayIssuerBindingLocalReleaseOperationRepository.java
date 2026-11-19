@@ -56,92 +56,89 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
     var issuerStateBefore = readCurrentIssuerState();
     var original = originalSources.read(sourceBefore);
     var operation =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-              BigInteger currentRevision =
-                  CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              var source =
-                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
-                      transaction, transitionId, true);
-              requireSameAbortSource(sourceBefore, source);
-              Record existing =
-                  transaction.fetchOne(
-                      "SELECT * FROM " + RELEASE + " WHERE transition_id = ? FOR UPDATE",
-                      transitionId);
-              if (existing != null) return readOperation(transaction, existing, source, original);
-              if (source.reservation().lifecycle()
-                      != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
-                  || !sameOperationSource(original, source)) {
-                throw conflict("Issuer release requires its exact pending local registration");
-              }
-              BigInteger priorRevision = source.transition().inventoryRevision();
-              if (currentRevision.compareTo(priorRevision) < 0) {
-                throw conflict(
-                    "Inventory clock regressed behind the retained Account-abort source");
-              }
-              BigInteger sourceRevision = currentRevision.add(BigInteger.ONE);
-              requireCounterLimit(sourceRevision, "releasePreparationInventoryRevision");
-              advanceAbortSourceRevision(
-                  transaction, source, priorRevision, sourceRevision, currentRevision);
-              source =
-                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
-                      transaction, transitionId, false);
-              var counters =
-                  CanonicalGameplayIssuerBindingLocalOperationRepository.allocateLocalCounters(
-                      transaction,
-                      original.anchor(),
-                      withLifecycleAndRevision(
-                          original.reservation(),
-                          CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING,
-                          sourceRevision));
-              UUID releaseId = freshNonNilUuid();
-              var releasedValue =
-                  createReleasedValue(
-                      original.memberValue(),
-                      sourceRevision,
-                      releaseId,
-                      counters.operationFence(),
-                      counters.localMemberGeneration());
-              byte[] releasedBytes = CanonicalGameplayIssuerMemberV2Codec.encode(releasedValue);
-              byte[] originalBytes = original.exactMemberValueBytes();
-              insertRelease(
+        dsl.transactionResult(configuration -> {
+          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          BigInteger currentRevision =
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          var source =
+              CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                  transaction, transitionId, true);
+          requireSameAbortSource(sourceBefore, source);
+          Record existing =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RELEASE + " WHERE transition_id = ? FOR UPDATE", transitionId);
+          if (existing != null) return readOperation(transaction, existing, source, original);
+          if (source.reservation().lifecycle()
+                  != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING
+              || !sameOperationSource(original, source)) {
+            throw conflict("Issuer release requires its exact pending local registration");
+          }
+          BigInteger priorRevision = source.transition().inventoryRevision();
+          if (currentRevision.compareTo(priorRevision) < 0) {
+            throw conflict("Inventory clock regressed behind the retained Account-abort source");
+          }
+          BigInteger sourceRevision = currentRevision.add(BigInteger.ONE);
+          requireCounterLimit(sourceRevision, "releasePreparationInventoryRevision");
+          advanceAbortSourceRevision(
+              transaction, source, priorRevision, sourceRevision, currentRevision);
+          source =
+              CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                  transaction, transitionId, false);
+          var counters =
+              CanonicalGameplayIssuerBindingLocalOperationRepository.allocateLocalCounters(
                   transaction,
-                  source,
-                  original,
+                  original.anchor(),
+                  withLifecycleAndRevision(
+                      original.reservation(),
+                      CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING,
+                      sourceRevision));
+          UUID releaseId = freshNonNilUuid();
+          var releasedValue =
+              createReleasedValue(
+                  original.memberValue(),
+                  sourceRevision,
                   releaseId,
                   counters.operationFence(),
-                  counters.localMemberGeneration(),
-                  sourceRevision,
-                  originalBytes,
-                  releasedBytes);
-              Record saved =
-                  transaction.fetchOne(
-                      "SELECT * FROM " + RELEASE + " WHERE operation_id = ? FOR UPDATE", releaseId);
-              if (saved == null) throw conflict("Issuer release operation was not retained");
-              byte[] mutationIntent =
-                  CanonicalGameplayIssuerPartitionMutationRepository.encodeIntendedChange(
-                      CanonicalGameplayIssuerPartitionMutation.Kind.RELEASE,
-                      releaseId,
-                      original.reservation().partitionId(),
-                      original.operationId().toString().getBytes(StandardCharsets.US_ASCII),
-                      source
-                          .reservation()
-                          .reservationId()
-                          .toString()
-                          .getBytes(StandardCharsets.US_ASCII),
-                      source.transition().bindingRef().bytes(),
-                      originalBytes,
-                      releasedBytes,
-                      sourceRevision.toString().getBytes(StandardCharsets.US_ASCII));
-              CanonicalGameplayIssuerPartitionMutationRepository.prepareInTransaction(
-                  transaction,
+                  counters.localMemberGeneration());
+          byte[] releasedBytes = CanonicalGameplayIssuerMemberV2Codec.encode(releasedValue);
+          byte[] originalBytes = original.exactMemberValueBytes();
+          insertRelease(
+              transaction,
+              source,
+              original,
+              releaseId,
+              counters.operationFence(),
+              counters.localMemberGeneration(),
+              sourceRevision,
+              originalBytes,
+              releasedBytes);
+          Record saved =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RELEASE + " WHERE operation_id = ? FOR UPDATE", releaseId);
+          if (saved == null) throw conflict("Issuer release operation was not retained");
+          byte[] mutationIntent =
+              CanonicalGameplayIssuerPartitionMutationRepository.encodeIntendedChange(
                   CanonicalGameplayIssuerPartitionMutation.Kind.RELEASE,
                   releaseId,
                   original.reservation().partitionId(),
-                  mutationIntent);
-              return readOperation(transaction, saved, source, original);
-            });
+                  original.operationId().toString().getBytes(StandardCharsets.US_ASCII),
+                  source
+                      .reservation()
+                      .reservationId()
+                      .toString()
+                      .getBytes(StandardCharsets.US_ASCII),
+                  source.transition().bindingRef().bytes(),
+                  originalBytes,
+                  releasedBytes,
+                  sourceRevision.toString().getBytes(StandardCharsets.US_ASCII));
+          CanonicalGameplayIssuerPartitionMutationRepository.prepareInTransaction(
+              transaction,
+              CanonicalGameplayIssuerPartitionMutation.Kind.RELEASE,
+              releaseId,
+              original.reservation().partitionId(),
+              mutationIntent);
+          return readOperation(transaction, saved, source, original);
+        });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
     requireSameAbortIdentity(
         sourceBefore, inventoryRepository.readIssuerCleanupSource(transitionId));
@@ -158,30 +155,27 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
     var issuerStateBefore = readCurrentIssuerState();
     CanonicalGameplayIssuerOriginalMemberSource original = originalSources.read(sourceBefore);
     CanonicalGameplayIssuerBindingLocalReleaseOperation committed =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              CanonicalGameplayIssuerCleanupSource source =
-                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
-                      transaction, transitionId, false);
-              requireSameAbortSource(sourceBefore, source);
-              Record existing =
-                  transaction.fetchOne(
-                      "SELECT * FROM " + RELEASE + " WHERE transition_id = ?", transitionId);
-              if (existing == null) {
-                throw conflict(
-                    "Physical retirement requires an existing committed release receipt");
-              }
-              CanonicalGameplayIssuerBindingLocalReleaseOperation operation =
-                  readOperation(transaction, existing, source, original);
-              if (operation.status()
-                  != CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED) {
-                throw conflict(
-                    "Physical retirement requires a committed original RELEASED receipt");
-              }
-              return operation;
-            });
+        dsl.transactionResult(configuration -> {
+          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          CanonicalGameplayIssuerCleanupSource source =
+              CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                  transaction, transitionId, false);
+          requireSameAbortSource(sourceBefore, source);
+          Record existing =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RELEASE + " WHERE transition_id = ?", transitionId);
+          if (existing == null) {
+            throw conflict("Physical retirement requires an existing committed release receipt");
+          }
+          CanonicalGameplayIssuerBindingLocalReleaseOperation operation =
+              readOperation(transaction, existing, source, original);
+          if (operation.status()
+              != CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED) {
+            throw conflict("Physical retirement requires a committed original RELEASED receipt");
+          }
+          return operation;
+        });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
     requireSameAbortSource(
         committed.cleanupSource(), inventoryRepository.readIssuerCleanupSource(transitionId));
@@ -202,183 +196,179 @@ final class CanonicalGameplayIssuerBindingLocalReleaseOperationRepository {
     String readbackDigest = CanonicalGameplayIssuerMemberV2Codec.sha256(readbackBytes);
     var issuerStateBefore = readCurrentIssuerState();
     var completed =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-              BigInteger currentRevision =
-                  CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              UUID transitionId = expected.cleanupSource().transition().transitionId();
-              var source =
-                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
-                      transaction, transitionId, true);
-              requireExactReleaseSource(expected, source);
-              Record releaseRow =
-                  transaction.fetchOne(
-                      "SELECT * FROM " + RELEASE + " WHERE operation_id = ? FOR UPDATE",
-                      expected.operationId());
-              if (releaseRow == null) throw conflict("SQL issuer release operation disappeared");
-              var current =
-                  readOperation(transaction, releaseRow, source, expected.originalSource());
-              requireSameOperation(expected, current);
-              if (current.status()
-                  == CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED) {
-                verifyReadbackMatchesOperation(current, readbackBytes, readbackDigest);
-                CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
-                    transaction, current.physicalMutation(), readbackBytes);
-                return current;
-              }
-              if (source.reservation().lifecycle()
-                  != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING) {
-                throw conflict(
-                    "Pending issuer release no longer has its exact RELEASE_PENDING source");
-              }
-              if (currentRevision.compareTo(current.sourceInventoryRevision()) < 0) {
-                throw conflict(
-                    "Inventory clock regressed behind the durable issuer release preparation");
-              }
-              verifyReadbackMatchesOperation(current, readbackBytes, readbackDigest);
-              CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
-                  transaction, current.physicalMutation(), readbackBytes);
-              BigInteger completionRevision = currentRevision.add(BigInteger.ONE);
-              requireCounterLimit(completionRevision, "completionInventoryRevision");
-              requireOne(
-                  transaction.execute(
-                      "UPDATE "
-                          + RELEASE
-                          + " SET status = 'RELEASED', physical_readback_field_set_bytes = ?,"
-                          + " physical_readback_field_set_digest = ?, completion_inventory_revision = ?,"
-                          + " completed_at = CURRENT_TIMESTAMP WHERE operation_id = ?"
-                          + " AND status = 'PENDING_PHYSICAL_PROOF' AND source_inventory_revision = ?",
-                      readbackBytes,
-                      readbackDigest,
-                      decimal(completionRevision),
-                      current.operationId(),
-                      decimal(current.sourceInventoryRevision())),
-                  "Issuer release completion lost its guarded SQL operation compare-and-set");
-              requireOne(
-                  transaction.execute(
-                      "UPDATE "
-                          + ISSUER_OBLIGATION
-                          + " SET status = 'RELEASED', local_release_operation_id = ?, inventory_revision = ?"
-                          + " WHERE transition_id = ? AND binding_ref = ? AND reservation_id = ?"
-                          + " AND status = 'REQUIRED' AND local_release_operation_id IS NULL"
-                          + " AND inventory_revision = ?",
-                      current.operationId(),
-                      decimal(completionRevision),
-                      transitionId,
-                      source.transition().bindingRef().bytes(),
-                      source.reservation().reservationId(),
-                      decimal(current.sourceInventoryRevision())),
-                  "Physical issuer release lost its exact local V29 obligation compare-and-set");
-              requireOne(
-                  transaction.execute(
-                      "UPDATE "
-                          + RESERVATION
-                          + " SET lifecycle = 'RELEASED', inventory_revision = ?"
-                          + " WHERE reservation_id = ? AND transition_id = ? AND lifecycle = 'RELEASE_PENDING'"
-                          + " AND inventory_revision = ? AND binding_ref = ? AND binding_generation = ?"
-                          + " AND reservation_fence = ? AND issuer_coverage_operation_id = ?"
-                          + " AND issuer_coverage_operation_fence = ? AND coverage_fence = ?"
-                          + " AND inventory_snapshot_revision = ? AND account_id = ? AND tenant_id = ?"
-                          + " AND playable_state_namespace_id = ? AND character_id = ?"
-                          + " AND game_instance_id = ? AND runtime_game_instance_id = ? AND session_id = ?"
-                          + " AND region_id = ? AND region_epoch = ? AND issuer_id = ? AND issuer_auth_generation = ?",
-                      decimal(completionRevision),
-                      source.reservation().reservationId(),
-                      transitionId,
-                      decimal(current.sourceInventoryRevision()),
-                      source.transition().bindingRef().bytes(),
-                      decimal(source.transition().bindingGeneration()),
-                      source.reservation().reservationFence(),
-                      source.reservation().issuerCoverageOperationId(),
-                      decimal(source.reservation().issuerCoverageOperationFence()),
-                      decimal(source.reservation().coverageFence()),
-                      decimal(source.reservation().inventorySnapshotRevision()),
-                      source.candidate().identity().accountId(),
-                      source.candidate().identity().tenantId(),
-                      source.candidate().identity().playableStateNamespaceId(),
-                      source.candidate().identity().characterId(),
-                      source.candidate().identity().gameInstanceId(),
-                      source.candidate().identity().runtimeGameInstanceId(),
-                      source.candidate().identity().sessionId(),
-                      source.candidate().identity().regionId(),
-                      decimal(source.candidate().identity().regionEpoch()),
-                      source.candidate().identity().issuerId(),
-                      decimal(source.candidate().identity().issuerAuthGeneration())),
-                  "Issuer release lost its exact original reservation compare-and-set");
-              requireOne(
-                  transaction.execute(
-                      "UPDATE "
-                          + INVENTORY
-                          + " SET inventory_revision = ?"
-                          + " WHERE binding_ref = ? AND transition_id = ?"
-                          + " AND lifecycle = 'TERMINAL_UNRESOLVED' AND inventory_revision = ?"
-                          + " AND binding_generation = ? AND issuer_reservation_id = ?",
-                      decimal(completionRevision),
-                      source.transition().bindingRef().bytes(),
-                      transitionId,
-                      decimal(current.sourceInventoryRevision()),
-                      decimal(source.transition().bindingGeneration()),
-                      source.reservation().reservationId()),
-                  "Issuer release lost its retained unresolved candidate compare-and-set");
-              requireOne(
-                  transaction.execute(
-                      "UPDATE "
-                          + TRANSITION
-                          + " SET inventory_revision = ?"
-                          + " WHERE transition_id = ? AND status = 'ABORTED'"
-                          + " AND COALESCE(admission_orphan_cleanup_id, original_new_abandonment_orphan_cleanup_id) = ? AND inventory_revision = ?"
-                          + " AND candidate_binding_ref = ? AND candidate_binding_generation = ?"
-                          + " AND issuer_reservation_id = ?",
-                      decimal(completionRevision),
-                      transitionId,
-                      source.orphanCleanupId(),
-                      decimal(current.sourceInventoryRevision()),
-                      source.transition().bindingRef().bytes(),
-                      decimal(source.transition().bindingGeneration()),
-                      source.reservation().reservationId()),
-                  "Issuer release lost its immutable Account-abort source revision compare-and-set");
-              requireOne(
-                  transaction.execute(
-                      "UPDATE "
-                          + ACCOUNT_OBLIGATION
-                          + " SET inventory_revision = ?"
-                          + " WHERE transition_id = ? AND inventory_revision = ?",
-                      decimal(completionRevision),
-                      transitionId,
-                      decimal(current.sourceInventoryRevision())),
-                  "Issuer release lost its retained Account obligation revision compare-and-set");
-              requireOne(
-                  transaction.execute(
-                      "UPDATE "
-                          + REGION_OBLIGATION
-                          + " SET inventory_revision = ?"
-                          + " WHERE transition_id = ? AND inventory_revision = ?",
-                      decimal(completionRevision),
-                      transitionId,
-                      decimal(current.sourceInventoryRevision())),
-                  "Issuer release lost its retained region obligation revision compare-and-set");
-              requireOne(
-                  transaction.execute(
-                      "UPDATE "
-                          + INVENTORY_CLOCK
-                          + " SET inventory_revision = ?"
-                          + " WHERE singleton_id = 1 AND inventory_revision = ?",
-                      decimal(completionRevision),
-                      decimal(currentRevision)),
-                  "Issuer release lost the current inventory-clock compare-and-set");
-              var completedSource =
-                  CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
-                      transaction, transitionId, false);
-              Record completedRow =
-                  transaction.fetchOne(
-                      "SELECT * FROM " + RELEASE + " WHERE operation_id = ?",
-                      expected.operationId());
-              if (completedRow == null)
-                throw conflict("Released issuer operation disappeared after completion");
-              return readOperation(
-                  transaction, completedRow, completedSource, expected.originalSource());
-            });
+        dsl.transactionResult(configuration -> {
+          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          BigInteger currentRevision =
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          UUID transitionId = expected.cleanupSource().transition().transitionId();
+          var source =
+              CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                  transaction, transitionId, true);
+          requireExactReleaseSource(expected, source);
+          Record releaseRow =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RELEASE + " WHERE operation_id = ? FOR UPDATE",
+                  expected.operationId());
+          if (releaseRow == null) throw conflict("SQL issuer release operation disappeared");
+          var current = readOperation(transaction, releaseRow, source, expected.originalSource());
+          requireSameOperation(expected, current);
+          if (current.status()
+              == CanonicalGameplayIssuerBindingLocalReleaseOperation.Status.RELEASED) {
+            verifyReadbackMatchesOperation(current, readbackBytes, readbackDigest);
+            CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+                transaction, current.physicalMutation(), readbackBytes);
+            return current;
+          }
+          if (source.reservation().lifecycle()
+              != CanonicalIssuerPartitionReservation.Lifecycle.RELEASE_PENDING) {
+            throw conflict("Pending issuer release no longer has its exact RELEASE_PENDING source");
+          }
+          if (currentRevision.compareTo(current.sourceInventoryRevision()) < 0) {
+            throw conflict(
+                "Inventory clock regressed behind the durable issuer release preparation");
+          }
+          verifyReadbackMatchesOperation(current, readbackBytes, readbackDigest);
+          CanonicalGameplayIssuerPartitionMutationRepository.completeInTransaction(
+              transaction, current.physicalMutation(), readbackBytes);
+          BigInteger completionRevision = currentRevision.add(BigInteger.ONE);
+          requireCounterLimit(completionRevision, "completionInventoryRevision");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + RELEASE
+                      + " SET status = 'RELEASED', physical_readback_field_set_bytes = ?,"
+                      + " physical_readback_field_set_digest = ?, completion_inventory_revision = ?,"
+                      + " completed_at = CURRENT_TIMESTAMP WHERE operation_id = ?"
+                      + " AND status = 'PENDING_PHYSICAL_PROOF' AND source_inventory_revision = ?",
+                  readbackBytes,
+                  readbackDigest,
+                  decimal(completionRevision),
+                  current.operationId(),
+                  decimal(current.sourceInventoryRevision())),
+              "Issuer release completion lost its guarded SQL operation compare-and-set");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + ISSUER_OBLIGATION
+                      + " SET status = 'RELEASED', local_release_operation_id = ?, inventory_revision = ?"
+                      + " WHERE transition_id = ? AND binding_ref = ? AND reservation_id = ?"
+                      + " AND status = 'REQUIRED' AND local_release_operation_id IS NULL"
+                      + " AND inventory_revision = ?",
+                  current.operationId(),
+                  decimal(completionRevision),
+                  transitionId,
+                  source.transition().bindingRef().bytes(),
+                  source.reservation().reservationId(),
+                  decimal(current.sourceInventoryRevision())),
+              "Physical issuer release lost its exact local V29 obligation compare-and-set");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + RESERVATION
+                      + " SET lifecycle = 'RELEASED', inventory_revision = ?"
+                      + " WHERE reservation_id = ? AND transition_id = ? AND lifecycle = 'RELEASE_PENDING'"
+                      + " AND inventory_revision = ? AND binding_ref = ? AND binding_generation = ?"
+                      + " AND reservation_fence = ? AND issuer_coverage_operation_id = ?"
+                      + " AND issuer_coverage_operation_fence = ? AND coverage_fence = ?"
+                      + " AND inventory_snapshot_revision = ? AND account_id = ? AND tenant_id = ?"
+                      + " AND playable_state_namespace_id = ? AND character_id = ?"
+                      + " AND game_instance_id = ? AND runtime_game_instance_id = ? AND session_id = ?"
+                      + " AND region_id = ? AND region_epoch = ? AND issuer_id = ? AND issuer_auth_generation = ?",
+                  decimal(completionRevision),
+                  source.reservation().reservationId(),
+                  transitionId,
+                  decimal(current.sourceInventoryRevision()),
+                  source.transition().bindingRef().bytes(),
+                  decimal(source.transition().bindingGeneration()),
+                  source.reservation().reservationFence(),
+                  source.reservation().issuerCoverageOperationId(),
+                  decimal(source.reservation().issuerCoverageOperationFence()),
+                  decimal(source.reservation().coverageFence()),
+                  decimal(source.reservation().inventorySnapshotRevision()),
+                  source.candidate().identity().accountId(),
+                  source.candidate().identity().tenantId(),
+                  source.candidate().identity().playableStateNamespaceId(),
+                  source.candidate().identity().characterId(),
+                  source.candidate().identity().gameInstanceId(),
+                  source.candidate().identity().runtimeGameInstanceId(),
+                  source.candidate().identity().sessionId(),
+                  source.candidate().identity().regionId(),
+                  decimal(source.candidate().identity().regionEpoch()),
+                  source.candidate().identity().issuerId(),
+                  decimal(source.candidate().identity().issuerAuthGeneration())),
+              "Issuer release lost its exact original reservation compare-and-set");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + INVENTORY
+                      + " SET inventory_revision = ?"
+                      + " WHERE binding_ref = ? AND transition_id = ?"
+                      + " AND lifecycle = 'TERMINAL_UNRESOLVED' AND inventory_revision = ?"
+                      + " AND binding_generation = ? AND issuer_reservation_id = ?",
+                  decimal(completionRevision),
+                  source.transition().bindingRef().bytes(),
+                  transitionId,
+                  decimal(current.sourceInventoryRevision()),
+                  decimal(source.transition().bindingGeneration()),
+                  source.reservation().reservationId()),
+              "Issuer release lost its retained unresolved candidate compare-and-set");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + TRANSITION
+                      + " SET inventory_revision = ?"
+                      + " WHERE transition_id = ? AND status = 'ABORTED'"
+                      + " AND COALESCE(admission_orphan_cleanup_id, original_new_abandonment_orphan_cleanup_id) = ? AND inventory_revision = ?"
+                      + " AND candidate_binding_ref = ? AND candidate_binding_generation = ?"
+                      + " AND issuer_reservation_id = ?",
+                  decimal(completionRevision),
+                  transitionId,
+                  source.orphanCleanupId(),
+                  decimal(current.sourceInventoryRevision()),
+                  source.transition().bindingRef().bytes(),
+                  decimal(source.transition().bindingGeneration()),
+                  source.reservation().reservationId()),
+              "Issuer release lost its immutable Account-abort source revision compare-and-set");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + ACCOUNT_OBLIGATION
+                      + " SET inventory_revision = ?"
+                      + " WHERE transition_id = ? AND inventory_revision = ?",
+                  decimal(completionRevision),
+                  transitionId,
+                  decimal(current.sourceInventoryRevision())),
+              "Issuer release lost its retained Account obligation revision compare-and-set");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + REGION_OBLIGATION
+                      + " SET inventory_revision = ?"
+                      + " WHERE transition_id = ? AND inventory_revision = ?",
+                  decimal(completionRevision),
+                  transitionId,
+                  decimal(current.sourceInventoryRevision())),
+              "Issuer release lost its retained region obligation revision compare-and-set");
+          requireOne(
+              transaction.execute(
+                  "UPDATE "
+                      + INVENTORY_CLOCK
+                      + " SET inventory_revision = ?"
+                      + " WHERE singleton_id = 1 AND inventory_revision = ?",
+                  decimal(completionRevision),
+                  decimal(currentRevision)),
+              "Issuer release lost the current inventory-clock compare-and-set");
+          var completedSource =
+              CanonicalGameplayBindingInventoryRepository.readIssuerCleanupSourceInTransaction(
+                  transaction, transitionId, false);
+          Record completedRow =
+              transaction.fetchOne(
+                  "SELECT * FROM " + RELEASE + " WHERE operation_id = ?", expected.operationId());
+          if (completedRow == null)
+            throw conflict("Released issuer operation disappeared after completion");
+          return readOperation(
+              transaction, completedRow, completedSource, expected.originalSource());
+        });
     requireSameCurrentIssuerState(issuerStateBefore, readCurrentIssuerState());
     CanonicalGameplayIssuerCleanupSource sourceAfter =
         inventoryRepository.readIssuerCleanupSource(

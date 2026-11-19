@@ -121,18 +121,16 @@ class AccountGameplayDelegationIssuanceCommitServiceTest {
     when(repository.readCommittedProof(signerFixture.requestId())).thenReturn(Optional.empty());
     when(registry.registerPending(signerFixture.requestId())).thenReturn(null);
     when(projection.publishCurrent(signerFixture.accountId()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return new PublicationObservation(
-                  "d".repeat(64), "e".repeat(64), 11L, 12L, ProjectionPublicationOutcome.PUBLISHED);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return new PublicationObservation(
+              "d".repeat(64), "e".repeat(64), 11L, 12L, ProjectionPublicationOutcome.PUBLISHED);
+        });
     when(projection.observeCurrent(signerFixture.accountId()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return new ProjectionObservation("d".repeat(64), "e".repeat(64), 11L, 12L);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return new ProjectionObservation("d".repeat(64), "e".repeat(64), 11L, 12L);
+        });
 
     AccountGameplayDelegationIssuanceCommitService service =
         new AccountGameplayDelegationIssuanceCommitService(
@@ -218,22 +216,16 @@ class AccountGameplayDelegationIssuanceCommitServiceTest {
       when(repository.readCommittedProof(signerFixture.requestId())).thenReturn(Optional.empty());
       when(registry.registerPending(signerFixture.requestId())).thenReturn(receipt);
       when(projection.publishCurrent(signerFixture.accountId()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                return new PublicationObservation(
-                    "d".repeat(64),
-                    "e".repeat(64),
-                    11L,
-                    12L,
-                    ProjectionPublicationOutcome.PUBLISHED);
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return new PublicationObservation(
+                "d".repeat(64), "e".repeat(64), 11L, 12L, ProjectionPublicationOutcome.PUBLISHED);
+          });
       when(projection.observeCurrent(signerFixture.accountId()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                return mismatch;
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return mismatch;
+          });
 
       AccountGameplayDelegationIssuanceCommitService service =
           new AccountGameplayDelegationIssuanceCommitService(

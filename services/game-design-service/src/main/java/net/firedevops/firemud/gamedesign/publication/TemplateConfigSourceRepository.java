@@ -471,11 +471,10 @@ public final class TemplateConfigSourceRepository {
     for (var entry : snapshot.entries())
       for (var input : entry.config().gameplayInputs())
         if (gameplay.entries().stream()
-            .noneMatch(
-                e ->
-                    e.family() == input.family()
-                        && e.definition().key().equals(input.key())
-                        && e.revisionId().equals(input.revisionId())))
+            .noneMatch(e ->
+                e.family() == input.family()
+                    && e.definition().key().equals(input.key())
+                    && e.revisionId().equals(input.revisionId())))
           throw new IllegalStateException("TEMPLATE_CONFIG_GAMEPLAY_INPUT_CHANGED");
   }
 
@@ -519,10 +518,9 @@ public final class TemplateConfigSourceRepository {
   private void verifyOwnerInventoryApplication(DraftCommitBinding binding) {
     var expected =
         TemplateConfigSource.mutations(binding).stream()
-            .filter(
-                mutation ->
-                    mutation.operation()
-                        == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+            .filter(mutation ->
+                mutation.operation()
+                    == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
             .toList();
     var rows =
         dsl.fetch(
@@ -574,19 +572,14 @@ public final class TemplateConfigSourceRepository {
       var mutation =
           TemplateConfigSource.mutations(sourceBinding).stream()
               .filter(m -> m.revisionId().equals(row.get("revision_id", UUID.class)))
-              .filter(
-                  m ->
-                      Integer.parseInt(m.revisionOrder())
-                          == row.get("revision_order", Integer.class))
-              .filter(
-                  m ->
-                      m.operation()
-                          == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+              .filter(m ->
+                  Integer.parseInt(m.revisionOrder()) == row.get("revision_order", Integer.class))
+              .filter(m ->
+                  m.operation()
+                      == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
               .findFirst()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_UNAVAILABLE"));
+              .orElseThrow(() ->
+                  new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_UNAVAILABLE"));
       if (!sourceBinding.requestId().equals(row.get("request_id", UUID.class))
           || !sourceBinding.commitId().equals(row.get("commit_id", UUID.class))
           || !mutation.declaredOwner().name().equals(row.get("owner", String.class))
@@ -604,15 +597,12 @@ public final class TemplateConfigSourceRepository {
           TemplateConfigSource.mutations(declaration.sourceBinding()).stream()
               .filter(m -> m.revisionId().equals(declaration.revisionId()))
               .filter(m -> m.revisionOrder().equals(declaration.revisionOrder()))
-              .filter(
-                  m ->
-                      m.operation()
-                          == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
+              .filter(m ->
+                  m.operation()
+                      == TemplateConfigSource.OperationKind.DECLARE_OWNER_SOURCE_INVENTORY)
               .findFirst()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_UNAVAILABLE"));
+              .orElseThrow(() ->
+                  new IllegalStateException("TEMPLATE_CONFIG_OWNER_INVENTORY_SOURCE_UNAVAILABLE"));
       var row =
           dsl.fetchOne(
               "SELECT request_id, commit_id, owner, inventory_json, payload_json "
@@ -757,11 +747,10 @@ public final class TemplateConfigSourceRepository {
     var rules = GameplayRuleSnapshot.fromStored(json);
     for (var input : config.gameplayInputs())
       if (rules.entries().stream()
-          .noneMatch(
-              e ->
-                  e.family() == input.family()
-                      && e.definition().key().equals(input.key())
-                      && e.revisionId().equals(input.revisionId())))
+          .noneMatch(e ->
+              e.family() == input.family()
+                  && e.definition().key().equals(input.key())
+                  && e.revisionId().equals(input.revisionId())))
         throw new IllegalStateException("TEMPLATE_CONFIG_GAMEPLAY_INPUT_UNAVAILABLE");
   }
 

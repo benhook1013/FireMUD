@@ -115,17 +115,15 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.wrongServer());
     try (var client = newClient(pki.gameDesignClient())) {
       client.init();
-      assertThatThrownBy(
-              () ->
-                  client.read(
-                      request(
-                          Owner.ENTITY_MANAGEMENT,
-                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
+      assertThatThrownBy(() ->
+              client.read(
+                  request(
+                      Owner.ENTITY_MANAGEMENT,
+                      SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThat(calls).hasValue(2);
     }
   }
@@ -156,17 +154,15 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.gameDesignServer());
     try (var client = newClient(pki.wrongClient())) {
       client.init();
-      assertThatThrownBy(
-              () ->
-                  client.read(
-                      request(
-                          Owner.ENTITY_MANAGEMENT,
-                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
+      assertThatThrownBy(() ->
+              client.read(
+                  request(
+                      Owner.ENTITY_MANAGEMENT,
+                      SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
       assertThat(calls).hasValue(1);
     }
 
@@ -176,12 +172,11 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.expiredGameDesignServer());
     try (var client = newClient(pki.gameDesignClient())) {
       client.init();
-      assertThatThrownBy(
-              () ->
-                  client.read(
-                      request(
-                          Owner.ENTITY_MANAGEMENT,
-                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
+      assertThatThrownBy(() ->
+              client.read(
+                  request(
+                      Owner.ENTITY_MANAGEMENT,
+                      SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class);
       assertThat(calls).hasValue(1);
     }
@@ -192,12 +187,11 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.gameDesignServer());
     try (var client = newClient(pki.expiredGameDesignClient())) {
       client.init();
-      assertThatThrownBy(
-              () ->
-                  client.read(
-                      request(
-                          Owner.ENTITY_MANAGEMENT,
-                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
+      assertThatThrownBy(() ->
+              client.read(
+                  request(
+                      Owner.ENTITY_MANAGEMENT,
+                      SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class);
       assertThat(calls).hasValue(1);
     }
@@ -246,17 +240,15 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     start(pki.gameDesignServer());
     try (var client = newClient(pki.gameDesignClient())) {
       client.init();
-      assertThatThrownBy(
-              () ->
-                  client.read(
-                      request(
-                          Owner.AUTOMATION_SCRIPTING,
-                          SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
+      assertThatThrownBy(() ->
+              client.read(
+                  request(
+                      Owner.AUTOMATION_SCRIPTING,
+                      SelectedOwnerIntakeSourceTestFixtures.selectedRevisionPayload())))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
     }
   }
 
@@ -265,20 +257,18 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GrpcSelectedOwnerIntakeSourceClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcSelectedOwnerIntakeSourceClient(
+                endpoints, plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
 
     var classpath = new CommonGrpcClientProperties();
     classpath.setCertChain("classpath:client.crt");
     classpath.setPrivateKey("/tmp/client.key");
     classpath.setCaCert("/tmp/ca.crt");
-    assertThatThrownBy(
-            () ->
-                new GrpcSelectedOwnerIntakeSourceClient(
-                    endpoints, classpath, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new GrpcSelectedOwnerIntakeSourceClient(
+                endpoints, classpath, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

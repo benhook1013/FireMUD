@@ -314,17 +314,16 @@ class ScriptDefinitionServiceImplTest {
     AtomicInteger saveCalls = new AtomicInteger();
     CountDownLatch bothFirstWrites = new CountDownLatch(2);
     when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
-        .thenAnswer(
-            invocation -> {
-              ScriptDefinition requested = invocation.getArgument(0);
-              bothFirstWrites.countDown();
-              if (!bothFirstWrites.await(5, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("concurrent first writes did not rendezvous");
-              }
-              boolean owner = "{\"owner\":true}".equals(requested.getDefinition());
-              saveCalls.incrementAndGet();
-              return new ScriptDefinitionRepository.SaveResult(winner, owner);
-            });
+        .thenAnswer(invocation -> {
+          ScriptDefinition requested = invocation.getArgument(0);
+          bothFirstWrites.countDown();
+          if (!bothFirstWrites.await(5, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("concurrent first writes did not rendezvous");
+          }
+          boolean owner = "{\"owner\":true}".equals(requested.getDefinition());
+          saveCalls.incrementAndGet();
+          return new ScriptDefinitionRepository.SaveResult(winner, owner);
+        });
     doAnswer(
             invocation -> {
               Collection<ScriptEventBinding> bindings = invocation.getArgument(0);
@@ -342,9 +341,8 @@ class ScriptDefinitionServiceImplTest {
           executor.submit(
               () -> service.updateScript(firstWriteDto("{\"owner\":true}", "binding-owner")));
       Future<ScriptDefinitionDto> nonOwner =
-          executor.submit(
-              () ->
-                  service.updateScript(firstWriteDto("{\"non-owner\":true}", "binding-non-owner")));
+          executor.submit(() ->
+              service.updateScript(firstWriteDto("{\"non-owner\":true}", "binding-non-owner")));
 
       assertNotNull(owner.get(10, TimeUnit.SECONDS));
       assertThatThrownBy(() -> nonOwner.get(10, TimeUnit.SECONDS))

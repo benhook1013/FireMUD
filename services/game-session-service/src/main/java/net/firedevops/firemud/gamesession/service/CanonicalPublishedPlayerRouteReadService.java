@@ -384,10 +384,9 @@ public final class CanonicalPublishedPlayerRouteReadService {
 
     var matches =
         complete.policies().stream()
-            .filter(
-                evidence ->
-                    evidence.policy().worldSlug().equals(route.worldSlug())
-                        && evidence.policy().realmSlug().equals(route.realmSlug()))
+            .filter(evidence ->
+                evidence.policy().worldSlug().equals(route.worldSlug())
+                    && evidence.policy().realmSlug().equals(route.realmSlug()))
             .toList();
     if (matches.size() != 1) {
       throw new InvalidAuthorityException("Published policy set lacks the exact current selector");

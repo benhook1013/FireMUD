@@ -92,12 +92,11 @@ public class GameSessionAccountPublicJwksConfiguration {
       this(
           cache,
           maximumAge,
-          Executors.newSingleThreadScheduledExecutor(
-              task -> {
-                Thread thread = new Thread(task, "game-session-account-public-jwks-refresh");
-                thread.setDaemon(true);
-                return thread;
-              }));
+          Executors.newSingleThreadScheduledExecutor(task -> {
+            Thread thread = new Thread(task, "game-session-account-public-jwks-refresh");
+            thread.setDaemon(true);
+            return thread;
+          }));
     }
 
     PublicJwksRefresh(

@@ -57,10 +57,9 @@ class WorldPublicationTerminalCompletionGrpcCodecTest {
             GameDesignPublicationTerminalEvidence.fromStored(historicalTerminal.canonicalBytes())
                 .operationBytes())
         .containsExactly(original);
-    assertThatThrownBy(
-            () ->
-                WorldPublicationTerminalCompletionGrpcCodec.Request.create(
-                    "test", original, historicalTerminal.canonicalBytes()))
+    assertThatThrownBy(() ->
+            WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+                "test", original, historicalTerminal.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Complete canonical publication operation and terminal required");
 
@@ -111,19 +110,17 @@ class WorldPublicationTerminalCompletionGrpcCodecTest {
           .isInstanceOf(IllegalArgumentException.class);
     }
 
-    assertThatThrownBy(
-            () ->
-                new WorldPublicationTerminalCompletionGrpcCodec.Request(
-                    2,
-                    "test",
-                    UUID.randomUUID(),
-                    operation.canonicalBytes(),
-                    terminal.canonicalBytes()))
+    assertThatThrownBy(() ->
+            new WorldPublicationTerminalCompletionGrpcCodec.Request(
+                2,
+                "test",
+                UUID.randomUUID(),
+                operation.canonicalBytes(),
+                terminal.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldPublicationTerminalCompletionGrpcCodec.Request.create(
-                    "test", operation.canonicalBytes(), new byte[0]))
+    assertThatThrownBy(() ->
+            WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+                "test", operation.canonicalBytes(), new byte[0]))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -190,10 +187,8 @@ class WorldPublicationTerminalCompletionGrpcCodecTest {
                 ByteString.copyFrom(
                     new byte[WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES]))
             .build();
-    assertThatThrownBy(
-            () ->
-                WorldPublicationTerminalCompletionGrpcCodec.fromResponse(
-                    request, oversizedResponse))
+    assertThatThrownBy(() ->
+            WorldPublicationTerminalCompletionGrpcCodec.fromResponse(request, oversizedResponse))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("32 MiB");
   }

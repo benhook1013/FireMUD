@@ -44,29 +44,28 @@ public final class EntityRuntimeFamilyCatalogRepository {
   public Evidence read(Request request) {
     requireIndependent(request);
     byte[] committed =
-        capture.execute(
-            status -> {
-              var catalog = currentCatalog();
-              byte[] requestBytes = EntityRuntimeFamilyCatalogCodec.requestBytes(request);
-              var proposed = new Evidence(request, UUID.randomUUID(), catalog);
-              byte[] evidenceBytes = EntityRuntimeFamilyCatalogCodec.evidenceBytes(proposed);
-              dsl.execute(
-                  "INSERT INTO "
-                      + table("entity_runtime_family_catalog_snapshot")
-                      + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
-                      + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)"
-                      + " ON CONFLICT (read_request_id) DO NOTHING",
-                  request.readRequestId(),
-                  request.targetNamespace(),
-                  requestBytes,
-                  EntityRuntimeFamilyCatalog.sha256(requestBytes),
-                  proposed.snapshotId(),
-                  catalog.catalogEpoch(),
-                  catalog.digest(),
-                  evidenceBytes,
-                  proposed.digest());
-              return retained(request, catalog);
-            });
+        capture.execute(status -> {
+          var catalog = currentCatalog();
+          byte[] requestBytes = EntityRuntimeFamilyCatalogCodec.requestBytes(request);
+          var proposed = new Evidence(request, UUID.randomUUID(), catalog);
+          byte[] evidenceBytes = EntityRuntimeFamilyCatalogCodec.evidenceBytes(proposed);
+          dsl.execute(
+              "INSERT INTO "
+                  + table("entity_runtime_family_catalog_snapshot")
+                  + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
+                  + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)"
+                  + " ON CONFLICT (read_request_id) DO NOTHING",
+              request.readRequestId(),
+              request.targetNamespace(),
+              requestBytes,
+              EntityRuntimeFamilyCatalog.sha256(requestBytes),
+              proposed.snapshotId(),
+              catalog.catalogEpoch(),
+              catalog.digest(),
+              evidenceBytes,
+              proposed.digest());
+          return retained(request, catalog);
+        });
     Evidence result = readExact(request);
     if (!Arrays.equals(committed, EntityRuntimeFamilyCatalogCodec.evidenceBytes(result)))
       throw new CatalogConflictException("Committed catalog readback changed");
@@ -76,10 +75,8 @@ public final class EntityRuntimeFamilyCatalogRepository {
   /** Independent committed readback; drift or missing evidence never becomes an empty success. */
   public Evidence readExact(Request request) {
     requireIndependent(request);
-    return readback.execute(
-        status ->
-            EntityRuntimeFamilyCatalogCodec.evidenceFromStored(
-                retained(request, currentCatalog())));
+    return readback.execute(status ->
+        EntityRuntimeFamilyCatalogCodec.evidenceFromStored(retained(request, currentCatalog())));
   }
 
   private EntityRuntimeFamilyCatalog currentCatalog() {

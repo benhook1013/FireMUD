@@ -560,55 +560,54 @@ public final class CanonicalGameplayRosterReferenceRepository {
             digest(targetBinding(request)),
             policy.batchSize());
     return candidates.stream()
-        .map(
-            row -> {
-              java.util.UUID operation =
-                  Objects.requireNonNull(row.get("operation_uuid", java.util.UUID.class));
-              java.util.UUID fenceUuid =
-                  Objects.requireNonNull(row.get("target_fence_uuid", java.util.UUID.class));
-              java.util.UUID recovery = row.get("recovery_uuid", java.util.UUID.class);
-              if (recovery == null) {
-                recovery = java.util.UUID.randomUUID();
-                dsl.execute(
-                    "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ?, recovery_started_at = clock_timestamp(), recovery_last_attempt_at = clock_timestamp() "
-                        + "WHERE operation_uuid = ? AND recovery_uuid IS NULL AND terminal_outcome IS NULL",
-                    recovery,
-                    operation);
-              } else {
-                dsl.execute(
-                    "UPDATE game_session_canonical_roster_selection SET recovery_last_attempt_at = GREATEST(recovery_last_attempt_at + interval '1 microsecond', clock_timestamp()) "
-                        + "WHERE operation_uuid = ? AND recovery_uuid = ? AND terminal_outcome IS NULL",
+        .map(row -> {
+          java.util.UUID operation =
+              Objects.requireNonNull(row.get("operation_uuid", java.util.UUID.class));
+          java.util.UUID fenceUuid =
+              Objects.requireNonNull(row.get("target_fence_uuid", java.util.UUID.class));
+          java.util.UUID recovery = row.get("recovery_uuid", java.util.UUID.class);
+          if (recovery == null) {
+            recovery = java.util.UUID.randomUUID();
+            dsl.execute(
+                "UPDATE game_session_canonical_roster_selection SET recovery_uuid = ?, recovery_started_at = clock_timestamp(), recovery_last_attempt_at = clock_timestamp() "
+                    + "WHERE operation_uuid = ? AND recovery_uuid IS NULL AND terminal_outcome IS NULL",
+                recovery,
+                operation);
+          } else {
+            dsl.execute(
+                "UPDATE game_session_canonical_roster_selection SET recovery_last_attempt_at = GREATEST(recovery_last_attempt_at + interval '1 microsecond', clock_timestamp()) "
+                    + "WHERE operation_uuid = ? AND recovery_uuid = ? AND terminal_outcome IS NULL",
+                operation,
+                recovery);
+          }
+          try {
+            byte[] originalBytes =
+                Objects.requireNonNull(row.get("original_request", byte[].class));
+            var original =
+                decodeRetainedOriginal(
+                    originalBytes,
                     operation,
-                    recovery);
-              }
-              try {
-                byte[] originalBytes =
-                    Objects.requireNonNull(row.get("original_request", byte[].class));
-                var original =
-                    decodeRetainedOriginal(
-                        originalBytes,
-                        operation,
-                        fenceUuid,
-                        row.get("fence_target_fence_uuid", java.util.UUID.class),
-                        row.get("owner_fence", Long.class),
-                        row.get("fence_owner_fence", Long.class),
-                        row.get("fence_target_binding", byte[].class),
-                        row.get("fence_target_binding_digest", String.class));
-                return net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence
-                    .requireRequest(
-                        net.firedevops.firemud.entitymanagement.v1
-                            .CanonicalGameplayRosterRecoveryRequest.newBuilder()
-                            .setSchemaVersion(1)
-                            .setOriginalSelection(original)
-                            .setRecoveryUuid(recovery.toString())
-                            .build());
-              } catch (com.google.protobuf.InvalidProtocolBufferException
-                  | IllegalArgumentException invalid) {
-                // The durable marker and attempt timestamp are scheduling state only. A malformed
-                // retained request remains protected and is never sent to the owner RPC.
-                return null;
-              }
-            })
+                    fenceUuid,
+                    row.get("fence_target_fence_uuid", java.util.UUID.class),
+                    row.get("owner_fence", Long.class),
+                    row.get("fence_owner_fence", Long.class),
+                    row.get("fence_target_binding", byte[].class),
+                    row.get("fence_target_binding_digest", String.class));
+            return net.firedevops.firemud.common.world.CanonicalGameplayRosterRecoveryEvidence
+                .requireRequest(
+                    net.firedevops.firemud.entitymanagement.v1
+                        .CanonicalGameplayRosterRecoveryRequest.newBuilder()
+                        .setSchemaVersion(1)
+                        .setOriginalSelection(original)
+                        .setRecoveryUuid(recovery.toString())
+                        .build());
+          } catch (com.google.protobuf.InvalidProtocolBufferException
+              | IllegalArgumentException invalid) {
+            // The durable marker and attempt timestamp are scheduling state only. A malformed
+            // retained request remains protected and is never sent to the owner RPC.
+            return null;
+          }
+        })
         .filter(Objects::nonNull)
         .toList();
   }
@@ -725,32 +724,31 @@ public final class CanonicalGameplayRosterReferenceRepository {
             afterOperation,
             afterOperation,
             limit)
-        .map(
-            row -> {
-              java.util.UUID operationUuid =
-                  Objects.requireNonNull(row.get("operation_uuid", java.util.UUID.class));
-              java.util.UUID fenceUuid =
-                  Objects.requireNonNull(row.get("target_fence_uuid", java.util.UUID.class));
-              String state = Objects.requireNonNull(row.get("fence_state", String.class));
-              try {
-                return new TargetCandidate(
-                    operationUuid,
+        .map(row -> {
+          java.util.UUID operationUuid =
+              Objects.requireNonNull(row.get("operation_uuid", java.util.UUID.class));
+          java.util.UUID fenceUuid =
+              Objects.requireNonNull(row.get("target_fence_uuid", java.util.UUID.class));
+          String state = Objects.requireNonNull(row.get("fence_state", String.class));
+          try {
+            return new TargetCandidate(
+                operationUuid,
+                fenceUuid,
+                decodeRetainedOriginal(
+                    Objects.requireNonNull(row.get("original_request", byte[].class)),
+                    Objects.requireNonNull(row.get("operation_uuid", java.util.UUID.class)),
+                    row.get("selection_target_fence_uuid", java.util.UUID.class),
                     fenceUuid,
-                    decodeRetainedOriginal(
-                        Objects.requireNonNull(row.get("original_request", byte[].class)),
-                        Objects.requireNonNull(row.get("operation_uuid", java.util.UUID.class)),
-                        row.get("selection_target_fence_uuid", java.util.UUID.class),
-                        fenceUuid,
-                        row.get("selection_owner_fence", Long.class),
-                        row.get("fence_owner_fence", Long.class),
-                        row.get("target_binding", byte[].class),
-                        row.get("target_binding_digest", String.class)),
-                    state);
-              } catch (com.google.protobuf.InvalidProtocolBufferException
-                  | IllegalArgumentException invalid) {
-                return TargetCandidate.invalid(operationUuid, fenceUuid, state);
-              }
-            });
+                    row.get("selection_owner_fence", Long.class),
+                    row.get("fence_owner_fence", Long.class),
+                    row.get("target_binding", byte[].class),
+                    row.get("target_binding_digest", String.class)),
+                state);
+          } catch (com.google.protobuf.InvalidProtocolBufferException
+              | IllegalArgumentException invalid) {
+            return TargetCandidate.invalid(operationUuid, fenceUuid, state);
+          }
+        });
   }
 
   /**

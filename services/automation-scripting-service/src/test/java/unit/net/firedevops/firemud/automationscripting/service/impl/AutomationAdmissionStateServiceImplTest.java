@@ -42,12 +42,11 @@ class AutomationAdmissionStateServiceImplTest {
         .thenReturn(Optional.empty())
         .thenAnswer(invocation -> Optional.of(durableResult.get()));
     when(historyRepository.insertOrGet(any(AutomationAdmissionRequestHistory.class)))
-        .thenAnswer(
-            invocation -> {
-              AutomationAdmissionRequestHistory history = invocation.getArgument(0);
-              durableResult.set(history);
-              return history;
-            });
+        .thenAnswer(invocation -> {
+          AutomationAdmissionRequestHistory history = invocation.getArgument(0);
+          durableResult.set(history);
+          return history;
+        });
     AutomationAdmissionStateService service = service(repository, historyRepository);
     AutomationAdmissionStateService.SetAdmissionModeCommand command =
         command("actor-1", "rollback");
@@ -77,24 +76,22 @@ class AutomationAdmissionStateServiceImplTest {
     when(repository.save(state)).thenReturn(state);
     AtomicReference<AutomationAdmissionRequestHistory> durableResult = new AtomicReference<>();
     when(historyRepository.find(anyString(), anyString(), anyString(), anyString(), anyString()))
-        .thenAnswer(
-            invocation -> {
-              AutomationAdmissionRequestHistory history = durableResult.get();
-              return history != null
-                      && invocation.getArgument(3, String.class).equals(history.getMode())
-                      && invocation
-                          .getArgument(4, String.class)
-                          .equals(history.getControlPlaneRequestId())
-                  ? Optional.of(history)
-                  : Optional.empty();
-            });
+        .thenAnswer(invocation -> {
+          AutomationAdmissionRequestHistory history = durableResult.get();
+          return history != null
+                  && invocation.getArgument(3, String.class).equals(history.getMode())
+                  && invocation
+                      .getArgument(4, String.class)
+                      .equals(history.getControlPlaneRequestId())
+              ? Optional.of(history)
+              : Optional.empty();
+        });
     when(historyRepository.insertOrGet(any(AutomationAdmissionRequestHistory.class)))
-        .thenAnswer(
-            invocation -> {
-              AutomationAdmissionRequestHistory history = invocation.getArgument(0);
-              durableResult.set(history);
-              return history;
-            });
+        .thenAnswer(invocation -> {
+          AutomationAdmissionRequestHistory history = invocation.getArgument(0);
+          durableResult.set(history);
+          return history;
+        });
     AutomationAdmissionStateService service = service(repository, historyRepository);
 
     AutomationAdmissionStateService.AdmissionStateSummary paused =
@@ -127,29 +124,27 @@ class AutomationAdmissionStateServiceImplTest {
     AtomicReference<AutomationAdmissionRequestHistory> pausedHistory = new AtomicReference<>();
     AtomicReference<AutomationAdmissionRequestHistory> normalHistory = new AtomicReference<>();
     when(historyRepository.find(anyString(), anyString(), anyString(), anyString(), anyString()))
-        .thenAnswer(
-            invocation -> {
-              String mode = invocation.getArgument(3, String.class);
-              String requestId = invocation.getArgument(4, String.class);
-              AutomationAdmissionRequestHistory history =
-                  "PAUSED_FOR_ROLLBACK".equals(mode) && "pause-request".equals(requestId)
-                      ? pausedHistory.get()
-                      : "NORMAL".equals(mode) && "normal-request".equals(requestId)
-                          ? normalHistory.get()
-                          : null;
-              return Optional.ofNullable(history);
-            });
+        .thenAnswer(invocation -> {
+          String mode = invocation.getArgument(3, String.class);
+          String requestId = invocation.getArgument(4, String.class);
+          AutomationAdmissionRequestHistory history =
+              "PAUSED_FOR_ROLLBACK".equals(mode) && "pause-request".equals(requestId)
+                  ? pausedHistory.get()
+                  : "NORMAL".equals(mode) && "normal-request".equals(requestId)
+                      ? normalHistory.get()
+                      : null;
+          return Optional.ofNullable(history);
+        });
     when(historyRepository.insertOrGet(any(AutomationAdmissionRequestHistory.class)))
-        .thenAnswer(
-            invocation -> {
-              AutomationAdmissionRequestHistory history = invocation.getArgument(0);
-              if ("PAUSED_FOR_ROLLBACK".equals(history.getMode())) {
-                pausedHistory.set(history);
-              } else {
-                normalHistory.set(history);
-              }
-              return history;
-            });
+        .thenAnswer(invocation -> {
+          AutomationAdmissionRequestHistory history = invocation.getArgument(0);
+          if ("PAUSED_FOR_ROLLBACK".equals(history.getMode())) {
+            pausedHistory.set(history);
+          } else {
+            normalHistory.set(history);
+          }
+          return history;
+        });
     AutomationAdmissionStateService service = service(repository, historyRepository);
     AutomationAdmissionStateService.SetAdmissionModeCommand pause =
         new AutomationAdmissionStateService.SetAdmissionModeCommand(
@@ -461,11 +456,10 @@ class AutomationAdmissionStateServiceImplTest {
         Mockito.mock(AutomationAdmissionRequestHistoryRepository.class);
     AutomationAdmissionStateService service = service(repository, historyRepository);
 
-    assertThatThrownBy(
-            () ->
-                service.setMode(
-                    new AutomationAdmissionStateService.SetAdmissionModeCommand(
-                        "tenant-1", "game-1", "region-1", mode, "request-1", "actor-1", "reason")))
+    assertThatThrownBy(() ->
+            service.setMode(
+                new AutomationAdmissionStateService.SetAdmissionModeCommand(
+                    "tenant-1", "game-1", "region-1", mode, "request-1", "actor-1", "reason")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("mode is required");
     verifyNoInteractions(repository, historyRepository);
@@ -500,11 +494,10 @@ class AutomationAdmissionStateServiceImplTest {
         Mockito.mock(AutomationAdmissionRequestHistoryRepository.class);
     AutomationAdmissionStateService service = service(repository, historyRepository);
 
-    assertThatThrownBy(
-            () ->
-                service.setMode(
-                    new AutomationAdmissionStateService.SetAdmissionModeCommand(
-                        tenantId, gameInstanceId, "region-1", "NORMAL", requestId, actor, reason)))
+    assertThatThrownBy(() ->
+            service.setMode(
+                new AutomationAdmissionStateService.SetAdmissionModeCommand(
+                    tenantId, gameInstanceId, "region-1", "NORMAL", requestId, actor, reason)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(expectedMessageField + " is required");
     verifyNoInteractions(repository, historyRepository);

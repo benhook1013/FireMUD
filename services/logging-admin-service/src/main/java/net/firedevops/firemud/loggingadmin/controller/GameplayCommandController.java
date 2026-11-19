@@ -28,15 +28,14 @@ public class GameplayCommandController {
       @PathVariable String tenantId,
       @PathVariable String gameInstanceId,
       @PathVariable String commandId) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          long parsedGameInstanceId =
-              LoggingAdminRequestReaders.requirePositiveLong(gameInstanceId, "gameInstanceId");
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  gameplayCommandStatusService.getGameplayCommandStatus(
-                      parsedTenantId, parsedGameInstanceId, commandId)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      long parsedGameInstanceId =
+          LoggingAdminRequestReaders.requirePositiveLong(gameInstanceId, "gameInstanceId");
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              gameplayCommandStatusService.getGameplayCommandStatus(
+                  parsedTenantId, parsedGameInstanceId, commandId)));
+    });
   }
 }

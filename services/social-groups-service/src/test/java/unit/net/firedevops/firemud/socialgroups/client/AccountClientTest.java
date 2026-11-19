@@ -76,21 +76,19 @@ class AccountClientTest {
         mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.listPresenceVisibilityPolicies(any()))
-        .thenAnswer(
-            invocation -> {
-              ListPresenceVisibilityPoliciesRequest request = invocation.getArgument(0);
-              return ListPresenceVisibilityPoliciesResponse.newBuilder()
-                  .addAllPolicies(
-                      request.getAccountIdsList().stream()
-                          .map(
-                              accountId ->
-                                  PresenceVisibilityPolicyEntry.newBuilder()
-                                      .setAccountId(accountId)
-                                      .setPolicy("FRIENDS_ONLY")
-                                      .build())
-                          .toList())
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          ListPresenceVisibilityPoliciesRequest request = invocation.getArgument(0);
+          return ListPresenceVisibilityPoliciesResponse.newBuilder()
+              .addAllPolicies(
+                  request.getAccountIdsList().stream()
+                      .map(accountId ->
+                          PresenceVisibilityPolicyEntry.newBuilder()
+                              .setAccountId(accountId)
+                              .setPolicy("FRIENDS_ONLY")
+                              .build())
+                      .toList())
+              .build();
+        });
     AccountClient client = newClient(stub);
     List<String> accountIds =
         LongStream.rangeClosed(1L, 101L).mapToObj(AccountUuidFixtures::accountUuid).toList();
@@ -354,22 +352,20 @@ class AccountClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     AtomicInteger calls = new AtomicInteger();
     when(stub.listPresenceVisibilityPolicies(any()))
-        .thenAnswer(
-            invocation -> {
-              if (calls.getAndIncrement() == 0) {
-                ListPresenceVisibilityPoliciesRequest request = invocation.getArgument(0);
-                return ListPresenceVisibilityPoliciesResponse.newBuilder()
-                    .addAllPolicies(
-                        request.getAccountIdsList().stream()
-                            .map(accountId -> policyEntry(accountId, "FRIENDS_ONLY"))
-                            .toList())
-                    .build();
-              }
-              return ListPresenceVisibilityPoliciesResponse.newBuilder()
-                  .setError(
-                      ErrorDetail.newBuilder().setCode("UNAVAILABLE").setMessage("Retry later"))
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          if (calls.getAndIncrement() == 0) {
+            ListPresenceVisibilityPoliciesRequest request = invocation.getArgument(0);
+            return ListPresenceVisibilityPoliciesResponse.newBuilder()
+                .addAllPolicies(
+                    request.getAccountIdsList().stream()
+                        .map(accountId -> policyEntry(accountId, "FRIENDS_ONLY"))
+                        .toList())
+                .build();
+          }
+          return ListPresenceVisibilityPoliciesResponse.newBuilder()
+              .setError(ErrorDetail.newBuilder().setCode("UNAVAILABLE").setMessage("Retry later"))
+              .build();
+        });
     AccountClient client = newClient(stub);
 
     assertThat(
@@ -417,11 +413,10 @@ class AccountClientTest {
         ArgumentCaptor.forClass(net.firedevops.firemud.account.v1.GetProfileRequest.class);
     verify(stub, times(2)).getProfile(reads.capture());
     assertThat(reads.getAllValues())
-        .allSatisfy(
-            request -> {
-              assertThat(request.getTenantId()).isEqualTo("11");
-              assertThat(request.getAccountId()).isEqualTo(accountUuid(2L));
-            });
+        .allSatisfy(request -> {
+          assertThat(request.getTenantId()).isEqualTo("11");
+          assertThat(request.getAccountId()).isEqualTo(accountUuid(2L));
+        });
     ArgumentCaptor<net.firedevops.firemud.account.v1.UpdateProfileRequest> update =
         ArgumentCaptor.forClass(net.firedevops.firemud.account.v1.UpdateProfileRequest.class);
     verify(stub).updateProfile(update.capture());

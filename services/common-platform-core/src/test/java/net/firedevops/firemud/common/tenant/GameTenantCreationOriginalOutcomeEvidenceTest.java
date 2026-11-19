@@ -54,27 +54,33 @@ class GameTenantCreationOriginalOutcomeEvidenceTest {
 
   @Test
   void rejectsOpenShapesAndReceiptSubstitution() {
-    assertThatThrownBy(
-            () ->
-                new GameTenantCreationOriginalOutcomeEvidence(
-                    1, binding(), Outcome.CREATED, Optional.empty()))
+    assertThatThrownBy(() ->
+            new GameTenantCreationOriginalOutcomeEvidence(
+                1, binding(), Outcome.CREATED, Optional.empty()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("requires its exact V30 receipt");
-    assertThatThrownBy(
-            () ->
-                new GameTenantCreationOriginalOutcomeEvidence(
-                    1, binding(), Outcome.NOT_CREATED, Optional.of(receipt())))
+    assertThatThrownBy(() ->
+            new GameTenantCreationOriginalOutcomeEvidence(
+                1, binding(), Outcome.NOT_CREATED, Optional.of(receipt())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("cannot contain a creation receipt");
-    assertThatThrownBy(
-            () ->
-                new GameTenantCreationOriginalOutcomeEvidence(
-                    1,
-                    binding(),
-                    Outcome.CREATED,
-                    Optional.of(
-                        new FreshTenantCreationEvidence(
-                            1,
+    assertThatThrownBy(() ->
+            new GameTenantCreationOriginalOutcomeEvidence(
+                1,
+                binding(),
+                Outcome.CREATED,
+                Optional.of(
+                    new FreshTenantCreationEvidence(
+                        1,
+                        NAMESPACE,
+                        REQUEST_ID,
+                        CREATION_OPERATION_ID,
+                        "sha256:" + "c".repeat(64),
+                        TENANT_ID,
+                        91L,
+                        "fresh-tenant-01",
+                        "NEW_GAME_ROW",
+                        GameTenantCreationDigest.evidenceDigest(
                             NAMESPACE,
                             REQUEST_ID,
                             CREATION_OPERATION_ID,
@@ -82,22 +88,12 @@ class GameTenantCreationOriginalOutcomeEvidenceTest {
                             TENANT_ID,
                             91L,
                             "fresh-tenant-01",
-                            "NEW_GAME_ROW",
-                            GameTenantCreationDigest.evidenceDigest(
-                                NAMESPACE,
-                                REQUEST_ID,
-                                CREATION_OPERATION_ID,
-                                "sha256:" + "c".repeat(64),
-                                TENANT_ID,
-                                91L,
-                                "fresh-tenant-01",
-                                "NEW_GAME_ROW")))))
+                            "NEW_GAME_ROW")))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("does not match the original request binding");
-    assertThatThrownBy(
-            () ->
-                new GameTenantCreationOriginalOutcomeEvidence(
-                    2, binding(), Outcome.NOT_CREATED, Optional.empty()))
+    assertThatThrownBy(() ->
+            new GameTenantCreationOriginalOutcomeEvidence(
+                2, binding(), Outcome.NOT_CREATED, Optional.empty()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("schema");
   }
@@ -105,10 +101,9 @@ class GameTenantCreationOriginalOutcomeEvidenceTest {
   @Test
   void storedDecoderRejectsTruncationTrailingBytesUnknownSchemaAndOversize() {
     byte[] canonical = notCreated().canonicalBytes();
-    assertThatThrownBy(
-            () ->
-                GameTenantCreationOriginalOutcomeEvidence.fromStored(
-                    java.util.Arrays.copyOf(canonical, canonical.length - 1)))
+    assertThatThrownBy(() ->
+            GameTenantCreationOriginalOutcomeEvidence.fromStored(
+                java.util.Arrays.copyOf(canonical, canonical.length - 1)))
         .isInstanceOf(IllegalArgumentException.class);
 
     byte[] trailing = java.util.Arrays.copyOf(canonical, canonical.length + 1);
@@ -145,35 +140,32 @@ class GameTenantCreationOriginalOutcomeEvidenceTest {
 
   @Test
   void bindingRequiresCanonicalNamespaceNonnilUuidsAndLowercaseDigests() {
-    assertThatThrownBy(
-            () ->
-                new Binding(
-                    "Fresh-Test",
-                    REQUEST_ID,
-                    ACCOUNT_OPERATION_ID,
-                    ACCOUNT_ID,
-                    CREATION_DIGEST,
-                    ACCOUNT_DIGEST))
+    assertThatThrownBy(() ->
+            new Binding(
+                "Fresh-Test",
+                REQUEST_ID,
+                ACCOUNT_OPERATION_ID,
+                ACCOUNT_ID,
+                CREATION_DIGEST,
+                ACCOUNT_DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Binding(
-                    NAMESPACE,
-                    new UUID(0L, 0L),
-                    ACCOUNT_OPERATION_ID,
-                    ACCOUNT_ID,
-                    CREATION_DIGEST,
-                    ACCOUNT_DIGEST))
+    assertThatThrownBy(() ->
+            new Binding(
+                NAMESPACE,
+                new UUID(0L, 0L),
+                ACCOUNT_OPERATION_ID,
+                ACCOUNT_ID,
+                CREATION_DIGEST,
+                ACCOUNT_DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Binding(
-                    NAMESPACE,
-                    REQUEST_ID,
-                    ACCOUNT_OPERATION_ID,
-                    ACCOUNT_ID,
-                    "SHA256:" + "a".repeat(64),
-                    ACCOUNT_DIGEST))
+    assertThatThrownBy(() ->
+            new Binding(
+                NAMESPACE,
+                REQUEST_ID,
+                ACCOUNT_OPERATION_ID,
+                ACCOUNT_ID,
+                "SHA256:" + "a".repeat(64),
+                ACCOUNT_DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

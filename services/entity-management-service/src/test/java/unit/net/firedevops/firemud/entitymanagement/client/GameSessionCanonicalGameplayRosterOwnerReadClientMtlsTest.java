@@ -141,16 +141,14 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientMtlsTest {
       client.init();
       assertThatThrownBy(() -> client.getCanonicalGameplayRosterReference(referenceRequest()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThatThrownBy(() -> client.getCanonicalGameplayRosterOwnerRead(ownerRequest()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
       var retirement = retirementRequest(referenceRequest());
       var confirmation =
           CanonicalGameplayRosterRetirementEvidence.confirmation(
@@ -159,17 +157,15 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientMtlsTest {
                   retirement, UUID.randomUUID(), 1000));
       assertThatThrownBy(() -> client.acknowledgeCanonicalGameplayRosterRetirement(retirement))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThatThrownBy(
               () -> client.confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThat(observedAcknowledgement.get()).isNull();
       assertThat(observedConfirmation.get()).isNull();
       assertThat(handlerReads.get()).isZero();
@@ -214,10 +210,8 @@ class GameSessionCanonicalGameplayRosterOwnerReadClientMtlsTest {
           CanonicalGameplayRosterRetirementEvidence.confirmation(
               foreign,
               CanonicalGameplayRosterRetirementEvidence.response(foreign, UUID.randomUUID(), 1000));
-      assertThatThrownBy(
-              () ->
-                  client.confirmCanonicalGameplayRosterRetirementAcknowledgement(
-                      foreignConfirmation))
+      assertThatThrownBy(() ->
+              client.confirmCanonicalGameplayRosterRetirementAcknowledgement(foreignConfirmation))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("namespace");
       assertThat(receivedCalls.get()).isEqualTo(2);

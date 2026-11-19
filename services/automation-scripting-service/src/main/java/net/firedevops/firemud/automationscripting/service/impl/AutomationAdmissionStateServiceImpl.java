@@ -139,16 +139,15 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
     String normalizedRegionId = normalize(regionId);
     return repository
         .findByTenantIdAndGameInstanceIdAndRegionId(tenantId, gameInstanceId, normalizedRegionId)
-        .orElseGet(
-            () -> {
-              AutomationAdmissionState state = new AutomationAdmissionState();
-              state.setTenantId(tenantId);
-              state.setGameInstanceId(gameInstanceId);
-              state.setRegionId(normalizedRegionId);
-              state.setMode(MODE_NORMAL);
-              state.setAdmissionEpoch(1L);
-              return repository.save(state);
-            });
+        .orElseGet(() -> {
+          AutomationAdmissionState state = new AutomationAdmissionState();
+          state.setTenantId(tenantId);
+          state.setGameInstanceId(gameInstanceId);
+          state.setRegionId(normalizedRegionId);
+          state.setMode(MODE_NORMAL);
+          state.setAdmissionEpoch(1L);
+          return repository.save(state);
+        });
   }
 
   private static AdmissionStateSummary toSummary(AutomationAdmissionState state) {

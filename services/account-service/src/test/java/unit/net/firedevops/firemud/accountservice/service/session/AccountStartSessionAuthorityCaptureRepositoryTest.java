@@ -181,17 +181,16 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
 
     AccountStartSessionAuthorityCapture observed =
         withPeer(WORLD_PEER_URI, NAMESPACE, "world-management-service")
-            .call(
-                () ->
-                    fixture
-                        .repository()
-                        .lockReadExactCurrentFromWorldReceiving(
-                            fixture.current(),
-                            fixture.tuple(),
-                            LOGGING_PEER_URI,
-                            RESERVATION_OWNER_ID,
-                            7L,
-                            WORLD_PEER_URI));
+            .call(() ->
+                fixture
+                    .repository()
+                    .lockReadExactCurrentFromWorldReceiving(
+                        fixture.current(),
+                        fixture.tuple(),
+                        LOGGING_PEER_URI,
+                        RESERVATION_OWNER_ID,
+                        7L,
+                        WORLD_PEER_URI));
 
     assertThat(observed.sameStoredValue(fixture.capture())).isTrue();
     verify(fixture.dsl(), times(1))
@@ -204,37 +203,33 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
     WorldLookupFixture fixture = worldLookupFixture(true);
     beginOwnerTransaction();
 
-    assertUnavailable(
-        () ->
-            withPeer(LOGGING_PEER_URI, NAMESPACE, "logging-admin-service")
-                .call(
-                    () ->
-                        fixture
-                            .repository()
-                            .lockReadExactCurrentFromWorldReceiving(
-                                fixture.current(),
-                                fixture.tuple(),
-                                LOGGING_PEER_URI,
-                                RESERVATION_OWNER_ID,
-                                7L,
-                                WORLD_PEER_URI)));
-    assertUnavailable(
-        () ->
-            withPeer(
-                    "spiffe://firemud/ns/other/sa/world-management-service",
-                    "other",
-                    "world-management-service")
-                .call(
-                    () ->
-                        fixture
-                            .repository()
-                            .lockReadExactCurrentFromWorldReceiving(
-                                fixture.current(),
-                                fixture.tuple(),
-                                LOGGING_PEER_URI,
-                                RESERVATION_OWNER_ID,
-                                7L,
-                                WORLD_PEER_URI)));
+    assertUnavailable(() ->
+        withPeer(LOGGING_PEER_URI, NAMESPACE, "logging-admin-service")
+            .call(() ->
+                fixture
+                    .repository()
+                    .lockReadExactCurrentFromWorldReceiving(
+                        fixture.current(),
+                        fixture.tuple(),
+                        LOGGING_PEER_URI,
+                        RESERVATION_OWNER_ID,
+                        7L,
+                        WORLD_PEER_URI)));
+    assertUnavailable(() ->
+        withPeer(
+                "spiffe://firemud/ns/other/sa/world-management-service",
+                "other",
+                "world-management-service")
+            .call(() ->
+                fixture
+                    .repository()
+                    .lockReadExactCurrentFromWorldReceiving(
+                        fixture.current(),
+                        fixture.tuple(),
+                        LOGGING_PEER_URI,
+                        RESERVATION_OWNER_ID,
+                        7L,
+                        WORLD_PEER_URI)));
 
     verifyNoInteractions(fixture.dsl());
   }
@@ -245,20 +240,18 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
     beginOwnerTransaction();
     SessionContext.setContext("account-user", List.of("tenantAdmin"), Map.of());
 
-    assertUnavailable(
-        () ->
-            withPeer(WORLD_PEER_URI, NAMESPACE, "world-management-service")
-                .call(
-                    () ->
-                        fixture
-                            .repository()
-                            .lockReadExactCurrentFromWorldReceiving(
-                                fixture.current(),
-                                fixture.tuple(),
-                                LOGGING_PEER_URI,
-                                RESERVATION_OWNER_ID,
-                                7L,
-                                WORLD_PEER_URI)));
+    assertUnavailable(() ->
+        withPeer(WORLD_PEER_URI, NAMESPACE, "world-management-service")
+            .call(() ->
+                fixture
+                    .repository()
+                    .lockReadExactCurrentFromWorldReceiving(
+                        fixture.current(),
+                        fixture.tuple(),
+                        LOGGING_PEER_URI,
+                        RESERVATION_OWNER_ID,
+                        7L,
+                        WORLD_PEER_URI)));
 
     verifyNoInteractions(fixture.dsl());
   }
@@ -268,20 +261,18 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
     WorldLookupFixture fixture = worldLookupFixture(false);
     beginOwnerTransaction();
 
-    assertUnavailable(
-        () ->
-            withPeer(WORLD_PEER_URI, NAMESPACE, "world-management-service")
-                .call(
-                    () ->
-                        fixture
-                            .repository()
-                            .lockReadExactCurrentFromWorldReceiving(
-                                fixture.current(),
-                                fixture.tuple(),
-                                LOGGING_PEER_URI,
-                                RESERVATION_OWNER_ID,
-                                7L,
-                                WORLD_PEER_URI)));
+    assertUnavailable(() ->
+        withPeer(WORLD_PEER_URI, NAMESPACE, "world-management-service")
+            .call(() ->
+                fixture
+                    .repository()
+                    .lockReadExactCurrentFromWorldReceiving(
+                        fixture.current(),
+                        fixture.tuple(),
+                        LOGGING_PEER_URI,
+                        RESERVATION_OWNER_ID,
+                        7L,
+                        WORLD_PEER_URI)));
 
     verify(fixture.dsl(), times(1))
         .fetchOne(startsWith("SELECT control_plane_request_id"), any(Object[].class));
@@ -293,31 +284,28 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
     WorldLookupFixture fixture = worldLookupFixture(true);
     beginOwnerTransaction();
 
-    assertUnavailable(
-        () ->
-            withPeer(WORLD_PEER_URI, NAMESPACE, "world-management-service")
-                .call(
-                    () ->
-                        fixture
-                            .repository()
-                            .lockReadExactCurrent(
-                                fixture.current(),
-                                fixture.tuple(),
-                                LOGGING_PEER_URI,
-                                RESERVATION_OWNER_ID,
-                                7L)));
+    assertUnavailable(() ->
+        withPeer(WORLD_PEER_URI, NAMESPACE, "world-management-service")
+            .call(() ->
+                fixture
+                    .repository()
+                    .lockReadExactCurrent(
+                        fixture.current(),
+                        fixture.tuple(),
+                        LOGGING_PEER_URI,
+                        RESERVATION_OWNER_ID,
+                        7L)));
     assertThat(
             withPeer(LOGGING_PEER_URI, NAMESPACE, "logging-admin-service")
-                .call(
-                    () ->
-                        fixture
-                            .repository()
-                            .lockReadExactCurrent(
-                                fixture.current(),
-                                fixture.tuple(),
-                                LOGGING_PEER_URI,
-                                RESERVATION_OWNER_ID,
-                                7L))
+                .call(() ->
+                    fixture
+                        .repository()
+                        .lockReadExactCurrent(
+                            fixture.current(),
+                            fixture.tuple(),
+                            LOGGING_PEER_URI,
+                            RESERVATION_OWNER_ID,
+                            7L))
                 .sameStoredValue(fixture.capture()))
         .isTrue();
   }

@@ -100,10 +100,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
           response.toBuilder().setCatalogRevision(0L).build(),
           response.toBuilder().setCatalogRevision(-1L).build()
         }) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
-                      request, invalid))
+      assertThatThrownBy(() ->
+              CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(request, invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -120,10 +118,9 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
         }) {
       var wireResponse =
           GetCanonicalGameInstanceLaunchAssociationResponse.parseFrom(invalidScope.toByteArray());
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
-                      request, wireResponse))
+      assertThatThrownBy(() ->
+              CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
+                  request, wireResponse))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -196,10 +193,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
             response.toBuilder().setExpectedOwnerMutationId(UUID.randomUUID().toString()).build(),
             response.toBuilder().setExpectedOwnerFence(5L).build(),
             response.toBuilder().setOwnerFence(5L).build())) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
-                      request, invalid))
+      assertThatThrownBy(() ->
+              CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(request, invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var worldRequest =
@@ -214,25 +209,23 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
             request.expectedDescriptorRequestDigest(),
             request.expectedDescriptorResultDigest(),
             request.expectedReleaseAttestationEvidenceDigest());
-    assertThatThrownBy(
-            () ->
-                CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
-                    worldRequest, response))
+    assertThatThrownBy(() ->
+            CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
+                worldRequest, response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new Request(
-                    operation.ownerMutationId(),
-                    request.targetNamespace(),
-                    request.canonicalTenantId(),
-                    request.worldSlug(),
-                    request.gameInstanceUuid(),
-                    request.controlPlaneRequestId(),
-                    request.launchDescriptorId(),
-                    request.expectedDescriptorRequestDigest(),
-                    request.expectedDescriptorResultDigest(),
-                    request.expectedReleaseAttestationEvidenceDigest(),
-                    operation))
+    assertThatThrownBy(() ->
+            new Request(
+                operation.ownerMutationId(),
+                request.targetNamespace(),
+                request.canonicalTenantId(),
+                request.worldSlug(),
+                request.gameInstanceUuid(),
+                request.controlPlaneRequestId(),
+                request.launchDescriptorId(),
+                request.expectedDescriptorRequestDigest(),
+                request.expectedDescriptorResultDigest(),
+                request.expectedReleaseAttestationEvidenceDigest(),
+                operation))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -280,10 +273,9 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromRequest(
-                    wire.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromRequest(
+                wire.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
     for (var invalid :
@@ -300,10 +292,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
                 .setReleaseAttestation(
                     response.getReleaseAttestation().toBuilder().setUnknownFields(unknown))
                 .build())) {
-      assertThatThrownBy(
-              () ->
-                  CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
-                      request, invalid))
+      assertThatThrownBy(() ->
+              CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(request, invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

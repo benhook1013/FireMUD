@@ -192,16 +192,15 @@ class TextCommandInterpreterTest {
                 .setAllowed(true)
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenAnswer(
-            invocation ->
-                GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                    .setTenantId("22")
-                    .setGameplayAvailable(true)
-                    .setAllowPublicJoin(true)
-                    .setEntitlementVersion(1L)
-                    .setTenantBillingSequence(1L)
-                    .setEvaluatedAt(java.time.Instant.now().toString())
-                    .build());
+        .thenAnswer(invocation ->
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId("22")
+                .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(java.time.Instant.now().toString())
+                .build());
     when(gameLogicClient.queryInventory(Mockito.any(SessionContext.class)))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
@@ -339,15 +338,14 @@ class TextCommandInterpreterTest {
     when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
         .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L, false)));
     when(gameInstanceRepository.findById(Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              long sessionId = invocation.getArgument(0);
-              GameInstance instance = new GameInstance();
-              instance.setId(sessionId);
-              instance.setTenantId(22L);
-              instance.setOwnerAccountId(123L);
-              return Optional.of(instance);
-            });
+        .thenAnswer(invocation -> {
+          long sessionId = invocation.getArgument(0);
+          GameInstance instance = new GameInstance();
+          instance.setId(sessionId);
+          instance.setTenantId(22L);
+          instance.setOwnerAccountId(123L);
+          return Optional.of(instance);
+        });
 
     sessionAuthenticationService =
         new SessionAuthenticationService(

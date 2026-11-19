@@ -55,23 +55,22 @@ class InternalGrpcClientAuthConfigTest {
 
   @Test
   void serviceOverridesSharedStubCustomizerWithInternalOnlyBehavior() {
-    contextRunner.run(
-        ctx -> {
-          BlockingGrpcStubCustomizer customizer = ctx.getBean(BlockingGrpcStubCustomizer.class);
-          CapturingChannel channel = new CapturingChannel();
-          CapturingStub stub = new CapturingStub(channel, CallOptions.DEFAULT);
+    contextRunner.run(ctx -> {
+      BlockingGrpcStubCustomizer customizer = ctx.getBean(BlockingGrpcStubCustomizer.class);
+      CapturingChannel channel = new CapturingChannel();
+      CapturingStub stub = new CapturingStub(channel, CallOptions.DEFAULT);
 
-          CapturingStub customized = customizer.customize(stub);
+      CapturingStub customized = customizer.customize(stub);
 
-          assertThat(customized).isNotSameAs(stub);
-          customized.invoke();
-          String authorization = channel.lastAuthorization();
-          assertThat(authorization).startsWith("Bearer ");
-          String token = authorization.substring(7);
-          String payloadJson = jwtPayload(token);
-          assertThat(payloadJson).contains("\"sub\":\"service:tcp-proxy-service\"");
-          assertThat(payloadJson).contains("\"internalService\":true");
-        });
+      assertThat(customized).isNotSameAs(stub);
+      customized.invoke();
+      String authorization = channel.lastAuthorization();
+      assertThat(authorization).startsWith("Bearer ");
+      String token = authorization.substring(7);
+      String payloadJson = jwtPayload(token);
+      assertThat(payloadJson).contains("\"sub\":\"service:tcp-proxy-service\"");
+      assertThat(payloadJson).contains("\"internalService\":true");
+    });
   }
 
   private static String jwtPayload(String token) {

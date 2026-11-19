@@ -50,10 +50,9 @@ class DraftCommitOrderReadClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var plaintext = tls(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new DraftCommitOrderReadClient(
-                    new ServiceEndpointsProperties(), plaintext, factory, "test"))
+    assertThatThrownBy(() ->
+            new DraftCommitOrderReadClient(
+                new ServiceEndpointsProperties(), plaintext, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
 
@@ -153,12 +152,11 @@ class DraftCommitOrderReadClientTest {
               eq(6565),
               any(CommonGrpcClientProperties.class),
               eq(true)))
-          .thenAnswer(
-              invocation -> {
-                ManagedChannel channel = mock(ManagedChannel.class);
-                channels.add(channel);
-                return channel;
-              });
+          .thenAnswer(invocation -> {
+            ManagedChannel channel = mock(ManagedChannel.class);
+            channels.add(channel);
+            return channel;
+          });
       client = new DraftCommitOrderReadClient(endpoints, tls, factory, "test");
       client.init();
       DraftCommitOrderReadClient clientUnderTest = client;

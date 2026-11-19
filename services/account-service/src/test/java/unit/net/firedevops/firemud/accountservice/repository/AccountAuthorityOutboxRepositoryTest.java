@@ -53,23 +53,21 @@ class AccountAuthorityOutboxRepositoryTest {
     assertThatThrownBy(
             () -> new Checkpoint("account:auth-authority:v1:account/abc", 0L, null, null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                repository.append(
-                    "account:auth-authority:v1:account/abc",
-                    "request-1",
-                    "event-1",
-                    "digest-1",
-                    new byte[0]))
+    assertThatThrownBy(() ->
+            repository.append(
+                "account:auth-authority:v1:account/abc",
+                "request-1",
+                "event-1",
+                "digest-1",
+                new byte[0]))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                repository.append(
-                    "account:auth-authority:v1:account/abc",
-                    "r".repeat(513),
-                    "event-1",
-                    "digest-1",
-                    new byte[] {1}))
+    assertThatThrownBy(() ->
+            repository.append(
+                "account:auth-authority:v1:account/abc",
+                "r".repeat(513),
+                "event-1",
+                "digest-1",
+                new byte[] {1}))
         .isInstanceOf(IllegalArgumentException.class);
 
     verifyNoInteractions(dsl);
@@ -160,16 +158,15 @@ class AccountAuthorityOutboxRepositoryTest {
             "{\"eventDigest\":\"sha256:wire-digest-4\"}".getBytes(),
             "request-4"));
 
-    assertThatThrownBy(
-            () ->
-                repository.append(
-                    "account:auth-authority:v1:membership/account-a/tenant-a",
-                    "request-4",
-                    sequence ->
-                        new EventEvidence(
-                            "event-4",
-                            "sha256:changed",
-                            "{\"eventDigest\":\"sha256:changed\"}".getBytes())))
+    assertThatThrownBy(() ->
+            repository.append(
+                "account:auth-authority:v1:membership/account-a/tenant-a",
+                "request-4",
+                sequence ->
+                    new EventEvidence(
+                        "event-4",
+                        "sha256:changed",
+                        "{\"eventDigest\":\"sha256:changed\"}".getBytes())))
         .isInstanceOf(AccountAuthorityOutboxRepository.IdempotencyConflictException.class);
 
     verify(dsl, never())
@@ -180,14 +177,13 @@ class AccountAuthorityOutboxRepositoryTest {
   void factoryFailureCannotAdvanceHeadOrInsertEvent() {
     stubAppend(0L, null);
 
-    assertThatThrownBy(
-            () ->
-                repository.append(
-                    "account:auth-authority:v1:membership/account-a/tenant-a",
-                    "request-1",
-                    sequence -> {
-                      throw new IllegalStateException("producer failed");
-                    }))
+    assertThatThrownBy(() ->
+            repository.append(
+                "account:auth-authority:v1:membership/account-a/tenant-a",
+                "request-1",
+                sequence -> {
+                  throw new IllegalStateException("producer failed");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("producer failed");
 
@@ -251,11 +247,10 @@ class AccountAuthorityOutboxRepositoryTest {
     when(event.get("payload", byte[].class)).thenReturn(new byte[] {2});
     when(event.get("request_id", String.class)).thenReturn("request-2");
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation ->
-                invocation.<String>getArgument(0).contains("account_authority_outbox_streams")
-                    ? stream
-                    : event);
+        .thenAnswer(invocation ->
+            invocation.<String>getArgument(0).contains("account_authority_outbox_streams")
+                ? stream
+                : event);
 
     assertThat(repository.readCheckpoint(streamKey))
         .contains(new Checkpoint(streamKey, 2L, "event-2", "canonical-digest-2"));
@@ -266,11 +261,8 @@ class AccountAuthorityOutboxRepositoryTest {
     String streamKey = "account:auth-authority:v1:membership/account-a/tenant-a";
     Record stream = streamRecord(0L);
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation ->
-                invocation.<String>getArgument(0).startsWith("SELECT last_sequence")
-                    ? stream
-                    : null);
+        .thenAnswer(invocation ->
+            invocation.<String>getArgument(0).startsWith("SELECT last_sequence") ? stream : null);
 
     assertThat(repository.readCheckpoint(streamKey)).isEmpty();
     verify(dsl)
@@ -285,11 +277,8 @@ class AccountAuthorityOutboxRepositoryTest {
     Record stream = streamRecord(0L);
     Record event = mock(Record.class);
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation ->
-                invocation.<String>getArgument(0).startsWith("SELECT last_sequence")
-                    ? stream
-                    : event);
+        .thenAnswer(invocation ->
+            invocation.<String>getArgument(0).startsWith("SELECT last_sequence") ? stream : event);
 
     assertThatThrownBy(() -> repository.readCheckpoint(streamKey))
         .isInstanceOf(IllegalStateException.class)
@@ -336,10 +325,9 @@ class AccountAuthorityOutboxRepositoryTest {
 
   @Test
   void requestReadbackRejectsInvalidRequestIdentityBeforeStorageAccess() {
-    assertThatThrownBy(
-            () ->
-                repository.findEvent(
-                    "account:auth-authority:v1:membership/account-a/tenant-a", "r".repeat(513)))
+    assertThatThrownBy(() ->
+            repository.findEvent(
+                "account:auth-authority:v1:membership/account-a/tenant-a", "r".repeat(513)))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(dsl);
   }
@@ -371,23 +359,22 @@ class AccountAuthorityOutboxRepositoryTest {
     Record advanced = streamRecord(currentSequence + 1L);
     when(dsl.execute(anyString(), any(Object[].class))).thenReturn(1);
     when(dsl.fetchOne(anyString(), any(Object[].class)))
-        .thenAnswer(
-            invocation -> {
-              String query = invocation.getArgument(0);
-              if (query.startsWith("SELECT last_sequence")) {
-                return stream;
-              }
-              if (query.startsWith("SELECT outbox_sequence")) {
-                return priorRequest;
-              }
-              if (query.startsWith("SELECT request_id")) {
-                return null;
-              }
-              if (query.startsWith("UPDATE account_authority_outbox_streams")) {
-                return advanced;
-              }
-              throw new AssertionError("Unexpected outbox query: " + query);
-            });
+        .thenAnswer(invocation -> {
+          String query = invocation.getArgument(0);
+          if (query.startsWith("SELECT last_sequence")) {
+            return stream;
+          }
+          if (query.startsWith("SELECT outbox_sequence")) {
+            return priorRequest;
+          }
+          if (query.startsWith("SELECT request_id")) {
+            return null;
+          }
+          if (query.startsWith("UPDATE account_authority_outbox_streams")) {
+            return advanced;
+          }
+          throw new AssertionError("Unexpected outbox query: " + query);
+        });
   }
 
   private Record streamRecord(long sequence) {

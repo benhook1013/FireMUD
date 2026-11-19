@@ -132,11 +132,10 @@ class GameplayRuleSourceRepositoryPostgresIntegrationTest {
     var binding = fixture.binding("0", fixture.genesisBase(), upsert("10"));
     fixture
         .write()
-        .executeWithoutResult(
-            status -> {
-              fixture.stageInTransaction(binding);
-              status.setRollbackOnly();
-            });
+        .executeWithoutResult(status -> {
+          fixture.stageInTransaction(binding);
+          status.setRollbackOnly();
+        });
     var owner = new GameplayRuleSourceRepository(fixture.sql());
     assertThat(owner.readGenesis(fixture.target())).isPresent();
     assertThat(owner.readSnapshot(fixture.target(), binding.commitId())).isEmpty();
@@ -151,17 +150,15 @@ class GameplayRuleSourceRepositoryPostgresIntegrationTest {
     var asset =
         fixture
             .write()
-            .execute(
-                ignored -> {
-                  var value = new GameAsset();
-                  value.setTenantId(fixture.target().gameDesignVersionTenantKey());
-                  value.setFileName("catalog-resource.png");
-                  value.setContentType("image/png");
-                  value.setData(
-                      "actual catalog asset bytes"
-                          .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                  return new GameAssetRepository(fixture.sql()).save(value);
-                });
+            .execute(ignored -> {
+              var value = new GameAsset();
+              value.setTenantId(fixture.target().gameDesignVersionTenantKey());
+              value.setFileName("catalog-resource.png");
+              value.setContentType("image/png");
+              value.setData(
+                  "actual catalog asset bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+              return new GameAssetRepository(fixture.sql()).save(value);
+            });
     var payloads = new java.util.ArrayList<>(gameplayPayloads());
     payloads.add(
         AssetSource.upsertPayload(
@@ -228,10 +225,9 @@ class GameplayRuleSourceRepositoryPostgresIntegrationTest {
             new GameplayRuleSourceRepository(fixture.sql())
                 .readSnapshot(binding.target(), binding.commitId()))
         .isPresent();
-    assertThatThrownBy(
-            () ->
-                new GameplayRuleSourceRepository(fixture.sql())
-                    .requireCompleteForGameLogic(binding.target(), binding.commitId()))
+    assertThatThrownBy(() ->
+            new GameplayRuleSourceRepository(fixture.sql())
+                .requireCompleteForGameLogic(binding.target(), binding.commitId()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAMEPLAY_RULE_LEGACY_COMMAND_SOURCE_NOT_CONVERGED");
   }
@@ -269,10 +265,9 @@ class GameplayRuleSourceRepositoryPostgresIntegrationTest {
             () -> repository.requireCompleteForGameLogic(binding.target(), binding.commitId()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAMEPLAY_RULE_GENERIC_SOURCE_NOT_CONVERGED");
-    assertThatThrownBy(
-            () ->
-                new GameplayRuleSourceRepository(fixture.sql())
-                    .requireCompleteForGameLogic(binding.target(), binding.commitId()))
+    assertThatThrownBy(() ->
+            new GameplayRuleSourceRepository(fixture.sql())
+                .requireCompleteForGameLogic(binding.target(), binding.commitId()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAMEPLAY_RULE_GENERIC_SOURCE_NOT_CONVERGED");
     assertThat(repository.readSnapshot(binding.target(), binding.commitId()).orElseThrow())
@@ -287,23 +282,21 @@ class GameplayRuleSourceRepositoryPostgresIntegrationTest {
     Version otherVersion =
         fixture
             .write()
-            .execute(
-                ignored -> {
-                  var value = new Version();
-                  value.setTenantId(fixture.target().gameDesignVersionTenantKey());
-                  value.setVersionNumber(2);
-                  return new VersionRepository(fixture.sql()).save(value);
-                });
+            .execute(ignored -> {
+              var value = new Version();
+              value.setTenantId(fixture.target().gameDesignVersionTenantKey());
+              value.setVersionNumber(2);
+              return new VersionRepository(fixture.sql()).save(value);
+            });
     String foreignTenant =
         fixture
             .write()
-            .execute(
-                ignored -> {
-                  var value = new Game();
-                  value.setTenantId("foreign-" + UUID.randomUUID().toString().substring(0, 8));
-                  value.setName("Controlled foreign legacy history scope");
-                  return new GameRepository(fixture.sql()).save(value).getTenantId();
-                });
+            .execute(ignored -> {
+              var value = new Game();
+              value.setTenantId("foreign-" + UUID.randomUUID().toString().substring(0, 8));
+              value.setName("Controlled foreign legacy history scope");
+              return new GameRepository(fixture.sql()).save(value).getTenantId();
+            });
     var binding =
         fixture.binding("0", fixture.genesisBase(), gameplayPayloads().toArray(String[]::new));
     fixture.stage(binding);
@@ -442,21 +435,19 @@ class GameplayRuleSourceRepositoryPostgresIntegrationTest {
     var sql = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
     var sources = new GameDesignSourceRepository(sql);
     var game =
-        write.execute(
-            ignored -> {
-              var requested = new Game();
-              requested.setTenantId("rule-" + UUID.randomUUID().toString().substring(0, 8));
-              requested.setName("Isolated authored gameplay rules");
-              return new GameRepository(sql).save(requested);
-            });
+        write.execute(ignored -> {
+          var requested = new Game();
+          requested.setTenantId("rule-" + UUID.randomUUID().toString().substring(0, 8));
+          requested.setName("Isolated authored gameplay rules");
+          return new GameRepository(sql).save(requested);
+        });
     Version version =
-        write.execute(
-            ignored -> {
-              var requested = new Version();
-              requested.setTenantId(game.getTenantId());
-              requested.setVersionNumber(1);
-              return new VersionRepository(sql).save(requested);
-            });
+        write.execute(ignored -> {
+          var requested = new Version();
+          requested.setTenantId(game.getTenantId());
+          requested.setVersionNumber(1);
+          return new VersionRepository(sql).save(requested);
+        });
     var target =
         new TargetProof(
             version.getCanonicalTenantId(),
@@ -538,21 +529,20 @@ class GameplayRuleSourceRepositoryPostgresIntegrationTest {
     }
 
     void synchronize(DraftCommitBinding binding) {
-      write.executeWithoutResult(
-          ignored -> {
-            var coordinator = new DraftCommitCoordinatorRepository(sql);
-            var outcome =
-                coordinator
-                    .read(target, binding.requestId())
-                    .orElseThrow()
-                    .ownerStates()
-                    .get(Owner.GAME_DESIGN_CONTROL_PLANE)
-                    .outcome()
-                    .orElseThrow();
-            IsolatedPublicationOwnerSetup.advanceIsolatedSourceVisibility(
-                sql, binding, List.of(outcome));
-            coordinator.releaseApplicationSlot(binding);
-          });
+      write.executeWithoutResult(ignored -> {
+        var coordinator = new DraftCommitCoordinatorRepository(sql);
+        var outcome =
+            coordinator
+                .read(target, binding.requestId())
+                .orElseThrow()
+                .ownerStates()
+                .get(Owner.GAME_DESIGN_CONTROL_PLANE)
+                .outcome()
+                .orElseThrow();
+        IsolatedPublicationOwnerSetup.advanceIsolatedSourceVisibility(
+            sql, binding, List.of(outcome));
+        coordinator.releaseApplicationSlot(binding);
+      });
     }
   }
 }

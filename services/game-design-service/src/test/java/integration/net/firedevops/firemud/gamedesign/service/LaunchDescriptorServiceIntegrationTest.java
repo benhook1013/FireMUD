@@ -127,10 +127,9 @@ class LaunchDescriptorServiceIntegrationTest {
     var applicationNameOrigin =
         environment.getPropertySources().stream()
             .filter(source -> source.containsProperty("spring.application.name"))
-            .map(
-                source ->
-                    org.springframework.boot.origin.OriginLookup.getOrigin(
-                        source, "spring.application.name"))
+            .map(source ->
+                org.springframework.boot.origin.OriginLookup.getOrigin(
+                    source, "spring.application.name"))
             .filter(java.util.Objects::nonNull)
             .findFirst()
             .orElseThrow(
@@ -158,10 +157,9 @@ class LaunchDescriptorServiceIntegrationTest {
             actualApplicationConfig, expectedApplicationConfig)
         .isEqualTo(expectedApplicationConfig);
 
-    assertThatThrownBy(
-            () ->
-                legacyLaunchDescriptorService.resolveLaunchDescriptor(
-                    "1", 9L, "integration-cp-unbound", null, null, null, null))
+    assertThatThrownBy(() ->
+            legacyLaunchDescriptorService.resolveLaunchDescriptor(
+                "1", 9L, "integration-cp-unbound", null, null, null, null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world source binding is"
@@ -366,10 +364,9 @@ class LaunchDescriptorServiceIntegrationTest {
       executor.shutdownNow();
     }
 
-    assertThatThrownBy(
-            () ->
-                launchDescriptorService.resolveLaunchDescriptor(
-                    fixture.requestWithPatch("different-patch")))
+    assertThatThrownBy(() ->
+            launchDescriptorService.resolveLaunchDescriptor(
+                fixture.requestWithPatch("different-patch")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("control-plane request identity was reused with changed input");
 
@@ -410,10 +407,9 @@ class LaunchDescriptorServiceIntegrationTest {
     ReflectionTestUtils.setField(corruptingService, "workloadNamespace", NAMESPACE);
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
 
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> corruptingService.resolveLaunchDescriptor(fixture.request())))
+    assertThatThrownBy(() ->
+            transaction.execute(
+                status -> corruptingService.resolveLaunchDescriptor(fixture.request())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("stored failure is not the exact immutable request outcome");
 
@@ -503,13 +499,11 @@ class LaunchDescriptorServiceIntegrationTest {
     candidate.setOutcomeStatus(LaunchDescriptor.OUTCOME_SUCCESS);
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
 
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> {
-                      launchDescriptorRepository.insertImmutable(candidate);
-                      throw new IllegalStateException("force owner transaction rollback");
-                    }))
+    assertThatThrownBy(() ->
+            transaction.execute(status -> {
+              launchDescriptorRepository.insertImmutable(candidate);
+              throw new IllegalStateException("force owner transaction rollback");
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("force owner transaction rollback");
 
@@ -735,12 +729,11 @@ class LaunchDescriptorServiceIntegrationTest {
     assertThat(requiredSnapshot(migratedRows, "version_asset_artifact").get("last_error_message"))
         .isEqualTo(longArtifactError);
 
-    assertThatThrownBy(
-            () ->
-                isolatedDsl.execute(
-                    "UPDATE publish_attempt SET failure_message = ? WHERE id = ?",
-                    "forbidden-terminal-rewrite-" + suffix,
-                    attemptId))
+    assertThatThrownBy(() ->
+            isolatedDsl.execute(
+                "UPDATE publish_attempt SET failure_message = ? WHERE id = ?",
+                "forbidden-terminal-rewrite-" + suffix,
+                attemptId))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining("publish attempt is stale or terminal");
     Map<String, Map<String, Object>> afterRejectedTerminalRewrite =
@@ -999,12 +992,11 @@ class LaunchDescriptorServiceIntegrationTest {
         before, launchRepository.findByPrivateRequest(privateTenantKey, requestId).orElseThrow());
     assertThat(readRetainedRows.get()).isEqualTo(retainedCurrentRows);
 
-    assertThatThrownBy(
-            () ->
-                isolatedDsl.execute(
-                    "UPDATE launch_descriptor SET runtime_flags_json = ? WHERE id = ?",
-                    "{\"changed\":true}",
-                    before.getId()))
+    assertThatThrownBy(() ->
+            isolatedDsl.execute(
+                "UPDATE launch_descriptor SET runtime_flags_json = ? WHERE id = ?",
+                "{\"changed\":true}",
+                before.getId()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining("launch descriptors are immutable");
     assertRetainedRowUnchanged(
@@ -1026,15 +1018,14 @@ class LaunchDescriptorServiceIntegrationTest {
     String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
     AuthoredWorldSourceEvidence source =
         new TransactionTemplate(transactionManager)
-            .execute(
-                status ->
-                    authoredWorldSourceRepository.register(
-                        NAMESPACE,
-                        UUID.randomUUID(),
-                        persistedGame.getCanonicalTenantId(),
-                        "tenant-" + suffix,
-                        "world-" + suffix,
-                        "Launch World 🐉"));
+            .execute(status ->
+                authoredWorldSourceRepository.register(
+                    NAMESPACE,
+                    UUID.randomUUID(),
+                    persistedGame.getCanonicalTenantId(),
+                    "tenant-" + suffix,
+                    "world-" + suffix,
+                    "Launch World 🐉"));
     assertThat(source).isNotNull();
 
     Version version = new Version();
@@ -1082,43 +1073,42 @@ class LaunchDescriptorServiceIntegrationTest {
 
   private void assertFailedShapeRejected(
       LaunchDescriptor failed, String controlPlaneRequestId, boolean nullSchemaVersion) {
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    """
-                    INSERT INTO launch_descriptor (
-                        tenant_id,
-                        control_plane_request_id,
-                        request_hash,
-                        descriptor_schema_version,
-                        target_namespace,
-                        canonical_tenant_id,
-                        world_slug,
-                        authored_world_source_operation_id,
-                        authored_world_source_evidence_digest,
-                        request_digest,
-                        original_request_json,
-                        source_evidence_json,
-                        outcome_status,
-                        failure_code,
-                        failure_message)
-                    VALUES (?, ?, ?, CAST(? AS SMALLINT), ?, CAST(? AS UUID), ?,
-                            CAST(? AS UUID), ?, ?, ?, ?, 'FAILED', CAST(? AS VARCHAR(64)), ?)
-                    """,
-                    failed.getTenantId(),
-                    controlPlaneRequestId,
-                    failed.getRequestHash(),
-                    nullSchemaVersion ? null : failed.getDescriptorSchemaVersion(),
-                    failed.getTargetNamespace(),
-                    failed.getCanonicalTenantId(),
-                    failed.getWorldSlug(),
-                    failed.getAuthoredWorldSourceOperationId(),
-                    failed.getAuthoredWorldSourceEvidenceDigest(),
-                    failed.getRequestDigest(),
-                    failed.getOriginalRequestJson(),
-                    failed.getSourceEvidenceJson(),
-                    nullSchemaVersion ? failed.getFailureCode() : null,
-                    failed.getFailureMessage()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                """
+                INSERT INTO launch_descriptor (
+                    tenant_id,
+                    control_plane_request_id,
+                    request_hash,
+                    descriptor_schema_version,
+                    target_namespace,
+                    canonical_tenant_id,
+                    world_slug,
+                    authored_world_source_operation_id,
+                    authored_world_source_evidence_digest,
+                    request_digest,
+                    original_request_json,
+                    source_evidence_json,
+                    outcome_status,
+                    failure_code,
+                    failure_message)
+                VALUES (?, ?, ?, CAST(? AS SMALLINT), ?, CAST(? AS UUID), ?,
+                        CAST(? AS UUID), ?, ?, ?, ?, 'FAILED', CAST(? AS VARCHAR(64)), ?)
+                """,
+                failed.getTenantId(),
+                controlPlaneRequestId,
+                failed.getRequestHash(),
+                nullSchemaVersion ? null : failed.getDescriptorSchemaVersion(),
+                failed.getTargetNamespace(),
+                failed.getCanonicalTenantId(),
+                failed.getWorldSlug(),
+                failed.getAuthoredWorldSourceOperationId(),
+                failed.getAuthoredWorldSourceEvidenceDigest(),
+                failed.getRequestDigest(),
+                failed.getOriginalRequestJson(),
+                failed.getSourceEvidenceJson(),
+                nullSchemaVersion ? failed.getFailureCode() : null,
+                failed.getFailureMessage()))
         .isInstanceOf(DataIntegrityViolationException.class)
         .hasStackTraceContaining("ck_launch_descriptor_authored_binding_complete");
   }
@@ -1150,18 +1140,17 @@ class LaunchDescriptorServiceIntegrationTest {
     ready.countDown();
     await(start);
     return new TransactionTemplate(transactionManager)
-        .execute(
-            status -> {
-              try {
-                return "SUCCESS:"
-                    + service
-                        .resolveLaunchDescriptor(fixture.request())
-                        .authoredWorldBinding()
-                        .resultDigest();
-              } catch (IllegalArgumentException exception) {
-                return "FAILED:" + exception.getMessage();
-              }
-            });
+        .execute(status -> {
+          try {
+            return "SUCCESS:"
+                + service
+                    .resolveLaunchDescriptor(fixture.request())
+                    .authoredWorldBinding()
+                    .resultDigest();
+          } catch (IllegalArgumentException exception) {
+            return "FAILED:" + exception.getMessage();
+          }
+        });
   }
 
   private LaunchDescriptorServiceImpl candidateForPhase(
@@ -1177,12 +1166,11 @@ class LaunchDescriptorServiceIntegrationTest {
     Mockito.when(view.getDefaultVersionId()).thenReturn(fixture.version().getId());
     Mockito.when(view.getDefaultRuntimeFlagsJson()).thenReturn("{}");
     Mockito.when(view.getTemplateReferencePhase())
-        .thenAnswer(
-            invocation -> {
-              viewReached.countDown();
-              await(continueResolution);
-              return phase;
-            });
+        .thenAnswer(invocation -> {
+          viewReached.countDown();
+          await(continueResolution);
+          return phase;
+        });
     Mockito.when(
             templateRepository.findLaunchConfigByTenantIdAndId(
                 fixture.privateSourceTenantKey(), fixture.template().getId()))
@@ -1330,39 +1318,38 @@ class LaunchDescriptorServiceIntegrationTest {
             "NEW_GAME_ROW",
             evidenceDigest);
 
-    isolatedTransaction.execute(
-        status -> {
-          isolatedDsl.execute(
-              "INSERT INTO game_design_tenant_slug_binding "
-                  + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
-                  + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, ?)",
-              source.targetNamespace(),
-              source.canonicalTenantId(),
-              source.tenantSlug(),
-              source.sourceGameRowId(),
-              source.sourceGameTenantKey(),
-              source.provenanceKind());
-          isolatedDsl.execute(
-              "INSERT INTO game_design_authored_world_source_operations "
-                  + "(operation_id, schema_version, target_namespace, registration_request_id, "
-                  + "request_digest, canonical_tenant_id, tenant_slug, world_slug, "
-                  + "world_display_name, source_game_row_id, source_game_tenant_key, "
-                  + "provenance_kind, evidence_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              source.operationId(),
-              source.schemaVersion(),
-              source.targetNamespace(),
-              source.registrationRequestId(),
-              source.requestDigest(),
-              source.canonicalTenantId(),
-              source.tenantSlug(),
-              source.worldSlug(),
-              source.worldDisplayName(),
-              source.sourceGameRowId(),
-              source.sourceGameTenantKey(),
-              source.provenanceKind(),
-              source.evidenceDigest());
-          return null;
-        });
+    isolatedTransaction.execute(status -> {
+      isolatedDsl.execute(
+          "INSERT INTO game_design_tenant_slug_binding "
+              + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+              + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, ?)",
+          source.targetNamespace(),
+          source.canonicalTenantId(),
+          source.tenantSlug(),
+          source.sourceGameRowId(),
+          source.sourceGameTenantKey(),
+          source.provenanceKind());
+      isolatedDsl.execute(
+          "INSERT INTO game_design_authored_world_source_operations "
+              + "(operation_id, schema_version, target_namespace, registration_request_id, "
+              + "request_digest, canonical_tenant_id, tenant_slug, world_slug, "
+              + "world_display_name, source_game_row_id, source_game_tenant_key, "
+              + "provenance_kind, evidence_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          source.operationId(),
+          source.schemaVersion(),
+          source.targetNamespace(),
+          source.registrationRequestId(),
+          source.requestDigest(),
+          source.canonicalTenantId(),
+          source.tenantSlug(),
+          source.worldSlug(),
+          source.worldDisplayName(),
+          source.sourceGameRowId(),
+          source.sourceGameTenantKey(),
+          source.provenanceKind(),
+          source.evidenceDigest());
+      return null;
+    });
     return source;
   }
 
@@ -1462,14 +1449,13 @@ class LaunchDescriptorServiceIntegrationTest {
   private Map<String, Map<String, Object>> priorPublicationEvidenceColumns(
       Map<String, Map<String, Object>> snapshots, Map<String, Map<String, Object>> prior) {
     Map<String, Map<String, Object>> projected = new java.util.LinkedHashMap<>();
-    prior.forEach(
-        (table, before) -> {
-          var after = requiredSnapshot(snapshots, table);
-          assertThat(after.keySet()).containsAll(before.keySet());
-          Map<String, Object> columns = new java.util.LinkedHashMap<>();
-          before.keySet().forEach(column -> columns.put(column, after.get(column)));
-          projected.put(table, columns);
-        });
+    prior.forEach((table, before) -> {
+      var after = requiredSnapshot(snapshots, table);
+      assertThat(after.keySet()).containsAll(before.keySet());
+      Map<String, Object> columns = new java.util.LinkedHashMap<>();
+      before.keySet().forEach(column -> columns.put(column, after.get(column)));
+      projected.put(table, columns);
+    });
     return projected;
   }
 
@@ -1678,88 +1664,81 @@ class LaunchDescriptorServiceIntegrationTest {
         null,
         null);
 
-    assertThatThrownBy(
-            () ->
-                insertFailedDescriptor(
-                    tenantId,
-                    "launch-schema-missing-source",
-                    UUID.randomUUID(),
-                    source,
-                    source.evidenceDigest(),
-                    requestDigest))
+    assertThatThrownBy(() ->
+            insertFailedDescriptor(
+                tenantId,
+                "launch-schema-missing-source",
+                UUID.randomUUID(),
+                source,
+                source.evidenceDigest(),
+                requestDigest))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                insertFailedDescriptor(
-                    tenantId,
-                    "launch-schema-mismatched-source",
+    assertThatThrownBy(() ->
+            insertFailedDescriptor(
+                tenantId,
+                "launch-schema-mismatched-source",
+                source.operationId(),
+                new AuthoredWorldSourceFixture(
+                    source.targetNamespace(),
+                    source.canonicalTenantId(),
+                    source.tenantSlug(),
+                    source.worldSlug(),
                     source.operationId(),
-                    new AuthoredWorldSourceFixture(
-                        source.targetNamespace(),
-                        source.canonicalTenantId(),
-                        source.tenantSlug(),
-                        source.worldSlug(),
-                        source.operationId(),
-                        source.sourceGameRowId() + 1,
-                        source.sourceGameTenantKey(),
-                        source.provenanceKind(),
-                        source.evidenceDigest()),
-                    source.evidenceDigest(),
-                    requestDigest))
+                    source.sourceGameRowId() + 1,
+                    source.sourceGameTenantKey(),
+                    source.provenanceKind(),
+                    source.evidenceDigest()),
+                source.evidenceDigest(),
+                requestDigest))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                insertFailedDescriptor(
-                    tenantId,
-                    "launch-schema-malformed-source-digest",
-                    source.operationId(),
-                    source,
-                    "sha256:" + "d".repeat(63),
-                    requestDigest))
+    assertThatThrownBy(() ->
+            insertFailedDescriptor(
+                tenantId,
+                "launch-schema-malformed-source-digest",
+                source.operationId(),
+                source,
+                "sha256:" + "d".repeat(63),
+                requestDigest))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                insertFailedDescriptor(
-                    tenantId,
-                    "launch-schema-malformed-request-digest",
-                    source.operationId(),
-                    source,
-                    source.evidenceDigest(),
-                    "not-a-sha256-digest"))
+    assertThatThrownBy(() ->
+            insertFailedDescriptor(
+                tenantId,
+                "launch-schema-malformed-request-digest",
+                source.operationId(),
+                source,
+                source.evidenceDigest(),
+                "not-a-sha256-digest"))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                insertSuccessDescriptor(
-                    "launch-schema-malformed-result-" + UUID.randomUUID(),
-                    tenantId,
-                    savedTemplate,
-                    savedVersion,
-                    savedBundle,
-                    "launch-schema-malformed-result-request",
-                    requestDigest,
-                    "sha256:" + "e".repeat(63),
-                    source,
-                    source.evidenceDigest()))
+    assertThatThrownBy(() ->
+            insertSuccessDescriptor(
+                "launch-schema-malformed-result-" + UUID.randomUUID(),
+                tenantId,
+                savedTemplate,
+                savedVersion,
+                savedBundle,
+                "launch-schema-malformed-result-request",
+                requestDigest,
+                "sha256:" + "e".repeat(63),
+                source,
+                source.evidenceDigest()))
         .isInstanceOf(DataAccessException.class);
 
     assertThatThrownBy(() -> jdbcTemplate.execute("TRUNCATE TABLE launch_descriptor"))
         .isInstanceOf(DataAccessException.class)
         .rootCause()
-        .satisfies(
-            failure -> {
-              assertThat(failure).isInstanceOf(SQLException.class);
-              assertThat(((SQLException) failure).getSQLState()).isEqualTo("0A000");
-            })
+        .satisfies(failure -> {
+          assertThat(failure).isInstanceOf(SQLException.class);
+          assertThat(((SQLException) failure).getSQLState()).isEqualTo("0A000");
+        })
         .hasMessageContaining("cannot truncate a table referenced in a foreign key constraint");
     assertThatThrownBy(() -> jdbcTemplate.execute("TRUNCATE TABLE launch_descriptor CASCADE"))
         .isInstanceOf(DataAccessException.class)
         .rootCause()
         .hasMessageContaining("launch descriptors are immutable");
-    assertThatThrownBy(
-            () ->
-                jdbcTemplate.update(
-                    "DELETE FROM launch_descriptor WHERE control_plane_request_id = ?",
-                    "launch-schema-bound-request"))
+    assertThatThrownBy(() ->
+            jdbcTemplate.update(
+                "DELETE FROM launch_descriptor WHERE control_plane_request_id = ?",
+                "launch-schema-bound-request"))
         .isInstanceOf(DataAccessException.class)
         .rootCause()
         .hasMessageContaining("launch descriptors are immutable");
@@ -1780,38 +1759,37 @@ class LaunchDescriptorServiceIntegrationTest {
     String requestDigest = sha256("f");
     String evidenceDigest = sha256("1");
     new TransactionTemplate(transactionManager)
-        .execute(
-            transaction -> {
-              jdbcTemplate.update(
-                  "INSERT INTO game_design_tenant_slug_binding "
-                      + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
-                      + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, ?)",
-                  targetNamespace,
-                  game.getCanonicalTenantId(),
-                  tenantSlug,
-                  game.getId(),
-                  game.getTenantId(),
-                  provenanceKind);
-              jdbcTemplate.update(
-                  "INSERT INTO game_design_authored_world_source_operations "
-                      + "(operation_id, schema_version, target_namespace, registration_request_id, "
-                      + "request_digest, canonical_tenant_id, tenant_slug, world_slug, "
-                      + "world_display_name, source_game_row_id, source_game_tenant_key, "
-                      + "provenance_kind, evidence_digest) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                  operationId,
-                  targetNamespace,
-                  UUID.randomUUID(),
-                  requestDigest,
-                  game.getCanonicalTenantId(),
-                  tenantSlug,
-                  worldSlug,
-                  "Launch schema world",
-                  game.getId(),
-                  game.getTenantId(),
-                  provenanceKind,
-                  evidenceDigest);
-              return null;
-            });
+        .execute(transaction -> {
+          jdbcTemplate.update(
+              "INSERT INTO game_design_tenant_slug_binding "
+                  + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+                  + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, ?)",
+              targetNamespace,
+              game.getCanonicalTenantId(),
+              tenantSlug,
+              game.getId(),
+              game.getTenantId(),
+              provenanceKind);
+          jdbcTemplate.update(
+              "INSERT INTO game_design_authored_world_source_operations "
+                  + "(operation_id, schema_version, target_namespace, registration_request_id, "
+                  + "request_digest, canonical_tenant_id, tenant_slug, world_slug, "
+                  + "world_display_name, source_game_row_id, source_game_tenant_key, "
+                  + "provenance_kind, evidence_digest) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              operationId,
+              targetNamespace,
+              UUID.randomUUID(),
+              requestDigest,
+              game.getCanonicalTenantId(),
+              tenantSlug,
+              worldSlug,
+              "Launch schema world",
+              game.getId(),
+              game.getTenantId(),
+              provenanceKind,
+              evidenceDigest);
+          return null;
+        });
     return new AuthoredWorldSourceFixture(
         targetNamespace,
         game.getCanonicalTenantId(),

@@ -439,12 +439,11 @@ public class AccountAuthEvidenceBundleRepository {
         sources
             .account()
             .accountSecurityCutoff()
-            .map(
-                cutoff ->
-                    new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
-                        cutoff.accountAuthorityGeneration(),
-                        cutoff.outboxStreamKey(),
-                        cutoff.outboxSequence())));
+            .map(cutoff ->
+                new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
+                    cutoff.accountAuthorityGeneration(),
+                    cutoff.outboxStreamKey(),
+                    cutoff.outboxSequence())));
   }
 
   private static Map<String, Object> sourceVersions(IssuerAccountSourceSnapshot sources) {

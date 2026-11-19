@@ -55,22 +55,17 @@ class CurrentTenantCreationAuthorizationGrpcCodecTest {
     assertThatThrownBy(() -> CurrentTenantCreationAuthorizationGrpcCodec.decodeRequest(unknown))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unknown");
-    assertThatThrownBy(
-            () ->
-                CurrentTenantCreationAuthorizationGrpcCodec.decodeRequest(
-                    valid.toBuilder().setSchemaVersion(2).build()))
+    assertThatThrownBy(() ->
+            CurrentTenantCreationAuthorizationGrpcCodec.decodeRequest(
+                valid.toBuilder().setSchemaVersion(2).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CurrentTenantCreationAuthorizationGrpcCodec.decodeRequest(
-                    valid.toBuilder()
-                        .setReadRequestId("00000000-0000-0000-0000-000000000000")
-                        .build()))
+    assertThatThrownBy(() ->
+            CurrentTenantCreationAuthorizationGrpcCodec.decodeRequest(
+                valid.toBuilder().setReadRequestId("00000000-0000-0000-0000-000000000000").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CurrentTenantCreationAuthorizationGrpcCodec.decodeRequest(
-                    valid.toBuilder().setCreationRequestId("not-a-uuid").build()))
+    assertThatThrownBy(() ->
+            CurrentTenantCreationAuthorizationGrpcCodec.decodeRequest(
+                valid.toBuilder().setCreationRequestId("not-a-uuid").build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -80,38 +75,33 @@ class CurrentTenantCreationAuthorizationGrpcCodecTest {
     var response =
         CurrentTenantCreationAuthorizationGrpcCodec.response(READ_ID, BINDING, validBefore);
 
-    assertThatThrownBy(
-            () ->
-                CurrentTenantCreationAuthorizationGrpcCodec.verifyResponse(
-                    UUID.randomUUID(), BINDING, response))
+    assertThatThrownBy(() ->
+            CurrentTenantCreationAuthorizationGrpcCodec.verifyResponse(
+                UUID.randomUUID(), BINDING, response))
         .isInstanceOf(IllegalArgumentException.class)
         .hasRootCauseMessage(
             "Current tenant-creation authorization response changed its exact request");
-    assertThatThrownBy(
-            () ->
-                CurrentTenantCreationAuthorizationGrpcCodec.verifyResponse(
-                    READ_ID,
-                    new Binding(
-                        BINDING.targetNamespace(),
-                        BINDING.creationRequestId(),
-                        BINDING.accountAuthorizationOperationId(),
-                        UUID.fromString("55555555-5555-4555-8555-555555555555"),
-                        BINDING.creationRequestDigest(),
-                        BINDING.accountAuthorizationDigest()),
-                    response))
+    assertThatThrownBy(() ->
+            CurrentTenantCreationAuthorizationGrpcCodec.verifyResponse(
+                READ_ID,
+                new Binding(
+                    BINDING.targetNamespace(),
+                    BINDING.creationRequestId(),
+                    BINDING.accountAuthorizationOperationId(),
+                    UUID.fromString("55555555-5555-4555-8555-555555555555"),
+                    BINDING.creationRequestDigest(),
+                    BINDING.accountAuthorizationDigest()),
+                response))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () -> CurrentTenantCreationAuthorizationGrpcCodec.response(READ_ID, BINDING, 0))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CurrentTenantCreationAuthorizationGrpcCodec.response(
-                    READ_ID, BINDING, Long.MAX_VALUE))
+    assertThatThrownBy(() ->
+            CurrentTenantCreationAuthorizationGrpcCodec.response(READ_ID, BINDING, Long.MAX_VALUE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CurrentTenantCreationAuthorizationGrpcCodec.verifyResponse(
-                    READ_ID, BINDING, response.toBuilder().setValidBeforeEpochMillis(0).build()))
+    assertThatThrownBy(() ->
+            CurrentTenantCreationAuthorizationGrpcCodec.verifyResponse(
+                READ_ID, BINDING, response.toBuilder().setValidBeforeEpochMillis(0).build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -128,10 +118,8 @@ class CurrentTenantCreationAuthorizationGrpcCodecTest {
                     .build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                CurrentTenantCreationAuthorizationGrpcCodec.verifyResponse(
-                    READ_ID, BINDING, unknown))
+    assertThatThrownBy(() ->
+            CurrentTenantCreationAuthorizationGrpcCodec.verifyResponse(READ_ID, BINDING, unknown))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unknown");
   }

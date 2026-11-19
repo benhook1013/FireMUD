@@ -84,9 +84,8 @@ public final class FakeGameplayPresenceService implements GameplayPresenceServic
   public List<GameplayPresence> listConnectedByGameInstance(long tenantId, long gameInstanceId) {
     List<GameplayPresence> matches =
         presences.values().stream()
-            .filter(
-                presence ->
-                    presence.tenantId() == tenantId && presence.gameInstanceId() == gameInstanceId)
+            .filter(presence ->
+                presence.tenantId() == tenantId && presence.gameInstanceId() == gameInstanceId)
             .sorted(ordering())
             .toList();
     return List.copyOf(matches);
@@ -105,10 +104,9 @@ public final class FakeGameplayPresenceService implements GameplayPresenceServic
       }
       List<GameplayPresence> matches =
           presences.values().stream()
-              .filter(
-                  presence ->
-                      presence.tenantId() == tenantId
-                          && Objects.equals(presence.accountId(), accountId))
+              .filter(presence ->
+                  presence.tenantId() == tenantId
+                      && Objects.equals(presence.accountId(), accountId))
               .sorted(ordering())
               .toList();
       if (!matches.isEmpty()) {

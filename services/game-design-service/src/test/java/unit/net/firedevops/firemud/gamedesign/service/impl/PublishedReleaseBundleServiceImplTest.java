@@ -54,15 +54,14 @@ class PublishedReleaseBundleServiceImplTest {
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenReturn(List.of(validCommandDefinition()));
     when(repository.save(any(PublishedReleaseBundle.class)))
-        .thenAnswer(
-            invocation -> {
-              PublishedReleaseBundle saved = invocation.getArgument(0);
-              saved.setId(11L);
-              saved.setPublishedReleaseBundleRef("owner-release");
-              when(repository.findByTenantIdAndVersionId("tenant-1", 7L))
-                  .thenReturn(Optional.of(saved));
-              return saved;
-            });
+        .thenAnswer(invocation -> {
+          PublishedReleaseBundle saved = invocation.getArgument(0);
+          saved.setId(11L);
+          saved.setPublishedReleaseBundleRef("owner-release");
+          when(repository.findByTenantIdAndVersionId("tenant-1", 7L))
+              .thenReturn(Optional.of(saved));
+          return saved;
+        });
     var first =
         service.createFullVersionBundle(
             selectorVersion(),
@@ -92,15 +91,14 @@ class PublishedReleaseBundleServiceImplTest {
     org.mockito.Mockito.verify(repository)
         .requireSelectedCommandDefinitions(any(), any(), any(), any());
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    selectorVersion(),
-                    "publish-workflow",
-                    emptyManifest(),
-                    "changed",
-                    participants,
-                    evidence))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "publish-workflow",
+                emptyManifest(),
+                "changed",
+                participants,
+                evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("IDEMPOTENCY_CONFLICT");
     PublishedReleaseBundleContract.requireSelectedFullBinding(first);
@@ -165,35 +163,32 @@ class PublishedReleaseBundleServiceImplTest {
     var participants =
         PublishedWorldSelectorFixtures.participants(
             7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    selectorVersion(),
-                    "publish-workflow",
-                    emptyManifest(),
-                    "genrev-1",
-                    participants,
-                    null))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "publish-workflow",
+                emptyManifest(),
+                "genrev-1",
+                participants,
+                null))
         .isInstanceOf(NullPointerException.class);
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    selectorVersion(),
-                    "wrong-workflow",
-                    emptyManifest(),
-                    "genrev-1",
-                    participants,
-                    evidence))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "wrong-workflow",
+                emptyManifest(),
+                "genrev-1",
+                participants,
+                evidence))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    selectorVersion(),
-                    "publish-workflow",
-                    emptyManifest(),
-                    "genrev-1",
-                    participants.subList(0, 4),
-                    evidence))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "publish-workflow",
+                emptyManifest(),
+                "genrev-1",
+                participants.subList(0, 4),
+                evidence))
         .isInstanceOf(IllegalArgumentException.class);
     var world = participants.getFirst();
     var changed = new java.util.ArrayList<>(participants);
@@ -209,28 +204,24 @@ class PublishedReleaseBundleServiceImplTest {
             null,
             null,
             null));
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    selectorVersion(),
-                    "publish-workflow",
-                    emptyManifest(),
-                    "genrev-1",
-                    changed,
-                    evidence))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "publish-workflow",
+                emptyManifest(),
+                "genrev-1",
+                changed,
+                evidence))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    selectorVersion(),
-                    "publish-workflow",
-                    emptyManifest(),
-                    "genrev-1",
-                    PublishedWorldSelectorFixtures.participants(
-                        7L,
-                        evidence,
-                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                    evidence))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "publish-workflow",
+                emptyManifest(),
+                "genrev-1",
+                PublishedWorldSelectorFixtures.participants(
+                    7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                evidence))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Selected-full");
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
@@ -257,15 +248,14 @@ class PublishedReleaseBundleServiceImplTest {
               participant.abilitySchemaDigest(),
               participant.errorCode(),
               participant.errorMessage()));
-      assertThatThrownBy(
-              () ->
-                  service.createFullVersionBundle(
-                      selectorVersion(),
-                      "publish-workflow",
-                      emptyManifest(),
-                      "genrev-1",
-                      mixed,
-                      evidence))
+      assertThatThrownBy(() ->
+              service.createFullVersionBundle(
+                  selectorVersion(),
+                  "publish-workflow",
+                  emptyManifest(),
+                  "genrev-1",
+                  mixed,
+                  evidence))
           .as("mixed profile for %s", participant.participantKey())
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("Selected-full release requires the exact 4/3/1/6/2");
@@ -279,18 +269,17 @@ class PublishedReleaseBundleServiceImplTest {
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenThrow(new IllegalStateException("SELECTED_SOURCE_CAPTURE_UNAVAILABLE"));
 
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    selectorVersion(),
-                    "publish-workflow",
-                    emptyManifest(),
-                    "genrev-1",
-                    PublishedWorldSelectorFixtures.participants(
-                        7L,
-                        evidence,
-                        AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION),
-                    evidence))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "publish-workflow",
+                emptyManifest(),
+                "genrev-1",
+                PublishedWorldSelectorFixtures.participants(
+                    7L,
+                    evidence,
+                    AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION),
+                evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
@@ -307,18 +296,17 @@ class PublishedReleaseBundleServiceImplTest {
     assertNull(
         service.getPublishedReleaseBundle("tenant-1", 7L).worldPublishedStartLocationEvidence());
     var evidence = selectorEvidence();
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    selectorVersion(),
-                    "publish-workflow",
-                    emptyManifest(),
-                    "genrev-1",
-                    PublishedWorldSelectorFixtures.participants(
-                        7L,
-                        evidence,
-                        AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION),
-                    evidence))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "publish-workflow",
+                emptyManifest(),
+                "genrev-1",
+                PublishedWorldSelectorFixtures.participants(
+                    7L,
+                    evidence,
+                    AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION),
+                evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("selector-ineligible");
     retained.setWorldPublishedStartLocationEvidenceJson(
@@ -380,10 +368,9 @@ class PublishedReleaseBundleServiceImplTest {
 
   @Test
   void legacyFullVersionCannotCreateV1BundleFromMutableRevisions() {
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    version(), "workflow-1", logoManifest(), "genrev-1", List.of()))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                version(), "workflow-1", logoManifest(), "genrev-1", List.of()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageStartingWith("PUBLISH_SELECTION_REQUIRED");
     org.mockito.Mockito.verifyNoInteractions(repository, versionRepository);
@@ -517,15 +504,14 @@ class PublishedReleaseBundleServiceImplTest {
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenThrow(new IllegalStateException("SELECTED_SOURCE_CAPTURE_UNAVAILABLE"));
 
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    selectorVersion(),
-                    "publish-workflow",
-                    emptyManifest(),
-                    "genrev-1",
-                    participants,
-                    evidence))
+    assertThatThrownBy(() ->
+            service.createFullVersionBundle(
+                selectorVersion(),
+                "publish-workflow",
+                emptyManifest(),
+                "genrev-1",
+                participants,
+                evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
@@ -555,13 +541,12 @@ class PublishedReleaseBundleServiceImplTest {
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenReturn(List.of(validCommandDefinition()));
     when(repository.save(any(PublishedReleaseBundle.class)))
-        .thenAnswer(
-            invocation -> {
-              PublishedReleaseBundle saved = invocation.getArgument(0);
-              saved.setId(11L);
-              saved.setPublishedReleaseBundleRef("owner-issued-reference-11");
-              return saved;
-            });
+        .thenAnswer(invocation -> {
+          PublishedReleaseBundle saved = invocation.getArgument(0);
+          saved.setId(11L);
+          saved.setPublishedReleaseBundleRef("owner-issued-reference-11");
+          return saved;
+        });
 
     var dto =
         service.createFullVersionBundle(

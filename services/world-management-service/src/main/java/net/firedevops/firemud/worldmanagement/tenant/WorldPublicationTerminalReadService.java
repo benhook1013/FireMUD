@@ -66,11 +66,10 @@ public final class WorldPublicationTerminalReadService {
       GameDesignPublicationTerminalEvidence committed =
           repository
               .readCommitted(terminalRequest)
-              .orElseThrow(
-                  () ->
-                      Status.FAILED_PRECONDITION
-                          .withDescription("Exact committed World terminal is unavailable")
-                          .asRuntimeException());
+              .orElseThrow(() ->
+                  Status.FAILED_PRECONDITION
+                      .withDescription("Exact committed World terminal is unavailable")
+                      .asRuntimeException());
       if (!Arrays.equals(
           request.expectedGameDesignTerminalEvidence(), committed.canonicalBytes())) {
         throw Status.FAILED_PRECONDITION

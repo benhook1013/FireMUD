@@ -89,12 +89,11 @@ class StartSessionReservationEvidenceClientTest {
     StartSessionPreAuthorizationReservationTuple tuple = tuple();
     List<ReadCurrentClaimEvidenceRequest> requests = new ArrayList<>();
     try (MtlsFixture fixture =
-        mtlsFixture(
-            request -> {
-              requests.add(request);
-              assertThat(io.grpc.Context.current().getDeadline()).isNotNull();
-              return validResponse(request, tuple.mutationDigest());
-            })) {
+        mtlsFixture(request -> {
+          requests.add(request);
+          assertThat(io.grpc.Context.current().getDeadline()).isNotNull();
+          return validResponse(request, tuple.mutationDigest());
+        })) {
       StartSessionReservationEvidenceClient client = fixture.client();
 
       ReadCurrentClaimEvidenceResponse issueFirst =
@@ -134,15 +133,13 @@ class StartSessionReservationEvidenceClientTest {
       assertThat(recoveryFirst).isEqualTo(recoveryRetry);
       assertThat(requests).hasSize(4);
       assertThat(requests)
-          .allSatisfy(
-              request -> {
-                assertThat(request.getControlPlaneRequestId()).isEqualTo(REQUEST_ID);
-                assertThat(request.getPreAuthorizationTupleJson().toByteArray())
-                    .containsExactly(tuple.canonicalJson().getBytes(StandardCharsets.UTF_8));
-                assertThat(request.getReservationOwnerId())
-                    .isEqualTo(RESERVATION_OWNER_ID.toString());
-                assertThat(request.getReservationClaimFence()).isEqualTo(1L);
-              });
+          .allSatisfy(request -> {
+            assertThat(request.getControlPlaneRequestId()).isEqualTo(REQUEST_ID);
+            assertThat(request.getPreAuthorizationTupleJson().toByteArray())
+                .containsExactly(tuple.canonicalJson().getBytes(StandardCharsets.UTF_8));
+            assertThat(request.getReservationOwnerId()).isEqualTo(RESERVATION_OWNER_ID.toString());
+            assertThat(request.getReservationClaimFence()).isEqualTo(1L);
+          });
       assertThat(requests.get(0).getPurpose())
           .isEqualTo(
               StartSessionReservationEvidencePurpose
@@ -198,15 +195,14 @@ class StartSessionReservationEvidenceClientTest {
 
       for (ReadCurrentClaimEvidenceResponse invalidResponse : invalid) {
         response.set(invalidResponse);
-        assertThatThrownBy(
-                () ->
-                    client.readCurrentClaimEvidence(
-                        tuple,
-                        RESERVATION_OWNER_ID,
-                        1L,
-                        RESERVATION_OWNER_ID,
-                        1L,
-                        StartSessionReservationEvidenceClient.Purpose.ISSUE))
+        assertThatThrownBy(() ->
+                client.readCurrentClaimEvidence(
+                    tuple,
+                    RESERVATION_OWNER_ID,
+                    1L,
+                    RESERVATION_OWNER_ID,
+                    1L,
+                    StartSessionReservationEvidenceClient.Purpose.ISSUE))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("stale or mismatched");
       }
@@ -247,52 +243,47 @@ class StartSessionReservationEvidenceClientTest {
     StartSessionPreAuthorizationReservationTuple tuple = tuple();
     AtomicInteger calls = new AtomicInteger();
     try (MtlsFixture fixture =
-        mtlsFixture(
-            request -> {
-              calls.incrementAndGet();
-              return validResponse(request, tuple.mutationDigest());
-            })) {
+        mtlsFixture(request -> {
+          calls.incrementAndGet();
+          return validResponse(request, tuple.mutationDigest());
+        })) {
       StartSessionReservationEvidenceClient client = fixture.client();
 
-      assertThatThrownBy(
-              () ->
-                  client.readCurrentClaimEvidence(
-                      null,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      StartSessionReservationEvidenceClient.Purpose.ISSUE))
+      assertThatThrownBy(() ->
+              client.readCurrentClaimEvidence(
+                  null,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  StartSessionReservationEvidenceClient.Purpose.ISSUE))
           .isInstanceOf(NullPointerException.class);
-      assertThatThrownBy(
-              () ->
-                  client.readCurrentClaimEvidence(
-                      tuple,
-                      RESERVATION_OWNER_ID,
-                      0L,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      StartSessionReservationEvidenceClient.Purpose.ISSUE))
+      assertThatThrownBy(() ->
+              client.readCurrentClaimEvidence(
+                  tuple,
+                  RESERVATION_OWNER_ID,
+                  0L,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  StartSessionReservationEvidenceClient.Purpose.ISSUE))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  client.readCurrentClaimEvidence(
-                      tuple,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      RECOVERY_OWNER_ID,
-                      3L,
-                      StartSessionReservationEvidenceClient.Purpose.ISSUE))
+      assertThatThrownBy(() ->
+              client.readCurrentClaimEvidence(
+                  tuple,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  RECOVERY_OWNER_ID,
+                  3L,
+                  StartSessionReservationEvidenceClient.Purpose.ISSUE))
           .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () ->
-                  client.readCurrentClaimEvidence(
-                      tuple,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      StartSessionReservationEvidenceClient.Purpose.RECOVER))
+      assertThatThrownBy(() ->
+              client.readCurrentClaimEvidence(
+                  tuple,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  StartSessionReservationEvidenceClient.Purpose.RECOVER))
           .isInstanceOf(IllegalArgumentException.class);
       assertThat(calls).hasValue(0);
     }
@@ -304,35 +295,32 @@ class StartSessionReservationEvidenceClientTest {
     StartSessionPreAuthorizationReservationTuple tuple = tuple();
     AtomicReference<Status> status = new AtomicReference<>(Status.UNAVAILABLE);
     try (MtlsFixture fixture =
-        mtlsFixture(
-            request -> {
-              throw status.get().asRuntimeException();
-            })) {
+        mtlsFixture(request -> {
+          throw status.get().asRuntimeException();
+        })) {
       StartSessionReservationEvidenceClient client = fixture.client();
 
-      assertThatThrownBy(
-              () ->
-                  client.readCurrentClaimEvidence(
-                      tuple,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      StartSessionReservationEvidenceClient.Purpose.ISSUE))
+      assertThatThrownBy(() ->
+              client.readCurrentClaimEvidence(
+                  tuple,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  StartSessionReservationEvidenceClient.Purpose.ISSUE))
           .isInstanceOf(StatusRuntimeException.class)
           .extracting(error -> ((StatusRuntimeException) error).getStatus().getCode())
           .isEqualTo(Status.Code.UNAVAILABLE);
 
       status.set(Status.FAILED_PRECONDITION);
-      assertThatThrownBy(
-              () ->
-                  client.readCurrentClaimEvidence(
-                      tuple,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      RESERVATION_OWNER_ID,
-                      1L,
-                      StartSessionReservationEvidenceClient.Purpose.ISSUE))
+      assertThatThrownBy(() ->
+              client.readCurrentClaimEvidence(
+                  tuple,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  StartSessionReservationEvidenceClient.Purpose.ISSUE))
           .isInstanceOf(StatusRuntimeException.class)
           .extracting(error -> ((StatusRuntimeException) error).getStatus().getCode())
           .isEqualTo(Status.Code.FAILED_PRECONDITION);
@@ -393,10 +381,9 @@ class StartSessionReservationEvidenceClientTest {
               })) {
         assertThatThrownBy(() -> readIssue(fixture.client()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.UNAUTHENTICATED))
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAUTHENTICATED))
             .hasMessageContaining("exact authenticated server workload identity");
       }
     }
@@ -407,11 +394,10 @@ class StartSessionReservationEvidenceClientTest {
   void rejectsAmbientTransactionAndSynchronizationBeforeAnyRpc() throws Exception {
     var calls = new AtomicInteger();
     try (var fixture =
-        mtlsFixture(
-            request -> {
-              calls.incrementAndGet();
-              return validResponse(request, tuple().mutationDigest());
-            })) {
+        mtlsFixture(request -> {
+          calls.incrementAndGet();
+          return validResponse(request, tuple().mutationDigest());
+        })) {
       TransactionSynchronizationManager.setActualTransactionActive(true);
       assertThatThrownBy(() -> readIssue(fixture.client()))
           .isInstanceOf(IllegalStateException.class)

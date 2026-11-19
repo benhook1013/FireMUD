@@ -134,11 +134,9 @@ public class EffectiveSettingsController {
       SessionContext context =
           sessionAuthenticationService
               .resolveUnverifiedSessionContext(Long.toString(parsedSessionId))
-              .orElseThrow(
-                  () ->
-                      new ResponseStatusException(
-                          HttpStatus.NOT_FOUND,
-                          "Session context not found for " + parsedSessionId));
+              .orElseThrow(() ->
+                  new ResponseStatusException(
+                      HttpStatus.NOT_FOUND, "Session context not found for " + parsedSessionId));
       return new SessionResolution(parsedSessionId, context, true);
     }
     long resolvedTenantId =

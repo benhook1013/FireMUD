@@ -74,19 +74,17 @@ public final class WorldOriginalDraftGraphApplicationService {
                 target.canonicalTenantId(),
                 target.canonicalVersionId(),
                 target.gameDesignVersionRowId())
-            .orElseThrow(
-                () ->
-                    new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
-                        "Exact World authored-Version identity receipt is missing"));
+            .orElseThrow(() ->
+                new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
+                    "Exact World authored-Version identity receipt is missing"));
 
     WorldAuthoredSourceIntakeReceipt retainedIntake = identity.sourceIntakeReceipt();
     WorldAuthoredSourceIntakeReceipt committedIntake =
         sourceIntakes
             .read(receiverNamespace, retainedIntake.intakeRequestId())
-            .orElseThrow(
-                () ->
-                    new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
-                        "Exact World source intake association is missing"));
+            .orElseThrow(() ->
+                new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
+                    "Exact World source intake association is missing"));
     if (!retainedIntake.equals(committedIntake)) {
       throw conflict("World Version identity differs from its independently read source intake");
     }

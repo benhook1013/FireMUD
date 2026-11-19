@@ -51,40 +51,33 @@ class PublicationReadGuardTest {
 
   @Test
   void allowsAllFourExactPublicationReadsWithWorkloadOnlyContext() {
-    withPeer(
-        () -> {
-          SessionContext.setContext(
-              null, List.of(), Map.of(), true, "game-design-service", "game-design-instance");
-          for (String method : PublicationReadGuard.PUBLICATION_READ_METHODS) {
-            guard.requirePublicationRead(method);
-          }
-        });
+    withPeer(() -> {
+      SessionContext.setContext(
+          null, List.of(), Map.of(), true, "game-design-service", "game-design-instance");
+      for (String method : PublicationReadGuard.PUBLICATION_READ_METHODS) {
+        guard.requirePublicationRead(method);
+      }
+    });
   }
 
   @Test
   void deniesAuthenticatedUserContextEvenWithGameDesignPeer() {
-    withPeer(
-        () -> {
-          SessionContext.setContext("42", List.of(), Map.of());
-          assertThatThrownBy(
-                  () ->
-                      guard.requirePublicationRead(
-                          PublicationReadGuard.WORLD_MANAGEMENT_DIGEST_METHOD))
-              .isInstanceOf(AdminAuthorizationException.class);
-        });
+    withPeer(() -> {
+      SessionContext.setContext("42", List.of(), Map.of());
+      assertThatThrownBy(() ->
+              guard.requirePublicationRead(PublicationReadGuard.WORLD_MANAGEMENT_DIGEST_METHOD))
+          .isInstanceOf(AdminAuthorizationException.class);
+    });
   }
 
   @Test
   void deniesAuthenticatedAdminContextEvenWithGameDesignPeer() {
-    withPeer(
-        () -> {
-          SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
-          assertThatThrownBy(
-                  () ->
-                      guard.requirePublicationRead(
-                          PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD))
-              .isInstanceOf(AdminAuthorizationException.class);
-        });
+    withPeer(() -> {
+      SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+      assertThatThrownBy(() ->
+              guard.requirePublicationRead(PublicationReadGuard.AUTOMATION_SCRIPTING_DIGEST_METHOD))
+          .isInstanceOf(AdminAuthorizationException.class);
+    });
   }
 
   @Test
@@ -118,10 +111,9 @@ class PublicationReadGuardTest {
     withPeer(
         wrongNamespacePeer,
         () ->
-            assertThatThrownBy(
-                    () ->
-                        guard.requirePublicationRead(
-                            PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD))
+            assertThatThrownBy(() ->
+                    guard.requirePublicationRead(
+                        PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD))
                 .isInstanceOf(AdminAuthorizationException.class));
   }
 

@@ -62,9 +62,8 @@ public final class GrpcServerPeerIdentityClientInterceptor implements ClientInte
                         && (expectedLeafSha256 == null
                             || GrpcPeerCertificateEvidence.fromSslSession(
                                     call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION))
-                                .filter(
-                                    certificate ->
-                                        expectedLeafSha256.equals(certificate.leafSha256()))
+                                .filter(certificate ->
+                                    expectedLeafSha256.equals(certificate.leafSha256()))
                                 .isPresent());
                 if (!verified) {
                   closed = true;

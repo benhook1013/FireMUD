@@ -81,12 +81,11 @@ class AuthoredCoreAndSpawnReadClientLifecycleTest {
       GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
       when(channelFactory.buildChannel(
               any(String.class), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
-          .thenAnswer(
-              invocation -> {
-                ManagedChannel channel = mock(ManagedChannel.class);
-                channels.add(channel);
-                return channel;
-              });
+          .thenAnswer(invocation -> {
+            ManagedChannel channel = mock(ManagedChannel.class);
+            channels.add(channel);
+            return channel;
+          });
       ClientHandle handle = kind.create(endpoints, tls, channelFactory);
       client = handle.client();
       handle.initialize().run();

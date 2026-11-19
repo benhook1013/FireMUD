@@ -224,14 +224,13 @@ public final class TickScheduler {
     }
     try {
       scheduledCounter.increment();
-      tickExecutor.execute(
-          () -> {
-            try {
-              tickService.processTick(instance.getTenantId(), instance.getId());
-            } finally {
-              pendingOrRunningTicks.remove(key);
-            }
-          });
+      tickExecutor.execute(() -> {
+        try {
+          tickService.processTick(instance.getTenantId(), instance.getId());
+        } finally {
+          pendingOrRunningTicks.remove(key);
+        }
+      });
     } catch (TaskRejectedException ex) {
       pendingOrRunningTicks.remove(key);
       rejectedCounter.increment();

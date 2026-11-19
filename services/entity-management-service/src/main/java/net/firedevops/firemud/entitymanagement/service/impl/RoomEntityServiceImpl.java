@@ -52,18 +52,17 @@ public class RoomEntityServiceImpl implements RoomEntityService {
         room == null
             ? List.of()
             : room.getEntities().stream()
-                .map(
-                    entity ->
-                        new RoomEntityDto(
-                            entity.getEntityId(),
-                            entity.getDisplayName(),
-                            entity.getEntityType(),
-                            entity.getRole(),
-                            entity.getStateFlags(),
-                            entity.getVisionPriority(),
-                            entity.getReloadHint(),
-                            entity.isVisible(),
-                            null))
+                .map(entity ->
+                    new RoomEntityDto(
+                        entity.getEntityId(),
+                        entity.getDisplayName(),
+                        entity.getEntityType(),
+                        entity.getRole(),
+                        entity.getStateFlags(),
+                        entity.getVisionPriority(),
+                        entity.getReloadHint(),
+                        entity.isVisible(),
+                        null))
                 .toList();
     Page<ItemInstance> roomGroundPage =
         itemInstanceRepository

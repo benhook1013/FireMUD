@@ -36,19 +36,16 @@ class SelectedDraftGameLogicReceiptServiceTest {
     when(repository.read(any(), any())).thenReturn(Optional.empty());
     when(repository.retain(any())).thenReturn(value);
     when(gl.retain(any()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return new GameLogicIntakeRetainEvidence(
-                  call.getArgument(0), value.receipt().terminal());
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return new GameLogicIntakeRetainEvidence(call.getArgument(0), value.receipt().terminal());
+        });
     when(account.read(any()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return new AccountGameLogicIntakeSettlementReadEvidence(
-                  call.getArgument(0), value.receipt());
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return new AccountGameLogicIntakeSettlementReadEvidence(
+              call.getArgument(0), value.receipt());
+        });
     var service =
         new SelectedDraftGameLogicReceiptService(
             repository,
@@ -83,10 +80,9 @@ class SelectedDraftGameLogicReceiptServiceTest {
     assertThatThrownBy(() -> service.retain(value.selection(), value.authorization()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SELECTION_UNAVAILABLE");
-    assertThatThrownBy(
-            () ->
-                service.retain(
-                    value.selection(), SelectedDraftGameLogicReceiptTest.fixture().authorization()))
+    assertThatThrownBy(() ->
+            service.retain(
+                value.selection(), SelectedDraftGameLogicReceiptTest.fixture().authorization()))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(repository, transactions, gl, account);
   }
@@ -110,21 +106,18 @@ class SelectedDraftGameLogicReceiptServiceTest {
     assertThatThrownBy(() -> service.retain(value.selection(), value.authorization()))
         .isInstanceOf(IllegalStateException.class);
     when(gl.retain(any()))
-        .thenAnswer(
-            call ->
-                new GameLogicIntakeRetainEvidence(
-                    call.getArgument(0),
-                    GameLogicGameplayRuleIntakeTerminal.aborted(
-                        new GameLogicGameplayRuleIntakeOperation("test", value.authorization()))));
+        .thenAnswer(call ->
+            new GameLogicIntakeRetainEvidence(
+                call.getArgument(0),
+                GameLogicGameplayRuleIntakeTerminal.aborted(
+                    new GameLogicGameplayRuleIntakeOperation("test", value.authorization()))));
     when(account.read(any()))
-        .thenAnswer(
-            call ->
-                new AccountGameLogicIntakeSettlementReadEvidence(
-                    call.getArgument(0),
-                    new AccountGameLogicIntakeSettlementEvidence(
-                        GameLogicGameplayRuleIntakeTerminal.aborted(
-                            new GameLogicGameplayRuleIntakeOperation(
-                                "test", value.authorization())))));
+        .thenAnswer(call ->
+            new AccountGameLogicIntakeSettlementReadEvidence(
+                call.getArgument(0),
+                new AccountGameLogicIntakeSettlementEvidence(
+                    GameLogicGameplayRuleIntakeTerminal.aborted(
+                        new GameLogicGameplayRuleIntakeOperation("test", value.authorization())))));
     assertThatThrownBy(() -> service.retain(value.selection(), value.authorization()))
         .isInstanceOf(IllegalArgumentException.class);
     verify(account).read(any());
@@ -142,9 +135,8 @@ class SelectedDraftGameLogicReceiptServiceTest {
     var gl = mock(GameLogicIntakeRetainClient.class);
     var account = mock(AccountGameLogicIntakeSettlementReadClient.class);
     when(gl.retain(any()))
-        .thenAnswer(
-            call ->
-                new GameLogicIntakeRetainEvidence(call.getArgument(0), value.receipt().terminal()));
+        .thenAnswer(call ->
+            new GameLogicIntakeRetainEvidence(call.getArgument(0), value.receipt().terminal()));
     when(account.read(any()))
         .thenThrow(new IllegalStateException("lost settlement acknowledgement"));
     var service =
@@ -159,10 +151,8 @@ class SelectedDraftGameLogicReceiptServiceTest {
         .hasMessage("lost settlement acknowledgement");
     verify(repository, never()).retain(any());
     verifyNoInteractions(transactions);
-    doAnswer(
-            call ->
-                new AccountGameLogicIntakeSettlementReadEvidence(
-                    call.getArgument(0), value.receipt()))
+    doAnswer(call ->
+            new AccountGameLogicIntakeSettlementReadEvidence(call.getArgument(0), value.receipt()))
         .when(account)
         .read(any());
     assertThat(service.retain(value.selection(), value.authorization())).isSameAs(value);

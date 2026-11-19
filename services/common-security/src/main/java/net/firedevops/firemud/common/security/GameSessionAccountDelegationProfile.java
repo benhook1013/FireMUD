@@ -88,13 +88,11 @@ public final class GameSessionAccountDelegationProfile {
       throw new IllegalArgumentException(
           "Account security cutoff presence does not match the source generation");
     }
-    accountSecurityCutoff.ifPresent(
-        cutoff -> {
-          if (!Long.toString(accountAuthorityGeneration)
-              .equals(cutoff.accountAuthorityGeneration())) {
-            throw new IllegalArgumentException("Account security cutoff generation is stale");
-          }
-        });
+    accountSecurityCutoff.ifPresent(cutoff -> {
+      if (!Long.toString(accountAuthorityGeneration).equals(cutoff.accountAuthorityGeneration())) {
+        throw new IllegalArgumentException("Account security cutoff generation is stale");
+      }
+    });
     Map<String, Object> tuple = new LinkedHashMap<>();
     tuple.put("issuerAuthGeneration", Long.toString(issuerAuthGeneration));
     tuple.put("accountAuthorityGeneration", Long.toString(accountAuthorityGeneration));

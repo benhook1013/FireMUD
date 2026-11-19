@@ -43,15 +43,14 @@ public final class WorldCanonicalFrozenTopology {
           freeze.publishWorkflowId());
       var expected =
           plan.binding().affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
-              .map(
-                  unit ->
-                      new OwnedAffectedTuple(
-                          unit.owner().name(),
-                          unit.aggregateType(),
-                          unit.aggregateId(),
-                          unit.scopeType(),
-                          unit.scopeId(),
-                          unit.expectedEpoch()))
+              .map(unit ->
+                  new OwnedAffectedTuple(
+                      unit.owner().name(),
+                      unit.aggregateType(),
+                      unit.aggregateId(),
+                      unit.scopeType(),
+                      unit.scopeId(),
+                      unit.expectedEpoch()))
               .toList();
       if (expected.size() != freeze.suppliedOwnedAffectedTuples().size()
           || !new java.util.HashSet<>(expected)

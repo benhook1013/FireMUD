@@ -80,10 +80,9 @@ class FileBackedGrpcMtlsPolicyTest {
   void acceptsResolvedReadableFiles(@TempDir Path directory) throws Exception {
     CommonGrpcClientProperties properties = propertiesWithFiles(directory);
 
-    assertThatCode(
-            () ->
-                requireResolved(
-                    properties, new GrpcTlsMaterialResolver(), "test read requires workload mTLS"))
+    assertThatCode(() ->
+            requireResolved(
+                properties, new GrpcTlsMaterialResolver(), "test read requires workload mTLS"))
         .doesNotThrowAnyException();
   }
 
@@ -100,20 +99,18 @@ class FileBackedGrpcMtlsPolicyTest {
                 classpathResource, classpathResource, classpathResource);
           }
         };
-    assertThatThrownBy(
-            () ->
-                requireResolved(properties, classpathResolver, "test read requires workload mTLS"))
+    assertThatThrownBy(() ->
+            requireResolved(properties, classpathResolver, "test read requires workload mTLS"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test read requires readable file-backed workload mTLS");
 
     CommonGrpcClientProperties directoryProperties = propertiesWithFiles(directory);
     directoryProperties.setCaCert(directory.toString());
-    assertThatThrownBy(
-            () ->
-                requireResolved(
-                    directoryProperties,
-                    new GrpcTlsMaterialResolver(),
-                    "test read requires workload mTLS"))
+    assertThatThrownBy(() ->
+            requireResolved(
+                directoryProperties,
+                new GrpcTlsMaterialResolver(),
+                "test read requires workload mTLS"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test read requires readable file-backed workload mTLS");
   }
@@ -123,12 +120,11 @@ class FileBackedGrpcMtlsPolicyTest {
       throws Exception {
     CommonGrpcClientProperties plaintext = propertiesWithFiles(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                requireResolved(
-                    plaintext,
-                    new GrpcTlsMaterialResolver(),
-                    "StartSession authorization requires file-backed workload mTLS"))
+    assertThatThrownBy(() ->
+            requireResolved(
+                plaintext,
+                new GrpcTlsMaterialResolver(),
+                "StartSession authorization requires file-backed workload mTLS"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("StartSession authorization requires file-backed workload mTLS");
 
@@ -140,12 +136,11 @@ class FileBackedGrpcMtlsPolicyTest {
             throw new IOException("sensitive resolver detail");
           }
         };
-    assertThatThrownBy(
-            () ->
-                requireResolved(
-                    propertiesWithFiles(directory),
-                    failingResolver,
-                    "Account authorization requires workload mTLS"))
+    assertThatThrownBy(() ->
+            requireResolved(
+                propertiesWithFiles(directory),
+                failingResolver,
+                "Account authorization requires workload mTLS"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test read requires readable file-backed workload mTLS")
         .hasMessageNotContaining("sensitive resolver detail");

@@ -174,12 +174,9 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
       assertThat(admittedHeaders.get().getFirst("X-Firemud-Connect-Token")).isNull();
       assertThat(admittedHeaders.get().getFirst("X-Firemud-Transport-Session-Id")).isNull();
 
-      assertThatThrownBy(
-              () ->
-                  connect(
-                      port,
-                      bridgeHeaders,
-                      clientContext("wrong-client.pem", "wrong-client-key.pem")))
+      assertThatThrownBy(() ->
+              connect(
+                  port, bridgeHeaders, clientContext("wrong-client.pem", "wrong-client-key.pem")))
           .isInstanceOf(RuntimeException.class)
           .hasMessageContaining("403 Forbidden");
       assertThat(admittedConnections).hasValue(1);
@@ -190,13 +187,12 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
 
       HttpHeaders noFrameHeaders = bridgeHeaders();
       noFrameHeaders.set("X-Proxy-Connection-Id", NO_FRAME_PROXY_CONNECTION_ID);
-      assertThatThrownBy(
-              () ->
-                  connect(
-                      port,
-                      noFrameHeaders,
-                      clientContext("tcp-proxy-client.pem", "tcp-proxy-client-key.pem"),
-                      Duration.ofSeconds(1)))
+      assertThatThrownBy(() ->
+              connect(
+                  port,
+                  noFrameHeaders,
+                  clientContext("tcp-proxy-client.pem", "tcp-proxy-client-key.pem"),
+                  Duration.ofSeconds(1)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Timeout on blocking read");
     }

@@ -191,17 +191,13 @@ public class AccountTenantCreationBootstrapService {
           UUID requestId =
               operationRepository
                   .findRequestIdByTenantForUpdate(tenantUuid)
-                  .orElseThrow(
-                      () ->
-                          new IllegalStateException(
-                              "Committed creator-bootstrap operation is absent"));
+                  .orElseThrow(() ->
+                      new IllegalStateException("Committed creator-bootstrap operation is absent"));
           StoredOperation operation =
               operationRepository
                   .findForUpdate(requestId)
-                  .orElseThrow(
-                      () ->
-                          new IllegalStateException(
-                              "Committed creator-bootstrap receipt is absent"));
+                  .orElseThrow(() ->
+                      new IllegalStateException("Committed creator-bootstrap receipt is absent"));
           FreshTenantCreationEvidence creation =
               tenantAssociationRepository
                   .read(tenantUuid)
@@ -251,9 +247,8 @@ public class AccountTenantCreationBootstrapService {
                     baseline.outboxStreamKey(), "0"))
             .equals(
                 baseline.outboxCheckpoints().stream()
-                    .filter(
-                        checkpoint ->
-                            checkpoint.outboxStreamKey().equals(baseline.outboxStreamKey()))
+                    .filter(checkpoint ->
+                        checkpoint.outboxStreamKey().equals(baseline.outboxStreamKey()))
                     .toList())) {
       throw new IllegalStateException(
           "Creator bootstrap baseline is not exact sequence-zero absence");

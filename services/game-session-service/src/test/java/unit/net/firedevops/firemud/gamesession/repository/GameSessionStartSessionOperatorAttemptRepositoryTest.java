@@ -60,15 +60,13 @@ class GameSessionStartSessionOperatorAttemptRepositoryTest {
   void requiresAnExplicitlyBoundedClaimLease() {
     DSLContext dsl = mock(DSLContext.class);
 
-    assertThatThrownBy(
-            () ->
-                new GameSessionStartSessionOperatorAttemptRepository(dsl, java.time.Duration.ZERO))
+    assertThatThrownBy(() ->
+            new GameSessionStartSessionOperatorAttemptRepository(dsl, java.time.Duration.ZERO))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("positive and at most five minutes");
-    assertThatThrownBy(
-            () ->
-                new GameSessionStartSessionOperatorAttemptRepository(
-                    dsl, java.time.Duration.ofMinutes(6)))
+    assertThatThrownBy(() ->
+            new GameSessionStartSessionOperatorAttemptRepository(
+                dsl, java.time.Duration.ofMinutes(6)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("positive and at most five minutes");
 

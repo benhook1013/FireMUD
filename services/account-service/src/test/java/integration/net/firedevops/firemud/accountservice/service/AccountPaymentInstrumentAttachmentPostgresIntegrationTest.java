@@ -72,18 +72,17 @@ class AccountPaymentInstrumentAttachmentPostgresIntegrationTest {
     UUID laterRequest = UUID.randomUUID();
     var unavailable =
         f.tx()
-            .execute(
-                s ->
-                    f.instruments()
-                        .recordAvailability(
-                            new AvailabilityObservation(
-                                laterRequest,
-                                f.request().instrumentUuid(),
-                                f.request().accountUuid(),
-                                1,
-                                State.UNAVAILABLE,
-                                observed.receipt().display(),
-                                "sha256:" + "c".repeat(64))));
+            .execute(s ->
+                f.instruments()
+                    .recordAvailability(
+                        new AvailabilityObservation(
+                            laterRequest,
+                            f.request().instrumentUuid(),
+                            f.request().accountUuid(),
+                            1,
+                            State.UNAVAILABLE,
+                            observed.receipt().display(),
+                            "sha256:" + "c".repeat(64))));
     f.transport().paths.clear();
     var replay = (HistoricalAttachment) f.service().retainSavedMethod(f.request());
     assertThat(replay.receipt()).isEqualTo(observed.receipt());
@@ -91,15 +90,14 @@ class AccountPaymentInstrumentAttachmentPostgresIntegrationTest {
     assertThat(f.instruments().readHistory(f.request().accountUuid(), f.request().instrumentUuid()))
         .containsExactly(observed.receipt(), unavailable);
     assertThat(f.transport().paths).isEmpty();
-    assertThatThrownBy(
-            () ->
-                f.service()
-                    .retainSavedMethod(
-                        new Request(
-                            f.request().requestId(),
-                            f.request().instrumentUuid(),
-                            f.request().accountUuid(),
-                            "pm_changed")))
+    assertThatThrownBy(() ->
+            f.service()
+                .retainSavedMethod(
+                    new Request(
+                        f.request().requestId(),
+                        f.request().instrumentUuid(),
+                        f.request().accountUuid(),
+                        "pm_changed")))
         .hasMessageContaining("changed binding");
     assertThat(f.instruments().readHistory(f.request().accountUuid(), f.request().instrumentUuid()))
         .containsExactly(observed.receipt(), unavailable);
@@ -197,16 +195,15 @@ class AccountPaymentInstrumentAttachmentPostgresIntegrationTest {
             tx.execute(
                 s -> customers.retainIntent(account, operation, UUID.randomUUID()).customer()));
     // Controlled local customer setup only; the observer must independently match SDK metadata.
-    tx.executeWithoutResult(
-        s ->
-            customers.recordObservation(
-                account,
-                operation,
-                intent.rowVersion(),
-                UUID.randomUUID(),
-                AccountBillingCustomerRecord.Observation.CONFIRMED,
-                "cus_saved",
-                "sha256:" + "a".repeat(64)));
+    tx.executeWithoutResult(s ->
+        customers.recordObservation(
+            account,
+            operation,
+            intent.rowVersion(),
+            UUID.randomUUID(),
+            AccountBillingCustomerRecord.Observation.CONFIRMED,
+            "cus_saved",
+            "sha256:" + "a".repeat(64)));
     var transport = new Transport(account, operation, sql);
     Clock clock = Clock.fixed(Instant.parse("2026-11-02T00:00:00Z"), ZoneOffset.UTC);
     var service =

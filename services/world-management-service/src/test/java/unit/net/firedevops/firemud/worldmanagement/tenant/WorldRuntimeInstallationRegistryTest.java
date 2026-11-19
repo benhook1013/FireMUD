@@ -16,10 +16,8 @@ class WorldRuntimeInstallationRegistryTest {
     var transactions = mock(PlatformTransactionManager.class);
     var registry = new WorldRuntimeInstallationRegistry(dsl, transactions, "world", "firemud");
 
-    assertThatThrownBy(
-            () ->
-                registry.preflightLaunchOwners(
-                    UUID.fromString("88888888-8888-4888-8888-888888888888")))
+    assertThatThrownBy(() ->
+            registry.preflightLaunchOwners(UUID.fromString("88888888-8888-4888-8888-888888888888")))
         .isInstanceOf(WorldRuntimeInstallationRegistry.RegistryUnavailableException.class)
         .hasMessage("Protected current-installation source is unavailable");
 

@@ -15,12 +15,11 @@ public class LookResultRenderer {
     out.append("Exits: ");
     out.append(
         result.getExitsList().stream()
-            .map(
-                e ->
-                    e.getLabel()
-                        + " ("
-                        + (e.getDescription().isEmpty() ? "no description" : e.getDescription())
-                        + ")")
+            .map(e ->
+                e.getLabel()
+                    + " ("
+                    + (e.getDescription().isEmpty() ? "no description" : e.getDescription())
+                    + ")")
             .collect(Collectors.joining(", ")));
     out.append("\nEntities:\n");
     for (var entity : result.getEntitiesList()) {

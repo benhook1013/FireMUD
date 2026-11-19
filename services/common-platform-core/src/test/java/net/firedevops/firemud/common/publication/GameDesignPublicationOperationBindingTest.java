@@ -82,10 +82,9 @@ class GameDesignPublicationOperationBindingTest {
           "sha256:"
               + java.util.HexFormat.of()
                   .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
-      assertThatThrownBy(
-              () ->
-                  WorldSelectedPublicationArtifactInventoryEvidence.fromRetainedSelection(
-                      operation.account(), operation.world(), bytes, digest))
+      assertThatThrownBy(() ->
+              WorldSelectedPublicationArtifactInventoryEvidence.fromRetainedSelection(
+                  operation.account(), operation.world(), bytes, digest))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

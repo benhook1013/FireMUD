@@ -33,10 +33,9 @@ class WorldPublishedStartLocationClientTest {
     var channelFactory = mock(GrpcChannelFactory.class);
     var plaintext = tls(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldPublishedStartLocationClient(
-                    new ServiceEndpointsProperties(), plaintext, channelFactory, "test"))
+    assertThatThrownBy(() ->
+            new WorldPublishedStartLocationClient(
+                new ServiceEndpointsProperties(), plaintext, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
 

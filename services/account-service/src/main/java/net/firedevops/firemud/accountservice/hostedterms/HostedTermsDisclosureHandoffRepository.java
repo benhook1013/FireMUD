@@ -410,14 +410,13 @@ public final class HostedTermsDisclosureHandoffRepository {
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new IllegalStateException("Writable caller Account transaction required");
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Transaction-bound writable READ_COMMITTED connection required");
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Transaction-bound writable READ_COMMITTED connection required");
+      }
+    });
   }
 }

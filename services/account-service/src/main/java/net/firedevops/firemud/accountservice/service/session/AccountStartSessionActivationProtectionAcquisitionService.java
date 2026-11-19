@@ -137,10 +137,9 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
               StoredParticipation exactParticipation =
                   participationRepository
                       .findHistoricalForOriginalTuple(tupleBytes)
-                      .orElseThrow(
-                          () ->
-                              failedPrecondition(
-                                  "Exact committed original World participation is unavailable"));
+                      .orElseThrow(() ->
+                          failedPrecondition(
+                              "Exact committed original World participation is unavailable"));
               requireSameParticipation(initiallyRetained, exactParticipation);
               requireCommittedParticipation(exactParticipation);
               requireExactRetainedAttempt(exactParticipation, attemptRequest, currentAttempt);
@@ -150,16 +149,14 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
     requireNoAmbientTransaction();
     StoredProtection readback =
         Objects.requireNonNull(
-            readbackTransaction.execute(
-                ignored ->
-                    protectionRepository
-                        .findHistoricalExact(
-                            committed.evidence().accountProtectionId(),
-                            committed.evidence().accountProtectionFence())
-                        .orElseThrow(
-                            () ->
-                                failedPrecondition(
-                                    "Committed original activation protection is not readable"))),
+            readbackTransaction.execute(ignored ->
+                protectionRepository
+                    .findHistoricalExact(
+                        committed.evidence().accountProtectionId(),
+                        committed.evidence().accountProtectionFence())
+                    .orElseThrow(() ->
+                        failedPrecondition(
+                            "Committed original activation protection is not readable"))),
             "Account activation protection readback transaction returned no value");
     if (!Arrays.equals(
         committed.evidence().canonicalBytes(), readback.evidence().canonicalBytes())) {
@@ -171,19 +168,16 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
   private StoredParticipation readCommittedParticipation(
       byte[] tupleBytes, AccountStartSessionActivationProtectionAcquisitionInput input) {
     return Objects.requireNonNull(
-        ownerTransaction.execute(
-            ignored -> {
-              StoredParticipation participation =
-                  participationRepository
-                      .findHistoricalForOriginalTuple(tupleBytes)
-                      .orElseThrow(
-                          () ->
-                              failedPrecondition(
-                                  "Exact original World participation is unavailable"));
-              requireTupleAndWorldBinding(participation, tupleBytes, input);
-              requireCommittedParticipation(participation);
-              return participation;
-            }),
+        ownerTransaction.execute(ignored -> {
+          StoredParticipation participation =
+              participationRepository
+                  .findHistoricalForOriginalTuple(tupleBytes)
+                  .orElseThrow(() ->
+                      failedPrecondition("Exact original World participation is unavailable"));
+          requireTupleAndWorldBinding(participation, tupleBytes, input);
+          requireCommittedParticipation(participation);
+          return participation;
+        }),
         "Account World participation transaction returned no value");
   }
 
@@ -208,10 +202,8 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
             // Read the immutable first witness without reopening that participation. Currentness
             // comes from the separate authenticated fresh read and Account's admission callback.
             .findHistoricalExact(participation, expectedRequest)
-            .orElseThrow(
-                () ->
-                    failedPrecondition(
-                        "Exact retained original Game Session attempt is unavailable"));
+            .orElseThrow(() ->
+                failedPrecondition("Exact retained original Game Session attempt is unavailable"));
     var stored = retained.result();
     if (!OriginalStartSessionCurrentAttemptEvidence.PENDING_PHASE.equals(stored.phaseState())
         || !stored.originalLeaseExpiresAt().equals(observed.originalLeaseExpiresAt())

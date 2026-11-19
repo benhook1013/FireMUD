@@ -79,26 +79,21 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
     var authorization = authorization();
     var accountReader = mock(GameLogicIntakeAuthorizationReadClient.class);
     when(accountReader.read(any()))
-        .thenAnswer(
-            invocation -> {
-              GameLogicIntakeAuthorizationReadEvidence.Request request = invocation.getArgument(0);
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(request.binding().canonicalBytes())
-                  .isEqualTo(authorization.canonicalBytes());
-              return new GameLogicIntakeAuthorizationReadEvidence(request);
-            });
+        .thenAnswer(invocation -> {
+          GameLogicIntakeAuthorizationReadEvidence.Request request = invocation.getArgument(0);
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(request.binding().canonicalBytes()).isEqualTo(authorization.canonicalBytes());
+          return new GameLogicIntakeAuthorizationReadEvidence(request);
+        });
     var sourceReader = mock(GameplayRuleSourceReadClient.class);
     when(sourceReader.read(any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayRuleSourceReadEvidence.Request request = invocation.getArgument(0);
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(request.proof())
-                  .isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
-              assertThat(request.proof().canonicalBytes())
-                  .isEqualTo(authorization.canonicalBytes());
-              return new GameplayRuleSourceReadEvidence(request, authorization.source());
-            });
+        .thenAnswer(invocation -> {
+          GameplayRuleSourceReadEvidence.Request request = invocation.getArgument(0);
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(request.proof()).isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
+          assertThat(request.proof().canonicalBytes()).isEqualTo(authorization.canonicalBytes());
+          return new GameplayRuleSourceReadEvidence(request, authorization.source());
+        });
     var intake =
         new GameLogicGameplayRuleIntakeService(
             f.repository(), f.manager(), accountReader, sourceReader, NAMESPACE);
@@ -175,15 +170,13 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
     var abortedAuthorization = authorization();
     var abortAccountReader = mock(GameLogicIntakeAuthorizationReadClient.class);
     when(abortAccountReader.read(any()))
-        .thenAnswer(
-            invocation -> {
-              GameLogicIntakeAuthorizationReadEvidence.Request heldRequest =
-                  invocation.getArgument(0);
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(heldRequest.binding().canonicalBytes())
-                  .isEqualTo(abortedAuthorization.canonicalBytes());
-              return new GameLogicIntakeAuthorizationReadEvidence(heldRequest);
-            });
+        .thenAnswer(invocation -> {
+          GameLogicIntakeAuthorizationReadEvidence.Request heldRequest = invocation.getArgument(0);
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(heldRequest.binding().canonicalBytes())
+              .isEqualTo(abortedAuthorization.canonicalBytes());
+          return new GameLogicIntakeAuthorizationReadEvidence(heldRequest);
+        });
     var unusedAbortSourceReader = mock(GameplayRuleSourceReadClient.class);
     var abortOwner =
         new GameLogicGameplayRuleIntakeService(
@@ -254,28 +247,27 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
     var failure = new AtomicReference<Throwable>();
     var response = new AtomicReference<GetDraftDesignDigestResponse>();
     var completed = new AtomicReference<>(false);
-    asGameDesign(
-        () -> {
-          receiver.getDraftDesignDigest(
-              request,
-              new StreamObserver<>() {
-                @Override
-                public void onNext(GetDraftDesignDigestResponse value) {
-                  response.set(value);
-                }
+    asGameDesign(() -> {
+      receiver.getDraftDesignDigest(
+          request,
+          new StreamObserver<>() {
+            @Override
+            public void onNext(GetDraftDesignDigestResponse value) {
+              response.set(value);
+            }
 
-                @Override
-                public void onError(Throwable value) {
-                  failure.set(value);
-                }
+            @Override
+            public void onError(Throwable value) {
+              failure.set(value);
+            }
 
-                @Override
-                public void onCompleted() {
-                  completed.set(true);
-                }
-              });
-          return null;
-        });
+            @Override
+            public void onCompleted() {
+              completed.set(true);
+            }
+          });
+      return null;
+    });
     assertThat(failure.get()).isInstanceOf(StatusRuntimeException.class);
     var statusFailure = (StatusRuntimeException) failure.get();
     assertThat(statusFailure.getStatus().getCode()).isEqualTo(code);

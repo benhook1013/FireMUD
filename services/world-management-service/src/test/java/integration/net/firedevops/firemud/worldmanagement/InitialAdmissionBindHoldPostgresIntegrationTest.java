@@ -93,42 +93,39 @@ class InitialAdmissionBindHoldPostgresIntegrationTest {
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
       Future<net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldDto> acquireFuture =
-          executor.submit(
-              () ->
-                  transactionTemplate.execute(
-                      status -> {
-                        worldInstanceRepository
-                            .findByTenantIdAndGameInstanceIdForUpdate(tenantId, gameInstanceId)
-                            .orElseThrow();
-                        Record backendIdentity =
-                            Objects.requireNonNull(
-                                dsl.fetchOne("SELECT pg_backend_pid()"),
-                                "PostgreSQL backend PID query returned no row");
-                        acquisitionBackendPid.set(
-                            Objects.requireNonNull(
-                                backendIdentity.get(0, Integer.class),
-                                "PostgreSQL backend PID query returned a null PID"));
-                        lifecycleLocked.countDown();
-                        await(allowAcquireCommit);
-                        return holdService.acquire(request);
-                      }));
+          executor.submit(() ->
+              transactionTemplate.execute(status -> {
+                worldInstanceRepository
+                    .findByTenantIdAndGameInstanceIdForUpdate(tenantId, gameInstanceId)
+                    .orElseThrow();
+                Record backendIdentity =
+                    Objects.requireNonNull(
+                        dsl.fetchOne("SELECT pg_backend_pid()"),
+                        "PostgreSQL backend PID query returned no row");
+                acquisitionBackendPid.set(
+                    Objects.requireNonNull(
+                        backendIdentity.get(0, Integer.class),
+                        "PostgreSQL backend PID query returned a null PID"));
+                lifecycleLocked.countDown();
+                await(allowAcquireCommit);
+                return holdService.acquire(request);
+              }));
       assertThat(lifecycleLocked.await(5, TimeUnit.SECONDS)).isTrue();
       int exactAcquisitionBackendPid = acquisitionBackendPid.get();
       assertThat(exactAcquisitionBackendPid).isPositive();
 
       CountDownLatch terminationStarted = new CountDownLatch(1);
       Future<String> terminationFuture =
-          executor.submit(
-              () -> {
-                terminationStarted.countDown();
-                try {
-                  lifecycleCommandService.terminateWorldInstance(
-                      tenantId, gameInstanceId, 4L, "terminate-race-1", "race");
-                  return "unexpected termination success";
-                } catch (IllegalArgumentException exception) {
-                  return exception.getMessage();
-                }
-              });
+          executor.submit(() -> {
+            terminationStarted.countDown();
+            try {
+              lifecycleCommandService.terminateWorldInstance(
+                  tenantId, gameInstanceId, 4L, "terminate-race-1", "race");
+              return "unexpected termination success";
+            } catch (IllegalArgumentException exception) {
+              return exception.getMessage();
+            }
+          });
       assertThat(terminationStarted.await(5, TimeUnit.SECONDS)).isTrue();
       int terminationBackendPid = awaitBackendBlockedBy(exactAcquisitionBackendPid);
       assertThat(isBackendBlockedBy(terminationBackendPid, exactAcquisitionBackendPid)).isTrue();
@@ -175,10 +172,9 @@ class InitialAdmissionBindHoldPostgresIntegrationTest {
 
     try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
       Future<?> termination =
-          executor.submit(
-              () ->
-                  lifecycleCommandService.terminateWorldInstance(
-                      tenantId, gameInstanceId, 4L, "terminate-race-2", "race"));
+          executor.submit(() ->
+              lifecycleCommandService.terminateWorldInstance(
+                  tenantId, gameInstanceId, 4L, "terminate-race-2", "race"));
       assertThat(ownerCleanupCalled.await(5, TimeUnit.SECONDS)).isTrue();
 
       assertThatThrownBy(() -> holdService.acquire(request(tenantId, gameInstanceId)))
@@ -201,10 +197,9 @@ class InitialAdmissionBindHoldPostgresIntegrationTest {
       var acquired = holdService.acquire(request(tenantId, gameInstanceId));
       holdService.requireReconciliation(acquired.holdId(), "GS_OWNER_READ_UNAVAILABLE");
 
-      assertThatThrownBy(
-              () ->
-                  lifecycleCommandService.terminateWorldInstance(
-                      tenantId, gameInstanceId, 4L, "terminate-held-1", "stop"))
+      assertThatThrownBy(() ->
+              lifecycleCommandService.terminateWorldInstance(
+                  tenantId, gameInstanceId, 4L, "terminate-held-1", "stop"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageStartingWith("INITIAL_ADMISSION_BIND_HOLD_ACTIVE:");
     } finally {

@@ -64,8 +64,8 @@ public interface AccountOriginalNewFinalAdmissionReadClient {
   }
 
   /**
-   * Typed response only constructible by the protected reader implementation. Account exact-
-   * compares every anchor and checks the canonical continuity deadline before persisting it.
+   * Typed response only constructible by the protected reader implementation. Account
+   * exact-compares every anchor and checks the canonical continuity deadline before persisting it.
    */
   final class AuthenticatedFinalAdmissionReadback {
     private static final long MAX_CANONICAL_SESSION_DURATION_MILLIS = 300_000L;

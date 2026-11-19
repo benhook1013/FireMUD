@@ -130,31 +130,28 @@ public final class AccountTenantCapacityRecoveryWorker {
     if (claim.reservation().state() != State.RESERVED) return claim.reservation();
     if (claim.noCommitProof() != null) {
       if (noCommitAction == NoCommitAction.RETAIN_FOR_REARM) return claim.reservation();
-      return owner.inTransaction(
-          () -> {
-            Record row = capacity.find(request.identity());
-            if (row == null) throw conflict();
-            Result current = capacity.exact(request, row);
-            AccountTenantCapacityOwner.requireClaim(row, workerId, claim.fence(), clock.instant());
-            if (!current.equals(claim.reservation())
-                || !"NOT_EXECUTED_AFTER_AUTHORIZATION"
-                    .equals(row.get("execution_status", String.class))
-                || !Arrays.equals(claim.noCommitProof(), row.get("owner_readback", byte[].class)))
-              throw conflict();
-            moveUsage(request, false);
-            int changed =
-                dsl.execute(
-                    "UPDATE account_tenant_capacity_reservations SET state = 'RELEASED', reservation_fence = ?, next_reconcile_at = NULL WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION'",
-                    Math.incrementExact(current.reservationFence()),
-                    request.identity().tenantId(),
-                    request.identity().requestId(),
-                    request.identity().admissionId(),
-                    workerId,
-                    claim.fence());
-            if (changed != 1) throw conflict();
-            return capacity.exact(
-                request, Objects.requireNonNull(capacity.find(request.identity())));
-          });
+      return owner.inTransaction(() -> {
+        Record row = capacity.find(request.identity());
+        if (row == null) throw conflict();
+        Result current = capacity.exact(request, row);
+        AccountTenantCapacityOwner.requireClaim(row, workerId, claim.fence(), clock.instant());
+        if (!current.equals(claim.reservation())
+            || !"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(row.get("execution_status", String.class))
+            || !Arrays.equals(claim.noCommitProof(), row.get("owner_readback", byte[].class)))
+          throw conflict();
+        moveUsage(request, false);
+        int changed =
+            dsl.execute(
+                "UPDATE account_tenant_capacity_reservations SET state = 'RELEASED', reservation_fence = ?, next_reconcile_at = NULL WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION'",
+                Math.incrementExact(current.reservationFence()),
+                request.identity().tenantId(),
+                request.identity().requestId(),
+                request.identity().admissionId(),
+                workerId,
+                claim.fence());
+        if (changed != 1) throw conflict();
+        return capacity.exact(request, Objects.requireNonNull(capacity.find(request.identity())));
+      });
     }
     Observation candidate = null;
     byte[] candidateProof = null;
@@ -180,93 +177,91 @@ public final class AccountTenantCapacityRecoveryWorker {
     }
     final Observation observed = candidate;
     final byte[] exactProof = candidateProof;
-    return owner.inTransaction(
-        () -> {
-          Record row = capacity.find(request.identity());
-          if (row == null) throw conflict();
-          Result current = capacity.exact(request, row);
-          AccountTenantCapacityOwner.requireClaim(row, workerId, claim.fence(), clock.instant());
-          if (!current.equals(claim.reservation())) throw conflict();
-          int attempt = Math.incrementExact(Math.toIntExact(number(row, "recovery_attempt_count")));
-          if (attempt > 12) throw unavailable();
-          Instant now = clock.instant();
-          boolean indeterminate =
-              observed == null || observed.disposition() == Disposition.INDETERMINATE;
-          boolean quarantine =
-              indeterminate && (attempt == 12 || !now.isBefore(claim.reconcileDeadline()));
-          String outcome =
-              quarantine
-                  ? State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION.name()
-                  : observed == null ? "SOURCE_UNAVAILABLE" : observed.disposition().name();
-          int retained =
-              dsl.execute(
-                  "INSERT INTO account_tenant_capacity_recovery_evidence (tenant_uuid, request_id, admission_id, admission_attempt_id, recovery_claim_fence, recovery_policy_version, recovery_attempt_number, observed_at, outcome, canonical_readback, readback_digest) VALUES (?, ?, ?, ?, ?, 'capacity-recovery/1', ?, ?::timestamptz, ?, ?, ?)",
-                  request.identity().tenantId(),
-                  request.identity().requestId(),
-                  request.identity().admissionId(),
-                  request.admissionAttemptId(),
-                  claim.fence(),
-                  attempt,
-                  at(now),
-                  outcome,
-                  exactProof,
-                  exactProof == null ? null : sha256(exactProof));
-          if (retained != 1) throw unavailable();
-          if (indeterminate) {
-            int updated =
-                dsl.execute(
-                    "UPDATE account_tenant_capacity_reservations SET recovery_attempt_count = ?, state = ?, recovery_escalated_at = ?::timestamptz, next_reconcile_at = ?::timestamptz WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'OWNER_EXECUTION_PENDING'",
-                    attempt,
-                    quarantine
-                        ? State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION.name()
-                        : State.RESERVED.name(),
-                    quarantine ? at(now) : null,
-                    quarantine
-                        ? null
-                        : at(
-                            now.plusSeconds(5).isBefore(claim.reconcileDeadline())
-                                ? now.plusSeconds(5)
-                                : claim.reconcileDeadline()),
-                    request.identity().tenantId(),
-                    request.identity().requestId(),
-                    request.identity().admissionId(),
-                    workerId,
-                    claim.fence());
-            if (updated != 1) throw conflict();
-            return capacity.exact(
-                request, Objects.requireNonNull(capacity.find(request.identity())));
-          }
-          boolean committed = observed.disposition() == Disposition.COMMITTED;
-          State next =
-              committed
-                  ? State.FINALIZED
-                  : noCommitAction == NoCommitAction.RELEASE ? State.RELEASED : State.RESERVED;
-          if (committed || next == State.RELEASED) moveUsage(request, committed);
-          long reservationFence =
-              next == State.RELEASED
-                  ? Math.incrementExact(current.reservationFence())
-                  : current.reservationFence();
-          int changed =
-              dsl.execute(
-                  "UPDATE account_tenant_capacity_reservations SET state = ?, execution_status = ?, owner_readback = ?, owner_readback_digest = ?, reservation_fence = ?, recovery_attempt_count = ?, next_reconcile_at = NULL "
-                      + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND admission_attempt_id = ? AND mutation_digest = ? AND reservation_fence = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'OWNER_EXECUTION_PENDING'",
-                  next.name(),
-                  committed ? "COMMITTED" : "NOT_EXECUTED_AFTER_AUTHORIZATION",
-                  exactProof,
-                  sha256(exactProof),
-                  reservationFence,
-                  attempt,
-                  request.identity().tenantId(),
-                  request.identity().requestId(),
-                  request.identity().admissionId(),
-                  request.admissionAttemptId(),
-                  request.mutationDigest(),
-                  current.reservationFence(),
-                  workerId,
-                  claim.fence());
-          if (changed != 1) throw conflict();
-          return capacity.exact(request, Objects.requireNonNull(capacity.find(request.identity())));
-        });
+    return owner.inTransaction(() -> {
+      Record row = capacity.find(request.identity());
+      if (row == null) throw conflict();
+      Result current = capacity.exact(request, row);
+      AccountTenantCapacityOwner.requireClaim(row, workerId, claim.fence(), clock.instant());
+      if (!current.equals(claim.reservation())) throw conflict();
+      int attempt = Math.incrementExact(Math.toIntExact(number(row, "recovery_attempt_count")));
+      if (attempt > 12) throw unavailable();
+      Instant now = clock.instant();
+      boolean indeterminate =
+          observed == null || observed.disposition() == Disposition.INDETERMINATE;
+      boolean quarantine =
+          indeterminate && (attempt == 12 || !now.isBefore(claim.reconcileDeadline()));
+      String outcome =
+          quarantine
+              ? State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION.name()
+              : observed == null ? "SOURCE_UNAVAILABLE" : observed.disposition().name();
+      int retained =
+          dsl.execute(
+              "INSERT INTO account_tenant_capacity_recovery_evidence (tenant_uuid, request_id, admission_id, admission_attempt_id, recovery_claim_fence, recovery_policy_version, recovery_attempt_number, observed_at, outcome, canonical_readback, readback_digest) VALUES (?, ?, ?, ?, ?, 'capacity-recovery/1', ?, ?::timestamptz, ?, ?, ?)",
+              request.identity().tenantId(),
+              request.identity().requestId(),
+              request.identity().admissionId(),
+              request.admissionAttemptId(),
+              claim.fence(),
+              attempt,
+              at(now),
+              outcome,
+              exactProof,
+              exactProof == null ? null : sha256(exactProof));
+      if (retained != 1) throw unavailable();
+      if (indeterminate) {
+        int updated =
+            dsl.execute(
+                "UPDATE account_tenant_capacity_reservations SET recovery_attempt_count = ?, state = ?, recovery_escalated_at = ?::timestamptz, next_reconcile_at = ?::timestamptz WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'OWNER_EXECUTION_PENDING'",
+                attempt,
+                quarantine
+                    ? State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION.name()
+                    : State.RESERVED.name(),
+                quarantine ? at(now) : null,
+                quarantine
+                    ? null
+                    : at(
+                        now.plusSeconds(5).isBefore(claim.reconcileDeadline())
+                            ? now.plusSeconds(5)
+                            : claim.reconcileDeadline()),
+                request.identity().tenantId(),
+                request.identity().requestId(),
+                request.identity().admissionId(),
+                workerId,
+                claim.fence());
+        if (updated != 1) throw conflict();
+        return capacity.exact(request, Objects.requireNonNull(capacity.find(request.identity())));
+      }
+      boolean committed = observed.disposition() == Disposition.COMMITTED;
+      State next =
+          committed
+              ? State.FINALIZED
+              : noCommitAction == NoCommitAction.RELEASE ? State.RELEASED : State.RESERVED;
+      if (committed || next == State.RELEASED) moveUsage(request, committed);
+      long reservationFence =
+          next == State.RELEASED
+              ? Math.incrementExact(current.reservationFence())
+              : current.reservationFence();
+      int changed =
+          dsl.execute(
+              "UPDATE account_tenant_capacity_reservations SET state = ?, execution_status = ?, owner_readback = ?, owner_readback_digest = ?, reservation_fence = ?, recovery_attempt_count = ?, next_reconcile_at = NULL "
+                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND admission_attempt_id = ? AND mutation_digest = ? AND reservation_fence = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'OWNER_EXECUTION_PENDING'",
+              next.name(),
+              committed ? "COMMITTED" : "NOT_EXECUTED_AFTER_AUTHORIZATION",
+              exactProof,
+              sha256(exactProof),
+              reservationFence,
+              attempt,
+              request.identity().tenantId(),
+              request.identity().requestId(),
+              request.identity().admissionId(),
+              request.admissionAttemptId(),
+              request.mutationDigest(),
+              current.reservationFence(),
+              workerId,
+              claim.fence());
+      if (changed != 1) throw conflict();
+      return capacity.exact(request, Objects.requireNonNull(capacity.find(request.identity())));
+    });
   }
 
   private void moveUsage(Request request, boolean committed) {
@@ -289,17 +284,15 @@ public final class AccountTenantCapacityRecoveryWorker {
 
   private Result rearmClaim(Request prior, Request next) {
     java.util.Optional<Result> replay =
-        owner.inTransaction(
-            () -> {
-              Record row = capacity.find(next.identity());
-              if (row != null
-                  && next.admissionAttemptId()
-                      .equals(row.get("admission_attempt_id", UUID.class))) {
-                capacity.requirePriorHistory(prior, next);
-                return java.util.Optional.of(capacity.exact(next, row));
-              }
-              return java.util.Optional.empty();
-            });
+        owner.inTransaction(() -> {
+          Record row = capacity.find(next.identity());
+          if (row != null
+              && next.admissionAttemptId().equals(row.get("admission_attempt_id", UUID.class))) {
+            capacity.requirePriorHistory(prior, next);
+            return java.util.Optional.of(capacity.exact(next, row));
+          }
+          return java.util.Optional.empty();
+        });
     if (replay.isPresent()) return replay.orElseThrow();
     Claim claim = claim(prior);
     return owner.rearm(prior, next, workerId, claim.fence());
@@ -316,45 +309,43 @@ public final class AccountTenantCapacityRecoveryWorker {
   }
 
   private Claim claim(Request request) {
-    return owner.inTransaction(
-        () -> {
-          Record row = capacity.find(request.identity());
-          if (row == null) throw conflict();
-          Result result = capacity.exact(request, row);
-          if (result.state() != State.RESERVED)
-            return new Claim(
-                result,
-                number(row, "recovery_claim_fence"),
-                Math.toIntExact(number(row, "recovery_attempt_count")),
-                AccountTenantCapacityRepository.time(row, "reconcile_deadline"),
-                row.get("owner_readback", byte[].class));
-          Instant now = clock.instant();
-          if (row.get("recovery_owner", UUID.class) != null
-              && !workerId.equals(row.get("recovery_owner", UUID.class))
-              && now.isBefore(
-                  AccountTenantCapacityRepository.time(row, "recovery_claim_expires_at")))
-            throw unavailable();
-          long fence = Math.incrementExact(number(row, "recovery_claim_fence"));
-          int changed =
-              dsl.execute(
-                  "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, recovery_claim_fence = ?, recovery_claim_expires_at = ?::timestamptz, next_reconcile_at = LEAST(?::timestamptz, reconcile_deadline) "
-                      + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND recovery_claim_fence = ?",
-                  workerId,
-                  fence,
-                  at(now.plusSeconds(15)),
-                  at(now.plusSeconds(5)),
-                  request.identity().tenantId(),
-                  request.identity().requestId(),
-                  request.identity().admissionId(),
-                  number(row, "recovery_claim_fence"));
-          if (changed != 1) throw conflict();
-          return new Claim(
-              result,
+    return owner.inTransaction(() -> {
+      Record row = capacity.find(request.identity());
+      if (row == null) throw conflict();
+      Result result = capacity.exact(request, row);
+      if (result.state() != State.RESERVED)
+        return new Claim(
+            result,
+            number(row, "recovery_claim_fence"),
+            Math.toIntExact(number(row, "recovery_attempt_count")),
+            AccountTenantCapacityRepository.time(row, "reconcile_deadline"),
+            row.get("owner_readback", byte[].class));
+      Instant now = clock.instant();
+      if (row.get("recovery_owner", UUID.class) != null
+          && !workerId.equals(row.get("recovery_owner", UUID.class))
+          && now.isBefore(AccountTenantCapacityRepository.time(row, "recovery_claim_expires_at")))
+        throw unavailable();
+      long fence = Math.incrementExact(number(row, "recovery_claim_fence"));
+      int changed =
+          dsl.execute(
+              "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, recovery_claim_fence = ?, recovery_claim_expires_at = ?::timestamptz, next_reconcile_at = LEAST(?::timestamptz, reconcile_deadline) "
+                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND recovery_claim_fence = ?",
+              workerId,
               fence,
-              Math.toIntExact(number(row, "recovery_attempt_count")),
-              AccountTenantCapacityRepository.time(row, "reconcile_deadline"),
-              row.get("owner_readback", byte[].class));
-        });
+              at(now.plusSeconds(15)),
+              at(now.plusSeconds(5)),
+              request.identity().tenantId(),
+              request.identity().requestId(),
+              request.identity().admissionId(),
+              number(row, "recovery_claim_fence"));
+      if (changed != 1) throw conflict();
+      return new Claim(
+          result,
+          fence,
+          Math.toIntExact(number(row, "recovery_attempt_count")),
+          AccountTenantCapacityRepository.time(row, "reconcile_deadline"),
+          row.get("owner_readback", byte[].class));
+    });
   }
 
   private static void requireExactSource(Request request, Result expected, Observation observed) {

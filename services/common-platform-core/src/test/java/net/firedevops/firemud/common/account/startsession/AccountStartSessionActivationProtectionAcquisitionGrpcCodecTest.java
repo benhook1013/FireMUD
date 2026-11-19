@@ -22,10 +22,9 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcCodecTest {
             .addSchemaVersion(1)
             .addSchemaVersion(1)
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequest(
-                    duplicate, NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequest(
+                duplicate, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate field");
 
@@ -36,10 +35,9 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcCodecTest {
                     .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequest(
-                    unknown, NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequest(
+                unknown, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
   }
@@ -47,10 +45,9 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcCodecTest {
   @Test
   void rejectsNonCanonicalFenceTextAndRawDuplicateOccurrences() {
     var nonCanonicalFence = minimallyPopulatedRequest("01");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequest(
-                    nonCanonicalFence, NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequest(
+                nonCanonicalFence, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical positive unsigned decimal");
 
@@ -60,10 +57,9 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcCodecTest {
             .addSchemaVersion(1)
             .build()
             .toByteArray();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequestWireBytes(
-                    duplicateSchemaWire, NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequestWireBytes(
+                duplicateSchemaWire, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate field");
   }
@@ -81,17 +77,15 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcCodecTest {
             .addActivationRequestId(ACTIVATION)
             .addWorldPreparingEvidence(ByteString.copyFrom(new byte[] {1}))
             .build();
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequest(
-                    request, NAMESPACE))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionAcquisitionGrpcCodec.fromRequest(
+                request, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("target namespace");
 
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionActivationProtectionAcquisitionInput(
-                    new byte[] {1}, UUID.fromString(MUTATION), UUID.fromString(ATTEMPT), 7L, null))
+    assertThatThrownBy(() ->
+            new AccountStartSessionActivationProtectionAcquisitionInput(
+                new byte[] {1}, UUID.fromString(MUTATION), UUID.fromString(ATTEMPT), 7L, null))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

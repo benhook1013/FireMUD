@@ -121,17 +121,16 @@ class SocialGroupsApplicationIntegrationTest {
     Mockito.when(
             TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicies(
                 Mockito.anyLong(), Mockito.anyCollection()))
-        .thenAnswer(
-            invocation -> {
-              java.util.Collection<String> accountIds = invocation.getArgument(1);
-              return accountIds.stream()
-                  .collect(
-                      java.util.stream.Collectors.toMap(
-                          accountId -> accountId,
-                          ignored ->
-                              net.firedevops.firemud.socialgroups.dto
-                                  .FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY));
-            });
+        .thenAnswer(invocation -> {
+          java.util.Collection<String> accountIds = invocation.getArgument(1);
+          return accountIds.stream()
+              .collect(
+                  java.util.stream.Collectors.toMap(
+                      accountId -> accountId,
+                      ignored ->
+                          net.firedevops.firemud.socialgroups.dto
+                              .FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY));
+        });
     Mockito.when(TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicy(1L, accountUuid(2L)))
         .thenReturn(
             java.util.Optional.of(

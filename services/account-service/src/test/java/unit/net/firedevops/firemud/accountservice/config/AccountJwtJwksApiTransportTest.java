@@ -63,8 +63,9 @@ class AccountJwtJwksApiTransportTest {
   private static final Duration STALL_TIMEOUT = Duration.ofMillis(350);
   private static final byte[] SELF_REVIEW =
       ("""
-          {"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview",%n\
-           "status":{"userInfo":{"username":"%s"}}}%n"""
+      {"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview",%n\
+       "status":{"userInfo":{"username":"%s"}}}%n\
+      """
               .formatted(API_USERNAME))
           .getBytes(StandardCharsets.UTF_8);
   private static final byte[] KUBE_SYSTEM_NAMESPACE =
@@ -73,8 +74,9 @@ class AccountJwtJwksApiTransportTest {
       namespaceJson(NAMESPACE, NAMESPACE_UID).getBytes(StandardCharsets.UTF_8);
   private static final byte[] CONFIG_MAP =
       ("""
-          {"apiVersion":"v1","kind":"ConfigMap","metadata":{%n\
-            "name":"jwt-jwks","namespace":"%s","uid":"%s","resourceVersion":"7"},"data":{}}%n"""
+      {"apiVersion":"v1","kind":"ConfigMap","metadata":{%n\
+        "name":"jwt-jwks","namespace":"%s","uid":"%s","resourceVersion":"7"},"data":{}}%n\
+      """
               .formatted(NAMESPACE, CONFIG_MAP_UID))
           .getBytes(StandardCharsets.UTF_8);
 
@@ -741,8 +743,9 @@ class AccountJwtJwksApiTransportTest {
 
   private static String namespaceJson(String name, String uid) {
     return """
-        {"apiVersion":"v1","kind":"Namespace","metadata":{"name":"%s","uid":"%s"},%n\
-         "status":{"phase":"Active"}}%n"""
+    {"apiVersion":"v1","kind":"Namespace","metadata":{"name":"%s","uid":"%s"},%n\
+     "status":{"phase":"Active"}}%n\
+    """
         .formatted(name, uid);
   }
 

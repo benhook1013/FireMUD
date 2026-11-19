@@ -171,10 +171,9 @@ class CanonicalGameplayIssuerLocalCapacityIntegrationTest
                   changedReservation,
                   abort.originalDecision(),
                   abort.orphanCleanupId()))) {
-        assertThatThrownBy(
-                () ->
-                    inventoryRepository.recordFirstNewAccountAbort(
-                        changedSource, changedSource.orphanCleanupId()))
+        assertThatThrownBy(() ->
+                inventoryRepository.recordFirstNewAccountAbort(
+                    changedSource, changedSource.orphanCleanupId()))
             .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
             .hasMessageContaining("Retained first-NEW abort source changed during exact retry");
         assertAbortRetryUnchanged.run();
@@ -264,11 +263,10 @@ class CanonicalGameplayIssuerLocalCapacityIntegrationTest
           .beginFenceIntent(
               originalMember.owner().accountId(), uuid("add-currentness-account-fence"));
 
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayIssuerBindingLocalProjectionRepository(
-                          fixture.dsl(), issuerStateSource)
-                      .requireStillCurrent(preparedAdd))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayIssuerBindingLocalProjectionRepository(
+                      fixture.dsl(), issuerStateSource)
+                  .requireStillCurrent(preparedAdd))
           .isInstanceOf(IllegalStateException.class);
       assertThat(physicalFieldSet(partitionKey)).isEqualTo(fieldsBeforeReread);
       assertThat(partitionMutationCount(fixture.dsl())).isEqualTo(mutationsBeforeReread);

@@ -28,18 +28,16 @@ class InitialGameplayLoginDisposalResultTest {
                       .proofKind())
               .isEqualTo(kind);
         } else {
-          assertThatThrownBy(
-                  () ->
-                      new InitialGameplayLoginDisposalResult(
-                          request, context, operation, disposition, kind))
+          assertThatThrownBy(() ->
+                  new InitialGameplayLoginDisposalResult(
+                      request, context, operation, disposition, kind))
               .isInstanceOf(IllegalArgumentException.class);
         }
       }
     }
-    assertThatThrownBy(
-            () ->
-                new InitialGameplayLoginDisposalResult(
-                    request, context, operation, Disposition.NO_TOKEN))
+    assertThatThrownBy(() ->
+            new InitialGameplayLoginDisposalResult(
+                request, context, operation, Disposition.NO_TOKEN))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

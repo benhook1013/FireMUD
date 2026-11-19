@@ -216,15 +216,14 @@ class AccountTenantCreationCurrentAuthorizationOwnerTest {
 
     Fixture() throws Exception {
       when(manager.getTransaction(any()))
-          .thenAnswer(
-              call -> {
-                TransactionDefinition definition = call.getArgument(0);
-                assertThat(definition.getIsolationLevel())
-                    .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-                assertThat(definition.getTimeout()).isEqualTo(5);
-                TransactionSynchronizationManager.setActualTransactionActive(true);
-                return mock(TransactionStatus.class);
-              });
+          .thenAnswer(call -> {
+            TransactionDefinition definition = call.getArgument(0);
+            assertThat(definition.getIsolationLevel())
+                .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+            assertThat(definition.getTimeout()).isEqualTo(5);
+            TransactionSynchronizationManager.setActualTransactionActive(true);
+            return mock(TransactionStatus.class);
+          });
       doAnswer(
               call -> {
                 commits++;
@@ -318,18 +317,16 @@ class AccountTenantCreationCurrentAuthorizationOwnerTest {
           .thenReturn(row);
       when(issuances.decodeStored(row)).thenReturn(issuance);
       when(actors.readAcceptedSignerKey("kid"))
-          .thenAnswer(
-              call -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(commits).isEqualTo(1);
-                return new AccountControlUiActorService.AcceptedSignerKey("kid", "fingerprint");
-              });
+          .thenAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(commits).isEqualTo(1);
+            return new AccountControlUiActorService.AcceptedSignerKey("kid", "fingerprint");
+          });
       when(terms.captureCurrentEnvironmentBoundary())
-          .thenAnswer(
-              call -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                return environment;
-              });
+          .thenAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return environment;
+          });
       when(capture.captureLocked(any(), any(), any(), any())).thenReturn(captured);
       when(captured.originalClaims()).thenReturn(new byte[] {3});
       when(captured.originalSignerReceipt()).thenReturn(signer);

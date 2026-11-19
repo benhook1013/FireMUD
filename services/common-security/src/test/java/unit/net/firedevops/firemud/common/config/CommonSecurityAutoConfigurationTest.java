@@ -47,13 +47,12 @@ class CommonSecurityAutoConfigurationTest {
         .withPropertyValues(
             "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
             "firemud.auth.grpc.public-methods[0]=firemud.gateway.v1.GatewayManagementService/Ping")
-        .run(
-            ctx -> {
-              assertThat(ctx).hasSingleBean(AuthTokenInterceptor.class);
-              GrpcAuthProperties props = ctx.getBean(GrpcAuthProperties.class);
-              assertThat(props.getPublicMethods())
-                  .containsExactly("firemud.gateway.v1.GatewayManagementService/Ping");
-            });
+        .run(ctx -> {
+          assertThat(ctx).hasSingleBean(AuthTokenInterceptor.class);
+          GrpcAuthProperties props = ctx.getBean(GrpcAuthProperties.class);
+          assertThat(props.getPublicMethods())
+              .containsExactly("firemud.gateway.v1.GatewayManagementService/Ping");
+        });
   }
 
   @Test
@@ -69,14 +68,13 @@ class CommonSecurityAutoConfigurationTest {
             "firemud.auth.http.enabled=true",
             "firemud.auth.http.public-routes[0].method=GET",
             "firemud.auth.http.public-routes[0].path-pattern=/ping")
-        .run(
-            ctx -> {
-              assertThat(ctx).hasSingleBean(HttpJwtAuthInterceptor.class);
-              HttpAuthProperties props = ctx.getBean(HttpAuthProperties.class);
-              assertThat(props.getPublicRoutes()).hasSize(1);
-              assertThat(props.getPublicRoutes().get(0).getMethod()).isEqualTo("GET");
-              assertThat(props.getPublicRoutes().get(0).getPathPattern()).isEqualTo("/ping");
-            });
+        .run(ctx -> {
+          assertThat(ctx).hasSingleBean(HttpJwtAuthInterceptor.class);
+          HttpAuthProperties props = ctx.getBean(HttpAuthProperties.class);
+          assertThat(props.getPublicRoutes()).hasSize(1);
+          assertThat(props.getPublicRoutes().get(0).getMethod()).isEqualTo("GET");
+          assertThat(props.getPublicRoutes().get(0).getPathPattern()).isEqualTo("/ping");
+        });
   }
 
   @Test
@@ -90,11 +88,10 @@ class CommonSecurityAutoConfigurationTest {
         .withPropertyValues(
             "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
             "firemud.auth.http.enabled=true")
-        .run(
-            ctx -> {
-              assertThat(ctx).doesNotHaveBean(HttpJwtAuthInterceptor.class);
-              assertThat(ctx).hasSingleBean(JwtUtil.class);
-            });
+        .run(ctx -> {
+          assertThat(ctx).doesNotHaveBean(HttpJwtAuthInterceptor.class);
+          assertThat(ctx).hasSingleBean(JwtUtil.class);
+        });
   }
 
   @Test
@@ -103,11 +100,10 @@ class CommonSecurityAutoConfigurationTest {
         .withPropertyValues(
             "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
             "firemud.auth.grpc.interceptor-enabled=false")
-        .run(
-            ctx -> {
-              assertThat(ctx).doesNotHaveBean(AuthTokenInterceptor.class);
-              assertThat(ctx).hasSingleBean(JwtUtil.class);
-            });
+        .run(ctx -> {
+          assertThat(ctx).doesNotHaveBean(AuthTokenInterceptor.class);
+          assertThat(ctx).hasSingleBean(JwtUtil.class);
+        });
   }
 
   @Test
@@ -116,49 +112,46 @@ class CommonSecurityAutoConfigurationTest {
         .withPropertyValues(
             "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
             "firemud.auth.grpc.public-methods[0]=demo.Service/Ping")
-        .run(
-            ctx -> {
-              AuthTokenInterceptor interceptor = ctx.getBean(AuthTokenInterceptor.class);
-              @SuppressWarnings({"rawtypes", "unchecked"})
-              ServerCall call = Mockito.mock(ServerCall.class);
-              @SuppressWarnings({"rawtypes", "unchecked"})
-              ServerCallHandler next = Mockito.mock(ServerCallHandler.class);
-              MethodDescriptor<Empty, Empty> methodDescriptor = unaryMethod("demo.Service/Ping");
-              Mockito.when(call.getMethodDescriptor()).thenReturn(methodDescriptor);
-              Mockito.when(
-                      next.startCall(Mockito.any(ServerCall.class), Mockito.any(Metadata.class)))
-                  .thenReturn(new ServerCall.Listener<>() {});
+        .run(ctx -> {
+          AuthTokenInterceptor interceptor = ctx.getBean(AuthTokenInterceptor.class);
+          @SuppressWarnings({"rawtypes", "unchecked"})
+          ServerCall call = Mockito.mock(ServerCall.class);
+          @SuppressWarnings({"rawtypes", "unchecked"})
+          ServerCallHandler next = Mockito.mock(ServerCallHandler.class);
+          MethodDescriptor<Empty, Empty> methodDescriptor = unaryMethod("demo.Service/Ping");
+          Mockito.when(call.getMethodDescriptor()).thenReturn(methodDescriptor);
+          Mockito.when(next.startCall(Mockito.any(ServerCall.class), Mockito.any(Metadata.class)))
+              .thenReturn(new ServerCall.Listener<>() {});
 
-              interceptor.interceptCall(call, new Metadata(), next);
+          interceptor.interceptCall(call, new Metadata(), next);
 
-              ArgumentCaptor<ServerCall> forwardedCallCaptor =
-                  ArgumentCaptor.forClass(ServerCall.class);
-              Mockito.verify(next)
-                  .startCall(forwardedCallCaptor.capture(), Mockito.any(Metadata.class));
-              ServerCall forwardedCall = forwardedCallCaptor.getValue();
-              assertThat(forwardedCall).isNotSameAs(call);
-              assertThat(forwardedCall.getMethodDescriptor()).isSameAs(methodDescriptor);
+          ArgumentCaptor<ServerCall> forwardedCallCaptor =
+              ArgumentCaptor.forClass(ServerCall.class);
+          Mockito.verify(next)
+              .startCall(forwardedCallCaptor.capture(), Mockito.any(Metadata.class));
+          ServerCall forwardedCall = forwardedCallCaptor.getValue();
+          assertThat(forwardedCall).isNotSameAs(call);
+          assertThat(forwardedCall.getMethodDescriptor()).isSameAs(methodDescriptor);
 
-              forwardedCall.close(Status.OK, new Metadata());
-              Mockito.verify(call).close(Mockito.eq(Status.OK), Mockito.any(Metadata.class));
-            });
+          forwardedCall.close(Status.OK, new Metadata());
+          Mockito.verify(call).close(Mockito.eq(Status.OK), Mockito.any(Metadata.class));
+        });
   }
 
   @Test
   void jwtUtilStillCarriesRoleClaims() {
     contextRunner
         .withPropertyValues("firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234")
-        .run(
-            ctx -> {
-              JwtUtil jwtUtil = ctx.getBean(JwtUtil.class);
-              String token =
-                  jwtUtil.generateToken(
-                      "user", java.util.Map.of("globalRoles", List.of("platformAdmin")));
-              Jws<Claims> claims = jwtUtil.parseToken(token);
-              assertThat(claims.getPayload().getSubject()).isEqualTo("user");
-              assertThat(claims.getPayload().get("globalRoles", List.class))
-                  .containsExactly("platformAdmin");
-            });
+        .run(ctx -> {
+          JwtUtil jwtUtil = ctx.getBean(JwtUtil.class);
+          String token =
+              jwtUtil.generateToken(
+                  "user", java.util.Map.of("globalRoles", List.of("platformAdmin")));
+          Jws<Claims> claims = jwtUtil.parseToken(token);
+          assertThat(claims.getPayload().getSubject()).isEqualTo("user");
+          assertThat(claims.getPayload().get("globalRoles", List.class))
+              .containsExactly("platformAdmin");
+        });
   }
 
   @Test
@@ -168,38 +161,34 @@ class CommonSecurityAutoConfigurationTest {
 
     contextRunner
         .withPropertyValues("firemud.auth.jwt-secret-path=" + secretFile)
-        .run(
-            ctx -> {
-              assertThat(ctx).hasSingleBean(JwtUtil.class);
-              JwtUtil jwtUtil = ctx.getBean(JwtUtil.class);
-              String token = jwtUtil.generateToken("user", java.util.Map.of());
-              Jws<Claims> claims = jwtUtil.parseToken(token);
-              assertThat(claims.getPayload().getSubject()).isEqualTo("user");
-            });
+        .run(ctx -> {
+          assertThat(ctx).hasSingleBean(JwtUtil.class);
+          JwtUtil jwtUtil = ctx.getBean(JwtUtil.class);
+          String token = jwtUtil.generateToken("user", java.util.Map.of());
+          Jws<Claims> claims = jwtUtil.parseToken(token);
+          assertThat(claims.getPayload().getSubject()).isEqualTo("user");
+        });
   }
 
   @Test
   void protectedMethodsStillRequireBearerToken() {
     contextRunner
         .withPropertyValues("firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234")
-        .run(
-            ctx -> {
-              AuthTokenInterceptor interceptor = ctx.getBean(AuthTokenInterceptor.class);
-              @SuppressWarnings({"rawtypes", "unchecked"})
-              ServerCall call = Mockito.mock(ServerCall.class);
-              @SuppressWarnings({"rawtypes", "unchecked"})
-              ServerCallHandler next = Mockito.mock(ServerCallHandler.class);
-              MethodDescriptor<Empty, Empty> methodDescriptor =
-                  unaryMethod("demo.Service/Protected");
-              Mockito.when(call.getMethodDescriptor()).thenReturn(methodDescriptor);
+        .run(ctx -> {
+          AuthTokenInterceptor interceptor = ctx.getBean(AuthTokenInterceptor.class);
+          @SuppressWarnings({"rawtypes", "unchecked"})
+          ServerCall call = Mockito.mock(ServerCall.class);
+          @SuppressWarnings({"rawtypes", "unchecked"})
+          ServerCallHandler next = Mockito.mock(ServerCallHandler.class);
+          MethodDescriptor<Empty, Empty> methodDescriptor = unaryMethod("demo.Service/Protected");
+          Mockito.when(call.getMethodDescriptor()).thenReturn(methodDescriptor);
 
-              interceptor.interceptCall(call, new Metadata(), next);
+          interceptor.interceptCall(call, new Metadata(), next);
 
-              ArgumentCaptor<Status> statusCaptor = ArgumentCaptor.forClass(Status.class);
-              Mockito.verify(call).close(statusCaptor.capture(), Mockito.any(Metadata.class));
-              assertThat(statusCaptor.getValue().getCode())
-                  .isEqualTo(Status.UNAUTHENTICATED.getCode());
-            });
+          ArgumentCaptor<Status> statusCaptor = ArgumentCaptor.forClass(Status.class);
+          Mockito.verify(call).close(statusCaptor.capture(), Mockito.any(Metadata.class));
+          assertThat(statusCaptor.getValue().getCode()).isEqualTo(Status.UNAUTHENTICATED.getCode());
+        });
   }
 
   @Test
@@ -219,13 +208,12 @@ class CommonSecurityAutoConfigurationTest {
         .withPropertyValues(
             "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
             "firemud.auth.grpc.force-internal-service-outbound=true")
-        .run(
-            ctx -> {
-              BlockingGrpcStubCustomizer customizer = ctx.getBean(BlockingGrpcStubCustomizer.class);
-              CapturingStub stub = new CapturingStub();
+        .run(ctx -> {
+          BlockingGrpcStubCustomizer customizer = ctx.getBean(BlockingGrpcStubCustomizer.class);
+          CapturingStub stub = new CapturingStub();
 
-              assertThat(customizer.customize(stub)).isNotSameAs(stub);
-            });
+          assertThat(customizer.customize(stub)).isNotSameAs(stub);
+        });
   }
 
   private MethodDescriptor<Empty, Empty> unaryMethod(String fullMethodName) {

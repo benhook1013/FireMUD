@@ -198,10 +198,8 @@ public final class GameSessionPrivateFreshCatalogRevisionRepository {
         readByPreparation(
                 required(current, "preparation_request_id", UUID.class),
                 required(current, "playtest_lifecycle_id", UUID.class))
-            .orElseThrow(
-                () ->
-                    new InvalidPrivateTargetException(
-                        "Current catalog original evidence is absent"));
+            .orElseThrow(() ->
+                new InvalidPrivateTargetException("Current catalog original evidence is absent"));
     requireHead(current, result);
     return Optional.of(result);
   }
@@ -249,9 +247,8 @@ public final class GameSessionPrivateFreshCatalogRevisionRepository {
         preparations
             .readExactForPrivateCatalogTarget(
                 request.preparationRequestId(), request.playtestLifecycleId())
-            .orElseThrow(
-                () ->
-                    new PreparationUnavailableException("Original revision preparation is absent"))
+            .orElseThrow(() ->
+                new PreparationUnavailableException("Original revision preparation is absent"))
             .preparation();
     originals.readExactSourceCatalog(preparation);
     originals.readCompleteHumanPolicyEvidence(preparation);

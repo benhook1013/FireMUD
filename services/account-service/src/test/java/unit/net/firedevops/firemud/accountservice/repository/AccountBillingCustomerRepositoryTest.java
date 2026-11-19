@@ -42,10 +42,9 @@ class AccountBillingCustomerRepositoryTest {
     assertThatThrownBy(() -> customers.findByAccountForUpdate(ACCOUNT))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("active writable Account transaction");
-    assertThatThrownBy(
-            () ->
-                customers.recordObservation(
-                    ACCOUNT, OPERATION, 1, UUID.randomUUID(), Observation.AMBIGUOUS, null, DIGEST))
+    assertThatThrownBy(() ->
+            customers.recordObservation(
+                ACCOUNT, OPERATION, 1, UUID.randomUUID(), Observation.AMBIGUOUS, null, DIGEST))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("active writable Account transaction");
   }
@@ -64,59 +63,53 @@ class AccountBillingCustomerRepositoryTest {
   @Test
   void rejectsMissingEvidenceInvalidVersionAndInventedConfirmationBeforeSql() {
     TransactionSynchronizationManager.setActualTransactionActive(true);
-    assertThatThrownBy(
-            () ->
-                customers.recordObservation(
-                    ACCOUNT, OPERATION, 0, UUID.randomUUID(), Observation.AMBIGUOUS, null, DIGEST))
+    assertThatThrownBy(() ->
+            customers.recordObservation(
+                ACCOUNT, OPERATION, 0, UUID.randomUUID(), Observation.AMBIGUOUS, null, DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                customers.recordObservation(
-                    ACCOUNT,
-                    OPERATION,
-                    Long.MAX_VALUE,
-                    UUID.randomUUID(),
-                    Observation.AMBIGUOUS,
-                    null,
-                    DIGEST))
+    assertThatThrownBy(() ->
+            customers.recordObservation(
+                ACCOUNT,
+                OPERATION,
+                Long.MAX_VALUE,
+                UUID.randomUUID(),
+                Observation.AMBIGUOUS,
+                null,
+                DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                customers.recordObservation(
-                    ACCOUNT,
-                    OPERATION,
-                    1,
-                    UUID.randomUUID(),
-                    Observation.AMBIGUOUS,
-                    "cus_unverified",
-                    DIGEST))
+    assertThatThrownBy(() ->
+            customers.recordObservation(
+                ACCOUNT,
+                OPERATION,
+                1,
+                UUID.randomUUID(),
+                Observation.AMBIGUOUS,
+                "cus_unverified",
+                DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                customers.recordObservation(
-                    ACCOUNT,
-                    OPERATION,
-                    1,
-                    UUID.randomUUID(),
-                    Observation.CONFIRMED,
-                    "raw-customer-payload",
-                    DIGEST))
+    assertThatThrownBy(() ->
+            customers.recordObservation(
+                ACCOUNT,
+                OPERATION,
+                1,
+                UUID.randomUUID(),
+                Observation.CONFIRMED,
+                "raw-customer-payload",
+                DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                customers.recordObservation(
-                    ACCOUNT,
-                    OPERATION,
-                    1,
-                    UUID.randomUUID(),
-                    Observation.PROVIDER_ABSENT,
-                    null,
-                    "missing-digest"))
+    assertThatThrownBy(() ->
+            customers.recordObservation(
+                ACCOUNT,
+                OPERATION,
+                1,
+                UUID.randomUUID(),
+                Observation.PROVIDER_ABSENT,
+                null,
+                "missing-digest"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                customers.recordObservation(
-                    ACCOUNT, OPERATION, 1, UUID.randomUUID(), Observation.NONE, null, DIGEST))
+    assertThatThrownBy(() ->
+            customers.recordObservation(
+                ACCOUNT, OPERATION, 1, UUID.randomUUID(), Observation.NONE, null, DIGEST))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(dsl);
   }

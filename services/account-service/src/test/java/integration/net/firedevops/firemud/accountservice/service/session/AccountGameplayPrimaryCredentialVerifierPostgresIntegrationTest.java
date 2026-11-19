@@ -273,13 +273,12 @@ class AccountGameplayPrimaryCredentialVerifierPostgresIntegrationTest {
     seed.setPasswordHash(PASSWORD_HASH);
     seed.setLoginAuthModes(authModes);
     Account account =
-        tx.execute(
-            status -> {
-              sources.initializeIssuerIfAbsent("firemud-account-service");
-              Account saved = accounts.save(seed);
-              challenges.save(challenge(saved, OTP_HASH, expired));
-              return saved;
-            });
+        tx.execute(status -> {
+          sources.initializeIssuerIfAbsent("firemud-account-service");
+          Account saved = accounts.save(seed);
+          challenges.save(challenge(saved, OTP_HASH, expired));
+          return saved;
+        });
     var issuance = new AccountGameplayDelegationIssuanceRepository(dsl, sources);
     // Unused AccountService surfaces are absent; every collaborator on this credential path is
     // real.

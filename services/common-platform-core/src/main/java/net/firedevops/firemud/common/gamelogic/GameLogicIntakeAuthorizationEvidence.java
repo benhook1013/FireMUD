@@ -74,17 +74,15 @@ public final class GameLogicIntakeAuthorizationEvidence {
       Objects.requireNonNull(outcome);
       sourceScope = Objects.requireNonNull(sourceScope);
       authorization = Objects.requireNonNull(authorization);
-      sourceScope.ifPresent(
-          scope -> {
-            if (!request.targetNamespace().equals(scope.targetNamespace())
-                || !request.intakeRequestId().equals(scope.intakeRequestId())
-                || !request.selected().equals(scope.selected())) throw invalid();
-          });
-      authorization.ifPresent(
-          binding -> {
-            if (!request.intakeRequestId().equals(binding.intakeRequestId())
-                || !request.selected().equals(binding.source().binding())) throw invalid();
-          });
+      sourceScope.ifPresent(scope -> {
+        if (!request.targetNamespace().equals(scope.targetNamespace())
+            || !request.intakeRequestId().equals(scope.intakeRequestId())
+            || !request.selected().equals(scope.selected())) throw invalid();
+      });
+      authorization.ifPresent(binding -> {
+        if (!request.intakeRequestId().equals(binding.intakeRequestId())
+            || !request.selected().equals(binding.source().binding())) throw invalid();
+      });
       if (sourceScope.isPresent() && authorization.isPresent()) {
         var scope = sourceScope.orElseThrow();
         var binding = authorization.orElseThrow();

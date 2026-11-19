@@ -332,15 +332,14 @@ public final class WorldCanonicalInstancePreparation {
             freeze.contentDigest(),
             freeze.digestSchemaVersion(),
             freeze.suppliedOwnedAffectedTuples().stream()
-                .map(
-                    tuple ->
-                        new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
-                            tuple.owner(),
-                            tuple.aggregateType(),
-                            tuple.aggregateId(),
-                            tuple.scopeType(),
-                            tuple.scopeId(),
-                            tuple.expectedEpoch()))
+                .map(tuple ->
+                    new WorldPublishedStartLocationEvidence.OwnedAffectedTuple(
+                        tuple.owner(),
+                        tuple.aggregateType(),
+                        tuple.aggregateId(),
+                        tuple.scopeType(),
+                        tuple.scopeId(),
+                        tuple.expectedEpoch()))
                 .toList());
     var receipt = WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes());
     var declaration =
@@ -349,19 +348,15 @@ public final class WorldCanonicalInstancePreparation {
             .plan()
             .graph()
             .freshGraphDeclaration()
-            .orElseThrow(
-                () ->
-                    new IllegalArgumentException(
-                        "Selected World graph has no original fresh declaration"));
+            .orElseThrow(() ->
+                new IllegalArgumentException(
+                    "Selected World graph has no original fresh declaration"));
     if (!selector.request().equals(expected)
         || !declaration.startLocation().equals(receipt.startLocation())
         || !receipt.bindingDigest().equals(topologyPlan.sourceBinding().plan().binding().digest())
         || topologyPlan.rooms().stream()
-                .filter(
-                    room ->
-                        room.identity()
-                            .templateId()
-                            .equals(receipt.startLocation().roomTemplateId()))
+                .filter(room ->
+                    room.identity().templateId().equals(receipt.startLocation().roomTemplateId()))
                 .count()
             != 1) {
       throw new IllegalArgumentException(

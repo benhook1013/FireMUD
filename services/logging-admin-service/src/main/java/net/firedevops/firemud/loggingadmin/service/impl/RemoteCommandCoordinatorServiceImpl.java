@@ -66,16 +66,15 @@ public class RemoteCommandCoordinatorServiceImpl implements RemoteCommandCoordin
         gameSessionControlPlaneClient.listRemoteCommandCoordinators(toRequest(tenantId, request));
     requireNoError(response.getError());
     return response.getCoordinatorsList().stream()
-        .map(
-            coordinator -> {
-              long responseTenantId = parseLong(coordinator.getTenantId(), "tenant_id");
-              if (responseTenantId != tenantId) {
-                throw new ResponseStatusException(
-                    HttpStatus.INTERNAL_SERVER_ERROR,
-                    "control-plane remote command coordinator list response did not match requested tenant_id");
-              }
-              return toDto(coordinator);
-            })
+        .map(coordinator -> {
+          long responseTenantId = parseLong(coordinator.getTenantId(), "tenant_id");
+          if (responseTenantId != tenantId) {
+            throw new ResponseStatusException(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "control-plane remote command coordinator list response did not match requested tenant_id");
+          }
+          return toDto(coordinator);
+        })
         .toList();
   }
 

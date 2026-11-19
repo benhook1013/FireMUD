@@ -57,10 +57,9 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
 
   @Test
   void rejectsMissingUnknownAndMalformedSelectorsBeforeOwnerReads() {
-    assertThatThrownBy(
-            () ->
-                CanonicalInitialPlayerLocationGrpcCodec.fromRequest(
-                    CanonicalInitialPlayerLocationRequest.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            CanonicalInitialPlayerLocationGrpcCodec.fromRequest(
+                CanonicalInitialPlayerLocationRequest.getDefaultInstance()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var unknownRequest =
@@ -232,12 +231,10 @@ class CanonicalInitialPlayerLocationGrpcCodecTest {
     assertThat(conflictResponse.hasStartLocation()).isFalse();
     assertThat(conflictResponse.getPrivateRuntimeRoomKey()).isEmpty();
 
-    assertThatThrownBy(
-            () ->
-                CanonicalInitialPlayerLocationGrpcCodec.toResponse(
-                    selection,
-                    new Result(
-                        Outcome.UNREGISTERED, null, null, null, null, null, null, null, false)))
+    assertThatThrownBy(() ->
+            CanonicalInitialPlayerLocationGrpcCodec.toResponse(
+                selection,
+                new Result(Outcome.UNREGISTERED, null, null, null, null, null, null, null, false)))
         .isInstanceOf(IllegalStateException.class);
   }
 
