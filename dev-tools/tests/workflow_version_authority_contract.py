@@ -2193,7 +2193,7 @@ def main() -> int:
     database_group_rule = next(
         rule
         for rule in renovate["packageRules"]
-        if rule.get("description") == "Keep Testcontainers database image updates reviewable"
+        if rule.get("groupName") == "Testcontainers database images"
     )
     if (
         database_major_rule.get("matchPackageNames")
@@ -2207,10 +2207,31 @@ def main() -> int:
         database_group_rule.get("matchDepNames") != ["postgres", "redis"]
         or database_group_rule.get("matchPackageNames")
         or database_group_rule.get("matchManagers") != ["custom.regex"]
-        or database_group_rule.get("groupName") != "Testcontainers database images"
+        or database_group_rule.get("matchFileNames") != [
+            "services/common-test-support/src/testFixtures/resources/net/firedevops/firemud/test/container-images.properties",
+            "dev-tools/docs/generate-erd.sh",
+        ]
         or database_group_rule.get("automerge") is not False
     ):
-        fail("Fixture grouping must match logical database dependency names")
+        fail("Fixture grouping must match logical database names and only the test and ERD inputs")
+    formatter_package = "com.google.googlejavaformat:google-java-format"
+    gradle_group_rule = next(
+        rule
+        for rule in renovate["packageRules"]
+        if rule.get("groupName") == "gradle non-major updates"
+    )
+    formatter_rule = next(
+        rule
+        for rule in renovate["packageRules"]
+        if rule.get("matchPackageNames") == [formatter_package]
+    )
+    if (
+        gradle_group_rule.get("matchPackageNames") != ["!" + formatter_package]
+        or formatter_rule.get("matchManagers") != ["gradle"]
+        or formatter_rule.get("groupName") is not None
+        or formatter_rule.get("automerge") is not False
+    ):
+        fail("Formatter updates must stay separate from routine Gradle updates and require review")
     digest_image_managers = [
         testcontainer_manager,
         next(
