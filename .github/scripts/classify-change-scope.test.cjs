@@ -536,6 +536,16 @@ test("shared modules force every Gradle module, including common-temporal", () =
   assert.deepEqual(result.bootableModules, ALL_SERVICES.concat("recovery-controller-service", "hosted-environment-identity-controller"));
 });
 
+test("shared modules force every Gradle module, including common-redis-contracts", () => {
+  const result = classifyChangeScope([
+    "services/common-redis-contracts/src/main/java/example/RedisContract.java",
+  ]);
+
+  assert.equal(result.runAll, true);
+  assert.deepEqual(result.affectedModules, ALL_MODULES);
+  assert.deepEqual(result.bootableModules, ALL_SERVICES.concat("recovery-controller-service", "hosted-environment-identity-controller"));
+});
+
 test("controller and load-testing changes receive their own module checks", () => {
   const controllerResult = classifyChangeScope([
     "services/hosted-environment-identity-controller/src/main/java/example/Controller.java",

@@ -480,8 +480,25 @@ except AssertionError as error:
         raise
 else:
     raise AssertionError("foreign render tools checkout escaped repository checking")
-if render_checkouts[1].get("with", {}).get("ref") != "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge" or render_checkouts[1].get("with", {}).get("path") != "candidate":
-    raise AssertionError("preview render must isolate the exact PR merge ref under candidate/")
+def check_candidate_checkout(step: dict[str, Any]) -> None:
+    options = step.get("with", {})
+    if options.get("repository", "$"+"{{ github.repository }}") != "$"+"{{ github.repository }}":
+        raise AssertionError("preview candidate must check out the current repository")
+    if options.get("ref") != "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge" or options.get("path") != "candidate":
+        raise AssertionError("preview render must isolate the exact PR merge ref under candidate/")
+
+check_candidate_checkout(render_checkouts[1])
+try:
+    check_candidate_checkout({
+        **render_checkouts[1],
+        "with": {**render_checkouts[1].get("with", {}), "repository": "other-owner/other-repo"},
+    })
+except AssertionError as error:
+    if str(error) != "preview candidate must check out the current repository":
+        raise
+else:
+    raise AssertionError("foreign candidate checkout escaped repository checking")
+
 def check_trusted_working_directories(workflow: dict[str, Any], job: dict[str, Any]) -> None:
     inherited = workflow.get("defaults", {}).get("run", {}).get("working-directory", ".")
     inherited = job.get("defaults", {}).get("run", {}).get("working-directory", inherited)

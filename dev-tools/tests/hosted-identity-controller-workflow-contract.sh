@@ -6794,6 +6794,7 @@ grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-va
 qualified_source_run_json="$(jq -c '.path += "@refs/pull/900/merge"' <<<"$valid_workflow_run_json")"
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$qualified_source_run_json" \
   run_deploy_target_fixture qualified-source-deploy 0 'action=deploy'
+grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
 cross_pr_qualified_source_run_json="$(jq -c '
   .path += "@refs/pull/901/merge" | .pull_requests += [{number:901,head:{sha:.head_sha}}]
@@ -6867,6 +6868,7 @@ for association_order in before after; do
       else .pull_requests + [{number:901,head:{sha:.head_sha}}] end)' <<<"$valid_workflow_run_json")"
   FAKE_FIXTURE_WORKFLOW_RUN_JSON="$multiple_association_json" \
     run_deploy_target_fixture "multiple-associations-${association_order}" 0 'action=deploy'
+  grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-multiple-associations-${association_order}.output"
 done
 duplicate_target_json="$(jq -c '.pull_requests += .pull_requests' <<<"$valid_workflow_run_json")"
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$duplicate_target_json" \

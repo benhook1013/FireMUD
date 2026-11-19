@@ -56,9 +56,26 @@ split_markers = [step for step in ci['jobs']['validation-gate']['steps']
 if split_markers != [{'name': 'Declare dev tool contract split', 'run': ':'}]:
     raise SystemExit('Split contract inventory must retain its unconditional native source marker')
 def substantive_name(name):
-    # Metadata-only edits rename a job; substantive runs use the fallback name.
-    match = re.fullmatch(r"\$\{\{ .* && 'PR Metadata Edit \((.+)\)' \|\| '\1' \}\}", name)
-    return match[1] if match else name
+    # Metadata wrappers must normalize to an explicitly covered substantive name.
+    match = re.fullmatch(r"\$\{\{\s+.*\s+&&\s+'PR Metadata Edit \((.+)\)'\s+\|\|\s+'\1'\s+\}\}", name)
+    if match:
+        return match[1]
+    if "PR Metadata Edit" in name:
+        raise ValueError(f"Unrecognized metadata job wrapper: {name}")
+    return name
+
+assert substantive_name("${{ condition && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'   }}") == "Validation Gate"
+for malformed in [
+    "${{ condition && 'PR Metadata Edit (Validation Gate)' || 'Wrong Gate' }}",
+    "${{ condition && 'PR Metadata Edit (Validation Gate)' }}",
+]:
+    try:
+        substantive_name(malformed)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Unrecognized metadata wrapper escaped normalization")
+
 names = [substantive_name(job['name']) for job in ci['jobs'].values()]
 for name in names:
     if '${{' not in name and json.dumps(name, ensure_ascii=False) not in script:

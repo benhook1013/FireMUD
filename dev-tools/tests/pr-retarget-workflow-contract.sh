@@ -556,7 +556,6 @@ assert_job_contains smoke.yml smoke-summary "name: \${{ github.event.action == '
 # earlier substantive result stands; pr-required-gate-context-contract.sh owns
 # the full gate-condition matrix.
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
-assert_job_contains smoke.yml smoke-gate "name: \${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
 assert_job_contains smoke.yml smoke-summary-pending 'name: Smoke Summary (Pending)'
 assert_job_contains smoke.yml smoke-summary-pending 'tracked-by-smoke-gate'
 assert_job_contains smoke.yml smoke-summary 'needs: [changes, smoke-gate, smoke-summary-pending]'
@@ -665,11 +664,7 @@ smoke_path, runtime_path = map(Path, sys.argv[1:])
 smoke = yaml.load(smoke_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 runtime = yaml.load(runtime_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
-if smoke["jobs"]["smoke-gate"].get("name") != (
-    "${{ github.event_name == 'pull_request' && github.event.action == 'edited' && "
-    "github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Gate)' || 'Smoke Gate' }}"
-):
-    raise SystemExit("metadata-only smoke must skip under a non-required name and keep Smoke Gate otherwise")
+# Required gate names are asserted in pr-required-gate-context-contract.sh.
 
 runtime_jobs = runtime["jobs"]
 metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
@@ -2343,6 +2338,7 @@ for conclusion in success skipped; do
   else
     [[ "$conclusion" == "skipped" ]] || { cat "$contract_fixture_dir/duplicate-$conclusion.error" >&2; exit 1; }
     require_contains "$contract_fixture_dir/duplicate-$conclusion.output" 'Waiting for runtime-images workflow 104'
+    require_contains "$contract_fixture_dir/duplicate-$conclusion.error" 'Timed out waiting for runtime-images workflow'
   fi
 done
 for fixture in missing-url empty-url; do
