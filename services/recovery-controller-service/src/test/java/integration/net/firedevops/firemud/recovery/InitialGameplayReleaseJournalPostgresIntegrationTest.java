@@ -746,6 +746,84 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void scopeReaderRejectsResealedScopeForAnotherRowKey() {
+    Scope original = scope();
+    journal.create(original, UUID.randomUUID());
+    Scope foreign =
+        new Scope(
+            UUID.randomUUID(),
+            original.canonicalTenantId(),
+            original.targetNamespace(),
+            original.playableStateNamespaceId(),
+            original.peerStorageBinding(),
+            original.evidenceRef());
+
+    assertThat(
+            dsl.execute(
+                "UPDATE recovery_control.initial_gameplay_release_operation SET scope_payload=CAST(? AS jsonb), scope_digest=? WHERE operation_id=?",
+                tupleCodec.toJson(foreign),
+                tupleCodec.digest(foreign),
+                original.operationId()))
+        .isEqualTo(1);
+    assertThatThrownBy(() -> journal.find(original.operationId()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Persisted initial gameplay release scope is inconsistent");
+  }
+
+  @Test
+  void outboxReadersRejectResealedPayloadForAnotherOperationRowKey() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry original = authorizedDispatch(base);
+    OutboxEntry foreign = authorizedDispatch(base);
+    UUID originalOperationId = original.effect().operationId();
+    UUID foreignEffectId = foreign.effect().effectId();
+    assertThat(
+            dsl.execute(
+                "UPDATE recovery_control.initial_gameplay_release_outbox SET effect_id=?, payload=CAST(? AS jsonb), payload_digest=?, operation_tuple_digest=? WHERE operation_id=? AND effect_id=?",
+                foreignEffectId,
+                tupleCodec.toJson(foreign.effect()),
+                foreign.payloadDigest(),
+                foreign.effect().operationTupleDigest(),
+                originalOperationId,
+                original.effect().effectId()))
+        .isEqualTo(1);
+    assertOutboxReadersRejectMismatchedKey(originalOperationId, foreignEffectId, base);
+  }
+
+  @Test
+  void outboxReadersRejectResealedPayloadForAnotherEffectRowKey() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry original = authorizedDispatch(base);
+    UUID operationId = original.effect().operationId();
+    UUID wrongEffectId = UUID.randomUUID();
+    assertThat(
+            dsl.execute(
+                "UPDATE recovery_control.initial_gameplay_release_outbox SET effect_id=? WHERE operation_id=? AND effect_id=?",
+                wrongEffectId,
+                operationId,
+                original.effect().effectId()))
+        .isEqualTo(1);
+    assertOutboxReadersRejectMismatchedKey(operationId, wrongEffectId, base);
+  }
+
+  private static void assertOutboxReadersRejectMismatchedKey(
+      UUID operationId, UUID effectId, Instant base) {
+    String error = "Persisted initial gameplay release effect is inconsistent";
+    assertThatThrownBy(() -> journal.findNextEffect(operationId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(error);
+    assertThatThrownBy(
+            () -> journal.findEffect(operationId, EffectKind.PREPARE_PLAYABLE_STATE_FENCED))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(error);
+    assertThatThrownBy(
+            () ->
+                journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(5)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(error);
+  }
+
   private static OutboxEntry authorizedDispatch(Instant base) {
     Scope scope = scope();
     journal.create(scope, UUID.randomUUID());

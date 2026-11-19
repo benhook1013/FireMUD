@@ -234,7 +234,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Record record =
         dsl.fetchOne(
             """
-            SELECT outbox_id, effect_id, effect_kind, operation_tuple_digest, payload,
+            SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest, state,
                    attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
             FROM recovery_control.initial_gameplay_release_outbox
@@ -452,7 +452,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Record record =
         dsl.fetchOne(
             """
-            SELECT outbox_id, effect_id, effect_kind, operation_tuple_digest, payload,
+            SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest, state,
                    attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
             FROM recovery_control.initial_gameplay_release_outbox
@@ -587,6 +587,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     JSONB bindingJson = record.get("peer_storage_binding", JSONB.class);
     Scope scope = tupleCodec.readScope(scopeJson.data());
     if (!"initial_gameplay_release".equals(record.get("operation_kind", String.class))
+        || !scope.operationId().equals(record.get("operation_id", UUID.class))
         || !scope.targetNamespace().equals(record.get("target_namespace", String.class))
         || !scope
             .playableStateNamespaceId()
@@ -620,7 +621,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Record record =
         context.fetchOne(
             """
-            SELECT outbox_id, effect_id, effect_kind, operation_tuple_digest, payload,
+            SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest, state,
                    attempt_count, last_attempt_id, last_outcome_code, acknowledged_at
             FROM recovery_control.initial_gameplay_release_outbox
@@ -640,7 +641,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     String effectKind = record.get("effect_kind", String.class);
     Instant acknowledgedAt = toInstant(record.get("acknowledged_at", OffsetDateTime.class));
     TypedEffect effect = tupleCodec.readEffect(effectKind, payload.data());
-    if (!tupleCodec.digest(effect).equals(record.get("payload_digest", String.class))
+    if (!effect.operationId().equals(record.get("operation_id", UUID.class))
+        || !effect.effectId().equals(record.get("effect_id", UUID.class))
+        || !tupleCodec.digest(effect).equals(record.get("payload_digest", String.class))
         || !effect
             .operationTupleDigest()
             .equals(record.get("operation_tuple_digest", String.class))) {
