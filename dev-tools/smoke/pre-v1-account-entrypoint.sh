@@ -9,8 +9,10 @@ fixtures=/pre-v1-fixtures
 install -d -o root -g root -m 0555 /etc/firemud /etc/firemud/account-jwt-api \
   /etc/firemud/account-jwt-materializer /etc/firemud/account-jwt-readiness
 install -o root -g root -m 0444 "$fixtures/account-jwt-api/binding.json" \
-  "$fixtures/account-jwt-api/serving-ca.pem" "$fixtures/account-jwt-api/validator-inventory.json" \
-  /etc/firemud/account-jwt-api/
+  "$fixtures/account-jwt-api/serving-ca.pem" /etc/firemud/account-jwt-api/
+# The validator inventory reader refuses a world-readable file.
+install -o root -g firemud -m 0440 "$fixtures/account-jwt-api/validator-inventory.json" \
+  /etc/firemud/account-jwt-api/validator-inventory.json
 install -o root -g root -m 0444 "$fixtures/materializer-binding/binding.properties" \
   /etc/firemud/account-jwt-materializer/binding.properties
 install -o root -g root -m 0444 "$fixtures/readiness-binding/binding.properties" \
