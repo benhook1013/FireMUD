@@ -139,7 +139,7 @@ jobs:
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
-              if (value === "pending" || value === "in_progress" || value === "queued") return "⏳";
+              if (value === "pending" || value === "in_progress" || value === "queued" || value === "unavailable") return "⏳";
               return "⏭️";
             };
 
@@ -159,11 +159,6 @@ jobs:
               const attemptDiff = numericIdentity(left?.run_attempt) - numericIdentity(right?.run_attempt);
               if (attemptDiff !== 0) return attemptDiff;
               return numericIdentity(left?.id) - numericIdentity(right?.id);
-            };
-
-            const checkRunWorkflowId = (checkRun) => {
-              const match = String(checkRun?.details_url || "").match(/\/actions\/runs\/(\d+)(?:\/|$)/);
-              return match?.[1] || null;
             };
 
             // Metadata-only edits skip their gate under a non-required name; the
@@ -196,46 +191,35 @@ jobs:
                     data.total_count !== data.jobs.length || data.total_count >= 100) {
                   throw new Error("Static summary candidate jobs are incomplete.");
                 }
+                const mismatched = data.jobs.some(job => !Number.isSafeInteger(job?.id) || job.id <= 0 ||
+                  job.run_id !== candidate.id || job.run_attempt !== candidate.run_attempt || job.head_sha !== headSha);
+                const evidenceNames = [gateName, ...(workflowId === "codeql.yml" ? [
+                  ...detailChecks.map(([, name]) => name), "CodeQL Analysis ($" + "{{ matrix.language }})",
+                ] : [])];
+                const duplicate = !mismatched &&
+                  evidenceNames.some(name => data.jobs.filter(job => job.name === name).length > 1);
+                if (mismatched || duplicate) {
+                  // Do not replace a summary from a newer attempt with an older ambiguous snapshot.
+                  const {data: currentRun} = await github.rest.actions.getWorkflowRun({
+                    ...context.repo, run_id: candidate.id,
+                  });
+                  if (currentRun?.id !== candidate.id || currentRun.run_attempt !== candidate.run_attempt ||
+                      currentRun.event !== "pull_request" || currentRun.head_sha !== headSha ||
+                      currentRun.display_title !== expectedTitle) {
+                    throw new Error("Static summary cannot confirm the current workflow attempt.");
+                  }
+                  return { status: "unavailable", conclusion: null, jobs: [] };
+                }
                 const metadataName = `PR Metadata Edit (${gateName})`;
                 const metadata = data.jobs.some(job => job.status === "completed" &&
                   job.conclusion === "skipped" &&
                   (job.name === metadataName || String(job.name || "").includes("'" + metadataName + "'")));
                 const substantive = data.jobs.some(job => job.name === gateName);
                 if (metadata && !substantive) continue;
-                if (!substantive) return { ...candidate, status: "in_progress", conclusion: null };
-                return candidate;
+                if (!substantive) return { ...candidate, status: "in_progress", conclusion: null, jobs: data.jobs };
+                return { ...candidate, jobs: data.jobs };
               }
               return null;
-            };
-
-            const compareCheckRuns = (left, right) => {
-              const leftTimestamp = Math.max(
-                parseTimestamp(left?.completed_at),
-                parseTimestamp(left?.started_at),
-                parseTimestamp(left?.created_at)
-              );
-              const rightTimestamp = Math.max(
-                parseTimestamp(right?.completed_at),
-                parseTimestamp(right?.started_at),
-                parseTimestamp(right?.created_at)
-              );
-              if (leftTimestamp !== rightTimestamp) return leftTimestamp - rightTimestamp;
-              return numericIdentity(left?.id) - numericIdentity(right?.id);
-            };
-
-            const selectLatestCheckRun = (checkRuns, checkName, workflowRun) => {
-              if (!workflowRun?.id) return null;
-              const workflowRunId = String(workflowRun.id);
-              const candidates = (Array.isArray(checkRuns) ? checkRuns : []).filter(
-                (checkRun) =>
-                  checkRun?.name === checkName &&
-                  checkRunWorkflowId(checkRun) === workflowRunId
-              );
-              return candidates.reduce(
-                (latest, candidate) =>
-                  !latest || compareCheckRuns(candidate, latest) > 0 ? candidate : latest,
-                null
-              );
             };
 
             const normalizeStatus = (checkRun, checkName, workflowRun) => {
@@ -256,38 +240,27 @@ jobs:
               return checkRun.conclusion ?? "pending";
             };
 
-            const loadChecks = async () => {
-              return github.paginate(github.rest.checks.listForRef, {
-                ...context.repo,
-                ref: headSha,
-                per_page: 100,
-              });
-            };
-
-            const resolveStatuses = (checkRuns, workflowRuns) =>
+            const resolveStatuses = (workflowRuns) =>
               [...gateChecks, ...detailChecks].map(([label, checkName, workflowKey]) => {
                 const isCodeQlAnalysis = checkName.startsWith("CodeQL Analysis (");
                 const emptyMatrixCodeQlCheck =
                   "CodeQL Analysis ($" + "{{ matrix.language }})";
                 const workflowRun = workflowRuns?.[workflowKey] || null;
-                const selectedCheckRun = selectLatestCheckRun(
-                  checkRuns,
-                  checkName,
-                  workflowRun
-                ) || (isCodeQlAnalysis
-                  ? selectLatestCheckRun(checkRuns, emptyMatrixCodeQlCheck, workflowRun)
-                  : null);
-                return [label, normalizeStatus(selectedCheckRun, checkName, workflowRun)];
+                const jobs = workflowRun?.jobs ?? [];
+                let candidates = jobs.filter(job => job.name === checkName);
+                if (!candidates.length && isCodeQlAnalysis) {
+                  candidates = jobs.filter(job => job.name === emptyMatrixCodeQlCheck);
+                }
+                return [label, normalizeStatus(candidates[0], checkName, workflowRun)];
               });
 
-            const checkRuns = await loadChecks();
             const workflowRuns = {
               codeql: await workflowRunFor("codeql.yml", "CodeQL Gate"),
               license: await workflowRunFor("license-scan.yml", "License Gate"),
             };
             // Each serialized producer completion publishes one bounded snapshot.
             // A running counterpart stays pending until its completion callback refreshes this comment.
-            const checks = resolveStatuses(checkRuns, workflowRuns);
+            const checks = resolveStatuses(workflowRuns);
 
             const gateResults = checks.slice(0, gateChecks.length);
             const detailResults = checks.slice(gateChecks.length);
@@ -299,9 +272,13 @@ jobs:
               ["pending", "in_progress", "queued"].includes(result)
             );
 
+            const unavailableChecks = gateResults.filter(([, result]) => result === "unavailable");
+
             let headline = "✅ Static analysis checks passed";
             if (failedChecks.length > 0) {
               headline = "❌ Static analysis checks failed";
+            } else if (unavailableChecks.length > 0) {
+              headline = "⏳ Static analysis evidence is unavailable";
             } else if (pendingChecks.length > 0) {
               headline = "⏳ Static analysis checks are still running";
             }
