@@ -1504,6 +1504,17 @@ jobs:
                     core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
                     continue smokeGatePolling;
                   }
+                  const { data: acceptanceAttempt } = await withTransientGitHubRetry(
+                    "current-base runtime attempt lookup after live identity validation",
+                    () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                  );
+                  if (acceptanceAttempt.id !== matching.id ||
+                      acceptanceAttempt.run_attempt !== matching.run_attempt ||
+                      acceptanceAttempt.status !== "completed" || acceptanceAttempt.conclusion !== "success") {
+                    core.info("Runtime attempt changed after current-base identity validation; resume exact selection.");
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
                 }
                 return;
               }

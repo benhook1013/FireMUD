@@ -606,6 +606,7 @@ async function scenario(kind, event = "pull_request") {
   const liveFallback = kind.startsWith("trusted-current-base");
   const nextBase = "e".repeat(40), nextMerge = "f".repeat(40);
   const tupleAdvanced = () => kind === "trusted-current-base-advances" && currentRunReads >= 2;
+  let rerunStartedDuringLatestIdentityRead = false;
   const failures = [], refs = [], info = [];
   const context = {repo: {owner: "example", repo: "firemud"}, sha: liveFallback ? null : merge, payload: {
     repository: {default_branch: "develop"},
@@ -645,6 +646,9 @@ async function scenario(kind, event = "pull_request") {
   const github = {rest: {
     pulls: {get: async () => {
       reads += 1;
+      if (kind === "trusted-current-base-attempt-advances" && currentRunReads >= 2) {
+        rerunStartedDuringLatestIdentityRead = true;
+      }
       return {data: {state: "open", head: {sha: head}, base: {ref: kind === "stale-final" && reads > 3 ? "other" : "develop", sha: tupleAdvanced() ? nextBase : base}, merge_commit_sha: tupleAdvanced() ? nextMerge : merge}};
     }},
     git: {getRef: async () => ({data: {object: {sha: tupleAdvanced() ? nextBase : base}}})},
@@ -667,7 +671,7 @@ async function scenario(kind, event = "pull_request") {
           snapshotRerunVisible = kind === "incomplete-snapshot-superseded";
           return {data: {...source, run_attempt: snapshotRerunVisible ? 2 : 1}};
         }
-        const superseded = kind === "newer-attempt" || (kind === "rerun-after-proof" && currentRunReads > 1);
+        const superseded = kind === "newer-attempt" || rerunStartedDuringLatestIdentityRead || (kind === "rerun-after-proof" && currentRunReads > 1);
         return {data: {...source, run_attempt: superseded ? 2 : 1, status: superseded ? "in_progress" : "completed"}};
       },
     },
@@ -762,6 +766,10 @@ async function scenario(kind, event = "pull_request") {
   assert.match(unchangedSnapshot.failures[0], /did not expose a terminal PR Full-Stack Smoke job/);
   const stableFallback = await scenario("trusted-current-base-stable", "repository_dispatch");
   assert.deepEqual(stableFallback.failures, [], "unchanged current-base tuple still accepts exact refresh proof");
+  const rerunningFallback = await scenario("trusted-current-base-attempt-advances", "repository_dispatch");
+  assert(rerunningFallback.info.some(line => line.includes("attempt changed after current-base identity validation")),
+    "rerunning the producer during the live tuple lookup cannot accept the old attempt");
+  assert.equal(rerunningFallback.failures.length, 1, "no exact proof for the new attempt must not pass");
   const advancedFallback = await scenario("trusted-current-base-advances", "repository_dispatch");
   assert(advancedFallback.info.some(line => line.includes("identity changed after the final runtime attempt lookup")),
     "late base movement cannot accept the old trusted refresh");
