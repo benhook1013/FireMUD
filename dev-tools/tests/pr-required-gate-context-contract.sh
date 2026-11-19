@@ -4297,6 +4297,13 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         if (workflow_id === "runtime-images.yml" && runEvent === "pull_request") {
           runs = kind === "newer-original" ? [{...source, id: 105, status: "in_progress"}] : [source];
         }
+        if (workflow_id === "runtime-images.yml" && runEvent === "repository_dispatch" && shared.posts) {
+          shared.observations = (shared.observations || 0) + 1;
+          if (kind === "ambiguous-visible" && clock >= 5000) {
+            shared.visible = true;
+            runs = [refresh];
+          }
+        }
         if (workflow_id === "runtime-images.yml" && runEvent === "repository_dispatch" && kind === "second-page") {
           runs = Array.from({length: 100}, (_, i) => ({...refresh, id: 1000 + i, display_title: "unrelated"})).concat(refresh);
         }
@@ -4315,7 +4322,8 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         assert.deepEqual(request, {owner: "example", repo: "firemud", event_type: "pr-runtime-base-refresh",
           client_payload: {pr_number: "42", base_ref: "develop", base_sha: base, head_sha: head, merge_sha: merge}});
         shared.posts++;
-        if (kind === "ambiguous-post") throw new Error("unknown POST outcome");
+        if (["ambiguous-post", "ambiguous-visible"].includes(kind)) throw new Error("unknown POST outcome");
+        if (kind === "rejected-post") throw Object.assign(new Error("validation rejected"), {status: 422, response: {status: 422}});
         if (kind !== "invisible") shared.visible = true;
       },
     },
@@ -4348,7 +4356,8 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         {name: "Enforce validation success", status: "completed", conclusion: metadata ? "skipped" : "failure"}]}];
   }};
   await execute(github, {repo: {owner: "example", repo: "firemud"}, eventName: "workflow_run",
-    payload: {workflow_run: event, repository: {default_branch: "develop"}}}, {info: () => {}},
+    payload: {workflow_run: event, repository: {default_branch: "develop"}}},
+    {info: () => {}, setFailed: message => { shared.failure = message; }},
     class extends Date { static now() { return clock; } }, callback => {clock += 5000; callback();});
   if (kind === "merge-unknown") assert.equal(tupleReads, 6, "unresolved mergeability retries are bounded");
   if (kind === "merge-pending") assert.equal(tupleReads, 3, "one convergence retry plus final current tuple fence");
@@ -4384,6 +4393,20 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     await assert.rejects(run(scenario, state));
     assert.equal(state.posts, ["incomplete", "at-cap"].includes(scenario) ? 0 : 1, "never retry unknown POST");
   }
+  const rejectedPost = {visible: false, posts: 0};
+  await assert.rejects(run("rejected-post", rejectedPost), /validation rejected/);
+  assert.equal(rejectedPost.posts, 1);
+  assert.equal(rejectedPost.observations, undefined, "a documented rejection must not hold the mutex for observation");
+  const ambiguousInvisible = {visible: false, posts: 0};
+  await assert.rejects(run("ambiguous-post", ambiguousInvisible), /attempted but visibility is unknown/);
+  assert.equal(ambiguousInvisible.posts, 1);
+  assert.equal(ambiguousInvisible.observations, 25, "ambiguous invisible POST holds lock for the existing bounded observation");
+  const ambiguousVisible = {visible: false, posts: 0};
+  assert.equal(await run("ambiguous-visible", ambiguousVisible), 1);
+  assert.equal(ambiguousVisible.observations, 2, "observe an exact late handoff after losing the POST response");
+  assert.match(ambiguousVisible.failure, /response is unknown; no retry issued/);
+  await run("valid", ambiguousVisible);
+  assert.equal(ambiguousVisible.posts, 1, "the next serialized callback sees the exact handoff and does not retry");
   // Under the shared job mutex, a CI-first visible refresh suppresses completion recovery.
   assert.equal(await run("valid", {visible: true, posts: 0}), 0);
   // Repeated completion callbacks, including after terminal refresh failure, dispatch at most once.

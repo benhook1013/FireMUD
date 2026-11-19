@@ -1045,6 +1045,9 @@ jobs:
                   }
                   const previousIds = new Set(inventory?.runs?.map(run => run.id) || []);
                   const dispatchSince = new Date(Date.now() - 1000).toISOString();
+                  const pending = {tuple, previousIds, dispatchSince, responseUnknown: false};
+                  visibilitySince ??= dispatchSince;
+                  pendingVisibility.push(pending);
                   try {
                     await github.rest.repos.createDispatchEvent({
                       ...context.repo,
@@ -1057,10 +1060,17 @@ jobs:
                         merge_sha: tuple.mergeSha,
                       },
                     });
-                    // Collect handoffs first so one slow visibility response cannot starve later PRs.
-                    visibilitySince ??= dispatchSince;
-                    pendingVisibility.push({tuple, previousIds, dispatchSince});
                   } catch (error) {
+                    // Repository dispatch documents 404 and 422 as rejected requests; 401 is invalid authentication.
+                    // A transport error or retryable response is not proof of rejection.
+                    if ([401, 404, 422].includes(error?.status) && error.response?.status === error.status &&
+                        !error.response.headers?.["retry-after"] && error.response.headers?.["x-ratelimit-remaining"] !== "0") {
+                      pendingVisibility.pop();
+                      if (!pendingVisibility.length) visibilitySince = undefined;
+                      core.setFailed(`Runtime refresh POST rejected for PR #${tuple.prNumber}; no retry issued: ${error.message || error}`);
+                      break runtimeRefresh;
+                    }
+                    pending.responseUnknown = true;
                     core.setFailed(`Runtime refresh handoff for PR #${tuple.prNumber} is uncertain; no retry issued: ${error.message || error}`);
                     runtimeInventoryPromise = undefined;
                     break runtimeRefresh;
@@ -1110,11 +1120,14 @@ jobs:
                 const observed = await readInventory(visibilitySince, ["repository_dispatch"]);
                 if (!observed.complete) throw new Error("Accepted refresh has incomplete visibility; no retry issued");
                 for (let index = pendingVisibility.length - 1; index >= 0; index--) {
-                  const {tuple, previousIds, dispatchSince} = pendingVisibility[index];
+                  const {tuple, previousIds, dispatchSince, responseUnknown} = pendingVisibility[index];
                   const exactTitle = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
                   if (observed.runs.some(run => run.event === "repository_dispatch" &&
                       run.display_title === exactTitle && !previousIds.has(run.id) &&
-                      validTimestamp(run.created_at) && Date.parse(run.created_at) >= Date.parse(dispatchSince))) pendingVisibility.splice(index, 1);
+                      validTimestamp(run.created_at) && Date.parse(run.created_at) >= Date.parse(dispatchSince))) {
+                    pendingVisibility.splice(index, 1);
+                    if (responseUnknown) core.info(`Runtime refresh for PR #${tuple.prNumber} became visible after an unknown POST response.`);
+                  }
                 }
               } catch (error) {
                 core.setFailed(`Runtime refresh visibility is uncertain; no retry issued: ${error.message || error}`);
@@ -1122,7 +1135,8 @@ jobs:
               }
               if (pendingVisibility.length === 0) break;
               if (Date.now() >= visibilityDeadline) {
-                core.setFailed(`Refresh dispatch accepted but visibility is unknown for PRs ${pendingVisibility.map(item => item.tuple.prNumber).join(", ")}; no retry issued`);
+                const dispatchState = pendingVisibility.some(item => item.responseUnknown) ? "attempted" : "accepted";
+                core.setFailed(`Refresh dispatch ${dispatchState} but visibility is unknown for PRs ${pendingVisibility.map(item => item.tuple.prNumber).join(", ")}; no retry issued`);
                 break;
               }
               await new Promise(resolve => setTimeout(resolve, 5000));

@@ -210,13 +210,26 @@ jobs:
             const {data: finalCi} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
             if (!matchesCi(finalCi) || !await sourceCurrent() || await originalSuperseded() || await currentTuple() !== baseRef) return;
             const dispatchStarted = new Date(Date.now() - 1000).toISOString();
-            await github.rest.repos.createDispatchEvent({...context.repo, event_type: "pr-runtime-base-refresh", client_payload: {
-              pr_number: number, base_ref: baseRef, base_sha: base, head_sha: head, merge_sha: merge,
-            }});
-            // Keep the shared dispatcher lock until the accepted handoff is observable. Never blindly retry POST.
+            let responseUnknown = false;
+            try {
+              await github.rest.repos.createDispatchEvent({...context.repo, event_type: "pr-runtime-base-refresh", client_payload: {
+                pr_number: number, base_ref: baseRef, base_sha: base, head_sha: head, merge_sha: merge,
+              }});
+            } catch (error) {
+              // A documented repository-dispatch 404/422 or authentication 401 is not a lost response.
+              if ([401, 404, 422].includes(error?.status) && error.response?.status === error.status &&
+                  !error.response.headers?.["retry-after"] && error.response.headers?.["x-ratelimit-remaining"] !== "0") throw error;
+              responseUnknown = true;
+              core.setFailed(`Runtime refresh POST response is unknown; no retry issued: ${error.message || error}`);
+            }
+            // Keep the shared lock during observation even when the one POST response was lost.
             const deadline = Date.now() + 120000;
             while (!await newerRefresh(dispatchStarted)) {
-              if (Date.now() >= deadline) throw new Error("Refresh dispatch accepted but visibility is unknown; no retry issued");
+              if (Date.now() >= deadline) {
+                throw new Error(responseUnknown
+                  ? "Refresh dispatch attempted but visibility is unknown; no retry issued"
+                  : "Refresh dispatch accepted but visibility is unknown; no retry issued");
+              }
               await new Promise(resolve => setTimeout(resolve, 5000));
             }
             core.info(`Reconciled failed original runtime for PR #${number}; exact refresh is visible.`);

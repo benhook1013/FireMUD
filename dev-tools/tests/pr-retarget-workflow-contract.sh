@@ -894,7 +894,7 @@ async function runDispatcher({
   tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
   branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
   hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
-  visibilityResponse = null, filesFailurePr = null,
+  visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
 }) {
   const dispatches = [];
   const postedRuns = [];
@@ -996,10 +996,10 @@ async function runDispatcher({
           if (request.event_type === "preview-deploy" && request.client_payload.pr_number === previewFailurePr) {
             throw new Error("ambiguous preview POST timeout");
           }
-          if (request.event_type === "pr-runtime-base-refresh" && request.client_payload.pr_number === postFailurePr) {
-            throw new Error("ambiguous POST timeout");
-          }
-          if (request.event_type === "pr-runtime-base-refresh" && !hideDispatchVisibility) {
+          const ambiguousRuntimePost = request.event_type === "pr-runtime-base-refresh" &&
+            request.client_payload.pr_number === postFailurePr;
+          if (request.event_type === "pr-runtime-base-refresh" && !hideDispatchVisibility &&
+              (!ambiguousRuntimePost || postFailureVisible)) {
             const payload = request.client_payload;
             postedRuns.push(producer({
               prNumber: payload.pr_number, baseSha: payload.base_sha,
@@ -1007,6 +1007,11 @@ async function runDispatcher({
             }, "repository_dispatch", "queued", null, {
               id: 900000 + postedRuns.length, created_at: "2026-01-08T00:00:00Z",
             }));
+          }
+          if (ambiguousRuntimePost) {
+            const error = new Error(postFailureStatus ? "fixture HTTP rejection" : "ambiguous POST timeout");
+            if (postFailureStatus) Object.assign(error, {status: postFailureStatus, response: {status: postFailureStatus}});
+            throw error;
           }
         },
       },
@@ -1397,6 +1402,21 @@ async function runDispatcher({
   const failedPost = await runDispatcher({ tuples: [tuple, sibling], postFailurePr: "101" });
   assert.deepEqual(numbers(failedPost), ["101", "102"], "ambiguous first POST must not retry or starve second");
   assert(failedPost.errors.some(message => message.includes("ambiguous POST timeout")));
+  assert.equal(failedPost.waitedMillis, 120000, "observe unknown handoff through the same bounded shared window");
+  assert(failedPost.errors.some(message => message.includes("attempted but visibility is unknown for PRs 101")));
+  const deniedPost = await runDispatcher({tuples: [tuple, sibling], postFailurePr: "101", postFailureStatus: 422});
+  assert.deepEqual(numbers(deniedPost), ["101", "102"]);
+  assert.equal(deniedPost.waitedMillis, 0, "a documented rejection must not extend the shared observation");
+  assert(deniedPost.errors.some(error => error.includes("POST rejected for PR #101")));
+  const observedAmbiguousPost = await runDispatcher({
+    tuples: [{...tuple, labels: [{name: "preview"}]}, sibling], postFailurePr: "101", postFailureVisible: true,
+  });
+  assert.deepEqual(numbers(observedAmbiguousPost), ["101", "102"], "visible ambiguous handoff must not retransmit");
+  assert(previewDispatches(observedAmbiguousPost).some(item => item.client_payload.pr_number === "101"));
+  assert(observedAmbiguousPost.infos.some(message => message.includes("became visible after an unknown POST response")));
+  assert(observedAmbiguousPost.errors.some(message => message.includes("ambiguous POST timeout")),
+    "visibility does not conceal the transport failure");
+  assert(!observedAmbiguousPost.errors.some(message => message.includes("visibility is unknown")));
   const transientFirst = await runDispatcher({
     tuples: [tuple, sibling], apiFailure: (_request, count) => count === 1,
   });
