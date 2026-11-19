@@ -34,6 +34,15 @@ services:
       - "&*"
       - "+@all"
 
+  # Account LOGIN requires one replica AOF acknowledgement (WAITAOF), so Compose runs a replica.
+  redis-coord-replica:
+    image: redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
+    command: ["redis-server", "--replicaof", "redis-coord", "6379", "--appendonly", "yes",
+              "--appendfsync", "everysec", "--save", ""]
+    depends_on:
+      redis-coord:
+        condition: service_healthy
+
   pre-v1-kube-api:
     image: python:3.12-slim@sha256:31a416db24bd8ade7dac5fd5999ba6c234d7fa79d4add8781e95f41b187f4c9a
     command:
@@ -77,6 +86,9 @@ services:
         condition: service_healthy
 
   account-service:
+    depends_on:
+      redis-coord-replica:
+        condition: service_started
     user: "0:0"
     entrypoint: ["/bin/bash", "/pre-v1/pre-v1-account-entrypoint.sh"]
     environment:
@@ -90,7 +102,7 @@ services:
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_URI: redis://account_coord_app:pre-v1-account-coordination@redis-coord:6379/0
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_COMMAND_TIMEOUT_MILLIS: "2000"
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_REQUIRED_LOCAL_AOF_COUNT: "1"
-      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_REQUIRED_REPLICA_AOF_COUNT: "0"
+      FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_REQUIRED_REPLICA_AOF_COUNT: "1"
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_COORDINATION_ACKNOWLEDGEMENT_TIMEOUT_MILLIS: "2000"
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_REGISTRY_CLEANUP_MARGIN_MILLIS: "60000"
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_REQUEST_DIGEST_KEYRING_PATH: /var/run/secrets/firemud/request-digest
