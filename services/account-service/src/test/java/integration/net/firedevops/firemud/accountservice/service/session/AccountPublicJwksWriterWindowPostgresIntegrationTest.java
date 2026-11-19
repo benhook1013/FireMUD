@@ -6,8 +6,15 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.Message;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import io.grpc.Attributes;
 import io.grpc.Context;
+import io.grpc.Grpc;
+import io.grpc.Metadata;
+import io.grpc.ServerCall;
+import io.grpc.Status;
+import io.grpc.stub.StreamObserver;
 import java.math.BigInteger;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -39,7 +46,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntConsumer;
 import java.util.function.Supplier;
+import javax.net.ssl.SSLSession;
 import javax.sql.DataSource;
+import net.firedevops.firemud.account.v1.EnrollBootstrapRequest;
+import net.firedevops.firemud.account.v1.GetCurrentGenerationRequestRequest;
+import net.firedevops.firemud.account.v1.GetCurrentPromotionRequestRequest;
+import net.firedevops.firemud.account.v1.RecordGenerationResultRequest;
+import net.firedevops.firemud.account.v1.RecordPrivatePromotionResultRequest;
+import net.firedevops.firemud.account.v1.RecordSecretObservationRequest;
+import net.firedevops.firemud.accountjwtmaterializer.CanonicalMaterializerDriver;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ApiCall;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ApiResponse;
@@ -56,6 +71,8 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PublicKeyIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
 import net.firedevops.firemud.accountservice.repository.AccountJwtValidatorInventoryRepository;
+import net.firedevops.firemud.accountservice.security.AccountJwtSignerMaterializerTlsInterceptor;
+import net.firedevops.firemud.accountservice.service.impl.AccountJwtSignerMaterializationService;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClient.ConfigMapSnapshot;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -130,6 +147,86 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
       jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
     schemas.clear();
+  }
+
+  @Test
+  void actualMaterializerPersistsOriginalGenerationAndRecoversWithoutLegacyReadinessRpc()
+      throws Exception {
+    Harness harness = harness();
+    CanonicalMaterializerDriver materializer =
+        new CanonicalMaterializerDriver(
+            harness.binding.namespace(),
+            CLUSTER_UID,
+            NAMESPACE_UID,
+            harness.binding.bindingDigest(),
+            harness.binding.configRevision(),
+            SECRET_UID,
+            harness::invokeMaterializerOwner);
+    assertThat(materializer.observe()).isEqualTo("SECRET_OBSERVATION_RECORDED");
+    assertThat(materializer.patches()).isZero();
+    assertThat(harness.count("account_jwt_signer_secret_observations")).isEqualTo(1);
+    materializer.loseNextPatchReply();
+    // The real materializer can retain generation even if later readiness remains unavailable.
+    assertThatThrownBy(materializer::reconcile)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account-authorized JWT materialization could not be reconciled");
+    assertThat(harness.lastMaterializerOwnerError.get()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(materializer.patches()).isEqualTo(1);
+    assertThat(harness.count("account_jwt_signer_generation_results")).isEqualTo(1);
+    byte[] originalPending = materializer.pendingBundle();
+    try {
+      Files.write(harness.privateMount.resolve("pending.key"), originalPending);
+      harness.result =
+          harness.tx(
+              () ->
+                  harness.desired.readCurrentGenerationResult(
+                      harness.binding.accountBinding(), harness.trust));
+      harness.readinessFixture =
+          new AccountJwtPreparedPublicationPostgresFixture(
+              harness.binding.accountBinding(),
+              harness.trust,
+              harness.result,
+              API_DIGEST,
+              API_REVISION);
+      harness.prepublication.prepublishCurrentGeneration();
+      harness.mountAndObserve();
+      // Each invocation constructs a new Materializer and client adapter; only durable owner
+      // state and the independently retained controlled Secret survive.
+      assertThatThrownBy(materializer::reconcile).isInstanceOf(IllegalStateException.class);
+      assertThat(harness.lastMaterializerOwnerError.get())
+          .isEqualTo(Status.Code.FAILED_PRECONDITION);
+      assertThat(materializer.patches()).isEqualTo(1);
+      assertThat(materializer.pendingBundle()).isEqualTo(originalPending);
+      assertThat(harness.count("account_jwt_signer_generation_results")).isEqualTo(1);
+      assertThat(harness.count("account_jwt_signer_secret_observations")).isEqualTo(1);
+      assertThat(harness.count("account_jwt_signer_promotion_operations")).isZero();
+      harness.readinessFixture.completeReadiness(
+          harness.readiness,
+          harness.transaction,
+          harness.dsl,
+          harness.privateMount,
+          harness.publicMount);
+      // Secret CAS precedes asynchronous mount delivery; the owner remains fail-closed.
+      assertThatThrownBy(materializer::reconcile)
+          .isInstanceOf(io.grpc.StatusRuntimeException.class);
+      assertThat(harness.lastMaterializerOwnerError.get()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+      assertThat(materializer.patches()).isEqualTo(2);
+      byte[] current = materializer.currentBundle();
+      try {
+        Files.write(harness.privateMount.resolve("current.key"), current);
+      } finally {
+        java.util.Arrays.fill(current, (byte) 0);
+      }
+      assertThat(materializer.reconcile()).isEqualTo("PRIVATE_PROMOTION_RECEIPT_RECORDED");
+      assertThat(materializer.patches()).isEqualTo(2);
+      assertThat(harness.materializerResponses).noneMatch(value -> value.contains("PRIVATE KEY"));
+      JsonMapper mapper = JsonMapper.builder().build();
+      String privateKey = mapper.readTree(originalPending).path("privateKeyPkcs8").asText();
+      assertThat(privateKey).isNotEmpty();
+      assertThat(harness.materializerResponses).noneMatch(value -> value.contains(privateKey));
+    } finally {
+      java.util.Arrays.fill(originalPending, (byte) 0);
+    }
   }
 
   @Test
@@ -681,6 +778,10 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     private final AccountJwtSignerBootstrapCoordinator coordinator;
     private final AccountPublicJwksReadService publicRead;
     private final ControlledTransport transport;
+    private final AccountJwtSignerMaterializerTrustBinding materializerProvider;
+    private final DefaultListableBeanFactory ownerBeans;
+    private final List<String> materializerResponses = new java.util.ArrayList<>();
+    private final AtomicReference<Status.Code> lastMaterializerOwnerError = new AtomicReference<>();
     private final AccountJwtJwksConfigMapClient configMap;
     private final Path privateMount;
     private final Path publicMount;
@@ -707,7 +808,8 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
       transaction = new TransactionTemplate(manager);
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
       String peer = "spiffe://firemud/ns/firemud-prod/sa/jwt-signer-materializer";
-      List<String> pins = List.of("d".repeat(64));
+      List<String> pins =
+          List.of(sha256("controlled-materializer-spki".getBytes(StandardCharsets.UTF_8)));
       String digest =
           AccountJwtSignerMaterializerTrustBinding.computeBindingDigest(
               "trust-r1",
@@ -732,6 +834,7 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
       trust = new TrustFence(CLUSTER_UID, NAMESPACE_UID, digest, "trust-r1");
       var materializer = mock(AccountJwtSignerMaterializerTrustBinding.class);
       when(materializer.current()).thenReturn(Optional.of(binding));
+      materializerProvider = materializer;
       ParsedBinding parsed =
           new ParsedBinding(
               API_REVISION,
@@ -792,6 +895,7 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
               });
       var beans = new DefaultListableBeanFactory();
       beans.registerSingleton("controlledInventory", inventory);
+      ownerBeans = beans;
       coordinator =
           new AccountJwtSignerBootstrapCoordinator(
               materializer,
@@ -807,7 +911,89 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
           new AccountPublicJwksReadService(
               source,
               new AccountPublicJwksReadWorkloadGuard(materializer, api, binding.namespace()));
+      ownerBeans.registerSingleton("bootstrapCoordinator", coordinator);
       coordinator.enrollOnce();
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private Message invokeMaterializerOwner(String method, Message request) {
+      var service =
+          new AccountJwtSignerMaterializationService(
+              new AccountJwtSignerDesiredStateRepository(dsl),
+              readiness,
+              materializerProvider,
+              manager,
+              ownerBeans.getBeanProvider(AccountJwtSignerBootstrapCoordinator.class),
+              ownerBeans.getBeanProvider(AccountJwtValidatorInventorySource.class));
+      AtomicReference<Message> value = new AtomicReference<>();
+      AtomicReference<Throwable> error = new AtomicReference<>();
+      AtomicBoolean complete = new AtomicBoolean();
+      StreamObserver observer =
+          new StreamObserver<Message>() {
+            public void onNext(Message response) {
+              assertThat(value.compareAndSet(null, response)).isTrue();
+              materializerResponses.add(response.toString());
+            }
+
+            public void onError(Throwable failure) {
+              error.set(failure);
+            }
+
+            public void onCompleted() {
+              complete.set(true);
+            }
+          };
+      ServerCall<String, String> call = mock(ServerCall.class);
+      SSLSession session = mock(SSLSession.class);
+      var certificate = mock(java.security.cert.X509Certificate.class);
+      var key = mock(java.security.PublicKey.class);
+      when(key.getEncoded())
+          .thenReturn("controlled-materializer-spki".getBytes(StandardCharsets.UTF_8));
+      when(certificate.getPublicKey()).thenReturn(key);
+      try {
+        when(certificate.getSubjectAlternativeNames())
+            .thenReturn(List.of(List.of(6, binding.expectedPeerUri())));
+        when(session.getPeerCertificates())
+            .thenReturn(new java.security.cert.Certificate[] {certificate});
+      } catch (Exception failure) {
+        throw new AssertionError(failure);
+      }
+      when(call.getAttributes())
+          .thenReturn(
+              Attributes.newBuilder().set(Grpc.TRANSPORT_ATTR_SSL_SESSION, session).build());
+      new AccountJwtSignerMaterializerTlsInterceptor(materializerProvider)
+          .interceptCall(
+              call,
+              new Metadata(),
+              (intercepted, headers) -> {
+                switch (method) {
+                  case "enroll" ->
+                      service.enrollBootstrap((EnrollBootstrapRequest) request, observer);
+                  case "generation" ->
+                      service.getCurrentGenerationRequest(
+                          (GetCurrentGenerationRequestRequest) request, observer);
+                  case "observe" ->
+                      service.recordSecretObservation(
+                          (RecordSecretObservationRequest) request, observer);
+                  case "record" ->
+                      service.recordGenerationResult(
+                          (RecordGenerationResultRequest) request, observer);
+                  case "promote" ->
+                      service.recordPrivatePromotionResult(
+                          (RecordPrivatePromotionResultRequest) request, observer);
+                  case "promotion" ->
+                      service.getCurrentPromotionRequest(
+                          (GetCurrentPromotionRequestRequest) request, observer);
+                  default -> throw new AssertionError("Unexpected materializer operation");
+                }
+                return new ServerCall.Listener<>() {};
+              });
+      if (error.get() != null) {
+        lastMaterializerOwnerError.set(Status.fromThrowable(error.get()).getCode());
+        throw Status.fromThrowable(error.get()).asRuntimeException();
+      }
+      assertThat(complete.get()).isTrue();
+      return java.util.Objects.requireNonNull(value.get());
     }
 
     private void generate() throws Exception {

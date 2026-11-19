@@ -108,6 +108,7 @@ dependencies {
     integrationTestImplementation(libs.spring.boot.starter.webflux)
     integrationTestImplementation(libs.spring.boot.starter.data.redis.reactive)
     integrationTestImplementation(testFixtures(project(":account-service")))
+    integrationTestImplementation(project(":account-jwt-materializer"))
     integrationTestImplementation(testFixtures(project(":logging-admin-service")))
 }
 
