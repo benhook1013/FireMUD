@@ -20,9 +20,19 @@ services:
       - redis-server
       - /usr/local/etc/redis/redis.conf
       - --user
-      - account_coord_app on >pre-v1-account-coordination ~* &* +@all
+      - account_coord_app
+      - "on"
+      - ">pre-v1-account-coordination"
+      - "~*"
+      - "&*"
+      - "+@all"
       - --user
-      - gamesession_coord_app on >pre-v1-game-session-coordination ~* &* +@all
+      - gamesession_coord_app
+      - "on"
+      - ">pre-v1-game-session-coordination"
+      - "~*"
+      - "&*"
+      - "+@all"
 
   pre-v1-kube-api:
     image: python:3.12-slim@sha256:31a416db24bd8ade7dac5fd5999ba6c234d7fa79d4add8781e95f41b187f4c9a
