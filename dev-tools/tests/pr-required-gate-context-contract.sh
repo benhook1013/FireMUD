@@ -8,7 +8,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # earlier substantive result stands and an edit can never turn a failing PR
 # green. Base retargets keep the required name and rerun the full gate.
 python3 - "$ROOT_DIR" <<'PY'
+import ast
 from pathlib import Path
+import re
 import sys
 
 import yaml
@@ -48,6 +50,90 @@ def evaluate(expression, action, base_ref, event="pull_request"):
         body = body.replace(key, value)
     body = body.replace("&&", " and ").replace("||", " or ").replace("!=", " != ").replace("null", "None")
     return eval(body, {"__builtins__": {}})
+
+
+
+def literal_format(pattern, *args):
+    if type(pattern) is not str:
+        raise ValueError("Concurrency format requires a literal string")
+    parts = []
+    cursor = 0
+    for match in re.finditer(r"\{([0-9]+)\}", pattern):
+        literal = pattern[cursor:match.start()]
+        if "{" in literal or "}" in literal:
+            raise ValueError("Unsupported concurrency format placeholder")
+        index = int(match[1])
+        if index >= len(args):
+            raise ValueError("Concurrency format placeholder out of range")
+        parts.extend((literal, str(args[index])))
+        cursor = match.end()
+    tail = pattern[cursor:]
+    if "{" in tail or "}" in tail:
+        raise ValueError("Unsupported concurrency format placeholder")
+    return "".join((*parts, tail))
+
+
+def interpret_selector(node):
+    if isinstance(node, ast.Constant) and type(node.value) in (str, int, bool, type(None)):
+        return node.value
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
+        # GitHub's boolean operators return operands and short-circuit.
+        value = interpret_selector(node.values[0])
+        for operand in node.values[1:]:
+            if bool(value) == isinstance(node.op, ast.Or):
+                return value
+            value = interpret_selector(operand)
+        return value
+    if (isinstance(node, ast.Compare) and len(node.ops) == 1
+            and isinstance(node.ops[0], (ast.Eq, ast.NotEq))):
+        values = interpret_selector(node.left), interpret_selector(node.comparators[0])
+        return (values[0] == values[1]) == isinstance(node.ops[0], ast.Eq)
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "format" and not node.keywords and node.args
+            and isinstance(node.args[0], ast.Constant)):
+        return literal_format(*(interpret_selector(arg) for arg in node.args))
+    raise ValueError("Unsupported concurrency selector")
+
+
+assert literal_format("metadata-{0}", 123) == "metadata-123"
+for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{1}"):
+    try:
+        literal_format(forbidden, 123)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"Accepted unsupported concurrency format: {forbidden}")
+
+
+def effective_group(group, base_ref):
+    values = {
+        "github.event.changes.base.ref": repr(base_ref),
+        "github.event.pull_request.number": "42",
+        "github.event.action": "'edited'",
+        "github.event_name": "'pull_request'",
+        "github.workflow": "'Required Gate'",
+        "github.run_id": "123",
+        "github.ref": "'refs/pull/42/merge'",
+    }
+
+    def render(match):
+        body = match[1].strip()
+        for key, value in values.items():
+            body = body.replace(key, value)
+        body = body.replace("&&", " and ").replace("||", " or ")
+        body = re.sub(r"\b(null|true|false)\b", lambda token: {
+            "null": "None", "true": "True", "false": "False",
+        }[token[0]], body)
+        tree = ast.parse(body, mode="eval")
+        return str(interpret_selector(tree.body))
+    return re.sub(r"\$\{\{(.*?)\}\}", render, group)
+
+
+def isolates_metadata_group(group, run_scoped):
+    metadata = effective_group(group, None)
+    retarget = effective_group(group, "develop")
+    expected_suffix = "-metadata-123" if run_scoped else "-metadata"
+    return metadata != retarget and metadata.endswith(expected_suffix) and retarget.endswith("-required")
 
 
 def excludes_metadata(expression):
@@ -169,6 +255,14 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     suffix = "format('metadata-{0}', github.run_id) || 'required'" if run_scoped else "&& 'metadata' || 'required'"
     if "github.event.pull_request.number" not in group or META.split(" && ", 1)[1] not in group or suffix not in group:
         raise SystemExit(f"{workflow} concurrency group must keep metadata runs out of the PR's required namespace")
+    if not isolates_metadata_group(group, run_scoped):
+        raise SystemExit(f"{workflow} effective metadata and retarget groups must differ")
+    # The old substring guard would accept this expression despite its bypass.
+    bypassed = group.replace(META, "true && 'required' || " + META, 1)
+    assert bypassed != group and META in bypassed and suffix in bypassed
+    assert effective_group(bypassed, None) == effective_group(bypassed, "develop"), workflow
+    assert effective_group(bypassed, None).endswith("-required"), workflow
+    assert not isolates_metadata_group(bypassed, run_scoped), workflow
     if concurrency.get("cancel-in-progress") != "true":
         raise SystemExit(f"{workflow} must cancel obsolete runs within each namespace")
 PY
