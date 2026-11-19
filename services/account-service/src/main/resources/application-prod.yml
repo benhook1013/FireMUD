@@ -85,6 +85,12 @@ firemud:
         - account.v1.StartSessionOperatorAuthorizationService/RecoverOperatorAuthorizationReference
         - account.v1.StartSessionOperatorAuthorizationService/RedeemOperatorAuthorization
         - account.v1.StartSessionOperatorAuthorizationService/ReadRedeemedOperationProjection
+        - account.v1.AccountJwtSignerMaterializationService/EnrollBootstrap
+        - account.v1.AccountJwtSignerMaterializationService/GetCurrentGenerationRequest
+        - account.v1.AccountJwtSignerMaterializationService/RecordSecretObservation
+        - account.v1.AccountJwtSignerMaterializationService/RecordGenerationResult
+        - account.v1.AccountJwtSignerMaterializationService/GetCurrentPromotionRequest
+        - account.v1.AccountJwtSignerMaterializationService/RecordPrivatePromotionResult
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

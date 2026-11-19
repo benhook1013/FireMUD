@@ -285,6 +285,14 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
                       START_SESSION_RECOVER_METHOD,
                       START_SESSION_REDEEM_METHOD,
                       READ_REDEEMED_OPERATION_PROJECTION_METHOD)
+                  // Bearer-free: the materializer is gated by its pinned TLS peer interceptor.
+                  .contains(
+                      "account.v1.AccountJwtSignerMaterializationService/EnrollBootstrap",
+                      "account.v1.AccountJwtSignerMaterializationService/GetCurrentGenerationRequest",
+                      "account.v1.AccountJwtSignerMaterializationService/RecordSecretObservation",
+                      "account.v1.AccountJwtSignerMaterializationService/RecordGenerationResult",
+                      "account.v1.AccountJwtSignerMaterializationService/GetCurrentPromotionRequest",
+                      "account.v1.AccountJwtSignerMaterializationService/RecordPrivatePromotionResult")
                   .doesNotContain("account.v1.StartSessionOperatorAuthorizationService/*")
                   .doesNotContain(NONPUBLIC_METHOD);
               action.accept(
