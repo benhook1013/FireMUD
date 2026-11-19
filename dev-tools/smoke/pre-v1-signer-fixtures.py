@@ -4,11 +4,11 @@
 Compose smoke only, under the pre-v1 gate waiver (ADR 0185). Writes, under OUTPUT_DIR:
 
   kube/            TLS leaf, key and bearer token for dev-tools/smoke/pre-v1-kube-api-standin.py
-  account-jwt-api/ Account's protected API binding (binding.json) and serving CA pin
+  account-jwt-api/ Account's protected API binding (binding.json), serving CA pin and
+                   validator inventory binding (validator-inventory.json)
   api-token/       Account's bearer token for that API
   materializer/    Materializer stand-in mTLS leaf (spiffe://firemud/ns/dev/sa/account-jwt-materializer)
   materializer-binding/ Account's protected materializer trust binding (binding.properties)
-  validator-inventory/ Account's protected validator inventory binding (binding.json)
   readiness-binding/ Account's protected readiness trust binding (binding.properties); the
                    self-attested readiness driver presents its harness identity
   identity.json    The fixed environment identity the stand-ins share
@@ -225,9 +225,8 @@ def main():
         ],
     }
     inventory["bindingDigest"] = sha256_hex(canonical_json(inventory))
-    inventory_dir = out / "validator-inventory"
-    inventory_dir.mkdir(exist_ok=True)
-    (inventory_dir / "binding.json").write_text(json.dumps(inventory, indent=2) + "\n")
+    # AccountJwtValidatorInventoryBinding reads one fixed path beside the API binding.
+    (api / "validator-inventory.json").write_text(json.dumps(inventory, indent=2) + "\n")
 
     (out / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
     os.chmod(out, 0o755)

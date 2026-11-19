@@ -24,6 +24,8 @@ Under ADR 0185 (no data carry-over before v1, proposed in #3459), Compose smoke 
 | Account runtime entitlement grants a tenant UUID that has no Account tenant source (script-seeded preview tenants) | Seeded tenants created through the real Game Design to Account tenant-creation flow, giving each an Account demo or paid source |
 | Game Session and Account LOGIN Coordination Redis accept plaintext `redis://` | TLS (`rediss://`) Coordination with peer verification |
 | Game Session initial LOGIN uses a process-local qualification lease | External Coordination qualification authority excluding reset, restore and promotion |
+| Compose Account JWT signer uses a stand-in Kubernetes API (`dev-tools/smoke/pre-v1-kube-api-standin.py`) and materializer (`dev-tools/smoke/pre-v1-jwt-materializer-standin.py`) | Deployed materializer writing a real Secret, the real cluster API and RBAC for the `jwt-jwks` ConfigMap and validator inventory |
+| Account signer promotion uses self-attested validator readiness (`PreV1SelfAttestedReadinessDriver`) | A Pod-bound readiness receiver client and orchestrator that verifies each validator Pod's acceptance |
 | Direct-text PLAY runs on the existing direct LOGIN until the authenticated LOGIN, WORLDS, REALMS and JOIN receiver lands (stacked straight after UUID PLAY is green) | Deployed Account JWT signer materializer and public-JWKS API binding, protected Coordination Redis (TLS, ACL, AOF acknowledgement) and the external Coordination qualification authority, then PLAY moved onto the authenticated receiver |
 
 ### Direct-text scope and JOIN identifier cutover
