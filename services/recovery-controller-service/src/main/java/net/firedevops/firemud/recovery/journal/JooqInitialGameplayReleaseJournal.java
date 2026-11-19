@@ -370,16 +370,20 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             String storedDigest =
                 stored == null ? null : stored.get("readback_digest", String.class);
             if (current.state() == EffectOutboxState.ACKNOWLEDGED) {
-              if (readbackDigest.equals(storedDigest)
-                  || (stored != null
-                      && !readback.observedAt().isAfter(now)
-                      && sameAcknowledgedOutcome(readback, stored, storedDigest))) {
+              if (readbackDigest.equals(storedDigest)) {
+                requireValidExactStoredReadback(readback, stored, storedDigest, current);
+                return operation;
+              }
+              if (stored != null
+                  && !readback.observedAt().isAfter(now)
+                  && sameAcknowledgedOutcome(readback, stored, storedDigest)) {
                 return operation;
               }
               throw conflict("effect readback changed after acknowledgement");
             }
             if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
                 && readbackDigest.equals(storedDigest)) {
+              requireValidExactStoredReadback(readback, stored, storedDigest, current);
               return operation;
             }
             if (readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
@@ -676,6 +680,20 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || !tuple.evidenceDigest().equals(tupleCodec.digest(operation.evidence()))) {
       throw conflict("public transition tuple does not match the operation-owned tuple");
     }
+  }
+
+  private void requireValidExactStoredReadback(
+      EffectReadback replay, Record stored, String digest, OutboxEntry current) {
+    JSONB payload = stored.get("readback_payload", JSONB.class);
+    if (payload == null) {
+      throw conflict("retained effect readback is incomplete");
+    }
+    EffectReadback saved = tupleCodec.readEffectReadback(payload.data());
+    if (!digest.equals(tupleCodec.digest(saved)) || !saved.equals(replay)) {
+      throw conflict("retained effect readback does not match exact replay");
+    }
+    requireReadbackMatches(
+        saved, current, current.effect().operationId(), current.effect().effectId());
   }
 
   private void requireNonRegressingReadback(

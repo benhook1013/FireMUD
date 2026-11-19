@@ -824,6 +824,48 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .hasMessageContaining(error);
   }
 
+  @Test
+  void exactReadbackReplayVerifiesRetainedPayloadInBothClosedStates() {
+    for (EffectReadbackState state :
+        List.of(EffectReadbackState.PREPARED_FENCED, EffectReadbackState.PROVEN_NO_EFFECT)) {
+      clearJournal();
+      Instant base = Instant.parse("2026-09-01T00:00:00Z");
+      OutboxEntry dispatched = authorizedDispatch(base);
+      UUID operationId = dispatched.effect().operationId();
+      UUID effectId = dispatched.effect().effectId();
+      UUID attemptId = dispatched.lastAttemptId();
+      EffectReadback valid =
+          readbackFor(dispatched, attemptId, state, "terminal", base.plusSeconds(5));
+      Operation settled =
+          journal.recordEffectReadback(
+              operationId, effectId, attemptId, valid, base.plusSeconds(6));
+      String before = storedOutbox(operationId, effectId);
+      assertThat(
+              journal.recordEffectReadback(
+                  operationId, effectId, attemptId, valid, base.plusSeconds(7)))
+          .isEqualTo(settled);
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+
+      EffectReadback mismatched =
+          readbackFor(dispatched, UUID.randomUUID(), state, "terminal", base.plusSeconds(5));
+      assertThat(
+              dsl.execute(
+                  "UPDATE recovery_control.initial_gameplay_release_outbox SET readback_payload=CAST(? AS jsonb) WHERE effect_id=?",
+                  tupleCodec.toJson(mismatched),
+                  effectId))
+          .isEqualTo(1);
+      String corrupt = storedOutbox(operationId, effectId);
+      assertThatThrownBy(
+              () ->
+                  journal.recordEffectReadback(
+                      operationId, effectId, attemptId, valid, base.plusSeconds(8)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("retained effect readback does not match exact replay");
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(corrupt);
+      assertThat(journal.find(operationId)).contains(settled);
+    }
+  }
+
   private static OutboxEntry authorizedDispatch(Instant base) {
     Scope scope = scope();
     journal.create(scope, UUID.randomUUID());
