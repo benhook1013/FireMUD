@@ -96,9 +96,24 @@ check(dispatch, "pr-7-base-base1-head-head1-merge-merge1-required")
 for event in [base, dispatch, {"event_name": "workflow_dispatch"},
               {"event_name": "workflow_run", "event": {"workflow_run": {"event": "pull_request", "head_branch": "develop"}}}]:
     assert evaluate(event, cancel) == "False", event
-for branch in ["main", "develop", "feature/x"]:
-    event = {"event_name": "workflow_run", "event": {"workflow_run": {"event": "push", "head_branch": branch}}}
-    assert evaluate(event, cancel) == str(branch in ["main", "develop"]), event
+def push_callback(branch, conclusion, run_id, attempt):
+    return {**base, "event_name": "workflow_run", "event": {"workflow_run": {
+        "event": "push", "head_branch": branch, "conclusion": conclusion,
+        "id": run_id, "run_attempt": attempt}}}
+
+for branch in ("main", "develop"):
+    event = push_callback(branch, "success", 91, 2)
+    assert evaluate(event, cancel) == "True", event
+    check(event, f"branch-{branch}-required")
+    for conclusion, run_id, attempt in (("failure", 92, 1), ("cancelled", 93, 2),
+                                       ("timed_out", 94, 3), (None, 95, 1)):
+        event = push_callback(branch, conclusion, run_id, attempt)
+        assert evaluate(event, cancel) == "False", event
+        check(event, f"ci-push-run-{run_id}-attempt-{attempt}-required")
+
+nonprotected = push_callback("feature/x", "success", 96, 2)
+assert evaluate(nonprotected, cancel) == "False", nonprotected
+check(nonprotected, "ci-push-run-96-attempt-2-required")
 
 for value in [0, False, "", None]:
     invalid = copy.deepcopy(dispatch)
@@ -116,8 +131,6 @@ check(dispatch, "pr-7-base-base1-head-head2-merge-merge1-required")
 callback = {**base, "event_name": "workflow_run", "event": {
     "workflow_run": {"event": "pull_request", "id": 90, "run_attempt": 2}}}
 check(callback, "ci-pr-run-90-attempt-2-required")
-callback["event"]["workflow_run"] = {"event": "push", "head_branch": "develop"}
-check(callback, "branch-develop-required")
 check({**base, "event_name": "push", "event": {}, "ref": "refs/heads/develop"},
       "refs/heads/develop-required")
 print("Runtime concurrency: nonpreemptive exact PR/dispatch tuple and branch isolation passed")
