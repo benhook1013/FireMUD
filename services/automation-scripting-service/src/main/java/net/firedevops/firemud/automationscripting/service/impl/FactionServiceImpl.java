@@ -38,15 +38,14 @@ public class FactionServiceImpl implements FactionService {
         standingRepository
             .findByTenantIdAndCharacterIdAndPlayableStateKeyAndFaction_Id(
                 tenantId, characterId, playableStateKey, factionId)
-            .orElseGet(
-                () -> {
-                  FactionStanding fs = new FactionStanding();
-                  fs.setTenantId(tenantId);
-                  fs.setCharacterId(characterId);
-                  fs.setPlayableStateKey(playableStateKey);
-                  fs.setFaction(faction);
-                  return fs;
-                });
+            .orElseGet(() -> {
+              FactionStanding fs = new FactionStanding();
+              fs.setTenantId(tenantId);
+              fs.setCharacterId(characterId);
+              fs.setPlayableStateKey(playableStateKey);
+              fs.setFaction(faction);
+              return fs;
+            });
     standing.setReputation(standing.getReputation() + delta);
     standingRepository.save(standing);
     return standing.getReputation();

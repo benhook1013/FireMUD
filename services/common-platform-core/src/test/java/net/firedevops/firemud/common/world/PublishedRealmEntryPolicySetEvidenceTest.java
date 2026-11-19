@@ -114,31 +114,27 @@ public class PublishedRealmEntryPolicySetEvidenceTest {
       throws Exception {
     var selection = fixture(false).operation().account().input().selection();
 
-    assertThatThrownBy(
-            () ->
-                AuthoredDraftPublishSelectionBinding.fromStored(
-                    selection.canonicalJson() + " ", selection.digest()))
+    assertThatThrownBy(() ->
+            AuthoredDraftPublishSelectionBinding.fromStored(
+                selection.canonicalJson() + " ", selection.digest()))
         .isInstanceOf(IllegalArgumentException.class)
-        .satisfies(
-            failure -> {
-              assertThat(failure.getCause())
-                  .isInstanceOf(IllegalArgumentException.class)
-                  .hasMessageContaining("not exact canonical JSON");
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getCause())
+              .isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("not exact canonical JSON");
+        });
 
     ObjectNode corrupted = (ObjectNode) JSON.readTree(selection.canonicalJson());
     corrupted.put("selectedCommitBindingJson", "{}");
     String corruptedJson = JSON.writeValueAsString(corrupted);
-    assertThatThrownBy(
-            () ->
-                AuthoredDraftPublishSelectionBinding.fromStored(corruptedJson, selection.digest()))
+    assertThatThrownBy(() ->
+            AuthoredDraftPublishSelectionBinding.fromStored(corruptedJson, selection.digest()))
         .isInstanceOf(IllegalArgumentException.class)
-        .satisfies(
-            failure -> {
-              assertThat(failure.getCause())
-                  .isInstanceOf(IllegalStateException.class)
-                  .hasMessageContaining("corrupt");
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getCause())
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessageContaining("corrupt");
+        });
   }
 
   @Test
@@ -231,22 +227,21 @@ public class PublishedRealmEntryPolicySetEvidenceTest {
                 policy("mars", "Mars", "main", "Main", false, false),
                 DIGEST));
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                PublishedRealmEntryPolicySetEvidence.calculatePolicySetDigest(
-                    fixture.target(),
-                    set.versionNumber(),
-                    set.sourceCommitId(),
-                    set.sourceEpoch(),
-                    set.publishedReleaseBundleRef(),
-                    set.publishedReleaseBundleDigest(),
-                    set.publishWorkflowId(),
-                    set.manifestHash(),
-                    set.publicationVersionStateEpoch(),
-                    set.operationBytes(),
-                    set.captureBytes(),
-                    set.terminalEvidenceBytes(),
-                    duplicateSource));
+        .isThrownBy(() ->
+            PublishedRealmEntryPolicySetEvidence.calculatePolicySetDigest(
+                fixture.target(),
+                set.versionNumber(),
+                set.sourceCommitId(),
+                set.sourceEpoch(),
+                set.publishedReleaseBundleRef(),
+                set.publishedReleaseBundleDigest(),
+                set.publishWorkflowId(),
+                set.manifestHash(),
+                set.publicationVersionStateEpoch(),
+                set.operationBytes(),
+                set.captureBytes(),
+                set.terminalEvidenceBytes(),
+                duplicateSource));
   }
 
   @Test
@@ -275,108 +270,103 @@ public class PublishedRealmEntryPolicySetEvidenceTest {
             fixture.target().sourceGameTenantKey(),
             fixture.target().sourceProvenanceKind());
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new PublishedRealmEntryPolicySetEvidence(
-                    changedTarget,
-                    set.versionNumber(),
-                    set.sourceCommitId(),
-                    set.sourceEpoch(),
-                    set.publishedReleaseBundleRef(),
-                    set.publishedReleaseBundleDigest(),
-                    set.publishWorkflowId(),
-                    set.manifestHash(),
-                    set.publicationVersionStateEpoch(),
-                    set.operationBytes(),
-                    set.captureBytes(),
-                    set.terminalEvidenceBytes(),
-                    set.policyCount(),
-                    set.policySetDigest(),
-                    set.policies()));
+        .isThrownBy(() ->
+            new PublishedRealmEntryPolicySetEvidence(
+                changedTarget,
+                set.versionNumber(),
+                set.sourceCommitId(),
+                set.sourceEpoch(),
+                set.publishedReleaseBundleRef(),
+                set.publishedReleaseBundleDigest(),
+                set.publishWorkflowId(),
+                set.manifestHash(),
+                set.publicationVersionStateEpoch(),
+                set.operationBytes(),
+                set.captureBytes(),
+                set.terminalEvidenceBytes(),
+                set.policyCount(),
+                set.policySetDigest(),
+                set.policies()));
 
     var changedOperation = operation(6L);
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new PublishedRealmEntryPolicySetEvidence(
-                    set.target(),
-                    set.versionNumber(),
-                    set.sourceCommitId(),
-                    set.sourceEpoch(),
-                    set.publishedReleaseBundleRef(),
-                    set.publishedReleaseBundleDigest(),
-                    set.publishWorkflowId(),
-                    set.manifestHash(),
-                    set.publicationVersionStateEpoch(),
-                    changedOperation.canonicalBytes(),
-                    set.captureBytes(),
-                    set.terminalEvidenceBytes(),
-                    set.policyCount(),
-                    set.policySetDigest(),
-                    set.policies()));
+        .isThrownBy(() ->
+            new PublishedRealmEntryPolicySetEvidence(
+                set.target(),
+                set.versionNumber(),
+                set.sourceCommitId(),
+                set.sourceEpoch(),
+                set.publishedReleaseBundleRef(),
+                set.publishedReleaseBundleDigest(),
+                set.publishWorkflowId(),
+                set.manifestHash(),
+                set.publicationVersionStateEpoch(),
+                changedOperation.canonicalBytes(),
+                set.captureBytes(),
+                set.terminalEvidenceBytes(),
+                set.policyCount(),
+                set.policySetDigest(),
+                set.policies()));
 
     byte[] substitutedCapture =
         capture(fixture.operation(), fixture.sourceBinding(), "44", fixture.sources());
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new PublishedRealmEntryPolicySetEvidence(
-                    set.target(),
-                    set.versionNumber(),
-                    set.sourceCommitId(),
-                    set.sourceEpoch(),
-                    set.publishedReleaseBundleRef(),
-                    set.publishedReleaseBundleDigest(),
-                    set.publishWorkflowId(),
-                    set.manifestHash(),
-                    set.publicationVersionStateEpoch(),
-                    set.operationBytes(),
-                    substitutedCapture,
-                    set.terminalEvidenceBytes(),
-                    set.policyCount(),
-                    set.policySetDigest(),
-                    set.policies()));
+        .isThrownBy(() ->
+            new PublishedRealmEntryPolicySetEvidence(
+                set.target(),
+                set.versionNumber(),
+                set.sourceCommitId(),
+                set.sourceEpoch(),
+                set.publishedReleaseBundleRef(),
+                set.publishedReleaseBundleDigest(),
+                set.publishWorkflowId(),
+                set.manifestHash(),
+                set.publicationVersionStateEpoch(),
+                set.operationBytes(),
+                substitutedCapture,
+                set.terminalEvidenceBytes(),
+                set.policyCount(),
+                set.policySetDigest(),
+                set.policies()));
 
     var substitutedTerminal = terminal(fixture.operation(), fixture.release("generation-2"), 6L);
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new PublishedRealmEntryPolicySetEvidence(
-                    set.target(),
-                    set.versionNumber(),
-                    set.sourceCommitId(),
-                    set.sourceEpoch(),
-                    set.publishedReleaseBundleRef(),
-                    set.publishedReleaseBundleDigest(),
-                    set.publishWorkflowId(),
-                    set.manifestHash(),
-                    set.publicationVersionStateEpoch(),
-                    set.operationBytes(),
-                    set.captureBytes(),
-                    substitutedTerminal.canonicalBytes(),
-                    set.policyCount(),
-                    set.policySetDigest(),
-                    set.policies()));
+        .isThrownBy(() ->
+            new PublishedRealmEntryPolicySetEvidence(
+                set.target(),
+                set.versionNumber(),
+                set.sourceCommitId(),
+                set.sourceEpoch(),
+                set.publishedReleaseBundleRef(),
+                set.publishedReleaseBundleDigest(),
+                set.publishWorkflowId(),
+                set.manifestHash(),
+                set.publicationVersionStateEpoch(),
+                set.operationBytes(),
+                set.captureBytes(),
+                substitutedTerminal.canonicalBytes(),
+                set.policyCount(),
+                set.policySetDigest(),
+                set.policies()));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                new PublishedRealmEntryPolicySetEvidence(
-                    set.target(),
-                    set.versionNumber(),
-                    set.sourceCommitId(),
-                    set.sourceEpoch(),
-                    "substituted-bundle-reference",
-                    set.publishedReleaseBundleDigest(),
-                    set.publishWorkflowId(),
-                    set.manifestHash(),
-                    set.publicationVersionStateEpoch(),
-                    set.operationBytes(),
-                    set.captureBytes(),
-                    set.terminalEvidenceBytes(),
-                    set.policyCount(),
-                    set.policySetDigest(),
-                    set.policies()));
+        .isThrownBy(() ->
+            new PublishedRealmEntryPolicySetEvidence(
+                set.target(),
+                set.versionNumber(),
+                set.sourceCommitId(),
+                set.sourceEpoch(),
+                "substituted-bundle-reference",
+                set.publishedReleaseBundleDigest(),
+                set.publishWorkflowId(),
+                set.manifestHash(),
+                set.publicationVersionStateEpoch(),
+                set.operationBytes(),
+                set.captureBytes(),
+                set.terminalEvidenceBytes(),
+                set.policyCount(),
+                set.policySetDigest(),
+                set.policies()));
   }
 
   @Test
@@ -452,30 +442,29 @@ public class PublishedRealmEntryPolicySetEvidenceTest {
     byte[] capture = capture(operation, sourceBinding, "43", sources);
     List<PublishedRealmEntryPolicyEvidence> policies =
         sources.stream()
-            .map(
-                source -> {
-                  UUID policyId = UUID.fromString(source.policyId());
-                  String policyDigest =
-                      PublishedRealmEntryPolicySetEvidence.policyDigest(
-                          policyId,
-                          target,
-                          terminal.releaseContent().versionNumber(),
-                          terminal.publishedReleaseBundleRef(),
-                          terminal.publishedReleaseBundleDigest(),
-                          terminal.releaseContent().publishWorkflowId(),
-                          terminal.releaseContent().manifestHash(),
-                          UUID.fromString(source.sourceCommitId()),
-                          UUID.fromString(source.sourceRevisionId()),
-                          source.logicalRevisionId(),
-                          source.policy());
-                  return new PublishedRealmEntryPolicyEvidence(
+            .map(source -> {
+              UUID policyId = UUID.fromString(source.policyId());
+              String policyDigest =
+                  PublishedRealmEntryPolicySetEvidence.policyDigest(
                       policyId,
+                      target,
+                      terminal.releaseContent().versionNumber(),
+                      terminal.publishedReleaseBundleRef(),
+                      terminal.publishedReleaseBundleDigest(),
+                      terminal.releaseContent().publishWorkflowId(),
+                      terminal.releaseContent().manifestHash(),
                       UUID.fromString(source.sourceCommitId()),
                       UUID.fromString(source.sourceRevisionId()),
                       source.logicalRevisionId(),
-                      source.policy(),
-                      policyDigest);
-                })
+                      source.policy());
+              return new PublishedRealmEntryPolicyEvidence(
+                  policyId,
+                  UUID.fromString(source.sourceCommitId()),
+                  UUID.fromString(source.sourceRevisionId()),
+                  source.logicalRevisionId(),
+                  source.policy(),
+                  policyDigest);
+            })
             .toList();
     var setDigest =
         PublishedRealmEntryPolicySetEvidence.calculatePolicySetDigest(
@@ -564,15 +553,14 @@ public class PublishedRealmEntryPolicySetEvidenceTest {
       throws IOException {
     List<Map<String, Object>> policies =
         sources.stream()
-            .map(
-                source -> {
-                  Map<String, Object> value = new LinkedHashMap<>();
-                  value.put("commitId", source.sourceCommitId());
-                  value.put("revisionId", source.sourceRevisionId());
-                  value.put("logicalRevisionId", source.logicalRevisionId());
-                  value.put("policy", JSON.readTree(source.policy().canonicalJson()));
-                  return value;
-                })
+            .map(source -> {
+              Map<String, Object> value = new LinkedHashMap<>();
+              value.put("commitId", source.sourceCommitId());
+              value.put("revisionId", source.sourceRevisionId());
+              value.put("logicalRevisionId", source.logicalRevisionId());
+              value.put("policy", JSON.readTree(source.policy().canonicalJson()));
+              return value;
+            })
             .toList();
     Map<String, Object> snapshot = new LinkedHashMap<>();
     snapshot.put("schema", PublishedRealmEntryPolicySetEvidence.SNAPSHOT_SCHEMA);
@@ -600,25 +588,19 @@ public class PublishedRealmEntryPolicySetEvidenceTest {
     var request = operation.world().request();
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new Participant(
-                        owner,
-                        Long.toString(
-                            operation
-                                .account()
-                                .input()
-                                .selection()
-                                .target()
-                                .gameDesignVersionRowId()),
-                        null,
-                        request.appliedCommitId(),
-                        owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        owner.equals("GAME_LOGIC") ? DIGEST : null,
-                        null,
-                        null))
+            .map(owner ->
+                new Participant(
+                    owner,
+                    Long.toString(
+                        operation.account().input().selection().target().gameDesignVersionRowId()),
+                    null,
+                    request.appliedCommitId(),
+                    owner.equals("WORLD_MANAGEMENT") ? request.contentDigest() : "c".repeat(64),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    owner.equals("GAME_LOGIC") ? DIGEST : null,
+                    null,
+                    null))
             .toList();
     return new ReleaseContent(
         request.canonicalTenantId(),

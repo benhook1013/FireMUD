@@ -163,168 +163,160 @@ public final class AccountGameplayDelegationAuthorityProjection {
     requireAccountId(tenantId);
     if (selectedOwner == null) throw new ProjectionUnavailableException();
     SelectedSnapshot result =
-        accountTransaction.execute(
-            status -> {
-              // The source and composite owners both take Account first; the composite fixes all
-              // four scopes.
-              var source =
-                  sourceEvidence.readCurrentIssuerAccountSources(
-                      GameSessionAccountDelegationProfile.ISSUER, accountId);
-              var composite =
-                  selectedOwner
-                      .generations()
-                      .readCompositeSnapshot(
-                          GameSessionAccountDelegationProfile.ISSUER,
-                          accountId,
-                          List.of(tenantId),
-                          List.of(tenantId));
-              var tenant = selectedOwner.tenantSources().readCurrentByTenant(tenantId);
-              var member =
-                  selectedOwner
-                      .memberships()
-                      .findFreshMembershipForUpdate(accountId, tenantId)
-                      .orElseThrow(ProjectionUnavailableException::new);
-              var pair =
-                  selectedOwner
-                      .pairs()
-                      .readForUpdate(accountId, tenantId)
-                      .orElseThrow(ProjectionUnavailableException::new);
-              String memberStream =
-                  "account:auth-authority:v1:membership/" + accountId + "/" + tenantId;
-              var memberCheckpoint =
-                  selectedOwner
-                      .outbox()
-                      .readCheckpoint(memberStream)
-                      .orElseThrow(ProjectionUnavailableException::new);
-              String tenantStream = "account:auth-authority:v1:tenant/" + tenantId;
-              var tenantCheckpoint =
-                  selectedOwner
-                      .outbox()
-                      .readCheckpoint(tenantStream)
-                      .orElseThrow(ProjectionUnavailableException::new);
-              var memberEvent =
-                  selectedOwner
-                      .outbox()
-                      .findEvent(memberStream, memberCheckpoint.outboxSequence())
-                      .orElseThrow(ProjectionUnavailableException::new);
-              var tenantEvent =
-                  selectedOwner
-                      .outbox()
-                      .findEvent(tenantStream, tenantCheckpoint.outboxSequence())
-                      .orElseThrow(ProjectionUnavailableException::new);
-              var event = memberEvent;
-              var verified =
-                  MembershipAuthorityEventV1Codec.verify(
-                      new String(event.payload(), StandardCharsets.UTF_8));
-              var tenantState = composite.tenants().getFirst();
-              var memberState = composite.memberships().getFirst();
-              if (source.issuer().generation() != composite.issuer().generation()
-                  || source.issuer().sourceVersion() != composite.issuer().sourceVersion()
-                  || source.account().generation() != composite.account().generation()
-                  || source.account().sourceVersion() != composite.account().sourceVersion()
-                  || !source.issuanceFence().equals(composite.issuanceFence())
-                  || tenant.tenantAuthorityGeneration() != tenantState.generation()
-                  || tenant.tenantAuthoritySourceVersion() != tenantState.sourceVersion()
-                  || !tenantId.equals(tenant.tenantId())
-                  || !pair.provenance()
-                      .sourceOperationId()
-                      .equals(tenant.sourceEvidence().operationId())
-                  || !pair.provenance().digest().equals(tenant.sourceEvidence().evidenceDigest())
-                  || !pair.membershipExists()
-                  || pair.lastTransitionInvalidated()
-                  || !"ACTIVE".equals(member.getLifecycleState())
-                  || !member.isGameplayAdmissionAllowed()
-                  || member.getMembershipVersion() != pair.membershipVersion()
-                  || member.getMembershipAuthorityGeneration()
-                      != pair.membershipAuthorityGeneration()
-                  || memberState.generation() != pair.membershipAuthorityGeneration()
-                  || memberState.sourceVersion() != memberState.generation()
-                  || !Long.toString(memberState.sourceVersion())
-                      .equals(verified.membershipAuthorityGeneration())
-                  || memberCheckpoint.outboxSequence() != pair.eventSequence()
-                  || !memberCheckpoint.sourceEventId().equals(pair.eventId())
-                  || !memberCheckpoint.sourceEventDigest().equals(pair.eventDigest())
-                  || !event.eventId().equals(pair.eventId())
-                  || !event.eventDigest().equals(pair.eventDigest())
-                  || !Long.toString(memberCheckpoint.outboxSequence())
-                      .equals(verified.outboxSequence())
-                  || !memberCheckpoint.outboxStreamKey().equals(verified.outboxStreamKey())
-                  || tenantCheckpoint.outboxSequence() != tenant.outboxSequence()
-                  || !tenantCheckpoint.sourceEventId().equals(tenant.eventId().toString())
-                  || !tenantCheckpoint.sourceEventDigest().equals(tenant.eventDigest())
-                  || !tenantEvent.eventId().equals(tenant.eventId().toString())
-                  || !tenantEvent.eventDigest().equals(tenant.eventDigest())
-                  || !Arrays.equals(tenantEvent.payload(), tenant.payload())
-                  || !Arrays.equals(event.payload(), verified.canonicalJsonUtf8())
-                  || !accountId.toString().equals(verified.accountId())
-                  || !tenantId.toString().equals(verified.tenantId())
-                  || !Long.toString(pair.membershipVersion())
-                      .equals(verified.membershipVersion().get(tenantId.toString()))
-                  || !Long.toString(pair.membershipAuthorityGeneration())
-                      .equals(verified.membershipAuthorityGeneration())
-                  || !"ACTIVE".equals(verified.membershipLifecycleState())
-                  || !verified.gameplayAdmissionAllowed()
-                  || verified.callerBoundAuthorityInvalidated()
-                  || !verified.roles().contains("player"))
-                throw new ProjectionUnavailableException();
-              // The immutable event proves this pair, not today's independent global/tenant
-              // sources.
-              // Derive today's tuple from the same locked owner read; never rewrite the historical
-              // event.
-              Map<String, Object> tuple = new LinkedHashMap<>();
-              tuple.put("issuerAuthGeneration", Long.toString(composite.issuer().generation()));
-              tuple.put(
-                  "accountAuthorityGeneration", Long.toString(composite.account().generation()));
-              tuple.put(
-                  "tenantAuthorityGeneration",
-                  Map.of(tenantId.toString(), Long.toString(tenantState.generation())));
-              tuple.put(
-                  "membershipAuthorityGeneration",
-                  Map.of(tenantId.toString(), Long.toString(memberState.generation())));
-              tuple.put("privateRealmGrantVersions", List.of());
-              var accountCutoff = source.account().accountSecurityCutoff();
-              if (accountCutoff.isPresent()) {
-                var cutoff = accountCutoff.orElseThrow();
-                tuple.put(
-                    "accountSecurityCutoff",
-                    Map.of(
-                        "accountAuthorityGeneration",
-                        cutoff.accountAuthorityGeneration(),
-                        "outboxStreamKey",
-                        cutoff.outboxStreamKey(),
-                        "outboxSequence",
-                        cutoff.outboxSequence()));
-              }
-              // The explicit demo owner has positive linked billing evidence; non-paid does not
-              // mean absent cutoff.
-              tuple.put(
-                  "tenantBillingCutoff",
+        accountTransaction.execute(status -> {
+          // The source and composite owners both take Account first; the composite fixes all
+          // four scopes.
+          var source =
+              sourceEvidence.readCurrentIssuerAccountSources(
+                  GameSessionAccountDelegationProfile.ISSUER, accountId);
+          var composite =
+              selectedOwner
+                  .generations()
+                  .readCompositeSnapshot(
+                      GameSessionAccountDelegationProfile.ISSUER,
+                      accountId,
+                      List.of(tenantId),
+                      List.of(tenantId));
+          var tenant = selectedOwner.tenantSources().readCurrentByTenant(tenantId);
+          var member =
+              selectedOwner
+                  .memberships()
+                  .findFreshMembershipForUpdate(accountId, tenantId)
+                  .orElseThrow(ProjectionUnavailableException::new);
+          var pair =
+              selectedOwner
+                  .pairs()
+                  .readForUpdate(accountId, tenantId)
+                  .orElseThrow(ProjectionUnavailableException::new);
+          String memberStream =
+              "account:auth-authority:v1:membership/" + accountId + "/" + tenantId;
+          var memberCheckpoint =
+              selectedOwner
+                  .outbox()
+                  .readCheckpoint(memberStream)
+                  .orElseThrow(ProjectionUnavailableException::new);
+          String tenantStream = "account:auth-authority:v1:tenant/" + tenantId;
+          var tenantCheckpoint =
+              selectedOwner
+                  .outbox()
+                  .readCheckpoint(tenantStream)
+                  .orElseThrow(ProjectionUnavailableException::new);
+          var memberEvent =
+              selectedOwner
+                  .outbox()
+                  .findEvent(memberStream, memberCheckpoint.outboxSequence())
+                  .orElseThrow(ProjectionUnavailableException::new);
+          var tenantEvent =
+              selectedOwner
+                  .outbox()
+                  .findEvent(tenantStream, tenantCheckpoint.outboxSequence())
+                  .orElseThrow(ProjectionUnavailableException::new);
+          var event = memberEvent;
+          var verified =
+              MembershipAuthorityEventV1Codec.verify(
+                  new String(event.payload(), StandardCharsets.UTF_8));
+          var tenantState = composite.tenants().getFirst();
+          var memberState = composite.memberships().getFirst();
+          if (source.issuer().generation() != composite.issuer().generation()
+              || source.issuer().sourceVersion() != composite.issuer().sourceVersion()
+              || source.account().generation() != composite.account().generation()
+              || source.account().sourceVersion() != composite.account().sourceVersion()
+              || !source.issuanceFence().equals(composite.issuanceFence())
+              || tenant.tenantAuthorityGeneration() != tenantState.generation()
+              || tenant.tenantAuthoritySourceVersion() != tenantState.sourceVersion()
+              || !tenantId.equals(tenant.tenantId())
+              || !pair.provenance()
+                  .sourceOperationId()
+                  .equals(tenant.sourceEvidence().operationId())
+              || !pair.provenance().digest().equals(tenant.sourceEvidence().evidenceDigest())
+              || !pair.membershipExists()
+              || pair.lastTransitionInvalidated()
+              || !"ACTIVE".equals(member.getLifecycleState())
+              || !member.isGameplayAdmissionAllowed()
+              || member.getMembershipVersion() != pair.membershipVersion()
+              || member.getMembershipAuthorityGeneration() != pair.membershipAuthorityGeneration()
+              || memberState.generation() != pair.membershipAuthorityGeneration()
+              || memberState.sourceVersion() != memberState.generation()
+              || !Long.toString(memberState.sourceVersion())
+                  .equals(verified.membershipAuthorityGeneration())
+              || memberCheckpoint.outboxSequence() != pair.eventSequence()
+              || !memberCheckpoint.sourceEventId().equals(pair.eventId())
+              || !memberCheckpoint.sourceEventDigest().equals(pair.eventDigest())
+              || !event.eventId().equals(pair.eventId())
+              || !event.eventDigest().equals(pair.eventDigest())
+              || !Long.toString(memberCheckpoint.outboxSequence()).equals(verified.outboxSequence())
+              || !memberCheckpoint.outboxStreamKey().equals(verified.outboxStreamKey())
+              || tenantCheckpoint.outboxSequence() != tenant.outboxSequence()
+              || !tenantCheckpoint.sourceEventId().equals(tenant.eventId().toString())
+              || !tenantCheckpoint.sourceEventDigest().equals(tenant.eventDigest())
+              || !tenantEvent.eventId().equals(tenant.eventId().toString())
+              || !tenantEvent.eventDigest().equals(tenant.eventDigest())
+              || !Arrays.equals(tenantEvent.payload(), tenant.payload())
+              || !Arrays.equals(event.payload(), verified.canonicalJsonUtf8())
+              || !accountId.toString().equals(verified.accountId())
+              || !tenantId.toString().equals(verified.tenantId())
+              || !Long.toString(pair.membershipVersion())
+                  .equals(verified.membershipVersion().get(tenantId.toString()))
+              || !Long.toString(pair.membershipAuthorityGeneration())
+                  .equals(verified.membershipAuthorityGeneration())
+              || !"ACTIVE".equals(verified.membershipLifecycleState())
+              || !verified.gameplayAdmissionAllowed()
+              || verified.callerBoundAuthorityInvalidated()
+              || !verified.roles().contains("player")) throw new ProjectionUnavailableException();
+          // The immutable event proves this pair, not today's independent global/tenant
+          // sources.
+          // Derive today's tuple from the same locked owner read; never rewrite the historical
+          // event.
+          Map<String, Object> tuple = new LinkedHashMap<>();
+          tuple.put("issuerAuthGeneration", Long.toString(composite.issuer().generation()));
+          tuple.put("accountAuthorityGeneration", Long.toString(composite.account().generation()));
+          tuple.put(
+              "tenantAuthorityGeneration",
+              Map.of(tenantId.toString(), Long.toString(tenantState.generation())));
+          tuple.put(
+              "membershipAuthorityGeneration",
+              Map.of(tenantId.toString(), Long.toString(memberState.generation())));
+          tuple.put("privateRealmGrantVersions", List.of());
+          var accountCutoff = source.account().accountSecurityCutoff();
+          if (accountCutoff.isPresent()) {
+            var cutoff = accountCutoff.orElseThrow();
+            tuple.put(
+                "accountSecurityCutoff",
+                Map.of(
+                    "accountAuthorityGeneration",
+                    cutoff.accountAuthorityGeneration(),
+                    "outboxStreamKey",
+                    cutoff.outboxStreamKey(),
+                    "outboxSequence",
+                    cutoff.outboxSequence()));
+          }
+          // The explicit demo owner has positive linked billing evidence; non-paid does not
+          // mean absent cutoff.
+          tuple.put(
+              "tenantBillingCutoff",
+              Map.of(
+                  tenantId.toString(),
                   Map.of(
-                      tenantId.toString(),
-                      Map.of(
-                          "tenantAuthorityGeneration",
-                              Long.toString(tenant.tenantAuthorityGeneration()),
-                          "tenantBillingSequence", Long.toString(tenant.tenantBillingSequence()),
-                          "outboxStreamKey", tenant.outboxStreamKey(),
-                          "outboxSequence", Long.toString(tenant.outboxSequence()))));
-              byte[][] initial = canonicalProjectionPair(source);
-              byte[] tenantProjectionBytes =
-                  tenantProjection(tenantEvent, tenantId).canonicalBytes();
-              byte[] membershipProjection =
-                  membershipProjection(memberEvent, accountId, tenantId).canonicalBytes();
-              return new SelectedSnapshot(
-                  source,
-                  composite,
-                  pair,
-                  verified.canonicalJson(),
-                  new String(tenant.payload(), StandardCharsets.UTF_8),
-                  canonical(tuple),
-                  new byte[][] {
-                    initial[0], initial[1], tenantProjectionBytes, membershipProjection
-                  },
-                  tenantCheckpoint,
-                  memberCheckpoint);
-            });
+                      "tenantAuthorityGeneration",
+                          Long.toString(tenant.tenantAuthorityGeneration()),
+                      "tenantBillingSequence", Long.toString(tenant.tenantBillingSequence()),
+                      "outboxStreamKey", tenant.outboxStreamKey(),
+                      "outboxSequence", Long.toString(tenant.outboxSequence()))));
+          byte[][] initial = canonicalProjectionPair(source);
+          byte[] tenantProjectionBytes = tenantProjection(tenantEvent, tenantId).canonicalBytes();
+          byte[] membershipProjection =
+              membershipProjection(memberEvent, accountId, tenantId).canonicalBytes();
+          return new SelectedSnapshot(
+              source,
+              composite,
+              pair,
+              verified.canonicalJson(),
+              new String(tenant.payload(), StandardCharsets.UTF_8),
+              canonical(tuple),
+              new byte[][] {initial[0], initial[1], tenantProjectionBytes, membershipProjection},
+              tenantCheckpoint,
+              memberCheckpoint);
+        });
     if (result == null) throw new ProjectionUnavailableException();
     return result;
   }
@@ -355,12 +347,11 @@ public final class AccountGameplayDelegationAuthorityProjection {
       }
       if (redisSequence > checkpoint.outboxSequence()) throw new ProjectionUnavailableException();
       AccountAuthorityOutboxRepository.Event retainedHead =
-          accountTransaction.execute(
-              status ->
-                  selectedOwner
-                      .outbox()
-                      .findEvent(streamKey, redisSequence)
-                      .orElseThrow(ProjectionUnavailableException::new));
+          accountTransaction.execute(status ->
+              selectedOwner
+                  .outbox()
+                  .findEvent(streamKey, redisSequence)
+                  .orElseThrow(ProjectionUnavailableException::new));
       if (!streamKey.equals(retainedHead.outboxStreamKey())
           || retainedHead.outboxSequence() != redisSequence) {
         throw new ProjectionUnavailableException();
@@ -382,11 +373,10 @@ public final class AccountGameplayDelegationAuthorityProjection {
     while (cursor < checkpoint.outboxSequence()) {
       long afterSequence = cursor;
       List<AccountAuthorityOutboxRepository.Event> page =
-          accountTransaction.execute(
-              status ->
-                  selectedOwner
-                      .outbox()
-                      .findEventPage(streamKey, afterSequence, checkpoint.outboxSequence()));
+          accountTransaction.execute(status ->
+              selectedOwner
+                  .outbox()
+                  .findEventPage(streamKey, afterSequence, checkpoint.outboxSequence()));
       if (page == null
           || page.isEmpty()
           || page.size() > AccountAuthorityOutboxRepository.MAX_EVENT_HISTORY_PAGE_SIZE) {
@@ -661,10 +651,9 @@ public final class AccountGameplayDelegationAuthorityProjection {
 
   private IssuerAccountSourceSnapshot readOwnerSnapshot(UUID accountId) {
     IssuerAccountSourceSnapshot snapshot =
-        accountTransaction.execute(
-            status ->
-                sourceEvidence.readCurrentIssuerAccountSources(
-                    GameSessionAccountDelegationProfile.ISSUER, accountId));
+        accountTransaction.execute(status ->
+            sourceEvidence.readCurrentIssuerAccountSources(
+                GameSessionAccountDelegationProfile.ISSUER, accountId));
     if (snapshot == null
         || !GameSessionAccountDelegationProfile.ISSUER.equals(snapshot.issuer().scope().issuerId())
         || !accountId.equals(snapshot.account().scope().accountId())) {

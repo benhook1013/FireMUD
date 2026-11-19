@@ -28,10 +28,9 @@ class AuthoredDraftPublishSelectionReadGrpcCodecTest {
             "00000000-0000-0000-0000-000000000000",
             "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
             "1-1-1-1-1")) {
-      assertThatThrownBy(
-              () ->
-                  AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
-                      request.toBuilder().setReadRequestId(invalidId).build()))
+      assertThatThrownBy(() ->
+              AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
+                  request.toBuilder().setReadRequestId(invalidId).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
     String canonical = binding().canonicalJson();
@@ -42,19 +41,17 @@ class AuthoredDraftPublishSelectionReadGrpcCodecTest {
             (" " + canonical).getBytes(StandardCharsets.UTF_8),
             (canonical.substring(0, canonical.length() - 1) + ",\"unknown\":\"value\"}")
                 .getBytes(StandardCharsets.UTF_8))) {
-      assertThatThrownBy(
-              () ->
-                  AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
-                      request.toBuilder()
-                          .setOriginalSelection(ByteString.copyFrom(invalidBytes))
-                          .build()))
+      assertThatThrownBy(() ->
+              AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
+                  request.toBuilder()
+                      .setOriginalSelection(ByteString.copyFrom(invalidBytes))
+                      .build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
     for (String namespace : List.of("", "Test", "test.other")) {
-      assertThatThrownBy(
-              () ->
-                  AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
-                      request.toBuilder().setTargetNamespace(namespace).build()))
+      assertThatThrownBy(() ->
+              AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
+                  request.toBuilder().setTargetNamespace(namespace).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -99,26 +96,22 @@ class AuthoredDraftPublishSelectionReadGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
-                    request.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
+                request.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
-                    request.toBuilder().setReadRequestId("not-a-uuid").build()))
+    assertThatThrownBy(() ->
+            AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
+                request.toBuilder().setReadRequestId("not-a-uuid").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
-                    request.toBuilder().setSchemaVersion(2).build()))
+    assertThatThrownBy(() ->
+            AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
+                request.toBuilder().setSchemaVersion(2).build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
-                    request.toBuilder().setSelectionDigest("sha256:" + "0".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            AuthoredDraftPublishSelectionReadGrpcCodec.fromRequest(
+                request.toBuilder().setSelectionDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Selected Draft publication read request is invalid")
         .hasCauseInstanceOf(IllegalArgumentException.class);

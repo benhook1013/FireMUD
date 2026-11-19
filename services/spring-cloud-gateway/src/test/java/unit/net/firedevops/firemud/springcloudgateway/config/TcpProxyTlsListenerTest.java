@@ -185,11 +185,10 @@ class TcpProxyTlsListenerTest {
     Throwable startupFailure;
     try (MockedStatic<SslContextBuilder> mocked = Mockito.mockStatic(SslContextBuilder.class)) {
       mocked
-          .when(
-              () ->
-                  SslContextBuilder.forServer(
-                      Path.of(properties.getCertificateChainPath()).toFile(),
-                      Path.of(properties.getPrivateKeyPath()).toFile()))
+          .when(() ->
+              SslContextBuilder.forServer(
+                  Path.of(properties.getCertificateChainPath()).toFile(),
+                  Path.of(properties.getPrivateKeyPath()).toFile()))
           .thenReturn(builder);
       startupFailure = catchThrowable(listener::start);
     }
@@ -197,11 +196,10 @@ class TcpProxyTlsListenerTest {
     assertThat(startupFailure)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Unable to start TCP Proxy internal TLS listener")
-        .satisfies(
-            failure -> {
-              assertThat(failure.getCause()).isNotNull();
-              assertThat(failure.getCause().getSuppressed()).containsExactly(cleanupFailure);
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getCause()).isNotNull();
+          assertThat(failure.getCause().getSuppressed()).containsExactly(cleanupFailure);
+        });
   }
 
   @Test

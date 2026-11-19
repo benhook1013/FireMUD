@@ -47,16 +47,15 @@ class GameplayRuleManifestTest {
 
   @Test
   void rejectsContinuousModifierOnResourceValue() {
-    assertThatThrownBy(
-            () ->
-                manifest(
-                    MANA,
-                    effect(
-                        "continuous-mana-value",
-                        Lifecycle.CONTINUOUS,
-                        EffectOperation.ADD,
-                        "mana",
-                        StatField.VALUE)))
+    assertThatThrownBy(() ->
+            manifest(
+                MANA,
+                effect(
+                    "continuous-mana-value",
+                    Lifecycle.CONTINUOUS,
+                    EffectOperation.ADD,
+                    "mana",
+                    StatField.VALUE)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("numeric STATS key");
   }

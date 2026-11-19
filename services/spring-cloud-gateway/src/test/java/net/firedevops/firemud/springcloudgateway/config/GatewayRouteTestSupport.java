@@ -92,9 +92,7 @@ final class GatewayRouteTestSupport {
     return route(gatewayProperties, routeId).getPredicates().stream()
         .filter(predicate -> predicateName.equalsIgnoreCase(predicate.getName()))
         .findFirst()
-        .orElseThrow(
-            () ->
-                new AssertionError(
-                    "Expected " + predicateName + " predicate for route " + routeId));
+        .orElseThrow(() ->
+            new AssertionError("Expected " + predicateName + " predicate for route " + routeId));
   }
 }

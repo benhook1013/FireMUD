@@ -112,12 +112,11 @@ public final class CurrentPrivatePlaytestLifecycleReadEvidence {
     public Evidence {
       Objects.requireNonNull(request, "request");
       current = Objects.requireNonNull(current, "current");
-      current.ifPresent(
-          snapshot -> {
-            if (!request.scope().equals(snapshot.scope())) {
-              throw new IllegalArgumentException("Current snapshot target differs from request");
-            }
-          });
+      current.ifPresent(snapshot -> {
+        if (!request.scope().equals(snapshot.scope())) {
+          throw new IllegalArgumentException("Current snapshot target differs from request");
+        }
+      });
     }
   }
 

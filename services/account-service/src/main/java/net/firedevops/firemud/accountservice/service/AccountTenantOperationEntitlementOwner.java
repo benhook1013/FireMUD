@@ -75,44 +75,43 @@ public final class AccountTenantOperationEntitlementOwner {
     requireRequest(request);
     requireNoAmbientTransaction();
     return Objects.requireNonNull(
-        transaction.execute(
-            status -> {
-              requireSourceTransaction();
-              DemoTenantEntitlementSnapshot snapshot = demos.readCurrent(request.tenantId());
-              if (!request.tenantId().equals(snapshot.canonicalTenantId())) {
-                throw unavailable("Demo source targets another tenant");
-              }
-              Map<String, Object> facts =
-                  facts(
-                      request.tenantId(),
-                      "NON_PAID_DEMO",
-                      snapshot.subscriptionStatus(),
-                      snapshot.gameplayAvailable(),
-                      snapshot.allowPublicJoin(),
-                      snapshot.allowNewGameplayBindings(),
-                      snapshot.allowNewInstanceStarts(),
-                      quotas(
-                          snapshot.quotas().maxActiveSessions(),
-                          snapshot.quotas().maxConcurrentGameInstances(),
-                          snapshot.quotas().maxStorageBytes()),
-                      snapshot.entitlementVersion(),
-                      snapshot.tenantBillingSequence(),
-                      snapshot.tenantAuthorityGeneration(),
-                      snapshot.tenantAuthorityOutboxStreamKey(),
-                      snapshot.tenantAuthorityOutboxSequence(),
-                      snapshot.tenantAuthorityEventId(),
-                      snapshot.tenantAuthorityEventDigest());
-              Map<String, Object> source = new LinkedHashMap<>();
-              source.put("sourceEvidenceDigest", snapshot.sourceEvidence().evidenceDigest());
-              source.put(
-                  "tenantAuthoritySourceVersion",
-                  Long.toString(snapshot.tenantAuthoritySourceVersion()));
-              source.put("billingStream", snapshot.outboxStreamKey());
-              source.put("billingSequence", Long.toString(snapshot.tenantBillingSequence()));
-              source.put("billingEventId", snapshot.eventId().toString());
-              source.put("billingEventDigest", snapshot.eventDigest());
-              return capture(request, facts, source, now());
-            }));
+        transaction.execute(status -> {
+          requireSourceTransaction();
+          DemoTenantEntitlementSnapshot snapshot = demos.readCurrent(request.tenantId());
+          if (!request.tenantId().equals(snapshot.canonicalTenantId())) {
+            throw unavailable("Demo source targets another tenant");
+          }
+          Map<String, Object> facts =
+              facts(
+                  request.tenantId(),
+                  "NON_PAID_DEMO",
+                  snapshot.subscriptionStatus(),
+                  snapshot.gameplayAvailable(),
+                  snapshot.allowPublicJoin(),
+                  snapshot.allowNewGameplayBindings(),
+                  snapshot.allowNewInstanceStarts(),
+                  quotas(
+                      snapshot.quotas().maxActiveSessions(),
+                      snapshot.quotas().maxConcurrentGameInstances(),
+                      snapshot.quotas().maxStorageBytes()),
+                  snapshot.entitlementVersion(),
+                  snapshot.tenantBillingSequence(),
+                  snapshot.tenantAuthorityGeneration(),
+                  snapshot.tenantAuthorityOutboxStreamKey(),
+                  snapshot.tenantAuthorityOutboxSequence(),
+                  snapshot.tenantAuthorityEventId(),
+                  snapshot.tenantAuthorityEventDigest());
+          Map<String, Object> source = new LinkedHashMap<>();
+          source.put("sourceEvidenceDigest", snapshot.sourceEvidence().evidenceDigest());
+          source.put(
+              "tenantAuthoritySourceVersion",
+              Long.toString(snapshot.tenantAuthoritySourceVersion()));
+          source.put("billingStream", snapshot.outboxStreamKey());
+          source.put("billingSequence", Long.toString(snapshot.tenantBillingSequence()));
+          source.put("billingEventId", snapshot.eventId().toString());
+          source.put("billingEventDigest", snapshot.eventDigest());
+          return capture(request, facts, source, now());
+        }));
   }
 
   private RuntimeTenantOperationEntitlementEvidence paid(
@@ -333,9 +332,8 @@ public final class AccountTenantOperationEntitlementOwner {
       GrpcPeerIdentity peer =
           GrpcPeerIdentity.parseUri(authenticatedCallerWorkload)
               .filter(identity -> identity.uri().equals(authenticatedCallerWorkload))
-              .orElseThrow(
-                  () ->
-                      new IllegalArgumentException("Canonical authenticated workload is required"));
+              .orElseThrow(() ->
+                  new IllegalArgumentException("Canonical authenticated workload is required"));
       if (!"world-management-service".equals(peer.service())) {
         throw new IllegalArgumentException("Tenant operation requires World Management");
       }

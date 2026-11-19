@@ -87,9 +87,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
         redisWithScans(List.of(List.of(LEGACY_CONTEXT), List.of(LEGACY_CONTEXT)));
     CanonicalGameplayFreshNamespaceRedisReconciler reconciler = reconciler(redis);
 
-    assertThatThrownBy(
-            () ->
-                reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("Complete empty legacy source inventory");
 
@@ -103,9 +102,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
         redisWithScans(scans(List.of(), List.of(), List.of(TARGET_KEY), List.of(TARGET_KEY)));
     CanonicalGameplayFreshNamespaceRedisReconciler reconciler = reconciler(redis);
 
-    assertThatThrownBy(
-            () ->
-                reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("session or index family is retained or unknown");
 
@@ -151,10 +149,9 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
       String malformed = "session:game:auth:issuer-generation:v1:" + issuerId;
       StringRedisTemplate redis = redisWithScans(scans(List.of(), List.of(), List.of(malformed)));
 
-      assertThatThrownBy(
-              () ->
-                  reconciler(redis)
-                      .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(2)))
+      assertThatThrownBy(() ->
+              reconciler(redis)
+                  .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(2)))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
           .hasMessageContaining("unsupported issuer identity")
           .hasMessageContaining("preserve legacy UUID issuer keys");
@@ -180,9 +177,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     CanonicalGameplayFreshNamespaceRedisReconciler reconciler =
         new CanonicalGameplayFreshNamespaceRedisReconciler(redis, visitLimit);
 
-    assertThatThrownBy(
-            () ->
-                reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(2)))
+    assertThatThrownBy(() ->
+            reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(2)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("duplicate-safe visit bound");
 
@@ -195,20 +191,18 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     StringRedisTemplate nonterminal =
         redisWithResults(
             List.of(ScanResult.empty(), ScanResult.empty(), ScanResult.withCursor(List.of(), 19L)));
-    assertThatThrownBy(
-            () ->
-                reconciler(nonterminal)
-                    .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler(nonterminal)
+                .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("terminal cursor identity");
 
     StringRedisTemplate failed =
         redisWithResults(
             List.of(ScanResult.empty(), ScanResult.empty(), ScanResult.failedCursor()));
-    assertThatThrownBy(
-            () ->
-                reconciler(failed)
-                    .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler(failed)
+                .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("cursor failed before complete exhaustion");
     verifyNoRedisMutationOrValueRead(nonterminal);
@@ -227,9 +221,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     invokeThroughRedisCallback(redis, connection);
     CanonicalGameplayFreshNamespaceRedisReconciler reconciler = reconciler(redis);
 
-    assertThatThrownBy(
-            () ->
-                reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining(
             "Legacy Redis cluster scan cannot prove complete cluster-wide inventory");
@@ -246,10 +239,9 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     when(connection.serverCommands()).thenReturn(serverCommands);
     invokeThroughRedisCallback(redis, connection);
 
-    assertThatThrownBy(
-            () ->
-                reconciler(redis)
-                    .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler(redis)
+                .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("standalone topology could not be proven");
 
@@ -266,10 +258,9 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     when(connection.serverCommands()).thenReturn(serverCommands);
     invokeThroughRedisCallback(redis, connection);
 
-    assertThatThrownBy(
-            () ->
-                reconciler(redis)
-                    .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler(redis)
+                .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("standalone topology could not be proven");
 
@@ -282,10 +273,9 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     StringRedisTemplate redis =
         redisWithScans(scans(List.of(), List.of(), List.of(), List.of(TARGET_KEY)));
 
-    assertThatThrownBy(
-            () ->
-                reconciler(redis)
-                    .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler(redis)
+                .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("changed between complete fenced scans");
 
@@ -298,10 +288,9 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     StringRedisTemplate redis = redisWithScans(emptyScans(8));
     TestCohort driftingCohort = new TestCohort(11);
 
-    assertThatThrownBy(
-            () ->
-                reconciler(redis)
-                    .rebuildExact(driftingCohort, emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler(redis)
+                .rebuildExact(driftingCohort, emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("changed during reconciliation");
 
@@ -370,9 +359,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     CanonicalGameplayFreshNamespaceRedisReconciler reconciler =
         new CanonicalGameplayFreshNamespaceRedisReconciler(redis, tightLimits);
 
-    assertThatThrownBy(
-            () ->
-                reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler.rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("unique-key bound");
 
@@ -383,10 +371,9 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
   void keyLengthAndElapsedTimeBoundsFailClosed() {
     StringRedisTemplate longKeyRedis =
         redisWithScans(scans(List.of(), List.of(), List.of("session:game:" + "x".repeat(300))));
-    assertThatThrownBy(
-            () ->
-                reconciler(longKeyRedis)
-                    .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            reconciler(longKeyRedis)
+                .rebuildExact(cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("exceeds its byte bound");
 
@@ -396,10 +383,9 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
             2, 20, 40, 256, Duration.ofNanos(1));
     var timedReconciler =
         new CanonicalGameplayFreshNamespaceRedisReconciler(timedRedis, immediateDeadline);
-    assertThatThrownBy(
-            () ->
-                timedReconciler.rebuildExact(
-                    cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
+    assertThatThrownBy(() ->
+            timedReconciler.rebuildExact(
+                cohort(), emptyLegacySnapshot(), emptyCanonicalSnapshot(1)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("time bound");
     verify(timedRedis, never()).execute(any(RedisCallback.class));
@@ -447,14 +433,13 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     RedisConnection connection = mock(RedisConnection.class);
     AtomicInteger scanIndex = new AtomicInteger();
     when(connection.scan(any(ScanOptions.class)))
-        .thenAnswer(
-            ignored -> {
-              int index = scanIndex.getAndIncrement();
-              if (index >= scans.size()) {
-                throw new AssertionError("unexpected additional Redis scan");
-              }
-              return cursor(scans.get(index));
-            });
+        .thenAnswer(ignored -> {
+          int index = scanIndex.getAndIncrement();
+          if (index >= scans.size()) {
+            throw new AssertionError("unexpected additional Redis scan");
+          }
+          return cursor(scans.get(index));
+        });
     RedisServerCommands serverCommands = serverCommandsWithTopology("0");
     when(connection.serverCommands()).thenReturn(serverCommands);
     invokeThroughRedisCallback(redis, connection);
@@ -504,9 +489,8 @@ class CanonicalGameplayFreshNamespaceRedisReconcilerTest {
     } else {
       when(cursor.hasNext()).thenAnswer(ignored -> index.get() < result.keys().size());
       when(cursor.next())
-          .thenAnswer(
-              ignored ->
-                  result.keys().get(index.getAndIncrement()).getBytes(StandardCharsets.UTF_8));
+          .thenAnswer(ignored ->
+              result.keys().get(index.getAndIncrement()).getBytes(StandardCharsets.UTF_8));
       when(cursor.getCursorId()).thenReturn(result.terminalCursorId());
     }
     return cursor;

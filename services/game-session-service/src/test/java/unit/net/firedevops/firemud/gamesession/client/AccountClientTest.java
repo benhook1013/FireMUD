@@ -306,38 +306,35 @@ class AccountClientTest {
       }
     };
     for (var fields : malformed) {
-      assertThatThrownBy(
-              () ->
-                  new DirectTextConnectScopeTarget(
-                      fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6],
-                      7L, 4L))
+      assertThatThrownBy(() ->
+              new DirectTextConnectScopeTarget(
+                  fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], 7L,
+                  4L))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                new DirectTextConnectScopeTarget(
-                    "22222222-2222-4222-8222-222222222222",
-                    "world",
-                    "realm",
-                    target.realmId(),
-                    target.playableStateNamespaceId(),
-                    "SHARED",
-                    "44444444-4444-4444-8444-444444444444",
-                    0L,
-                    4L))
+    assertThatThrownBy(() ->
+            new DirectTextConnectScopeTarget(
+                "22222222-2222-4222-8222-222222222222",
+                "world",
+                "realm",
+                target.realmId(),
+                target.playableStateNamespaceId(),
+                "SHARED",
+                "44444444-4444-4444-8444-444444444444",
+                0L,
+                4L))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new DirectTextConnectScopeTarget(
-                    "22222222-2222-4222-8222-222222222222",
-                    "world",
-                    "realm",
-                    target.realmId(),
-                    target.playableStateNamespaceId(),
-                    "SHARED",
-                    "44444444-4444-4444-8444-444444444444",
-                    7L,
-                    -1L))
+    assertThatThrownBy(() ->
+            new DirectTextConnectScopeTarget(
+                "22222222-2222-4222-8222-222222222222",
+                "world",
+                "realm",
+                target.realmId(),
+                target.playableStateNamespaceId(),
+                "SHARED",
+                "44444444-4444-4444-8444-444444444444",
+                7L,
+                -1L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -725,11 +722,10 @@ class AccountClientTest {
     var clock = new TestClock(JOIN_TEST_NOW);
     var fixture = newRetryFixture(clock);
     when(fixture.initialStub().withDeadlineAfter(5L, TimeUnit.SECONDS))
-        .thenAnswer(
-            invocation -> {
-              clock.set(JOIN_TEST_NOW.plusSeconds(60));
-              return fixture.initialStub();
-            });
+        .thenAnswer(invocation -> {
+          clock.set(JOIN_TEST_NOW.plusSeconds(60));
+          return fixture.initialStub();
+        });
 
     assertThat(join(fixture.client(), directTextContext()).getError().getCode())
         .isEqualTo("CONNECT_SCOPE_INVALID");
@@ -744,11 +740,10 @@ class AccountClientTest {
     var clock = new TestClock(JOIN_TEST_NOW);
     var fixture = newRetryFixture(clock);
     when(fixture.initialStub().joinPublicProductionMembership(any()))
-        .thenAnswer(
-            invocation -> {
-              clock.set(JOIN_TEST_NOW.plusSeconds(60));
-              throw Status.fromCode(Status.Code.valueOf(status)).asRuntimeException();
-            });
+        .thenAnswer(invocation -> {
+          clock.set(JOIN_TEST_NOW.plusSeconds(60));
+          throw Status.fromCode(Status.Code.valueOf(status)).asRuntimeException();
+        });
 
     assertThat(join(fixture.client(), directTextContext()).getError().getCode())
         .isEqualTo("AUTH_UNAVAILABLE");
@@ -765,11 +760,10 @@ class AccountClientTest {
     when(fixture.initialStub().joinPublicProductionMembership(any()))
         .thenThrow(Status.UNAVAILABLE.asRuntimeException());
     when(fixture.channelFactory().buildChannel(anyString(), anyInt(), any(), anyBoolean()))
-        .thenAnswer(
-            invocation -> {
-              clock.set(JOIN_TEST_NOW.plusSeconds(60));
-              return mock(ManagedChannel.class);
-            });
+        .thenAnswer(invocation -> {
+          clock.set(JOIN_TEST_NOW.plusSeconds(60));
+          return mock(ManagedChannel.class);
+        });
 
     assertThat(join(fixture.client(), directTextContext()).getError().getCode())
         .isEqualTo("AUTH_UNAVAILABLE");

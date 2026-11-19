@@ -51,45 +51,40 @@ class GameSessionCanonicalAdmissionPointerRepositoryTest {
 
   @Test
   void requestRejectsNilIdentityAndNonCanonicalTargetNamespace() {
-    assertThatThrownBy(
-            () ->
-                new CreateCanonicalClosedAdmissionPointerRequest(
-                    NIL_UUID, TARGET_NAMESPACE, uuid(2), uuid(3), uuid(4), 1L, "actor", "reason"))
+    assertThatThrownBy(() ->
+            new CreateCanonicalClosedAdmissionPointerRequest(
+                NIL_UUID, TARGET_NAMESPACE, uuid(2), uuid(3), uuid(4), 1L, "actor", "reason"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("non-nil UUID");
-    assertThatThrownBy(
-            () ->
-                new CreateCanonicalClosedAdmissionPointerRequest(
-                    uuid(1), "Canonical_Closed", uuid(2), uuid(3), uuid(4), 1L, "actor", "reason"))
+    assertThatThrownBy(() ->
+            new CreateCanonicalClosedAdmissionPointerRequest(
+                uuid(1), "Canonical_Closed", uuid(2), uuid(3), uuid(4), 1L, "actor", "reason"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical DNS label");
-    assertThatThrownBy(
-            () ->
-                new CreateCanonicalClosedAdmissionPointerRequest(
-                    uuid(1), TARGET_NAMESPACE, uuid(2), uuid(3), uuid(4), 0L, "actor", "reason"))
+    assertThatThrownBy(() ->
+            new CreateCanonicalClosedAdmissionPointerRequest(
+                uuid(1), TARGET_NAMESPACE, uuid(2), uuid(3), uuid(4), 0L, "actor", "reason"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("catalogRevision must be positive");
   }
 
   @Test
   void requestRejectsMalformedOrUnboundedAuditText() {
-    assertThatThrownBy(
-            () ->
-                new CreateCanonicalClosedAdmissionPointerRequest(
-                    uuid(1),
-                    TARGET_NAMESPACE,
-                    uuid(2),
-                    uuid(3),
-                    uuid(4),
-                    1L,
-                    "bad" + (char) 0xD800,
-                    "reason"))
+    assertThatThrownBy(() ->
+            new CreateCanonicalClosedAdmissionPointerRequest(
+                uuid(1),
+                TARGET_NAMESPACE,
+                uuid(2),
+                uuid(3),
+                uuid(4),
+                1L,
+                "bad" + (char) 0xD800,
+                "reason"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("well-formed UTF-8");
-    assertThatThrownBy(
-            () ->
-                new CreateCanonicalClosedAdmissionPointerRequest(
-                    uuid(1), TARGET_NAMESPACE, uuid(2), uuid(3), uuid(4), 1L, "actor", "  "))
+    assertThatThrownBy(() ->
+            new CreateCanonicalClosedAdmissionPointerRequest(
+                uuid(1), TARGET_NAMESPACE, uuid(2), uuid(3), uuid(4), 1L, "actor", "  "))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("bounded and nonblank");
   }
@@ -122,23 +117,17 @@ class GameSessionCanonicalAdmissionPointerRepositoryTest {
             updatedAt,
             catalog);
 
-    assertThatCode(
-            () ->
-                GameSessionCanonicalAdmissionPointerRepository.requireExpectedVersions(
-                    origin, 1L, 1L))
+    assertThatCode(() ->
+            GameSessionCanonicalAdmissionPointerRepository.requireExpectedVersions(origin, 1L, 1L))
         .doesNotThrowAnyException();
-    assertThatThrownBy(
-            () ->
-                GameSessionCanonicalAdmissionPointerRepository.requireExpectedVersions(
-                    origin, 2L, 1L))
+    assertThatThrownBy(() ->
+            GameSessionCanonicalAdmissionPointerRepository.requireExpectedVersions(origin, 2L, 1L))
         .isInstanceOf(
             GameSessionCanonicalAdmissionPointerRepository
                 .InvalidCanonicalClosedPointerEvidenceException.class)
         .hasMessageContaining("versions do not match");
-    assertThatThrownBy(
-            () ->
-                GameSessionCanonicalAdmissionPointerRepository.requireExpectedVersions(
-                    origin, 1L, 2L))
+    assertThatThrownBy(() ->
+            GameSessionCanonicalAdmissionPointerRepository.requireExpectedVersions(origin, 1L, 2L))
         .isInstanceOf(
             GameSessionCanonicalAdmissionPointerRepository
                 .InvalidCanonicalClosedPointerEvidenceException.class)

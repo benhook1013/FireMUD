@@ -20,7 +20,13 @@ The capacity-bound FINAL changes the exact schema-2 COMPLETE payload by requirin
 
 ### Finalized capacity usage retirement
 
-The exact current Game Session owner establishes irreversible closure of serving and resume for the admitted binding and retains settlement of applicable effects and indexes. Game Session supplies an authenticated terminal receipt linked to the original admission, FINAL evidence, binding lineage and Account reservation. [Account owns retirement of the corresponding used capacity](../account-service/runtime-and-data.md#finalized-capacity-usage-retirement).
+This is a target-only contract, not an enabled or runtime-qualified retirement path.
+
+The exact current Game Session owner establishes irreversible closure of serving and resume for the admitted binding and retains settlement of applicable effects and indexes. Game Session supplies an authenticated terminal receipt linked to the original admission, FINAL evidence, binding lineage and Account reservation. [Account owns retirement of the corresponding used capacity](../account-service/runtime-and-data.md#finalized-capacity-usage-retirement). Before irreversible closure or settlement can discard the original work state, Game Session must durably retain the exact teardown identity and progress evidence needed for a replacement owner to finish the same terminal receipt. A crash between closure/settlement and receipt retention resumes that original teardown without reopening the binding or inventing a new receipt identity. The terminal receipt remains durable and exactly readable after binding closure and worker replacement. A replacement owner recovers and redelivers that same receipt until Account's exact retirement acknowledgement is known; this recovery never reopens serving or resume.
+
+The target Game Session owner persists the teardown identity and progress in its own PostgreSQL storage, then retains the immutable terminal evidence under that same identity. A replacement worker reads the persisted progress and exact receipt rather than reconstructing either from Redis, an in-memory job or the current binding alone. The receipt binds the original admission, FINAL evidence, binding lineage and exact Account reservation; conflicting identities or stale owner fences must be refused.
+
+Qualification must prove restart before send, Account commit followed by response loss and worker restart, and exact receipt replay without a second decrement. Account—not Game Session—atomically retains the retirement receipt and decrements used capacity. Wrong identity or fence must fail closed, and no failure or retry may reopen serving or resume. These are acceptance requirements, not claims that the target path or its restart proof exists today.
 
 ### Normal-handoff future-execution fencing
 
@@ -45,16 +51,6 @@ V1065 retains the transfer control and per-original receipt families, their immu
 Game Session coordinates with Redis to store volatile session state and command queues and with PostgreSQL to persist durable game-instance control-plane metadata. It provides a single point of truth for current tick and world time while exposing gameplay-session state to the protocol front door.
 
 The service runtime model assumes replaceable workers, not authoritative in-process state.
-
-### Finalized capacity usage retirement
-
-This is a target-only contract, not an enabled or runtime-qualified retirement path.
-
-The exact current Game Session owner establishes irreversible closure of serving and resume for the admitted binding and retains settlement of applicable effects and indexes. Game Session supplies an authenticated terminal receipt linked to the original admission, FINAL evidence, binding lineage and Account reservation. [Account owns retirement of the corresponding used capacity](../account-service/runtime-and-data.md#finalized-capacity-usage-retirement). Before irreversible closure or settlement can discard the original work state, Game Session must durably retain the exact teardown identity and progress evidence needed for a replacement owner to finish the same terminal receipt. A crash between closure/settlement and receipt retention resumes that original teardown without reopening the binding or inventing a new receipt identity. The terminal receipt remains durable and exactly readable after binding closure and worker replacement. A replacement owner recovers and redelivers that same receipt until Account's exact retirement acknowledgement is known; this recovery never reopens serving or resume.
-
-The target Game Session owner persists the teardown identity and progress in its own PostgreSQL storage, then retains the immutable terminal evidence under that same identity. A replacement worker reads the persisted progress and exact receipt rather than reconstructing either from Redis, an in-memory job or the current binding alone. The receipt binds the original admission, FINAL evidence, binding lineage and exact Account reservation; conflicting identities or stale owner fences must be refused.
-
-Qualification must prove restart before send, Account commit followed by response loss and worker restart, and exact receipt replay without a second decrement. Account—not Game Session—atomically retains the retirement receipt and decrements used capacity. Wrong identity or fence must fail closed, and no failure or retry may reopen serving or resume. These are acceptance requirements, not claims that the target path or its restart proof exists today.
 
 ## Implementation Status
 

@@ -90,15 +90,11 @@ class StartSessionAuthorityEvidenceBundleTest {
             tuple.controlPlaneRequestId(), ACTOR_ID, changedAction);
     StartSessionPreAuthorizationReservationTuple changedRequest = tuple("other-request");
 
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthorityEvidenceBundle.decode(bytes)
-                    .requireTupleBinding(changedDigest))
+    assertThatThrownBy(() ->
+            StartSessionAuthorityEvidenceBundle.decode(bytes).requireTupleBinding(changedDigest))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthorityEvidenceBundle.decode(bytes)
-                    .requireTupleBinding(changedRequest))
+    assertThatThrownBy(() ->
+            StartSessionAuthorityEvidenceBundle.decode(bytes).requireTupleBinding(changedRequest))
         .isInstanceOf(IllegalArgumentException.class);
 
     Map<String, Object> prefixedDigest = read(bytes);
@@ -161,26 +157,20 @@ class StartSessionAuthorityEvidenceBundleTest {
 
     assertThatThrownBy(() -> StartSessionAuthorityEvidenceBundle.decode(malformedUtf8))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthorityEvidenceBundle.decode(
-                    duplicate.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            StartSessionAuthorityEvidenceBundle.decode(duplicate.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthorityEvidenceBundle.decode(
-                    (new String(valid, StandardCharsets.UTF_8) + "{}")
-                        .getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            StartSessionAuthorityEvidenceBundle.decode(
+                (new String(valid, StandardCharsets.UTF_8) + "{}")
+                    .getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthorityEvidenceBundle.decode(
-                    (new String(valid, StandardCharsets.UTF_8) + " ")
-                        .getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            StartSessionAuthorityEvidenceBundle.decode(
+                (new String(valid, StandardCharsets.UTF_8) + " ").getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthorityEvidenceBundle.decode(Arrays.copyOf(valid, valid.length - 1)))
+    assertThatThrownBy(() ->
+            StartSessionAuthorityEvidenceBundle.decode(Arrays.copyOf(valid, valid.length - 1)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -195,57 +185,50 @@ class StartSessionAuthorityEvidenceBundleTest {
 
     StartSessionAuthorityEvidenceBundle decoded =
         StartSessionAuthorityEvidenceBundle.decode(canonical(validValue(tuple)));
-    assertThatThrownBy(
-            () ->
-                decoded.requireReferenceBinding(
-                    new StartSessionAuthorityEvidenceBundle.BundleReference(
-                        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "18", "23", "17")))
+    assertThatThrownBy(() ->
+            decoded.requireReferenceBinding(
+                new StartSessionAuthorityEvidenceBundle.BundleReference(
+                    StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "18", "23", "17")))
         .isInstanceOf(IllegalArgumentException.class);
     assertThat(
-            org.assertj.core.api.Assertions.catchThrowable(
-                () ->
-                    decoded.requireReferenceBinding(
-                        new StartSessionAuthorityEvidenceBundle.BundleReference(
-                            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "24", "17"))))
+            org.assertj.core.api.Assertions.catchThrowable(() ->
+                decoded.requireReferenceBinding(
+                    new StartSessionAuthorityEvidenceBundle.BundleReference(
+                        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "24", "17"))))
         .isNull();
-    assertThatThrownBy(
-            () ->
-                new StartSessionAuthorityEvidenceBundle.BundleReference(
-                    "authorityEvidenceBundle/v2", "17", "23", "17"))
+    assertThatThrownBy(() ->
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                "authorityEvidenceBundle/v2", "17", "23", "17"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new StartSessionAuthorityEvidenceBundle.BundleReference(
-                    StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-                    "17",
-                    "9223372036854775808",
-                    "17"))
+    assertThatThrownBy(() ->
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                "17",
+                "9223372036854775808",
+                "17"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new StartSessionAuthorityEvidenceBundle.BundleReference(
-                    StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-                    "9223372036854775808",
-                    "23",
-                    "17"))
+    assertThatThrownBy(() ->
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                "9223372036854775808",
+                "23",
+                "17"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new StartSessionAuthorityEvidenceBundle.BundleReference(
-                    StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-                    "17",
-                    "23",
-                    "18446744073709551616"))
+    assertThatThrownBy(() ->
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                "17",
+                "23",
+                "18446744073709551616"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void rejectsOversizedBundlesAndOutOfScopeTenantAuthority() throws Exception {
     StartSessionPreAuthorizationReservationTuple tuple = tuple("bundle-bounds");
-    assertThatThrownBy(
-            () ->
-                StartSessionAuthorityEvidenceBundle.decode(
-                    new byte[StartSessionAuthorityEvidenceBundle.MAX_BUNDLE_BYTES + 1]))
+    assertThatThrownBy(() ->
+            StartSessionAuthorityEvidenceBundle.decode(
+                new byte[StartSessionAuthorityEvidenceBundle.MAX_BUNDLE_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
 
     Map<String, Object> widened = mutableValue(tuple);

@@ -213,10 +213,9 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
     return holdRepository
         .markReconciliationRequired(hold, normalizedErrorCode, clock.instant())
         .map(this::toDto)
-        .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "INITIAL_ADMISSION_BIND_HOLD_STALE: reconciliation update lost"));
+        .orElseThrow(() ->
+            new IllegalStateException(
+                "INITIAL_ADMISSION_BIND_HOLD_STALE: reconciliation update lost"));
   }
 
   private void validateRequest(InitialAdmissionBindHoldRequest request) {
@@ -315,28 +314,23 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
     requireCanonicalUuid(holdId, "holdId");
     return holdRepository
         .findByHoldIdForUpdate(holdId)
-        .orElseThrow(
-            () ->
-                new IllegalArgumentException(
-                    "INITIAL_ADMISSION_BIND_HOLD_NOT_FOUND: hold not found"));
+        .orElseThrow(() ->
+            new IllegalArgumentException("INITIAL_ADMISSION_BIND_HOLD_NOT_FOUND: hold not found"));
   }
 
   private InitialAdmissionBindHold requireHold(String holdId) {
     requireCanonicalUuid(holdId, "holdId");
     return holdRepository
         .findByHoldId(holdId)
-        .orElseThrow(
-            () ->
-                new IllegalArgumentException(
-                    "INITIAL_ADMISSION_BIND_HOLD_NOT_FOUND: hold not found"));
+        .orElseThrow(() ->
+            new IllegalArgumentException("INITIAL_ADMISSION_BIND_HOLD_NOT_FOUND: hold not found"));
   }
 
   private WorldInstance requireLockedWorldInstance(long tenantId, long gameInstanceId) {
     return worldInstanceRepository
         .findByTenantIdAndGameInstanceIdForUpdate(tenantId, gameInstanceId)
-        .orElseThrow(
-            () ->
-                new IllegalArgumentException("WORLD_INSTANCE_NOT_FOUND: world instance not found"));
+        .orElseThrow(() ->
+            new IllegalArgumentException("WORLD_INSTANCE_NOT_FOUND: world instance not found"));
   }
 
   private boolean isTerminal(String status) {

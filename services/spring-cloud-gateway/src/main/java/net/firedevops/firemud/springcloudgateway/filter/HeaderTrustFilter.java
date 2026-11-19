@@ -127,42 +127,38 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     ServerWebExchange mutated =
         exchange
             .mutate()
-            .request(
-                request ->
-                    request.headers(
-                        headers -> {
-                          stripGatewayOwnedHeaders(headers, isGameplayRoute);
+            .request(request ->
+                request.headers(headers -> {
+                  stripGatewayOwnedHeaders(headers, isGameplayRoute);
 
-                          if (canonicalLocale != null) {
-                            headers.set(HDR_FIREMUD_LOCALE, canonicalLocale);
-                          }
+                  if (canonicalLocale != null) {
+                    headers.set(HDR_FIREMUD_LOCALE, canonicalLocale);
+                  }
 
-                          if (canonicalClientIp != null) {
-                            headers.set(HDR_CLIENT_IP, canonicalClientIp);
-                          }
+                  if (canonicalClientIp != null) {
+                    headers.set(HDR_CLIENT_IP, canonicalClientIp);
+                  }
 
-                          if (trustedTcpProxy) {
-                            if (incomingProxyConnectionId != null
-                                && !incomingProxyConnectionId.isBlank()) {
-                              headers.set(HDR_PROXY_CONNECTION_ID, incomingProxyConnectionId);
-                            }
-                            if (incomingProxyGameInstanceId != null
-                                && !incomingProxyGameInstanceId.isBlank()) {
-                              headers.set(HDR_GAME_INSTANCE_ID, incomingProxyGameInstanceId);
-                            }
-                            if (incomingProxyTenantId != null && !incomingProxyTenantId.isBlank()) {
-                              headers.set(HDR_TENANT_ID, incomingProxyTenantId);
-                            }
-                            if (isSessionRoute) {
-                              if (canonicalRoutingBundle != null) {
-                                headers.set(HDR_WORLD_SLUG, canonicalRoutingBundle.worldSlug());
-                                headers.set(HDR_REALM_SLUG, canonicalRoutingBundle.realmSlug());
-                                headers.set(
-                                    HDR_POINTER_VERSION, canonicalRoutingBundle.pointerVersion());
-                              }
-                            }
-                          }
-                        }))
+                  if (trustedTcpProxy) {
+                    if (incomingProxyConnectionId != null && !incomingProxyConnectionId.isBlank()) {
+                      headers.set(HDR_PROXY_CONNECTION_ID, incomingProxyConnectionId);
+                    }
+                    if (incomingProxyGameInstanceId != null
+                        && !incomingProxyGameInstanceId.isBlank()) {
+                      headers.set(HDR_GAME_INSTANCE_ID, incomingProxyGameInstanceId);
+                    }
+                    if (incomingProxyTenantId != null && !incomingProxyTenantId.isBlank()) {
+                      headers.set(HDR_TENANT_ID, incomingProxyTenantId);
+                    }
+                    if (isSessionRoute) {
+                      if (canonicalRoutingBundle != null) {
+                        headers.set(HDR_WORLD_SLUG, canonicalRoutingBundle.worldSlug());
+                        headers.set(HDR_REALM_SLUG, canonicalRoutingBundle.realmSlug());
+                        headers.set(HDR_POINTER_VERSION, canonicalRoutingBundle.pointerVersion());
+                      }
+                    }
+                  }
+                }))
             .build();
 
     return chain.filter(mutated);
@@ -235,9 +231,8 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     List.copyOf(headers.headerNames()).stream()
         .filter(
             name -> name.regionMatches(true, 0, HDR_FIREMUD_PREFIX, 0, HDR_FIREMUD_PREFIX.length()))
-        .filter(
-            name ->
-                !preserveGameplayConnectTokenCarrier || !name.equalsIgnoreCase(HDR_CONNECT_TOKEN))
+        .filter(name ->
+            !preserveGameplayConnectTokenCarrier || !name.equalsIgnoreCase(HDR_CONNECT_TOKEN))
         .forEach(headers::remove);
 
     headers.remove(HDR_CLIENT_IP);

@@ -97,18 +97,17 @@ public final class AccountDraftSourceCompositionService {
             CreatorPartyEncoding.creation(creator), bootstrap.creatorEvidencePayload())
         || currentTerms.sourceEvidence().stream()
             .filter(source -> source.kind() == SourceKind.CREATOR_PARTY)
-            .noneMatch(
-                source ->
-                    source.scopeId().equals(association.partySource().creatorPartyId().toString())
-                        && Objects.equals(
-                            source.generation(),
-                            Long.toString(association.partySource().identityVersion()))
-                        && source
-                            .sourceVersion()
-                            .equals(Long.toString(association.partySource().sourceVersion()))
-                        && Arrays.equals(
-                            source.evidence(),
-                            CreatorPartyEncoding.party(association.partySource())))) {
+            .noneMatch(source ->
+                source.scopeId().equals(association.partySource().creatorPartyId().toString())
+                    && Objects.equals(
+                        source.generation(),
+                        Long.toString(association.partySource().identityVersion()))
+                    && source
+                        .sourceVersion()
+                        .equals(Long.toString(association.partySource().sourceVersion()))
+                    && Arrays.equals(
+                        source.evidence(),
+                        CreatorPartyEncoding.party(association.partySource())))) {
       throw mismatch();
     }
     return new ExistingSources(membership, issuerAccount, association, currentTerms);
@@ -172,14 +171,13 @@ public final class AccountDraftSourceCompositionService {
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new IllegalStateException("Writable READ_COMMITTED Account transaction required");
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException("Writable READ_COMMITTED Account transaction required");
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException("Writable READ_COMMITTED Account transaction required");
+      }
+    });
   }
 
   private static IllegalStateException mismatch() {

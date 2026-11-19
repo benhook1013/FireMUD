@@ -98,14 +98,12 @@ class WorldDesignPublicationFenceIntegrationTest {
     WorldDesignPublicationFenceEvidence request =
         evidence(receipt, "request-7", GAME_DESIGN_VERSION_A, 9L);
 
-    assertThatThrownBy(
-            () ->
-                ownerTransaction()
-                    .execute(
-                        status -> {
-                          repository.lockOpen(request.ownerBinding());
-                          throw new ForcedRollbackException();
-                        }))
+    assertThatThrownBy(() ->
+            ownerTransaction()
+                .execute(status -> {
+                  repository.lockOpen(request.ownerBinding());
+                  throw new ForcedRollbackException();
+                }))
         .isInstanceOf(ForcedRollbackException.class);
     assertThat(ownerCount(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isZero();
 
@@ -139,14 +137,13 @@ class WorldDesignPublicationFenceIntegrationTest {
     AtomicBoolean retryRecapturedCheckpoint = new AtomicBoolean();
     FrozenAttempt retry =
         ownerTransaction()
-            .execute(
-                status ->
-                    repository.claimFreeze(
-                        request,
-                        () -> {
-                          retryRecapturedCheckpoint.set(true);
-                          return new Checkpoint("synthetic-new-commit", "d".repeat(64), 2);
-                        }));
+            .execute(status ->
+                repository.claimFreeze(
+                    request,
+                    () -> {
+                      retryRecapturedCheckpoint.set(true);
+                      return new Checkpoint("synthetic-new-commit", "d".repeat(64), 2);
+                    }));
     assertThat(retry).isEqualTo(frozen);
     assertThat(retryRecapturedCheckpoint).isFalse();
     assertThat(attemptCount(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isEqualTo(1L);
@@ -218,10 +215,9 @@ class WorldDesignPublicationFenceIntegrationTest {
     assertThatThrownBy(() -> repository.readAttempt(request))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("schema-0");
-    assertThatThrownBy(
-            () ->
-                ownerTransaction()
-                    .execute(status -> repository.claimFreeze(request, () -> SYNTHETIC_CHECKPOINT)))
+    assertThatThrownBy(() ->
+            ownerTransaction()
+                .execute(status -> repository.claimFreeze(request, () -> SYNTHETIC_CHECKPOINT)))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("schema-0");
     assertThat(ownerCount(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isZero();
@@ -238,17 +234,15 @@ class WorldDesignPublicationFenceIntegrationTest {
         intake(canonicalTenantId, "brighter-coast", tenantSlug, 6_001L);
 
     ownerTransaction()
-        .execute(
-            status -> {
-              repository.lockOpen(ownerBinding(first, GAME_DESIGN_VERSION_A));
-              return null;
-            });
+        .execute(status -> {
+          repository.lockOpen(ownerBinding(first, GAME_DESIGN_VERSION_A));
+          return null;
+        });
     ownerTransaction()
-        .execute(
-            status -> {
-              repository.lockOpen(ownerBinding(second, GAME_DESIGN_VERSION_A));
-              return null;
-            });
+        .execute(status -> {
+          repository.lockOpen(ownerBinding(second, GAME_DESIGN_VERSION_A));
+          return null;
+        });
 
     assertThat(identity(first, GAME_DESIGN_VERSION_A).localVersionKey())
         .isNotEqualTo(identity(second, GAME_DESIGN_VERSION_A).localVersionKey());
@@ -320,33 +314,29 @@ class WorldDesignPublicationFenceIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<FrozenAttempt> first =
-          executor.submit(
-              () ->
-                  ownerTransaction()
-                      .execute(
-                          status ->
-                              repository.claimFreeze(
-                                  request,
-                                  () -> {
-                                    checkpointCaptured.countDown();
-                                    await(releaseFirst);
-                                    return SYNTHETIC_CHECKPOINT;
-                                  })));
+          executor.submit(() ->
+              ownerTransaction()
+                  .execute(status ->
+                      repository.claimFreeze(
+                          request,
+                          () -> {
+                            checkpointCaptured.countDown();
+                            await(releaseFirst);
+                            return SYNTHETIC_CHECKPOINT;
+                          })));
       await(checkpointCaptured);
       Future<FrozenAttempt> second =
-          executor.submit(
-              () -> {
-                secondStarted.countDown();
-                return ownerTransaction()
-                    .execute(
-                        status ->
-                            repository.claimFreeze(
-                                request,
-                                () -> {
-                                  secondCapturedCheckpoint.set(true);
-                                  return new Checkpoint("synthetic-second", "d".repeat(64), 3);
-                                }));
-              });
+          executor.submit(() -> {
+            secondStarted.countDown();
+            return ownerTransaction()
+                .execute(status ->
+                    repository.claimFreeze(
+                        request,
+                        () -> {
+                          secondCapturedCheckpoint.set(true);
+                          return new Checkpoint("synthetic-second", "d".repeat(64), 3);
+                        }));
+          });
       await(secondStarted);
       awaitOwnerRowLockWait();
       releaseFirst.countDown();
@@ -374,31 +364,27 @@ class WorldDesignPublicationFenceIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<?> writer =
-          executor.submit(
-              () ->
-                  ownerTransaction()
-                      .execute(
-                          status -> {
-                            repository.lockOpen(request.ownerBinding());
-                            writerLocked.countDown();
-                            await(releaseWriter);
-                            return null;
-                          }));
+          executor.submit(() ->
+              ownerTransaction()
+                  .execute(status -> {
+                    repository.lockOpen(request.ownerBinding());
+                    writerLocked.countDown();
+                    await(releaseWriter);
+                    return null;
+                  }));
       await(writerLocked);
       Future<FrozenAttempt> freeze =
-          executor.submit(
-              () -> {
-                freezeStarted.countDown();
-                return ownerTransaction()
-                    .execute(
-                        status ->
-                            repository.claimFreeze(
-                                request,
-                                () -> {
-                                  checkpointCaptured.set(true);
-                                  return SYNTHETIC_CHECKPOINT;
-                                }));
-              });
+          executor.submit(() -> {
+            freezeStarted.countDown();
+            return ownerTransaction()
+                .execute(status ->
+                    repository.claimFreeze(
+                        request,
+                        () -> {
+                          checkpointCaptured.set(true);
+                          return SYNTHETIC_CHECKPOINT;
+                        }));
+          });
       await(freezeStarted);
       awaitOwnerRowLockWait();
       assertThat(checkpointCaptured).isFalse();
@@ -427,38 +413,34 @@ class WorldDesignPublicationFenceIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       Future<FrozenAttempt> freeze =
-          executor.submit(
-              () ->
-                  ownerTransaction()
-                      .execute(
-                          status -> {
-                            FrozenAttempt result =
-                                repository.claimFreeze(
-                                    request,
-                                    () -> {
-                                      freezeLocked.countDown();
-                                      return SYNTHETIC_CHECKPOINT;
-                                    });
-                            await(releaseFreeze);
-                            return result;
-                          }));
+          executor.submit(() ->
+              ownerTransaction()
+                  .execute(status -> {
+                    FrozenAttempt result =
+                        repository.claimFreeze(
+                            request,
+                            () -> {
+                              freezeLocked.countDown();
+                              return SYNTHETIC_CHECKPOINT;
+                            });
+                    await(releaseFreeze);
+                    return result;
+                  }));
       await(freezeLocked);
       Future<Boolean> writer =
-          executor.submit(
-              () -> {
-                writerStarted.countDown();
-                try {
-                  ownerTransaction()
-                      .execute(
-                          status -> {
-                            repository.lockOpen(request.ownerBinding());
-                            return null;
-                          });
-                  return false;
-                } catch (WorldDesignPublicationFenceRepository.ConflictException expected) {
-                  return true;
-                }
-              });
+          executor.submit(() -> {
+            writerStarted.countDown();
+            try {
+              ownerTransaction()
+                  .execute(status -> {
+                    repository.lockOpen(request.ownerBinding());
+                    return null;
+                  });
+              return false;
+            } catch (WorldDesignPublicationFenceRepository.ConflictException expected) {
+              return true;
+            }
+          });
       await(writerStarted);
       awaitOwnerRowLockWait();
       releaseFreeze.countDown();
@@ -479,34 +461,30 @@ class WorldDesignPublicationFenceIntegrationTest {
     WorldAuthoredSourceIntakeReceipt receipt = intake(UUID.randomUUID(), "private-key-guard");
     WorldAuthoredVersionIdentityReceipt identity = identity(receipt, GAME_DESIGN_VERSION_A);
 
-    assertThatThrownBy(
-            () ->
-                ownerTransaction()
-                    .execute(
-                        status -> {
-                          repository.lockExistingOpenByPrivateKeys(
-                              receipt.localTenantKey(), identity.localVersionKey());
-                          return null;
-                        }))
+    assertThatThrownBy(() ->
+            ownerTransaction()
+                .execute(status -> {
+                  repository.lockExistingOpenByPrivateKeys(
+                      receipt.localTenantKey(), identity.localVersionKey());
+                  return null;
+                }))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("existing publication owner row");
     assertThat(ownerCount(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isZero();
     assertThat(attemptCount(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isZero();
 
     ownerTransaction()
-        .execute(
-            status -> {
-              repository.lockOpen(ownerBinding(receipt, GAME_DESIGN_VERSION_A));
-              return null;
-            });
+        .execute(status -> {
+          repository.lockOpen(ownerBinding(receipt, GAME_DESIGN_VERSION_A));
+          return null;
+        });
     String openOwnerSnapshot = ownerSnapshot(receipt, identity);
     ownerTransaction()
-        .execute(
-            status -> {
-              repository.lockExistingOpenByPrivateKeys(
-                  receipt.localTenantKey(), identity.localVersionKey());
-              return null;
-            });
+        .execute(status -> {
+          repository.lockExistingOpenByPrivateKeys(
+              receipt.localTenantKey(), identity.localVersionKey());
+          return null;
+        });
     assertThat(ownerSnapshot(receipt, identity)).isEqualTo(openOwnerSnapshot);
     WorldDesignPublicationFenceEvidence request =
         evidence(receipt, "private-key-guard-freeze", GAME_DESIGN_VERSION_A, 1L);
@@ -515,15 +493,13 @@ class WorldDesignPublicationFenceIntegrationTest {
             .execute(status -> repository.claimFreeze(request, () -> SYNTHETIC_CHECKPOINT));
     String ownerBeforeDeniedWrite = ownerSnapshot(receipt, identity);
 
-    assertThatThrownBy(
-            () ->
-                ownerTransaction()
-                    .execute(
-                        status -> {
-                          repository.lockExistingOpenByPrivateKeys(
-                              receipt.localTenantKey(), identity.localVersionKey());
-                          return null;
-                        }))
+    assertThatThrownBy(() ->
+            ownerTransaction()
+                .execute(status -> {
+                  repository.lockExistingOpenByPrivateKeys(
+                      receipt.localTenantKey(), identity.localVersionKey());
+                  return null;
+                }))
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
         .hasMessageContaining("not open");
 
@@ -553,26 +529,25 @@ class WorldDesignPublicationFenceIntegrationTest {
         GAME_DESIGN_VERSION_A,
         () ->
             ownerTransaction()
-                .execute(
-                    status ->
-                        repository.claimFreeze(
-                            new WorldDesignPublicationFenceEvidence(
-                                NAMESPACE,
-                                first.canonicalTenantId(),
-                                identity(first, GAME_DESIGN_VERSION_A).canonicalVersionId(),
-                                identity(first, GAME_DESIGN_VERSION_A).operationId(),
-                                GAME_DESIGN_VERSION_A,
-                                first.intakeRequestId(),
-                                first.operationId(),
-                                first.requestDigest(),
-                                first.sourceOperationId(),
-                                second.sourceEvidenceDigest(),
-                                first.receiptDigest(),
-                                "request-7",
-                                FULL_REQUEST_DIGEST,
-                                9L,
-                                request.publishWorkflowId()),
-                            () -> SYNTHETIC_CHECKPOINT)));
+                .execute(status ->
+                    repository.claimFreeze(
+                        new WorldDesignPublicationFenceEvidence(
+                            NAMESPACE,
+                            first.canonicalTenantId(),
+                            identity(first, GAME_DESIGN_VERSION_A).canonicalVersionId(),
+                            identity(first, GAME_DESIGN_VERSION_A).operationId(),
+                            GAME_DESIGN_VERSION_A,
+                            first.intakeRequestId(),
+                            first.operationId(),
+                            first.requestDigest(),
+                            first.sourceOperationId(),
+                            second.sourceEvidenceDigest(),
+                            first.receiptDigest(),
+                            "request-7",
+                            FULL_REQUEST_DIGEST,
+                            9L,
+                            request.publishWorkflowId()),
+                        () -> SYNTHETIC_CHECKPOINT)));
 
     UUID changedTenantId = UUID.randomUUID();
     WorldDesignPublicationFenceEvidence changedAssociation =
@@ -590,9 +565,8 @@ class WorldDesignPublicationFenceIntegrationTest {
         GAME_DESIGN_VERSION_A,
         () ->
             ownerTransaction()
-                .execute(
-                    status ->
-                        repository.claimFreeze(changedAssociation, () -> SYNTHETIC_CHECKPOINT)));
+                .execute(status ->
+                    repository.claimFreeze(changedAssociation, () -> SYNTHETIC_CHECKPOINT)));
     assertThat(ownerCount(changedTenantId, GAME_DESIGN_VERSION_A)).isZero();
 
     WorldAuthoredVersionIdentityReceipt identity = identity(first, GAME_DESIGN_VERSION_A);
@@ -618,10 +592,8 @@ class WorldDesignPublicationFenceIntegrationTest {
         GAME_DESIGN_VERSION_A,
         () ->
             ownerTransaction()
-                .execute(
-                    status ->
-                        repository.claimFreeze(
-                            changedCanonicalVersion, () -> SYNTHETIC_CHECKPOINT)));
+                .execute(status ->
+                    repository.claimFreeze(changedCanonicalVersion, () -> SYNTHETIC_CHECKPOINT)));
 
     String changedSelectorWorkflow =
         PublicationDigestRequestBinding.full(
@@ -649,10 +621,8 @@ class WorldDesignPublicationFenceIntegrationTest {
         GAME_DESIGN_VERSION_A,
         () ->
             ownerTransaction()
-                .execute(
-                    status ->
-                        repository.claimFreeze(
-                            changedGameDesignSelector, () -> SYNTHETIC_CHECKPOINT)));
+                .execute(status ->
+                    repository.claimFreeze(changedGameDesignSelector, () -> SYNTHETIC_CHECKPOINT)));
 
     WorldDesignPublicationFenceEvidence changedRequest =
         evidence(first, "request-8", GAME_DESIGN_VERSION_A, 9L);
@@ -693,26 +663,23 @@ class WorldDesignPublicationFenceIntegrationTest {
         .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
 
     assertThat(repository.readAttempt(request)).contains(frozen);
-    assertThatThrownBy(
-            () ->
-                evidence(
-                    first,
-                    "request-7",
-                    GAME_DESIGN_VERSION_A,
-                    9L,
-                    "F".repeat(64),
-                    request.publishWorkflowId()))
+    assertThatThrownBy(() ->
+            evidence(
+                first,
+                "request-7",
+                GAME_DESIGN_VERSION_A,
+                9L,
+                "F".repeat(64),
+                request.publishWorkflowId()))
         .isInstanceOf(IllegalArgumentException.class);
 
     WorldAuthoredSourceIntakeReceipt missingCheckpointReceipt =
         intake(UUID.randomUUID(), "uncheckpointed-world");
     WorldDesignPublicationFenceEvidence missingCheckpointRequest =
         evidence(missingCheckpointReceipt, "request-missing-checkpoint", GAME_DESIGN_VERSION_B, 1L);
-    assertThatThrownBy(
-            () ->
-                ownerTransaction()
-                    .execute(
-                        status -> repository.claimFreeze(missingCheckpointRequest, () -> null)))
+    assertThatThrownBy(() ->
+            ownerTransaction()
+                .execute(status -> repository.claimFreeze(missingCheckpointRequest, () -> null)))
         .isInstanceOf(NullPointerException.class);
     assertThat(ownerCount(missingCheckpointReceipt.canonicalTenantId(), GAME_DESIGN_VERSION_B))
         .isZero();
@@ -918,10 +885,8 @@ class WorldDesignPublicationFenceIntegrationTest {
             VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
             1L);
     return ownerTransaction()
-        .execute(
-            status ->
-                new WorldAuthoredVersionIdentityRepository(dsl)
-                    .acceptFresh(receipt, stateEvidence));
+        .execute(status ->
+            new WorldAuthoredVersionIdentityRepository(dsl).acceptFresh(receipt, stateEvidence));
   }
 
   private static UUID stableId(

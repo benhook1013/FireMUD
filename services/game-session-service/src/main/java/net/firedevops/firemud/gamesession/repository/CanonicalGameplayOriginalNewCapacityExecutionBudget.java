@@ -261,20 +261,19 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     synchronized (lifecycle) {
       outstandingAsyncCloses++;
     }
-    closeAttempt.whenComplete(
-        (ignored, failure) -> {
-          synchronized (lifecycle) {
-            if (failure != null) {
-              if (!redisCloseFailureRecorded) {
-                redisCloseFailureRecorded = true;
-                REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
-              }
-              return;
-            }
-            outstandingAsyncCloses--;
-            releaseIfFinished();
+    closeAttempt.whenComplete((ignored, failure) -> {
+      synchronized (lifecycle) {
+        if (failure != null) {
+          if (!redisCloseFailureRecorded) {
+            redisCloseFailureRecorded = true;
+            REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
           }
-        });
+          return;
+        }
+        outstandingAsyncCloses--;
+        releaseIfFinished();
+      }
+    });
   }
 
   /** Waits for one Redis close attempt only through this operation's deadline. */

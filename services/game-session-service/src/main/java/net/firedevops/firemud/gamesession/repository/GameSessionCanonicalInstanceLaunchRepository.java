@@ -67,61 +67,57 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
     FixtureCanonicalRealmCatalog catalog =
         catalogRepository.establishVerifiedFixtureRealm(evidence);
     FixtureCanonicalInstanceLaunch committed =
-        writeTransaction.execute(
-            status -> {
-              requireOwnerTransaction();
-              dsl.execute(
-                  "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-                  "canonical-launch:"
-                      + workloadNamespace
-                      + ":"
-                      + descriptor.controlPlaneRequestId());
-              FixtureCanonicalRealmCatalog actual =
-                  catalogRepository.readVerifiedFixtureRealmInOwnerTransaction(evidence);
-              if (!catalog.equals(actual)) {
-                throw new InvalidCanonicalInstanceLaunchException(
-                    "Fixture catalog changed before STARTING");
-              }
-              Record existing =
-                  readLaunchRowByOperationInTransaction(descriptor.controlPlaneRequestId(), true);
-              if (existing != null) return readFixtureLaunch(existing, evidence, actual, false);
-              if (dsl.fetchOne(
-                      "SELECT id FROM game_instances WHERE tenant_id = ? AND run_owned_start_request_id = ? FOR UPDATE",
-                      actual.association().gameSessionTenantId(),
-                      descriptor.controlPlaneRequestId())
-                  != null) {
-                throw new InvalidCanonicalInstanceLaunchException(
-                    "Runtime identity has no exact immutable fixture association");
-              }
-              UUID instanceUuid = newNonNilUuid();
-              Record runtime =
-                  dsl.fetchOne(
-                      "INSERT INTO game_instances (tenant_id, runtime_version, owner_account_id, status, row_version,"
-                          + " game_instance_uuid, game_template_id, launch_descriptor_id, version_id, release_bundle_id,"
-                          + " generation_config_revision, version_state_epoch, run_owned_start_request_id,"
-                          + " run_owned_start_request_digest, run_owned_start_published_release_bundle_ref)"
-                          + " VALUES (?, ?, ?, 'STARTING', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-                      actual.association().gameSessionTenantId(),
-                      Long.toString(descriptor.versionId()),
-                      evidence.fixtureCapability().ownerAccountId(),
-                      instanceUuid,
-                      descriptor.gameTemplateId(),
-                      descriptor.launchDescriptorId(),
-                      descriptor.versionId(),
-                      descriptor.releaseBundleId(),
-                      descriptor.generationConfigRevision(),
-                      descriptor.versionStateEpoch(),
-                      descriptor.controlPlaneRequestId(),
-                      evidence.fixtureRuntimeRequestDigest(),
-                      descriptor.publishedReleaseBundleRef());
-              long instanceId = required(runtime, "id", Long.class);
-              insertFixtureAssociation(evidence, descriptor, actual, instanceId, instanceUuid);
-              return readFixtureLaunch(
-                  readLaunchRowByOperationInTransaction(descriptor.controlPlaneRequestId(), false),
-                  evidence,
-                  actual,
-                  true);
-            });
+        writeTransaction.execute(status -> {
+          requireOwnerTransaction();
+          dsl.execute(
+              "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+              "canonical-launch:" + workloadNamespace + ":" + descriptor.controlPlaneRequestId());
+          FixtureCanonicalRealmCatalog actual =
+              catalogRepository.readVerifiedFixtureRealmInOwnerTransaction(evidence);
+          if (!catalog.equals(actual)) {
+            throw new InvalidCanonicalInstanceLaunchException(
+                "Fixture catalog changed before STARTING");
+          }
+          Record existing =
+              readLaunchRowByOperationInTransaction(descriptor.controlPlaneRequestId(), true);
+          if (existing != null) return readFixtureLaunch(existing, evidence, actual, false);
+          if (dsl.fetchOne(
+                  "SELECT id FROM game_instances WHERE tenant_id = ? AND run_owned_start_request_id = ? FOR UPDATE",
+                  actual.association().gameSessionTenantId(),
+                  descriptor.controlPlaneRequestId())
+              != null) {
+            throw new InvalidCanonicalInstanceLaunchException(
+                "Runtime identity has no exact immutable fixture association");
+          }
+          UUID instanceUuid = newNonNilUuid();
+          Record runtime =
+              dsl.fetchOne(
+                  "INSERT INTO game_instances (tenant_id, runtime_version, owner_account_id, status, row_version,"
+                      + " game_instance_uuid, game_template_id, launch_descriptor_id, version_id, release_bundle_id,"
+                      + " generation_config_revision, version_state_epoch, run_owned_start_request_id,"
+                      + " run_owned_start_request_digest, run_owned_start_published_release_bundle_ref)"
+                      + " VALUES (?, ?, ?, 'STARTING', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                  actual.association().gameSessionTenantId(),
+                  Long.toString(descriptor.versionId()),
+                  evidence.fixtureCapability().ownerAccountId(),
+                  instanceUuid,
+                  descriptor.gameTemplateId(),
+                  descriptor.launchDescriptorId(),
+                  descriptor.versionId(),
+                  descriptor.releaseBundleId(),
+                  descriptor.generationConfigRevision(),
+                  descriptor.versionStateEpoch(),
+                  descriptor.controlPlaneRequestId(),
+                  evidence.fixtureRuntimeRequestDigest(),
+                  descriptor.publishedReleaseBundleRef());
+          long instanceId = required(runtime, "id", Long.class);
+          insertFixtureAssociation(evidence, descriptor, actual, instanceId, instanceUuid);
+          return readFixtureLaunch(
+              readLaunchRowByOperationInTransaction(descriptor.controlPlaneRequestId(), false),
+              evidence,
+              actual,
+              true);
+        });
     Objects.requireNonNull(committed, "Fixture launch transaction returned no result");
     FixtureCanonicalInstanceLaunch independent = readVerifiedFixtureLaunch(evidence);
     if (independent.gameInstanceId() != committed.gameInstanceId()
@@ -137,14 +133,13 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
     requireNoActiveOwnerTransaction();
     evidence.requireVerifiedFixture();
     return Objects.requireNonNull(
-        readTransaction.execute(
-            status ->
-                readFixtureLaunch(
-                    readLaunchRowByOperationInTransaction(
-                        evidence.fixtureCapability().operationId(), false),
-                    evidence,
-                    catalogRepository.readVerifiedFixtureRealmInOwnerTransaction(evidence),
-                    false)),
+        readTransaction.execute(status ->
+            readFixtureLaunch(
+                readLaunchRowByOperationInTransaction(
+                    evidence.fixtureCapability().operationId(), false),
+                evidence,
+                catalogRepository.readVerifiedFixtureRealmInOwnerTransaction(evidence),
+                false)),
         "Fixture launch independent read returned no result");
   }
 

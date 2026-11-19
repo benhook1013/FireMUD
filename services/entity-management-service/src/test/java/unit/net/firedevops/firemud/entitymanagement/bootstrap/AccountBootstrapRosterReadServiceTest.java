@@ -53,25 +53,21 @@ class AccountBootstrapRosterReadServiceTest {
     var client = mock(GameSessionCanonicalGameplayRosterOwnerReadClient.class);
     var repository = mock(CharacterRepository.class);
     when(client.getCanonicalGameplayRosterOwnerRead(any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              assertThat(
-                      invocation.getArgument(
-                          0, CanonicalGameplayRosterOwnerReadEvidence.Request.class))
-                  .isEqualTo(f.evidence().request());
-              return f.evidence();
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          assertThat(
+                  invocation.getArgument(0, CanonicalGameplayRosterOwnerReadEvidence.Request.class))
+              .isEqualTo(f.evidence().request());
+          return f.evidence();
+        });
     UUID actor = UUID.randomUUID();
     when(repository.readAccountBootstrapRoster(any(), eq(f.target())))
-        .thenAnswer(
-            ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isTrue();
-              return List.of(
-                  new AccountBootstrapRosterActorProjection(actor, "Persisted Actor", 7));
-            })
+        .thenAnswer(ignored -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isTrue();
+          return List.of(new AccountBootstrapRosterActorProjection(actor, "Persisted Actor", 7));
+        })
         .thenReturn(List.of());
     var service = service(client, repository);
     assertThat(service.read(f.request()).getActorsList())
@@ -147,15 +143,14 @@ class AccountBootstrapRosterReadServiceTest {
     assertThatThrownBy(
             () -> service.read(f.request().toBuilder().setCanonicalAccountUuid("12").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                service.read(
-                    f.request().toBuilder()
-                        .setExpectedTarget(
-                            f.request().getExpectedTarget().toBuilder()
-                                .setPlayableStateScope(
-                                    PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
-                        .build()))
+    assertThatThrownBy(() ->
+            service.read(
+                f.request().toBuilder()
+                    .setExpectedTarget(
+                        f.request().getExpectedTarget().toBuilder()
+                            .setPlayableStateScope(
+                                PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+                    .build()))
         .isInstanceOf(UnsupportedOperationException.class);
     var unknown =
         UnknownFieldSet.newBuilder()
@@ -165,14 +160,13 @@ class AccountBootstrapRosterReadServiceTest {
             () -> service.read(f.request().toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class);
     new TransactionTemplate(new LocalTransactions())
-        .executeWithoutResult(
-            ignored -> {
-              assertThatThrownBy(() -> service.read(f.request()))
-                  .isExactlyInstanceOf(IllegalStateException.class)
-                  .hasMessage(
-                      "Account bootstrap roster read requires no ambient transaction or synchronization")
-                  .hasNoCause();
-            });
+        .executeWithoutResult(ignored -> {
+          assertThatThrownBy(() -> service.read(f.request()))
+              .isExactlyInstanceOf(IllegalStateException.class)
+              .hasMessage(
+                  "Account bootstrap roster read requires no ambient transaction or synchronization")
+              .hasNoCause();
+        });
     verifyNoInteractions(client, repository);
   }
 
@@ -258,10 +252,9 @@ class AccountBootstrapRosterReadServiceTest {
         new AccountBootstrapRosterReadGrpcService(service, AccountBootstrapRosterFixture.NAMESPACE);
     StreamObserver<AccountBootstrapRosterReadResponse> observer = mock(StreamObserver.class);
 
-    withControlledAccountPeer(
-        () ->
-            receiver.readAccountBootstrapRoster(
-                f.request().toBuilder().setCanonicalAccountUuid("malformed").build(), observer));
+    withControlledAccountPeer(() ->
+        receiver.readAccountBootstrapRoster(
+            f.request().toBuilder().setCanonicalAccountUuid("malformed").build(), observer));
 
     assertReceiverFailure(observer, Status.Code.INVALID_ARGUMENT);
     verifyNoInteractions(service);
@@ -281,11 +274,10 @@ class AccountBootstrapRosterReadServiceTest {
             .thenThrow(new IllegalStateException("CANONICAL_ROSTER_LEVEL_NULL"));
       } else if ("negative-level".equals(invalidProjection)) {
         when(repository.readAccountBootstrapRoster(any(), any()))
-            .thenAnswer(
-                ignored ->
-                    List.of(
-                        new AccountBootstrapRosterActorProjection(
-                            UUID.randomUUID(), "Persisted Actor", -1)));
+            .thenAnswer(ignored ->
+                List.of(
+                    new AccountBootstrapRosterActorProjection(
+                        UUID.randomUUID(), "Persisted Actor", -1)));
       } else {
         var actor =
             new AccountBootstrapRosterActorProjection(UUID.randomUUID(), "Persisted Actor", 0);
@@ -342,11 +334,10 @@ class AccountBootstrapRosterReadServiceTest {
     ServerCallHandler<AccountBootstrapRosterReadRequest, AccountBootstrapRosterReadResponse> next =
         mock(ServerCallHandler.class);
     when(next.startCall(any(), any()))
-        .thenAnswer(
-            ignored -> {
-              action.run();
-              return new ServerCall.Listener<AccountBootstrapRosterReadRequest>() {};
-            });
+        .thenAnswer(ignored -> {
+          action.run();
+          return new ServerCall.Listener<AccountBootstrapRosterReadRequest>() {};
+        });
 
     new AccountBootstrapRosterPeerInterceptor(AccountBootstrapRosterFixture.NAMESPACE)
         .interceptCall(call, new Metadata(), next);

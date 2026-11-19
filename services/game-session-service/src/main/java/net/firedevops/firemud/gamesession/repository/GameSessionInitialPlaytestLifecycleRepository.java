@@ -324,10 +324,9 @@ public class GameSessionInitialPlaytestLifecycleRepository {
     }
     List<RealmPolicyPublishedEvidence.Policy> targetPolicies =
         policy.policies().stream()
-            .filter(
-                candidate ->
-                    candidate.source().policy().worldSlug().equals(request.worldSlug())
-                        && candidate.source().policy().realmSlug().equals(request.realmSlug()))
+            .filter(candidate ->
+                candidate.source().policy().worldSlug().equals(request.worldSlug())
+                    && candidate.source().policy().realmSlug().equals(request.realmSlug()))
             .toList();
     if (targetPolicies.size() != 1) {
       throw new SourceUnavailableException(

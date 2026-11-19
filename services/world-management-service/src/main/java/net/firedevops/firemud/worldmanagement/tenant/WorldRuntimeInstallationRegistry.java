@@ -69,59 +69,57 @@ public final class WorldRuntimeInstallationRegistry {
       held.requireCurrent();
       var artifact = artifact(held);
       Registration committed =
-          write.execute(
-              status -> {
-                // One namespace serializes registration; source authority remains held through
-                // commit.
-                dsl.execute(
-                    "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
-                    "world-runtime-registry/" + namespace);
-                Record current =
-                    dsl.fetchOne(
-                        "SELECT * FROM "
-                            + table("world_runtime_installation_current")
-                            + " WHERE target_namespace=? FOR UPDATE",
-                        namespace);
-                Record old =
-                    dsl.fetchOne(
-                        "SELECT * FROM "
-                            + table("world_runtime_installation_registration")
-                            + " WHERE artifact_id=?",
-                        artifact.artifactId());
-                Registration registered;
-                if (old != null) {
-                  registered = registration(old);
-                  exact(registered.artifact(), artifact);
-                  if (current == null
-                      || registered.revision() != current.get("revision", Long.class)) {
-                    throw new RegistryUnavailableException(
-                        "Historical installation cannot replace the current registration");
-                  }
-                } else {
-                  Record inserted =
-                      dsl.fetchSingle(
-                          "INSERT INTO "
-                              + table("world_runtime_installation_registration")
-                              + " (artifact_id,installation_id,target_namespace,artifact_bytes,artifact_digest) VALUES (?,?,?,?,?) RETURNING *",
-                          artifact.artifactId(),
-                          artifact.installationId(),
-                          namespace,
-                          artifact.exactBytes(),
-                          artifact.digest());
-                  registered = registration(inserted);
-                  dsl.execute(
+          write.execute(status -> {
+            // One namespace serializes registration; source authority remains held through
+            // commit.
+            dsl.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
+                "world-runtime-registry/" + namespace);
+            Record current =
+                dsl.fetchOne(
+                    "SELECT * FROM "
+                        + table("world_runtime_installation_current")
+                        + " WHERE target_namespace=? FOR UPDATE",
+                    namespace);
+            Record old =
+                dsl.fetchOne(
+                    "SELECT * FROM "
+                        + table("world_runtime_installation_registration")
+                        + " WHERE artifact_id=?",
+                    artifact.artifactId());
+            Registration registered;
+            if (old != null) {
+              registered = registration(old);
+              exact(registered.artifact(), artifact);
+              if (current == null || registered.revision() != current.get("revision", Long.class)) {
+                throw new RegistryUnavailableException(
+                    "Historical installation cannot replace the current registration");
+              }
+            } else {
+              Record inserted =
+                  dsl.fetchSingle(
                       "INSERT INTO "
-                          + table("world_runtime_installation_current")
-                          + " (target_namespace,revision,artifact_digest) VALUES (?,?,?) ON CONFLICT (target_namespace)"
-                          + " DO UPDATE SET revision=EXCLUDED.revision,artifact_digest=EXCLUDED.artifact_digest",
+                          + table("world_runtime_installation_registration")
+                          + " (artifact_id,installation_id,target_namespace,artifact_bytes,artifact_digest) VALUES (?,?,?,?,?) RETURNING *",
+                      artifact.artifactId(),
+                      artifact.installationId(),
                       namespace,
-                      registered.revision(),
+                      artifact.exactBytes(),
                       artifact.digest());
-                }
-                held.requireCurrent();
-                exact(artifact(held), artifact);
-                return registered;
-              });
+              registered = registration(inserted);
+              dsl.execute(
+                  "INSERT INTO "
+                      + table("world_runtime_installation_current")
+                      + " (target_namespace,revision,artifact_digest) VALUES (?,?,?) ON CONFLICT (target_namespace)"
+                      + " DO UPDATE SET revision=EXCLUDED.revision,artifact_digest=EXCLUDED.artifact_digest",
+                  namespace,
+                  registered.revision(),
+                  artifact.digest());
+            }
+            held.requireCurrent();
+            exact(artifact(held), artifact);
+            return registered;
+          });
       held.requireCurrent();
       Registration result = current();
       if (committed.revision() != result.revision()) {
@@ -154,17 +152,16 @@ public final class WorldRuntimeInstallationRegistry {
       held.requireCurrent();
       var artifact = artifact(held);
       artifact.requireResolved();
-      read.executeWithoutResult(
-          status -> {
-            var registered = currentInTransaction(false);
-            exact(registered.artifact(), artifact);
-            if (dsl.fetchExists(
-                dsl.selectOne()
-                    .from(table("world_runtime_required_owner_snapshot"))
-                    .where("canonical_game_instance_id=?", gameInstanceId))) {
-              requireFrozen(gameInstanceId, registered);
-            }
-          });
+      read.executeWithoutResult(status -> {
+        var registered = currentInTransaction(false);
+        exact(registered.artifact(), artifact);
+        if (dsl.fetchExists(
+            dsl.selectOne()
+                .from(table("world_runtime_required_owner_snapshot"))
+                .where("canonical_game_instance_id=?", gameInstanceId))) {
+          requireFrozen(gameInstanceId, registered);
+        }
+      });
       held.requireCurrent();
       exact(artifact(held), artifact);
     }
@@ -186,26 +183,25 @@ public final class WorldRuntimeInstallationRegistry {
       held.requireCurrent();
       var artifact = artifact(held);
       artifact.requireResolved();
-      write.executeWithoutResult(
-          status -> {
-            var registered = currentInTransaction(true);
-            exact(registered.artifact(), artifact);
-            dsl.execute(
-                "INSERT INTO "
-                    + table("world_runtime_required_owner_snapshot")
-                    + " (canonical_game_instance_id,target_namespace,registry_revision,artifact_digest,required_owners)"
-                    + " VALUES (?,?,?,?,"
-                    + schema
-                    + ".world_runtime_required_owners(?)) ON CONFLICT (canonical_game_instance_id) DO NOTHING",
-                gameInstanceId,
-                namespace,
-                registered.revision(),
-                artifact.digest(),
-                artifact.exactBytes());
-            requireFrozen(gameInstanceId, registered);
-            held.requireCurrent();
-            exact(artifact(held), artifact);
-          });
+      write.executeWithoutResult(status -> {
+        var registered = currentInTransaction(true);
+        exact(registered.artifact(), artifact);
+        dsl.execute(
+            "INSERT INTO "
+                + table("world_runtime_required_owner_snapshot")
+                + " (canonical_game_instance_id,target_namespace,registry_revision,artifact_digest,required_owners)"
+                + " VALUES (?,?,?,?,"
+                + schema
+                + ".world_runtime_required_owners(?)) ON CONFLICT (canonical_game_instance_id) DO NOTHING",
+            gameInstanceId,
+            namespace,
+            registered.revision(),
+            artifact.digest(),
+            artifact.exactBytes());
+        requireFrozen(gameInstanceId, registered);
+        held.requireCurrent();
+        exact(artifact(held), artifact);
+      });
       read.executeWithoutResult(
           status -> requireFrozen(gameInstanceId, currentInTransaction(false)));
       held.requireCurrent();

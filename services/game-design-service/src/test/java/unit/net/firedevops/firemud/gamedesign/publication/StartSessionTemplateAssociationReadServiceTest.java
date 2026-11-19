@@ -294,14 +294,13 @@ class StartSessionTemplateAssociationReadServiceTest {
       RuntimeException cause) {
     assertThatThrownBy(() -> withPeer(service, request, "game-session-service"))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            thrown -> {
-              var status = ((StatusRuntimeException) thrown).getStatus();
-              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-              assertThat(status.getDescription())
-                  .isEqualTo("Game Design association owner storage unavailable");
-              assertThat(status.getCause()).isSameAs(cause);
-            });
+        .satisfies(thrown -> {
+          var status = ((StatusRuntimeException) thrown).getStatus();
+          assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+          assertThat(status.getDescription())
+              .isEqualTo("Game Design association owner storage unavailable");
+          assertThat(status.getCause()).isSameAs(cause);
+        });
   }
 
   private void assertAuthoredCoreStorageFailure(
@@ -321,17 +320,14 @@ class StartSessionTemplateAssociationReadServiceTest {
             dsl.fetchOne(
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.any(Object[].class)))
-        .thenAnswer(
-            ignored -> {
-              assertThat(snapshotOpened).isTrue();
-              throw storageFailure;
-            });
+        .thenAnswer(ignored -> {
+          assertThat(snapshotOpened).isTrue();
+          throw storageFailure;
+        });
 
-    assertThatThrownBy(
-            () ->
-                withPeer(
-                    "game-session-service",
-                    () -> authoredCoreReader.read(authoredCoreRequest(tuple))))
+    assertThatThrownBy(() ->
+            withPeer(
+                "game-session-service", () -> authoredCoreReader.read(authoredCoreRequest(tuple))))
         .isInstanceOf(StatusRuntimeException.class)
         .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
         .isEqualTo(expectedStatus);

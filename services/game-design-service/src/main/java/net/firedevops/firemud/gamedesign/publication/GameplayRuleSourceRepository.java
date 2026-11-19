@@ -376,10 +376,8 @@ public final class GameplayRuleSourceRepository {
     var commands =
         new CommandSourceRepository(dsl)
             .readSnapshot(target, commitId)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "GAMEPLAY_RULE_LEGACY_COMMAND_INVENTORY_UNAVAILABLE"));
+            .orElseThrow(() ->
+                new IllegalStateException("GAMEPLAY_RULE_LEGACY_COMMAND_INVENTORY_UNAVAILABLE"));
     if (!commands.binding().equals(snapshot.binding()) || !commands.definitions().isEmpty())
       throw new IllegalStateException("GAMEPLAY_RULE_LEGACY_COMMAND_SOURCE_NOT_CONVERGED");
     return snapshot;

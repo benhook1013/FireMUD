@@ -56,26 +56,24 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
   void rejectsWrongCanonicalNamespaceAndMalformedEnvelopeBeforeOwner() {
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(NAMESPACE, "game-session-service"))
-        .run(
-            () -> {
-              var wrongNamespace =
-                  AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(
-                      AccountStartSessionAdmissionProtectionGrpcTestFixture.request("another"));
-              var wrongNamespaceObserver = new Capture();
-              service.acquireStartSessionAdmissionProtection(
-                  wrongNamespace, wrongNamespaceObserver);
-              assertThat(wrongNamespaceObserver.code()).isEqualTo(Status.Code.PERMISSION_DENIED);
+        .run(() -> {
+          var wrongNamespace =
+              AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(
+                  AccountStartSessionAdmissionProtectionGrpcTestFixture.request("another"));
+          var wrongNamespaceObserver = new Capture();
+          service.acquireStartSessionAdmissionProtection(wrongNamespace, wrongNamespaceObserver);
+          assertThat(wrongNamespaceObserver.code()).isEqualTo(Status.Code.PERMISSION_DENIED);
 
-              var malformed =
-                  AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(
-                          AccountStartSessionAdmissionProtectionGrpcTestFixture.request(NAMESPACE))
-                      .toBuilder()
-                      .addSchemaVersion(1)
-                      .build();
-              var malformedObserver = new Capture();
-              service.acquireStartSessionAdmissionProtection(malformed, malformedObserver);
-              assertThat(malformedObserver.code()).isEqualTo(Status.Code.INVALID_ARGUMENT);
-            });
+          var malformed =
+              AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(
+                      AccountStartSessionAdmissionProtectionGrpcTestFixture.request(NAMESPACE))
+                  .toBuilder()
+                  .addSchemaVersion(1)
+                  .build();
+          var malformedObserver = new Capture();
+          service.acquireStartSessionAdmissionProtection(malformed, malformedObserver);
+          assertThat(malformedObserver.code()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+        });
     verifyNoInteractions(owner);
   }
 
@@ -92,11 +90,10 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
 
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(NAMESPACE, "game-session-service"))
-        .run(
-            () ->
-                service.acquireStartSessionAdmissionProtection(
-                    AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
-                    response));
+        .run(() ->
+            service.acquireStartSessionAdmissionProtection(
+                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
+                response));
 
     assertThat(response.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(response.errorDescription)
@@ -145,11 +142,10 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
 
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(NAMESPACE, "game-session-service"))
-        .run(
-            () ->
-                service.acquireStartSessionAdmissionProtection(
-                    AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
-                    response));
+        .run(() ->
+            service.acquireStartSessionAdmissionProtection(
+                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
+                response));
 
     assertThat(response.code()).isEqualTo(Status.Code.INTERNAL);
     assertThat(response.errorDescription)
@@ -185,11 +181,10 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
 
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(NAMESPACE, "game-session-service"))
-        .run(
-            () ->
-                service.acquireStartSessionAdmissionProtection(
-                    AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
-                    response));
+        .run(() ->
+            service.acquireStartSessionAdmissionProtection(
+                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
+                response));
 
     assertThat(response.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(response.errorDescription)
@@ -209,11 +204,10 @@ class AccountStartSessionAdmissionProtectionGrpcServiceTest {
 
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(NAMESPACE, "game-session-service"))
-        .run(
-            () ->
-                service.acquireStartSessionAdmissionProtection(
-                    AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
-                    response));
+        .run(() ->
+            service.acquireStartSessionAdmissionProtection(
+                AccountStartSessionAdmissionProtectionAcquisitionGrpcCodec.toRequest(request),
+                response));
 
     assertThat(response.code()).isEqualTo(expected);
     assertThat(response.errorDescription)

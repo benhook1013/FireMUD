@@ -428,16 +428,15 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
 
     void settle(OriginalNewCapacityExecution original, UUID denial) {
       var assignment = tags.assignmentForTransition(original.transitionId());
-      sql.transaction(
-          configuration ->
-              CanonicalGameplayCapacityEvidenceBudget.settleDenied(
-                  DSL.using(configuration),
-                  original.request(),
-                  original.candidateDigest(),
-                  new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
-                      original.selectedOwnerId(), original.selectedOwnerFence()),
-                  assignment.tenantGameplayTag(),
-                  denial));
+      sql.transaction(configuration ->
+          CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+              DSL.using(configuration),
+              original.request(),
+              original.candidateDigest(),
+              new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+                  original.selectedOwnerId(), original.selectedOwnerFence()),
+              assignment.tenantGameplayTag(),
+              denial));
     }
 
     void precharge(OriginalNewCapacityExecution original) {
@@ -679,36 +678,35 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
     void retainControlledTransferReceipt(UUID id) {
       String digest = "sha256:" + "a".repeat(64);
       UUID round = UUID.randomUUID();
-      sql.transaction(
-          configuration -> {
-            DSLContext transaction = DSL.using(configuration);
-            assertThat(
-                    transaction.execute(
-                        "UPDATE game_session_region_owner_transfer"
-                            + " SET incarnation_digest=?,verification_round=? WHERE transfer_id=?",
-                        digest,
-                        round,
-                        id))
-                .isEqualTo(1);
-            assertThat(
-                    transaction.execute(
-                        "UPDATE game_session_region_owner_transfer_item"
-                            + " SET fence_readback=?,incarnation_digest=?,before_payload_digest=?,"
-                            + " after_payload_digest=?,verified_round=? WHERE transfer_id=?",
-                        ascii("controlled-readback"),
-                        digest,
-                        digest,
-                        digest,
-                        round,
-                        id))
-                .isEqualTo(1);
-            assertThat(
-                    transaction.execute(
-                        "UPDATE game_session_region_owner_transfer"
-                            + " SET verification_cursor=0,verification_complete=true WHERE transfer_id=?",
-                        id))
-                .isEqualTo(1);
-          });
+      sql.transaction(configuration -> {
+        DSLContext transaction = DSL.using(configuration);
+        assertThat(
+                transaction.execute(
+                    "UPDATE game_session_region_owner_transfer"
+                        + " SET incarnation_digest=?,verification_round=? WHERE transfer_id=?",
+                    digest,
+                    round,
+                    id))
+            .isEqualTo(1);
+        assertThat(
+                transaction.execute(
+                    "UPDATE game_session_region_owner_transfer_item"
+                        + " SET fence_readback=?,incarnation_digest=?,before_payload_digest=?,"
+                        + " after_payload_digest=?,verified_round=? WHERE transfer_id=?",
+                    ascii("controlled-readback"),
+                    digest,
+                    digest,
+                    digest,
+                    round,
+                    id))
+            .isEqualTo(1);
+        assertThat(
+                transaction.execute(
+                    "UPDATE game_session_region_owner_transfer"
+                        + " SET verification_cursor=0,verification_complete=true WHERE transfer_id=?",
+                    id))
+            .isEqualTo(1);
+      });
     }
 
     CanonicalGameplayRegionRuntimeStatus rawCompleteAndInstall(

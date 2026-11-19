@@ -548,10 +548,8 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
                     () -> asGameDesign(() -> wrongGdComposition.settle(operation.canonicalBytes())))
                 .isInstanceOf(RuntimeException.class);
             assertPending(sources, repository, order);
-            assertThatThrownBy(
-                    () ->
-                        asGameDesign(
-                            () -> wrongWorldComposition.settle(operation.canonicalBytes())))
+            assertThatThrownBy(() ->
+                    asGameDesign(() -> wrongWorldComposition.settle(operation.canonicalBytes())))
                 .isInstanceOf(RuntimeException.class);
             assertPending(sources, repository, order);
           }
@@ -623,13 +621,12 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
           assertCode(
               Status.Code.FAILED_PRECONDITION,
               () ->
-                  asGameDesign(
-                      () -> {
-                        heldReader.requireHeld(
-                            AccountPublicationAuthorizationReadEvidence.Request.create(
-                                NAMESPACE, order));
-                        return null;
-                      }));
+                  asGameDesign(() -> {
+                    heldReader.requireHeld(
+                        AccountPublicationAuthorizationReadEvidence.Request.create(
+                            NAMESPACE, order));
+                    return null;
+                  }));
           assertThat(sources.tx(sources::changeRoleToAdmin).getRole()).isEqualTo("admin");
           corruptReadback.set(true);
           assertThatThrownBy(
@@ -660,11 +657,10 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
             sources.dsl.fetchCount(
                 org.jooq.impl.DSL.table("account_selected_publication_settlements")))
         .isZero();
-    sources.tx(
-        () -> {
-          repository.readHeld(order);
-          return null;
-        });
+    sources.tx(() -> {
+      repository.readHeld(order);
+      return null;
+    });
     assertThatThrownBy(() -> sources.tx(sources::changeRoleToAdmin))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasMessageContaining("selected-publication");

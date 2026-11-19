@@ -8,10 +8,9 @@ import org.junit.jupiter.api.Test;
 class GameTenantCreationDigestTest {
   @Test
   void acceptsOwnerLimitsAndPreservesAbsentOrEmptyDescription() {
-    assertThatCode(
-            () ->
-                GameTenantCreationDigest.validateCandidateInputs(
-                    "😀".repeat(36), "😀".repeat(100), "😀".repeat(255)))
+    assertThatCode(() ->
+            GameTenantCreationDigest.validateCandidateInputs(
+                "😀".repeat(36), "😀".repeat(100), "😀".repeat(255)))
         .doesNotThrowAnyException();
     assertThatCode(() -> GameTenantCreationDigest.validateCandidateInputs("source", "", null))
         .doesNotThrowAnyException();

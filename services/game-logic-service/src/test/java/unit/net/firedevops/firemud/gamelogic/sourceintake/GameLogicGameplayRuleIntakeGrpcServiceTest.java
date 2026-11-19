@@ -47,10 +47,9 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
     var request = GameLogicIntakeRetainEvidence.Request.create(NAMESPACE, fixture.authorization);
     var observer = new RecordingObserver<RetainGameplayRuleIntakeResponse>();
 
-    asGameDesign(
-        () ->
-            fixture.transport.retainGameplayRuleIntake(
-                GameLogicIntakeRetainProtoCodec.toRequest(request), observer));
+    asGameDesign(() ->
+        fixture.transport.retainGameplayRuleIntake(
+            GameLogicIntakeRetainProtoCodec.toRequest(request), observer));
 
     assertThat(observer.error).isNull();
     assertThat(observer.completed).isTrue();
@@ -91,11 +90,9 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
     var wrongNamespace = new RecordingObserver<RetainGameplayRuleIntakeResponse>();
     var requestForOtherNamespace =
         GameLogicIntakeRetainEvidence.Request.create("other", fixture.authorization);
-    asGameDesign(
-        () ->
-            fixture.transport.retainGameplayRuleIntake(
-                GameLogicIntakeRetainProtoCodec.toRequest(requestForOtherNamespace),
-                wrongNamespace));
+    asGameDesign(() ->
+        fixture.transport.retainGameplayRuleIntake(
+            GameLogicIntakeRetainProtoCodec.toRequest(requestForOtherNamespace), wrongNamespace));
     assertCode(wrongNamespace.error, Status.Code.PERMISSION_DENIED);
 
     var changed =
@@ -108,10 +105,9 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
             fixture.authorization.sources());
     var changedRequest = GameLogicIntakeRetainEvidence.Request.create(NAMESPACE, changed);
     var conflict = new RecordingObserver<RetainGameplayRuleIntakeResponse>();
-    asGameDesign(
-        () ->
-            fixture.transport.retainGameplayRuleIntake(
-                GameLogicIntakeRetainProtoCodec.toRequest(changedRequest), conflict));
+    asGameDesign(() ->
+        fixture.transport.retainGameplayRuleIntake(
+            GameLogicIntakeRetainProtoCodec.toRequest(changedRequest), conflict));
     assertCode(conflict.error, Status.Code.ALREADY_EXISTS);
     verify(fixture.repository).findTerminal(fixture.authorization.operationId());
     verify(fixture.accountReader, never()).read(any());
@@ -150,10 +146,9 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
       var request = GameLogicIntakeRetainEvidence.Request.create(NAMESPACE, fixture.authorization);
       var observer = new RecordingObserver<RetainGameplayRuleIntakeResponse>();
 
-      asGameDesign(
-          () ->
-              fixture.transport.retainGameplayRuleIntake(
-                  GameLogicIntakeRetainProtoCodec.toRequest(request), observer));
+      asGameDesign(() ->
+          fixture.transport.retainGameplayRuleIntake(
+              GameLogicIntakeRetainProtoCodec.toRequest(request), observer));
 
       assertSanitizedFailure(observer, Status.Code.FAILED_PRECONDITION, secret);
       verify(fixture.accountReader, never()).read(any());
@@ -171,40 +166,35 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
     var storageRequest =
         GameLogicIntakeRetainEvidence.Request.create(NAMESPACE, storageFixture.authorization);
 
-    asGameDesign(
-        () ->
-            storageFixture.transport.retainGameplayRuleIntake(
-                GameLogicIntakeRetainProtoCodec.toRequest(storageRequest), storageObserver));
+    asGameDesign(() ->
+        storageFixture.transport.retainGameplayRuleIntake(
+            GameLogicIntakeRetainProtoCodec.toRequest(storageRequest), storageObserver));
 
     assertSanitizedFailure(storageObserver, Status.Code.UNAVAILABLE, secret);
 
     var transactionFixture = new Fixture();
     when(transactionFixture.repository.findTerminal(any(UUID.class))).thenReturn(Optional.empty());
     when(transactionFixture.accountReader.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  invocation.getArgument(0, GameLogicIntakeAuthorizationReadEvidence.Request.class);
-              return new GameLogicIntakeAuthorizationReadEvidence(request);
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              invocation.getArgument(0, GameLogicIntakeAuthorizationReadEvidence.Request.class);
+          return new GameLogicIntakeAuthorizationReadEvidence(request);
+        });
     when(transactionFixture.gameDesignReader.read(any()))
-        .thenAnswer(
-            invocation -> {
-              var request = invocation.getArgument(0, GameplayRuleSourceReadEvidence.Request.class);
-              return new GameplayRuleSourceReadEvidence(
-                  request, transactionFixture.authorization.source());
-            });
+        .thenAnswer(invocation -> {
+          var request = invocation.getArgument(0, GameplayRuleSourceReadEvidence.Request.class);
+          return new GameplayRuleSourceReadEvidence(
+              request, transactionFixture.authorization.source());
+        });
     when(transactionFixture.transactions.getTransaction(any()))
         .thenThrow(new CannotCreateTransactionException(secret));
     var transactionObserver = new RecordingObserver<RetainGameplayRuleIntakeResponse>();
     var transactionRequest =
         GameLogicIntakeRetainEvidence.Request.create(NAMESPACE, transactionFixture.authorization);
 
-    asGameDesign(
-        () ->
-            transactionFixture.transport.retainGameplayRuleIntake(
-                GameLogicIntakeRetainProtoCodec.toRequest(transactionRequest),
-                transactionObserver));
+    asGameDesign(() ->
+        transactionFixture.transport.retainGameplayRuleIntake(
+            GameLogicIntakeRetainProtoCodec.toRequest(transactionRequest), transactionObserver));
 
     assertSanitizedFailure(transactionObserver, Status.Code.UNAVAILABLE, secret);
   }

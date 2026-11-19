@@ -276,14 +276,13 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
     Connection different = mock(Connection.class);
     var calls = new AtomicInteger();
     when(fixture.stampRow.next())
-        .thenAnswer(
-            ignored -> {
-              if (calls.getAndIncrement() == 0) return true;
-              TransactionSynchronizationManager.unbindResource(fixture.source);
-              TransactionSynchronizationManager.bindResource(
-                  fixture.source, new ConnectionHolder(different));
-              return false;
-            });
+        .thenAnswer(ignored -> {
+          if (calls.getAndIncrement() == 0) return true;
+          TransactionSynchronizationManager.unbindResource(fixture.source);
+          TransactionSynchronizationManager.bindResource(
+              fixture.source, new ConnectionHolder(different));
+          return false;
+        });
     try (var repositories = fixture.repositories(State.PENDING)) {
       assertThatThrownBy(() -> fixture.executor.execute(fixture.evidence, fixture.decision))
           .hasMessageContaining("Fresh owned Account original COMMIT required");

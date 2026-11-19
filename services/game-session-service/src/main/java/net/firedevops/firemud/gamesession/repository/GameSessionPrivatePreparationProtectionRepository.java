@@ -75,66 +75,65 @@ public final class GameSessionPrivatePreparationProtectionRepository {
       requireLiveCaller();
       try {
         return Objects.requireNonNull(
-            owner.execute(
-                status -> {
-                  // A blocking lock would establish a SERIALIZABLE snapshot before waiting,
-                  // consuming the source budget and potentially hiding the winner's committed row.
-                  // Roll back a busy attempt and wait without retaining a transaction/connection.
-                  Record locked =
-                      dsl.fetchOne(
-                          "SELECT pg_try_advisory_xact_lock(hashtextextended(?,0)) AS acquired",
-                          "private-source-protection/" + requestId);
-                  if (locked == null || !Boolean.TRUE.equals(locked.get("acquired", Boolean.class)))
-                    throw new RequestContendedException();
-                  Record previous = byRequest(requestId);
-                  if (previous != null) return requireExact(previous, expectedBytes);
-                  var readRequest =
-                      new PrivateWorldPreparationReadGrpcCodec.Request(
-                          UUID.randomUUID(), expected.scope(), expected.preparation().requestId());
-                  Snapshot current = source.read(readRequest);
-                  if (!Arrays.equals(
-                      expectedBytes, PrivateWorldPreparationReadGrpcCodec.stableBytes(current)))
-                    throw new ProtectionUnavailableException(
-                        "Private source changed before protection");
-                  var runtime = current.runtimeAllocation();
-                  var selection = current.selection();
-                  var target = current.target();
-                  requireLiveCaller();
-                  Record inserted =
-                      dsl.fetchOne(
-                          "INSERT INTO "
-                              + TABLE
-                              + " (request_id,hold_id,source_read_request_id,target_namespace,"
-                              + "canonical_tenant_id,world_slug,realm_slug,realm_id,preparation_request_id,playtest_lifecycle_id,"
-                              + "runtime_allocation_request_id,game_instance_id,catalog_revision,catalog_request_id,"
-                              + "selection_head_revision,selection_request_id,source_bytes,source_digest,source_evidence)"
-                              + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING RETURNING *",
-                          requestId,
-                          UUID.randomUUID(),
-                          readRequest.readRequestId(),
-                          current.scope().targetNamespace(),
-                          current.scope().tenantId(),
-                          current.scope().worldSlug(),
-                          current.scope().realmSlug(),
-                          target.realmId(),
-                          current.preparation().requestId(),
-                          current.preparation().lifecycleId(),
-                          runtime.requestId(),
-                          runtime.gameInstanceId(),
-                          target.catalogRevision(),
-                          target.creationRequestId(),
-                          selection.headRevision(),
-                          selection.requestId(),
-                          expectedBytes,
-                          PrivateWorldPreparationReadEvidence.sha256(expectedBytes),
-                          PrivateWorldPreparationReadGrpcCodec.toResponse(readRequest, current)
-                              .getCanonicalEvidence()
-                              .toByteArray());
-                  if (inserted == null)
-                    throw new ProtectionUnavailableException(
-                        "Private runtime already has another source protection");
-                  return requireExact(inserted, expectedBytes);
-                }));
+            owner.execute(status -> {
+              // A blocking lock would establish a SERIALIZABLE snapshot before waiting,
+              // consuming the source budget and potentially hiding the winner's committed row.
+              // Roll back a busy attempt and wait without retaining a transaction/connection.
+              Record locked =
+                  dsl.fetchOne(
+                      "SELECT pg_try_advisory_xact_lock(hashtextextended(?,0)) AS acquired",
+                      "private-source-protection/" + requestId);
+              if (locked == null || !Boolean.TRUE.equals(locked.get("acquired", Boolean.class)))
+                throw new RequestContendedException();
+              Record previous = byRequest(requestId);
+              if (previous != null) return requireExact(previous, expectedBytes);
+              var readRequest =
+                  new PrivateWorldPreparationReadGrpcCodec.Request(
+                      UUID.randomUUID(), expected.scope(), expected.preparation().requestId());
+              Snapshot current = source.read(readRequest);
+              if (!Arrays.equals(
+                  expectedBytes, PrivateWorldPreparationReadGrpcCodec.stableBytes(current)))
+                throw new ProtectionUnavailableException(
+                    "Private source changed before protection");
+              var runtime = current.runtimeAllocation();
+              var selection = current.selection();
+              var target = current.target();
+              requireLiveCaller();
+              Record inserted =
+                  dsl.fetchOne(
+                      "INSERT INTO "
+                          + TABLE
+                          + " (request_id,hold_id,source_read_request_id,target_namespace,"
+                          + "canonical_tenant_id,world_slug,realm_slug,realm_id,preparation_request_id,playtest_lifecycle_id,"
+                          + "runtime_allocation_request_id,game_instance_id,catalog_revision,catalog_request_id,"
+                          + "selection_head_revision,selection_request_id,source_bytes,source_digest,source_evidence)"
+                          + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING RETURNING *",
+                      requestId,
+                      UUID.randomUUID(),
+                      readRequest.readRequestId(),
+                      current.scope().targetNamespace(),
+                      current.scope().tenantId(),
+                      current.scope().worldSlug(),
+                      current.scope().realmSlug(),
+                      target.realmId(),
+                      current.preparation().requestId(),
+                      current.preparation().lifecycleId(),
+                      runtime.requestId(),
+                      runtime.gameInstanceId(),
+                      target.catalogRevision(),
+                      target.creationRequestId(),
+                      selection.headRevision(),
+                      selection.requestId(),
+                      expectedBytes,
+                      PrivateWorldPreparationReadEvidence.sha256(expectedBytes),
+                      PrivateWorldPreparationReadGrpcCodec.toResponse(readRequest, current)
+                          .getCanonicalEvidence()
+                          .toByteArray());
+              if (inserted == null)
+                throw new ProtectionUnavailableException(
+                    "Private runtime already has another source protection");
+              return requireExact(inserted, expectedBytes);
+            }));
       } catch (RequestContendedException busy) {
         // TransactionTemplate has already rolled back and released its connection.
         requireLiveCaller();
@@ -181,23 +180,22 @@ public final class GameSessionPrivatePreparationProtectionRepository {
     uuid(holdId);
     if (fence <= 0) throw new IllegalArgumentException("Positive source hold fence required");
     return Objects.requireNonNull(
-        owner.execute(
-            status -> {
-              Hold held = decode(byRequest(requestId));
-              if (!held.holdId().equals(holdId) || held.fence() != fence)
-                throw new ProtectionUnavailableException("Private protection identity differs");
-              Snapshot current =
-                  source.read(
-                      new PrivateWorldPreparationReadGrpcCodec.Request(
-                          UUID.randomUUID(),
-                          held.source().scope(),
-                          held.source().preparation().requestId()));
-              if (!Arrays.equals(
-                  PrivateWorldPreparationReadGrpcCodec.stableBytes(current),
-                  PrivateWorldPreparationReadGrpcCodec.stableBytes(held.source())))
-                throw new ProtectionUnavailableException("Protected private source changed");
-              return held;
-            }));
+        owner.execute(status -> {
+          Hold held = decode(byRequest(requestId));
+          if (!held.holdId().equals(holdId) || held.fence() != fence)
+            throw new ProtectionUnavailableException("Private protection identity differs");
+          Snapshot current =
+              source.read(
+                  new PrivateWorldPreparationReadGrpcCodec.Request(
+                      UUID.randomUUID(),
+                      held.source().scope(),
+                      held.source().preparation().requestId()));
+          if (!Arrays.equals(
+              PrivateWorldPreparationReadGrpcCodec.stableBytes(current),
+              PrivateWorldPreparationReadGrpcCodec.stableBytes(held.source())))
+            throw new ProtectionUnavailableException("Protected private source changed");
+          return held;
+        }));
   }
 
   private Record byRequest(UUID requestId) {

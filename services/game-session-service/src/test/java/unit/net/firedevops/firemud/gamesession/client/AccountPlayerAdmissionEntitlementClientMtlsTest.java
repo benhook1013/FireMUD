@@ -424,10 +424,9 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
             refusal
                 .isExactlyInstanceOf(StatusRuntimeException.class)
                 .hasMessage("CANCELLED: Account player-admission entitlement read did not complete")
-                .satisfies(
-                    failure ->
-                        assertThat(Status.fromThrowable(failure).getCode())
-                            .isEqualTo(Status.Code.CANCELLED));
+                .satisfies(failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.CANCELLED));
         case "original-request",
             "original-context",
             "attempt-fence",
@@ -650,10 +649,9 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
         case "custody" ->
             refusal
                 .isExactlyInstanceOf(StatusRuntimeException.class)
-                .satisfies(
-                    failure ->
-                        assertThat(Status.fromThrowable(failure).getCode())
-                            .isEqualTo(Status.Code.CANCELLED));
+                .satisfies(failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.CANCELLED));
         case "scope-expiry", "login-expiry" ->
             refusal
                 .isExactlyInstanceOf(IllegalArgumentException.class)
@@ -865,12 +863,11 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
             canonical(List.of()));
     when(login.evidence()).thenReturn(evidence);
     when(login.compactJwtBytes())
-        .thenAnswer(
-            invocation -> {
-              byte[] bytes = JWT.getBytes(StandardCharsets.US_ASCII);
-              borrowed.add(bytes);
-              return bytes;
-            });
+        .thenAnswer(invocation -> {
+          byte[] bytes = JWT.getBytes(StandardCharsets.US_ASCII);
+          borrowed.add(bytes);
+          return bytes;
+        });
     return login;
   }
 

@@ -119,28 +119,26 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
     assertThat(evidence.committedAt()).isNotNull();
     assertThat(evidence.recoveryFailedAt()).isNull();
     assertThat(
-            context.inTransaction(
-                () ->
-                    Objects.requireNonNull(
-                            context.transactionDsl.fetchOne(
-                                "SELECT encrypted_response FROM account_control_ui_response_envelopes "
-                                    + "WHERE operation_id = ?",
-                                seed.operationId()),
-                            "Missing committed control-ui response envelope row for operation "
-                                + seed.operationId())
-                        .get(0, byte[].class)))
+            context.inTransaction(() ->
+                Objects.requireNonNull(
+                        context.transactionDsl.fetchOne(
+                            "SELECT encrypted_response FROM account_control_ui_response_envelopes "
+                                + "WHERE operation_id = ?",
+                            seed.operationId()),
+                        "Missing committed control-ui response envelope row for operation "
+                            + seed.operationId())
+                    .get(0, byte[].class)))
         .containsExactly(seed.encryptedResponse());
     assertThat(
-            context.inTransaction(
-                () ->
-                    Objects.requireNonNull(
-                            context.transactionDsl.fetchOne(
-                                "SELECT owner_binding FROM account_control_ui_response_envelopes "
-                                    + "WHERE operation_id = ?",
-                                seed.operationId()),
-                            "Missing committed control-ui owner-binding row for operation "
-                                + seed.operationId())
-                        .get(0, byte[].class)))
+            context.inTransaction(() ->
+                Objects.requireNonNull(
+                        context.transactionDsl.fetchOne(
+                            "SELECT owner_binding FROM account_control_ui_response_envelopes "
+                                + "WHERE operation_id = ?",
+                            seed.operationId()),
+                        "Missing committed control-ui owner-binding row for operation "
+                            + seed.operationId())
+                    .get(0, byte[].class)))
         .containsExactly(seed.ownerBinding());
 
     byte[] exposedClaims = evidence.claims();
@@ -160,17 +158,14 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
 
     assertThat(context.inTransaction(() -> context.repository.readCommitted("f".repeat(64))))
         .isEmpty();
-    assertThatThrownBy(
-            () ->
-                context.inTransaction(
-                    () -> context.repository.readCommitted(candidate.tokenHash())))
+    assertThatThrownBy(() ->
+            context.inTransaction(() -> context.repository.readCommitted(candidate.tokenHash())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Exact committed Account control-ui issuance evidence unavailable");
     assertThat(context.status(candidate.requestId())).isEqualTo("CANDIDATE");
     assertThat(context.status(revoked.requestId())).isEqualTo("REVOKED");
-    assertThatThrownBy(
-            () ->
-                context.inTransaction(() -> context.repository.readCommitted(revoked.tokenHash())))
+    assertThatThrownBy(() ->
+            context.inTransaction(() -> context.repository.readCommitted(revoked.tokenHash())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Exact committed Account control-ui issuance evidence unavailable");
   }
@@ -180,41 +175,33 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
     Context context = context();
     IssuanceSeed seed = context.insertCommitted();
 
-    assertThatThrownBy(
-            () ->
-                context.inTransaction(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_control_ui_issuance_operations "
-                                + "SET source_payload = ? WHERE request_id = ?",
-                            bytes("test-only-rewritten-source"),
-                            seed.requestId())))
+    assertThatThrownBy(() ->
+            context.inTransaction(() ->
+                context.transactionDsl.execute(
+                    "UPDATE account_control_ui_issuance_operations "
+                        + "SET source_payload = ? WHERE request_id = ?",
+                    bytes("test-only-rewritten-source"),
+                    seed.requestId())))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context.inTransaction(
-                    () ->
-                        context.transactionDsl.execute(
-                            "DELETE FROM account_control_ui_issuance_operations WHERE request_id = ?",
-                            seed.requestId())))
+    assertThatThrownBy(() ->
+            context.inTransaction(() ->
+                context.transactionDsl.execute(
+                    "DELETE FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                    seed.requestId())))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context.inTransaction(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_control_ui_response_envelopes "
-                                + "SET encrypted_response = ? WHERE operation_id = ?",
-                            bytes("test-only-rewritten-envelope"),
-                            seed.operationId())))
+    assertThatThrownBy(() ->
+            context.inTransaction(() ->
+                context.transactionDsl.execute(
+                    "UPDATE account_control_ui_response_envelopes "
+                        + "SET encrypted_response = ? WHERE operation_id = ?",
+                    bytes("test-only-rewritten-envelope"),
+                    seed.operationId())))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                context.inTransaction(
-                    () ->
-                        context.transactionDsl.execute(
-                            "DELETE FROM account_control_ui_response_envelopes WHERE operation_id = ?",
-                            seed.operationId())))
+    assertThatThrownBy(() ->
+            context.inTransaction(() ->
+                context.transactionDsl.execute(
+                    "DELETE FROM account_control_ui_response_envelopes WHERE operation_id = ?",
+                    seed.operationId())))
         .isInstanceOf(DataAccessException.class);
 
     var retained =
@@ -222,16 +209,15 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
             () -> context.repository.readCommitted(seed.tokenHash()).orElseThrow());
     assertThat(retained.source()).containsExactly(seed.source());
     assertThat(
-            context.inTransaction(
-                () ->
-                    Objects.requireNonNull(
-                            context.transactionDsl.fetchOne(
-                                "SELECT encrypted_response FROM account_control_ui_response_envelopes "
-                                    + "WHERE operation_id = ?",
-                                seed.operationId()),
-                            "Missing retained control-ui response envelope row for operation "
-                                + seed.operationId())
-                        .get(0, byte[].class)))
+            context.inTransaction(() ->
+                Objects.requireNonNull(
+                        context.transactionDsl.fetchOne(
+                            "SELECT encrypted_response FROM account_control_ui_response_envelopes "
+                                + "WHERE operation_id = ?",
+                            seed.operationId()),
+                        "Missing retained control-ui response envelope row for operation "
+                            + seed.operationId())
+                    .get(0, byte[].class)))
         .containsExactly(seed.encryptedResponse());
   }
 
@@ -247,42 +233,37 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
     ExecutorService executor = Executors.newFixedThreadPool(2);
 
     Future<AccountControlUiCommittedIssuanceRepository.CommittedIssuance> reader =
-        executor.submit(
-            () ->
-                context.inTransaction(
-                    () -> {
-                      var evidence =
-                          context.repository.readCommitted(seed.tokenHash()).orElseThrow();
-                      readerPid.set(
-                          Objects.requireNonNull(
-                                  context.transactionDsl.fetchOne("SELECT pg_backend_pid()"),
-                                  "Missing PostgreSQL backend pid row for committed-read reader")
-                              .get(0, Integer.class));
-                      readerHasLoadedEvidence.countDown();
-                      await(releaseReaderTransaction, "reader transaction release");
-                      return evidence;
-                    }));
+        executor.submit(() ->
+            context.inTransaction(() -> {
+              var evidence = context.repository.readCommitted(seed.tokenHash()).orElseThrow();
+              readerPid.set(
+                  Objects.requireNonNull(
+                          context.transactionDsl.fetchOne("SELECT pg_backend_pid()"),
+                          "Missing PostgreSQL backend pid row for committed-read reader")
+                      .get(0, Integer.class));
+              readerHasLoadedEvidence.countDown();
+              await(releaseReaderTransaction, "reader transaction release");
+              return evidence;
+            }));
     Future<?> revocation;
     try {
       assertThat(readerHasLoadedEvidence.await(5, TimeUnit.SECONDS)).isTrue();
       revocation =
-          executor.submit(
-              () ->
-                  context.inTransaction(
-                      () -> {
-                        revokerPid.set(
-                            Objects.requireNonNull(
-                                    context.transactionDsl.fetchOne("SELECT pg_backend_pid()"),
-                                    "Missing PostgreSQL backend pid row for concurrent revoker")
-                                .get(0, Integer.class));
-                        revocationIsAboutToUpdate.countDown();
-                        context.transactionDsl.execute(
-                            "UPDATE account_control_ui_issuance_operations "
-                                + "SET status = 'REVOKING', recovery_failed_at = clock_timestamp() "
-                                + "WHERE request_id = ? AND status = 'COMMITTED'",
-                            seed.requestId());
-                        return null;
-                      }));
+          executor.submit(() ->
+              context.inTransaction(() -> {
+                revokerPid.set(
+                    Objects.requireNonNull(
+                            context.transactionDsl.fetchOne("SELECT pg_backend_pid()"),
+                            "Missing PostgreSQL backend pid row for concurrent revoker")
+                        .get(0, Integer.class));
+                revocationIsAboutToUpdate.countDown();
+                context.transactionDsl.execute(
+                    "UPDATE account_control_ui_issuance_operations "
+                        + "SET status = 'REVOKING', recovery_failed_at = clock_timestamp() "
+                        + "WHERE request_id = ? AND status = 'COMMITTED'",
+                    seed.requestId());
+                return null;
+              }));
       assertThat(revocationIsAboutToUpdate.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(
               waitUntilBlockedBy(
@@ -440,19 +421,18 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
       transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
       repository = new AccountControlUiCommittedIssuanceRepository(transactionDsl);
       owner =
-          inTransaction(
-              () -> {
-                String suffix = UUID.randomUUID().toString();
-                Account account = new Account();
-                account.setUsername("cui-" + suffix.replace("-", ""));
-                account.setEmail("control-ui-committed-" + suffix + "@example.test");
-                account.setPasswordHash("test-only-account-password-hash");
-                Account saved = new AccountRepository(transactionDsl).save(account);
-                UUID tenantId = UUID.randomUUID();
-                new FreshTenantIdentityAssociationRepository(transactionDsl, "prod")
-                    .importVerified(tenantEvidence(tenantId));
-                return new OwnerIdentity(saved.getAccountUuid(), tenantId);
-              });
+          inTransaction(() -> {
+            String suffix = UUID.randomUUID().toString();
+            Account account = new Account();
+            account.setUsername("cui-" + suffix.replace("-", ""));
+            account.setEmail("control-ui-committed-" + suffix + "@example.test");
+            account.setPasswordHash("test-only-account-password-hash");
+            Account saved = new AccountRepository(transactionDsl).save(account);
+            UUID tenantId = UUID.randomUUID();
+            new FreshTenantIdentityAssociationRepository(transactionDsl, "prod")
+                .importVerified(tenantEvidence(tenantId));
+            return new OwnerIdentity(saved.getAccountUuid(), tenantId);
+          });
     }
 
     OwnerIdentity owner() {
@@ -482,57 +462,52 @@ class AccountControlUiCommittedIssuanceRepositoryIntegrationTest {
     }
 
     void insertProtectedResponse(IssuanceSeed seed) {
-      inTransactionWithoutResult(
-          () ->
-              transactionDsl.execute(
-                  "INSERT INTO account_control_ui_response_envelopes "
-                      + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
-                      + "VALUES (?, ?, ?, CAST(? AS timestamptz))",
-                  seed.operationId(),
-                  seed.encryptedResponse(),
-                  seed.ownerBinding(),
-                  seed.recoveryExpiresAt()));
+      inTransactionWithoutResult(() ->
+          transactionDsl.execute(
+              "INSERT INTO account_control_ui_response_envelopes "
+                  + "(operation_id, encrypted_response, owner_binding, recovery_expires_at) "
+                  + "VALUES (?, ?, ?, CAST(? AS timestamptz))",
+              seed.operationId(),
+              seed.encryptedResponse(),
+              seed.ownerBinding(),
+              seed.recoveryExpiresAt()));
     }
 
     void commitCandidate(IssuanceSeed seed) {
-      inTransactionWithoutResult(
-          () ->
-              transactionDsl.execute(
-                  "UPDATE account_control_ui_issuance_operations "
-                      + "SET status = 'COMMITTED', pending_receipt = ?, "
-                      + "committed_at = clock_timestamp() "
-                      + "WHERE request_id = ? AND status = 'CANDIDATE'",
-                  seed.pendingReceipt(),
-                  seed.requestId()));
+      inTransactionWithoutResult(() ->
+          transactionDsl.execute(
+              "UPDATE account_control_ui_issuance_operations "
+                  + "SET status = 'COMMITTED', pending_receipt = ?, "
+                  + "committed_at = clock_timestamp() "
+                  + "WHERE request_id = ? AND status = 'CANDIDATE'",
+              seed.pendingReceipt(),
+              seed.requestId()));
     }
 
     void revokeCommitted(IssuanceSeed seed) {
-      inTransactionWithoutResult(
-          () ->
-              transactionDsl.execute(
-                  "UPDATE account_control_ui_issuance_operations "
-                      + "SET status = 'REVOKING', recovery_failed_at = clock_timestamp() "
-                      + "WHERE request_id = ? AND status = 'COMMITTED'",
-                  seed.requestId()));
-      inTransactionWithoutResult(
-          () ->
-              transactionDsl.execute(
-                  "UPDATE account_control_ui_issuance_operations "
-                      + "SET status = 'REVOKED', revocation_receipt = ? "
-                      + "WHERE request_id = ? AND status = 'REVOKING'",
-                  bytes("test-only-revocation-receipt"),
-                  seed.requestId()));
+      inTransactionWithoutResult(() ->
+          transactionDsl.execute(
+              "UPDATE account_control_ui_issuance_operations "
+                  + "SET status = 'REVOKING', recovery_failed_at = clock_timestamp() "
+                  + "WHERE request_id = ? AND status = 'COMMITTED'",
+              seed.requestId()));
+      inTransactionWithoutResult(() ->
+          transactionDsl.execute(
+              "UPDATE account_control_ui_issuance_operations "
+                  + "SET status = 'REVOKED', revocation_receipt = ? "
+                  + "WHERE request_id = ? AND status = 'REVOKING'",
+              bytes("test-only-revocation-receipt"),
+              seed.requestId()));
     }
 
     String status(UUID requestId) {
-      return inTransaction(
-          () ->
-              Objects.requireNonNull(
-                      transactionDsl.fetchOne(
-                          "SELECT status FROM account_control_ui_issuance_operations WHERE request_id = ?",
-                          requestId),
-                      "Missing Account control-ui issuance status row for request " + requestId)
-                  .get(0, String.class));
+      return inTransaction(() ->
+          Objects.requireNonNull(
+                  transactionDsl.fetchOne(
+                      "SELECT status FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                      requestId),
+                  "Missing Account control-ui issuance status row for request " + requestId)
+              .get(0, String.class));
     }
 
     private void insertPrepared(IssuanceSeed seed) {

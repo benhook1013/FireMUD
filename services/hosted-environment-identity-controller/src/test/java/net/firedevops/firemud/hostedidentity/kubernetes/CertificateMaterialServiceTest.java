@@ -369,9 +369,8 @@ class CertificateMaterialServiceTest {
         .when(lockedReplacementResource)
         .replace();
 
-    assertDoesNotThrow(
-        () ->
-            CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
+    assertDoesNotThrow(() ->
+        CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
 
     existingSpec.put("secretName", "another-obsolete-secret-name");
     KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);

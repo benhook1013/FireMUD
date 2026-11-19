@@ -62,14 +62,13 @@ public final class ControlUiJwtProfileValidator {
 
     Map<String, Object> scopedRoles =
         AccountJwtProfileClaimSupport.requireObjectMap(claims.get("scopedRoles"));
-    scopedRoles.forEach(
-        (tenantId, roles) -> {
-          AccountJwtProfileClaimSupport.requireUuid(tenantId);
-          AccountJwtProfileClaimSupport.requireRoleList(roles);
-          if (((List<?>) roles).isEmpty() || tenantId.equals(claims.get("accountId"))) {
-            throw AccountJwtProfileClaimSupport.invalid();
-          }
-        });
+    scopedRoles.forEach((tenantId, roles) -> {
+      AccountJwtProfileClaimSupport.requireUuid(tenantId);
+      AccountJwtProfileClaimSupport.requireRoleList(roles);
+      if (((List<?>) roles).isEmpty() || tenantId.equals(claims.get("accountId"))) {
+        throw AccountJwtProfileClaimSupport.invalid();
+      }
+    });
     if (!scopedRoles.keySet().containsAll(tenantGenerations.keySet())) {
       throw AccountJwtProfileClaimSupport.invalid();
     }

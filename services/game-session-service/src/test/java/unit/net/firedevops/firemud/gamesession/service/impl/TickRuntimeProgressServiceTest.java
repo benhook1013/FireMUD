@@ -72,12 +72,11 @@ class TickRuntimeProgressServiceTest {
     setField(service, "tickDurationMs", 1000L);
     setField(service, "maxRemoteFollowupsPerTick", 16);
     when(runtimeRegionStatusRepository.advanceLastCommittedTickId(any()))
-        .thenAnswer(
-            invocation -> {
-              RuntimeRegionStatus expected = invocation.getArgument(0);
-              expected.setLastCommittedTickId(expected.getLastCommittedTickId() + 1L);
-              return Optional.of(expected);
-            });
+        .thenAnswer(invocation -> {
+          RuntimeRegionStatus expected = invocation.getArgument(0);
+          expected.setLastCommittedTickId(expected.getLastCommittedTickId() + 1L);
+          return Optional.of(expected);
+        });
   }
 
   @Test

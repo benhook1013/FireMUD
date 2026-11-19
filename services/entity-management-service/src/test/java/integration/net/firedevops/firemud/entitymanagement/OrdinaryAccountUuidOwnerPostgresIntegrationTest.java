@@ -205,10 +205,9 @@ class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
             "authored_initial_core_json = '{}'",
             "creation_descriptor_json = '{}'",
             "creation_descriptor_digest = 'sha256:" + "a".repeat(64) + "'")) {
-      assertThatThrownBy(
-              () ->
-                  jdbc.update(
-                      "UPDATE characters SET " + invalidChange + " WHERE id = ?", saved.getId()))
+      assertThatThrownBy(() ->
+              jdbc.update(
+                  "UPDATE characters SET " + invalidChange + " WHERE id = ?", saved.getId()))
           .as(invalidChange)
           .isInstanceOf(org.springframework.dao.DataAccessException.class);
       assertThat(
@@ -229,11 +228,10 @@ class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
             "health",
             "mana",
             "body_layout_key")) {
-      assertThatThrownBy(
-              () ->
-                  jdbc.update(
-                      "UPDATE characters SET " + requiredColumn + " = NULL WHERE id = ?",
-                      saved.getId()))
+      assertThatThrownBy(() ->
+              jdbc.update(
+                  "UPDATE characters SET " + requiredColumn + " = NULL WHERE id = ?",
+                  saved.getId()))
           .as(requiredColumn)
           .isInstanceOf(org.springframework.dao.DataAccessException.class);
     }

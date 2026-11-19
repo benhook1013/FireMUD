@@ -58,11 +58,10 @@ public class AsyncConfig {
 
   @Bean(name = "queueLockRenewalExecutor", destroyMethod = "shutdown")
   public ScheduledExecutorService queueLockRenewalExecutor() {
-    return Executors.newSingleThreadScheduledExecutor(
-        runnable -> {
-          Thread thread = new Thread(runnable, "queue-lock-renewal");
-          thread.setDaemon(true);
-          return thread;
-        });
+    return Executors.newSingleThreadScheduledExecutor(runnable -> {
+      Thread thread = new Thread(runnable, "queue-lock-renewal");
+      thread.setDaemon(true);
+      return thread;
+    });
   }
 }

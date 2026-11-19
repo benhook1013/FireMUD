@@ -84,15 +84,14 @@ class RuntimeAccountIdentityEvidenceTest {
       UUID canonicalAccountId,
       long sourceAccountRowId,
       String provenance) {
-    assertThatThrownBy(
-            () ->
-                new RuntimeAccountIdentityEvidence(
-                    schemaVersion,
-                    targetNamespace,
-                    requestId,
-                    canonicalAccountId,
-                    sourceAccountRowId,
-                    provenance))
+    assertThatThrownBy(() ->
+            new RuntimeAccountIdentityEvidence(
+                schemaVersion,
+                targetNamespace,
+                requestId,
+                canonicalAccountId,
+                sourceAccountRowId,
+                provenance))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

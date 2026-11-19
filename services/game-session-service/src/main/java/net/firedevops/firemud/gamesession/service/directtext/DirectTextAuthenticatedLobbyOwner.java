@@ -129,9 +129,8 @@ public final class DirectTextAuthenticatedLobbyOwner {
             custody,
             transport ->
                 Boolean.TRUE.equals(
-                    transaction.execute(
-                        status ->
-                            repository.claimDispatch(committed, verified, transport, clock))));
+                    transaction.execute(status ->
+                        repository.claimDispatch(committed, verified, transport, clock))));
     if (!claimed) return observe(committed, original, verified, custody);
 
     // An ambiguous claim COMMIT/readback throws before Account. The persisted possible state is
@@ -146,12 +145,10 @@ public final class DirectTextAuthenticatedLobbyOwner {
             custody,
             transport -> {
               possible.scope().requireCurrent(original, verified, transport, clock);
-              transaction.executeWithoutResult(
-                  status -> {
-                    var selected = repository.current(original, verified, transport, clock);
-                    if (!selected.recordId().equals(possible.scope().recordId()))
-                      throw unavailable();
-                  });
+              transaction.executeWithoutResult(status -> {
+                var selected = repository.current(original, verified, transport, clock);
+                if (!selected.recordId().equals(possible.scope().recordId())) throw unavailable();
+              });
               var request = possible.request();
               return account.joinPublicProductionMembership(
                   request.getPlayerContext(),

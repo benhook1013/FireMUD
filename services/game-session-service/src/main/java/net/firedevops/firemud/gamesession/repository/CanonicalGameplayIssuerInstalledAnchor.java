@@ -163,62 +163,60 @@ public final class CanonicalGameplayIssuerInstalledAnchor {
   static byte[] encodeIncarnation(CanonicalGameplayIssuerMemberV2Value.Incarnation incarnation) {
     Objects.requireNonNull(incarnation, "incarnation");
     var deployment = incarnation.targetDeploymentEvidence();
-    return encode(
-        output -> {
-          writeText(output, "canonical-stable-issuer-incarnation/v1");
-          writeText(output, incarnation.attestorBinding());
-          writeText(output, incarnation.acceptedAttestationDigest());
-          writeText(output, deployment.deploymentIdentity());
-          writeText(output, deployment.deploymentGeneration());
-          output.writeInt(deployment.canonicalNodeSet().size());
-          for (String node : deployment.canonicalNodeSet()) writeText(output, node);
-          writeText(output, deployment.redisBuildIdentity());
-          writeText(output, deployment.luaScriptRegistryVersion());
-          writeText(output, deployment.luaScriptRegistryDigest());
-          writeText(output, deployment.startupState());
-          writeText(output, deployment.bootGeneration());
-          writeText(output, deployment.startupGeneration());
-          writeText(output, deployment.storageGeneration());
-          writeText(output, deployment.aofGeneration());
-          writeText(output, incarnation.coordOpsRoAclDigest());
-          writeText(output, incarnation.coordRedisConfigObservedDigest());
-        });
+    return encode(output -> {
+      writeText(output, "canonical-stable-issuer-incarnation/v1");
+      writeText(output, incarnation.attestorBinding());
+      writeText(output, incarnation.acceptedAttestationDigest());
+      writeText(output, deployment.deploymentIdentity());
+      writeText(output, deployment.deploymentGeneration());
+      output.writeInt(deployment.canonicalNodeSet().size());
+      for (String node : deployment.canonicalNodeSet()) writeText(output, node);
+      writeText(output, deployment.redisBuildIdentity());
+      writeText(output, deployment.luaScriptRegistryVersion());
+      writeText(output, deployment.luaScriptRegistryDigest());
+      writeText(output, deployment.startupState());
+      writeText(output, deployment.bootGeneration());
+      writeText(output, deployment.startupGeneration());
+      writeText(output, deployment.storageGeneration());
+      writeText(output, deployment.aofGeneration());
+      writeText(output, incarnation.coordOpsRoAclDigest());
+      writeText(output, incarnation.coordRedisConfigObservedDigest());
+    });
   }
 
   private byte[] encodeExactAnchor() {
-    return encode(
-        output -> {
-          writeText(output, ENCODING);
-          writeText(output, bootstrapOperationId.toString());
-          writeText(output, bootstrapRequestId.toString());
-          writeText(output, buildOperationId.toString());
-          writeText(output, buildPlanDigest);
-          writeText(output, issuerId);
-          writeBigInteger(output, controlEpoch);
-          writeText(output, issuerCoverageOperationId.toString());
-          writeBigInteger(output, operationFence);
-          writeBigInteger(output, coverageFence);
-          writeBigInteger(output, issuerInventorySnapshotRevision);
-          writeBigInteger(output, layoutVersion);
-          writeBigInteger(output, partitionCount);
-          writeBigInteger(output, partitionCapacity);
-          writeText(output, mappingIdentity);
-          writeBytes(output, layoutDescriptorBytes);
-          writeText(output, layoutDescriptorDigest);
-          writeBigInteger(output, issuerAuthGeneration);
-          writeBytes(output, sourceCheckpointBytes);
-          writeText(output, sourceCheckpointDigest);
-          writeNullableBytes(output, sourceEventBytes);
-          writeNullableText(output, sourceEventDigest);
-          writeBytes(output, incarnationBytes);
-          writeText(output, incarnationDigest);
-          writeBigInteger(output, globalCoverageGeneration);
-          output.writeLong(partitionProofCount);
-          output.writeLong(physicalReservationCount);
-          output.writeLong(physicalBindingCount);
-          writeBigInteger(output, aggregateCountedCapacity);
-          writeText(output, partitionProofRootDigest);
-        });
+    return encode(output -> {
+      writeText(output, ENCODING);
+      writeText(output, bootstrapOperationId.toString());
+      writeText(output, bootstrapRequestId.toString());
+      writeText(output, buildOperationId.toString());
+      writeText(output, buildPlanDigest);
+      writeText(output, issuerId);
+      writeBigInteger(output, controlEpoch);
+      writeText(output, issuerCoverageOperationId.toString());
+      writeBigInteger(output, operationFence);
+      writeBigInteger(output, coverageFence);
+      writeBigInteger(output, issuerInventorySnapshotRevision);
+      writeBigInteger(output, layoutVersion);
+      writeBigInteger(output, partitionCount);
+      writeBigInteger(output, partitionCapacity);
+      writeText(output, mappingIdentity);
+      writeBytes(output, layoutDescriptorBytes);
+      writeText(output, layoutDescriptorDigest);
+      writeBigInteger(output, issuerAuthGeneration);
+      writeBytes(output, sourceCheckpointBytes);
+      writeText(output, sourceCheckpointDigest);
+      writeNullableBytes(output, sourceEventBytes);
+      writeNullableText(output, sourceEventDigest);
+      writeBytes(output, incarnationBytes);
+      writeText(output, incarnationDigest);
+      writeBigInteger(output, globalCoverageGeneration);
+      output.writeLong(partitionProofCount);
+      output.writeLong(physicalReservationCount);
+      output.writeLong(physicalBindingCount);
+      writeBigInteger(output, aggregateCountedCapacity);
+      writeText(output, partitionProofRootDigest);
+    });
   }
 
   public UUID bootstrapOperationId() {

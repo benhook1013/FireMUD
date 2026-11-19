@@ -102,10 +102,9 @@ public class RunOwnedFixtureLaunchReadback {
                 registered.canonicalTenantId(),
                 registered.worldSlug(),
                 registered.targetNamespace())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Committed authored-world source registration cannot be read back"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Committed authored-world source registration cannot be read back"));
     if (!registered.equals(committed)) {
       throw new IllegalStateException(
           "Committed authored-world source readback differs from the registration result");

@@ -124,15 +124,13 @@ class CanonicalGameplayOriginalNewCandidateTest {
     assertThat(candidate.matchesProvisionalSources(preparedEvidence(otherBinding))).isFalse();
     assertThat(candidate.matchesProvisionalSources(preparedEvidence(otherGeneration))).isFalse();
 
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
-                    preparedEvidence(original), otherBinding.decision()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
+                preparedEvidence(original), otherBinding.decision()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
-                    preparedEvidence(original), otherGeneration.decision()))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
+                preparedEvidence(original), otherGeneration.decision()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -156,10 +154,9 @@ class CanonicalGameplayOriginalNewCandidateTest {
             BigInteger.valueOf(7),
             BigInteger.valueOf(6),
             original.target());
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
-                    preparedEvidence(original), resumeDecision))
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
+                preparedEvidence(original), resumeDecision))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("public-production original NEW");
 
@@ -497,13 +494,12 @@ class CanonicalGameplayOriginalNewCandidateTest {
     carrier.put(
         "outboxCheckpoints",
         streams.stream()
-            .map(
-                stream ->
-                    Map.of(
-                        "outboxStreamKey",
-                        stream,
-                        "outboxSequence",
-                        stream.contains("tenant/") || stream.contains("membership/") ? "4" : "0"))
+            .map(stream ->
+                Map.of(
+                    "outboxStreamKey",
+                    stream,
+                    "outboxSequence",
+                    stream.contains("tenant/") || stream.contains("membership/") ? "4" : "0"))
             .toList());
     carrier.put(
         "tokenIdentityEvidence",

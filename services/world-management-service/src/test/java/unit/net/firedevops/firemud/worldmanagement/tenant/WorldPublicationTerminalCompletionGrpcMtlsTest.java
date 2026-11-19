@@ -115,17 +115,14 @@ class WorldPublicationTerminalCompletionGrpcMtlsTest {
       for (var identity :
           java.util.List.of(pki.accountClient(), pki.otherNamespaceGameDesignClient())) {
         try (var channel = managedChannel(pki, server.port(), identity)) {
-          assertThatThrownBy(
-                  () ->
-                      WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(
-                              channel.channel())
-                          .withDeadlineAfter(5, TimeUnit.SECONDS)
-                          .completeVersionPublication(input.wire()))
+          assertThatThrownBy(() ->
+                  WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(channel.channel())
+                      .withDeadlineAfter(5, TimeUnit.SECONDS)
+                      .completeVersionPublication(input.wire()))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure ->
-                      assertThat(Status.fromThrowable(failure).getCode())
-                          .isEqualTo(Status.Code.PERMISSION_DENIED));
+              .satisfies(failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.PERMISSION_DENIED));
         }
       }
     }
@@ -145,16 +142,14 @@ class WorldPublicationTerminalCompletionGrpcMtlsTest {
     try (var server =
             startServer(pki, pki.otherNamespaceWorldServer(), service, handlerCalls, false, null);
         var channel = managedChannel(pki, server.port(), pki.otherNamespaceGameDesignClient())) {
-      assertThatThrownBy(
-              () ->
-                  WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(channel.channel())
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .completeVersionPublication(input.wire()))
+      assertThatThrownBy(() ->
+              WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(channel.channel())
+                  .withDeadlineAfter(5, TimeUnit.SECONDS)
+                  .completeVersionPublication(input.wire()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     }
 
     assertThat(handlerCalls).hasValue(1);
@@ -175,10 +170,9 @@ class WorldPublicationTerminalCompletionGrpcMtlsTest {
       client.init();
       assertThatThrownBy(() -> client.complete(input.request()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
     }
 
     assertThat(handlerCalls).hasValue(0);
@@ -195,16 +189,14 @@ class WorldPublicationTerminalCompletionGrpcMtlsTest {
 
     try (var server = startServer(pki, service, handlerCalls, true, null);
         var channel = managedChannel(pki, server.port(), pki.gameDesignClient())) {
-      assertThatThrownBy(
-              () ->
-                  WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(channel.channel())
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .completeVersionPublication(input.wire()))
+      assertThatThrownBy(() ->
+              WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(channel.channel())
+                  .withDeadlineAfter(5, TimeUnit.SECONDS)
+                  .completeVersionPublication(input.wire()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     }
 
     assertThat(handlerCalls).hasValue(1);
@@ -222,16 +214,14 @@ class WorldPublicationTerminalCompletionGrpcMtlsTest {
 
     try (var server = startServer(pki, service, handlerCalls, false, null);
         var channel = managedChannel(pki, server.port(), pki.gameDesignClient())) {
-      assertThatThrownBy(
-              () ->
-                  WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(channel.channel())
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .completeVersionPublication(input.wire()))
+      assertThatThrownBy(() ->
+              WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(channel.channel())
+                  .withDeadlineAfter(5, TimeUnit.SECONDS)
+                  .completeVersionPublication(input.wire()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
     }
 
     assertThat(handlerCalls).hasValue(1);
@@ -248,12 +238,11 @@ class WorldPublicationTerminalCompletionGrpcMtlsTest {
 
     try (var server = startServer(pki, service, handlerCalls, false, null);
         var unauthenticatedClient = clientWithoutIdentity(pki, server.port())) {
-      assertThatThrownBy(
-              () ->
-                  WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(
-                          unauthenticatedClient.channel())
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .completeVersionPublication(input.wire()))
+      assertThatThrownBy(() ->
+              WorldPublicationTerminalCompletionServiceGrpc.newBlockingStub(
+                      unauthenticatedClient.channel())
+                  .withDeadlineAfter(5, TimeUnit.SECONDS)
+                  .completeVersionPublication(input.wire()))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());

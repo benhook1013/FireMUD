@@ -170,26 +170,23 @@ class SelectedOwnerIntakeAuthorizationBindingTest {
     UUID otherActor = id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab");
     UUID otherTenant = id("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
 
-    assertThatThrownBy(
-            () ->
-                new SelectedOwnerIntakeAuthorizationBinding(
-                    content(Owner.ENTITY_MANAGEMENT, otherActor), unsortedSources(ACTOR)))
+    assertThatThrownBy(() ->
+            new SelectedOwnerIntakeAuthorizationBinding(
+                content(Owner.ENTITY_MANAGEMENT, otherActor), unsortedSources(ACTOR)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new SelectedOwnerIntakeAuthorizationBinding(
-                    original.content(),
-                    List.of(
-                        evidence(SourceKind.ACCOUNT, ACTOR.toString(), "changed"),
-                        evidence(SourceKind.TENANT, otherTenant.toString(), "tenant"))))
+    assertThatThrownBy(() ->
+            new SelectedOwnerIntakeAuthorizationBinding(
+                original.content(),
+                List.of(
+                    evidence(SourceKind.ACCOUNT, ACTOR.toString(), "changed"),
+                    evidence(SourceKind.TENANT, otherTenant.toString(), "tenant"))))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new SelectedOwnerIntakeAuthorizationBinding(
-                    original.content(),
-                    List.of(
-                        evidence(SourceKind.ACCOUNT, otherActor.toString(), "actor"),
-                        evidence(SourceKind.TENANT, TENANT.toString(), "tenant"))))
+    assertThatThrownBy(() ->
+            new SelectedOwnerIntakeAuthorizationBinding(
+                original.content(),
+                List.of(
+                    evidence(SourceKind.ACCOUNT, otherActor.toString(), "actor"),
+                    evidence(SourceKind.TENANT, TENANT.toString(), "tenant"))))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -261,10 +258,9 @@ class SelectedOwnerIntakeAuthorizationBindingTest {
             null));
     assertThatThrownBy(() -> SelectedOwnerIntakeAuthorizationBinding.fromStored(null))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                SelectedOwnerIntakeAuthorizationBinding.fromStored(
-                    new byte[SelectedOwnerIntakeAuthorizationBinding.MAX_BYTES + 1]))
+    assertThatThrownBy(() ->
+            SelectedOwnerIntakeAuthorizationBinding.fromStored(
+                new byte[SelectedOwnerIntakeAuthorizationBinding.MAX_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

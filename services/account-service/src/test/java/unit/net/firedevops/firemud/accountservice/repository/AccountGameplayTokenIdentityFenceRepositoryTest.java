@@ -121,10 +121,8 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
     Record token = tokenRow(State.ACTIVE);
     stubOwnerRows(dsl, account, token, null);
     transaction();
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayTokenIdentityFenceRepository(dsl)
-                    .requireActiveForUpdate(IDENTITY))
+    assertThatThrownBy(() ->
+            new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveForUpdate(IDENTITY))
         .isInstanceOf(TokenFenceUnavailableException.class);
   }
 
@@ -191,10 +189,8 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
             IDENTITY.notBeforeEpochSecond() + 1L,
             IDENTITY.tokenGeneration(),
             IDENTITY.issuanceFence());
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayTokenIdentityFenceRepository(dsl)
-                    .requireActiveForUpdate(changedNbf))
+    assertThatThrownBy(() ->
+            new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveForUpdate(changedNbf))
         .isInstanceOf(TokenFenceUnavailableException.class);
   }
 
@@ -207,10 +203,8 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
       Record source = mock(Record.class);
       stubOwnerRows(dsl, account, token, source);
       transaction();
-      assertThatThrownBy(
-              () ->
-                  new AccountGameplayTokenIdentityFenceRepository(dsl)
-                      .requireActiveForUpdate(IDENTITY))
+      assertThatThrownBy(() ->
+              new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveForUpdate(IDENTITY))
           .isInstanceOf(TokenRevokedException.class);
     }
   }
@@ -222,10 +216,8 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
     when(dsl.fetchOne(DISPOSAL_GUARD_SELECT, IDENTITY.issuanceRequestId()))
         .thenReturn(mock(Record.class));
     transaction();
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayTokenIdentityFenceRepository(dsl)
-                    .requireActiveForUpdate(IDENTITY))
+    assertThatThrownBy(() ->
+            new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveForUpdate(IDENTITY))
         .isInstanceOf(TokenRevokedException.class);
     verify(dsl, never()).fetchOne(startsWith(TOKEN_SELECT_PREFIX), eq(IDENTITY.operationId()));
     verify(dsl, never())
@@ -273,10 +265,9 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
         AccountGameplayTokenIdentityFenceRepository.revocationDigest(IDENTITY, changedRequest);
     transaction();
 
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayTokenIdentityFenceRepository(dsl)
-                    .beginRevocationIntent(IDENTITY, changedRequest, digest))
+    assertThatThrownBy(() ->
+            new AccountGameplayTokenIdentityFenceRepository(dsl)
+                .beginRevocationIntent(IDENTITY, changedRequest, digest))
         .isInstanceOf(
             AccountGameplayTokenIdentityFenceRepository.RevocationConflictException.class);
     verify(dsl, never())
@@ -294,10 +285,9 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
         AccountGameplayTokenIdentityFenceRepository.revocationDigest(IDENTITY, requestId);
     transaction();
 
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayTokenIdentityFenceRepository(dsl)
-                    .beginRevocationIntent(IDENTITY, requestId, digest))
+    assertThatThrownBy(() ->
+            new AccountGameplayTokenIdentityFenceRepository(dsl)
+                .beginRevocationIntent(IDENTITY, requestId, digest))
         .isInstanceOf(TokenRevokedException.class);
     verify(dsl, never())
         .execute(startsWith("UPDATE account_gameplay_token_identity_fences"), any(Object[].class));
@@ -412,10 +402,9 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
   void callerClaimedDigestCannotStartRevocationOrAcquireLocks() {
     DSLContext dsl = mock(DSLContext.class);
     transaction();
-    assertThatThrownBy(
-            () ->
-                new AccountGameplayTokenIdentityFenceRepository(dsl)
-                    .beginRevocationIntent(IDENTITY, UUID.randomUUID(), "b".repeat(64)))
+    assertThatThrownBy(() ->
+            new AccountGameplayTokenIdentityFenceRepository(dsl)
+                .beginRevocationIntent(IDENTITY, UUID.randomUUID(), "b".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(dsl);
   }

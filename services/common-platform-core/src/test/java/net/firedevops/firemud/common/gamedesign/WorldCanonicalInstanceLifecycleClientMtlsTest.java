@@ -130,10 +130,9 @@ class WorldCanonicalInstanceLifecycleClientMtlsTest {
 
       assertThatThrownBy(() -> client.read(expected.request()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThat(serverCallStarts).as(wrongPeer.alias()).hasValue(0);
       assertThat(applicationCalls).as(wrongPeer.alias()).hasValue(0);
       stopTransport();
@@ -172,25 +171,17 @@ class WorldCanonicalInstanceLifecycleClientMtlsTest {
     receivedPeerUri = new AtomicReference<>();
     var plaintext = pki.clientProperties(tempDirectory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldCanonicalInstanceLifecycleClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    new GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new WorldCanonicalInstanceLifecycleClient(
+                new ServiceEndpointsProperties(), plaintext, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
 
     var classpath = pki.clientProperties(tempDirectory);
     classpath.setCaCert("classpath:ca.crt");
-    assertThatThrownBy(
-            () ->
-                new WorldCanonicalInstanceLifecycleClient(
-                    new ServiceEndpointsProperties(),
-                    classpath,
-                    new GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new WorldCanonicalInstanceLifecycleClient(
+                new ServiceEndpointsProperties(), classpath, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("file-backed");
 

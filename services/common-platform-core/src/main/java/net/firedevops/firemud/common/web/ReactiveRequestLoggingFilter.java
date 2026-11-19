@@ -47,21 +47,20 @@ public class ReactiveRequestLoggingFilter implements WebFilter, Ordered {
 
     return chain
         .filter(exchange)
-        .doFinally(
-            signalType -> {
-              long duration = System.currentTimeMillis() - start;
-              var statusCode = exchange.getResponse().getStatusCode();
-              logger.info(
-                  "HTTP request completed method={} path={} status={} durationMs={} service={} serviceInstanceId={} correlationId={} traceId={}",
-                  request.getMethod(),
-                  request.getPath().value(),
-                  statusCode != null ? statusCode.value() : 200,
-                  duration,
-                  runtimeIdentity.service(),
-                  runtimeIdentity.serviceInstanceId(),
-                  correlationId,
-                  valueOrUnknown(traceId));
-            });
+        .doFinally(signalType -> {
+          long duration = System.currentTimeMillis() - start;
+          var statusCode = exchange.getResponse().getStatusCode();
+          logger.info(
+              "HTTP request completed method={} path={} status={} durationMs={} service={} serviceInstanceId={} correlationId={} traceId={}",
+              request.getMethod(),
+              request.getPath().value(),
+              statusCode != null ? statusCode.value() : 200,
+              duration,
+              runtimeIdentity.service(),
+              runtimeIdentity.serviceInstanceId(),
+              correlationId,
+              valueOrUnknown(traceId));
+        });
   }
 
   private static String resolveCorrelationId(String incoming) {

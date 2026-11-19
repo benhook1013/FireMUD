@@ -101,15 +101,14 @@ final class WorldPublishedAdmissionSourceComposition {
             publication.policyCount(),
             publication.policySetDigest(),
             publication.policies().stream()
-                .map(
-                    p ->
-                        new PublishedRealmEntryPolicyEvidence(
-                            p.policyId(),
-                            p.source().commitId(),
-                            p.source().revisionId(),
-                            p.source().logicalRevisionId(),
-                            p.source().policy(),
-                            p.policyDigest()))
+                .map(p ->
+                    new PublishedRealmEntryPolicyEvidence(
+                        p.policyId(),
+                        p.source().commitId(),
+                        p.source().revisionId(),
+                        p.source().logicalRevisionId(),
+                        p.source().policy(),
+                        p.policyDigest()))
                 .toList());
     // This is the sole stipulated source: the exact published set already used by the real
     // preparation/OPEN owners. No Game Design issuing-owner proof is claimed here.
@@ -215,13 +214,12 @@ final class WorldPublishedAdmissionSourceComposition {
                     target.pointerVersion());
             assertThatThrownBy(() -> accountClient.resolvePublishedRealmAdmissionTarget(wrong))
                 .isExactlyInstanceOf(StatusRuntimeException.class)
-                .satisfies(
-                    failure -> {
-                      var status = ((StatusRuntimeException) failure).getStatus();
-                      assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-                      assertThat(status.getDescription())
-                          .isEqualTo("Canonical Game Session admission decision is unavailable");
-                    });
+                .satisfies(failure -> {
+                  var status = ((StatusRuntimeException) failure).getStatus();
+                  assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                  assertThat(status.getDescription())
+                      .isEqualTo("Canonical Game Session admission decision is unavailable");
+                });
             var afterRefusal = accountClient.resolvePublishedRealmAdmissionTarget(selector);
             assertThat(afterRefusal.selector()).isEqualTo(resolved.selector());
             assertThat(afterRefusal.currentTarget()).isEqualTo(resolved.currentTarget());

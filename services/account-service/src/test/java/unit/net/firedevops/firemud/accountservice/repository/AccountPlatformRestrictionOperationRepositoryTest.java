@@ -38,22 +38,18 @@ class AccountPlatformRestrictionOperationRepositoryTest {
     when(account.get("lifecycle_state", String.class)).thenReturn("deactivated_pending_delete");
     UUID accountUuid = UUID.fromString("68d408e1-ec07-4e0f-a59b-9bfc521365a0");
 
-    assertThatCode(
-            () ->
-                requireLifecycleProjection(
-                    dsl,
-                    projection(
-                        accountUuid,
-                        Category.ACCOUNT_SECURITY_LOCK,
-                        RestrictionState.NONRESTRICTED)))
+    assertThatCode(() ->
+            requireLifecycleProjection(
+                dsl,
+                projection(
+                    accountUuid, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED)))
         .doesNotThrowAnyException();
 
-    assertThatThrownBy(
-            () ->
-                requireLifecycleProjection(
-                    dsl,
-                    projection(
-                        accountUuid, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.RESTRICTED)))
+    assertThatThrownBy(() ->
+            requireLifecycleProjection(
+                dsl,
+                projection(
+                    accountUuid, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.RESTRICTED)))
         .isInstanceOf(
             AccountPlatformRestrictionOperationRepository.RestrictionProjectionUnavailableException
                 .class);
@@ -67,14 +63,11 @@ class AccountPlatformRestrictionOperationRepositoryTest {
             "SELECT lifecycle_state FROM accounts WHERE account_uuid = ? FOR SHARE", accountUuid))
         .thenReturn(null);
 
-    assertThatThrownBy(
-            () ->
-                requireLifecycleProjection(
-                    dsl,
-                    projection(
-                        accountUuid,
-                        Category.ACCOUNT_SECURITY_LOCK,
-                        RestrictionState.NONRESTRICTED)))
+    assertThatThrownBy(() ->
+            requireLifecycleProjection(
+                dsl,
+                projection(
+                    accountUuid, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED)))
         .isInstanceOf(
             AccountPlatformRestrictionOperationRepository.RestrictionProjectionUnavailableException
                 .class);

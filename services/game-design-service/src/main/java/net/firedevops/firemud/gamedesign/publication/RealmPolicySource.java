@@ -186,17 +186,16 @@ public final class RealmPolicySource {
   static String policiesJson(List<Policy> policies) {
     return canonical(
         draftOrdered(policies).stream()
-            .map(
-                policy ->
-                    Map.of(
-                        "commitId",
-                        policy.commitId().toString(),
-                        "revisionId",
-                        policy.revisionId().toString(),
-                        "logicalRevisionId",
-                        policy.logicalRevisionId(),
-                        "policy",
-                        tree(policy.policy().canonicalJson())))
+            .map(policy ->
+                Map.of(
+                    "commitId",
+                    policy.commitId().toString(),
+                    "revisionId",
+                    policy.revisionId().toString(),
+                    "logicalRevisionId",
+                    policy.logicalRevisionId(),
+                    "policy",
+                    tree(policy.policy().canonicalJson())))
             .toList());
   }
 

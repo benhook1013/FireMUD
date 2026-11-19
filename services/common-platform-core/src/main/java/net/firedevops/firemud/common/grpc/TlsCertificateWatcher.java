@@ -101,16 +101,12 @@ public class TlsCertificateWatcher implements AutoCloseable {
     }
     allRequiredRegistrationsValid.set(allRequiredDirectoriesRegistered());
     retryExecutor =
-        Executors.newSingleThreadScheduledExecutor(
-            runnable -> {
-              Thread retryThread =
-                  Thread.ofPlatform()
-                      .daemon(true)
-                      .name("tls-cert-reload-retry")
-                      .unstarted(runnable);
-              retryExecutorThread.set(retryThread);
-              return retryThread;
-            });
+        Executors.newSingleThreadScheduledExecutor(runnable -> {
+          Thread retryThread =
+              Thread.ofPlatform().daemon(true).name("tls-cert-reload-retry").unstarted(runnable);
+          retryExecutorThread.set(retryThread);
+          return retryThread;
+        });
     thread = new Thread(this::processEvents, "tls-cert-watcher");
     thread.setDaemon(true);
   }

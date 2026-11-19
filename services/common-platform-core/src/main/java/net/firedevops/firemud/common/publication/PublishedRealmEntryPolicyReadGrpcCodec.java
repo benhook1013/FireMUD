@@ -209,10 +209,9 @@ public final class PublishedRealmEntryPolicyReadGrpcCodec {
   private static void requireSelector(
       PublishedRealmEntryPolicySetEvidence evidence, String worldSlug, String realmSlug) {
     if (evidence.policies().stream()
-        .noneMatch(
-            policy ->
-                policy.policy().worldSlug().equals(worldSlug)
-                    && policy.policy().realmSlug().equals(realmSlug))) {
+        .noneMatch(policy ->
+            policy.policy().worldSlug().equals(worldSlug)
+                && policy.policy().realmSlug().equals(realmSlug))) {
       throw new IllegalArgumentException(
           "Published policy set does not contain the exact selector");
     }

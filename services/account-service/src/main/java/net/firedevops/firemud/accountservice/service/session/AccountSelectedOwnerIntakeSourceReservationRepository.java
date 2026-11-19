@@ -948,14 +948,13 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new IllegalStateException("Writable Account owner transaction required");
     }
-    dsl.connection(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.isReadOnly()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Writable READ_COMMITTED Account owner transaction required");
-          }
-        });
+    dsl.connection(connection -> {
+      if (connection.getAutoCommit()
+          || connection.isReadOnly()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Writable READ_COMMITTED Account owner transaction required");
+      }
+    });
   }
 }

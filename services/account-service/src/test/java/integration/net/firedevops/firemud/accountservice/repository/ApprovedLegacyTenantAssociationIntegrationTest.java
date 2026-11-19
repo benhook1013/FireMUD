@@ -120,10 +120,9 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
 
     OwnerApprovedAccountTenantAssociation changedCapture =
         withCapture(evidence, evidence.sourceCapturedAt().plusNanos(1_000));
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> associations.importOwnerApproved(legacyId, changedCapture)))
+    assertThatThrownBy(() ->
+            transaction.execute(
+                status -> associations.importOwnerApproved(legacyId, changedCapture)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("differs");
 
@@ -145,10 +144,9 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
             evidence.signedAt(),
             evidence.operationEntryCount(),
             evidence.manifestSchemaVersion());
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> associations.importOwnerApproved(legacyId, changedApproval)))
+    assertThatThrownBy(() ->
+            transaction.execute(
+                status -> associations.importOwnerApproved(legacyId, changedApproval)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts");
 
@@ -157,11 +155,9 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
     var duplicateProjection = sourceEvidence.projection(duplicateLegacyId);
     var duplicateEvidence =
         evidence(duplicateLegacyId, duplicateProjection, evidence.canonicalTenantId());
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status ->
-                        associations.importOwnerApproved(duplicateLegacyId, duplicateEvidence)))
+    assertThatThrownBy(() ->
+            transaction.execute(
+                status -> associations.importOwnerApproved(duplicateLegacyId, duplicateEvidence)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("another claim");
     assertThat(associations.findByLegacyTenantId(duplicateLegacyId)).isEmpty();
@@ -175,13 +171,12 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
     assertThatThrownBy(
             () -> dsl.execute("TRUNCATE account_approved_legacy_tenant_associations CASCADE"))
         .hasMessageContaining("immutable");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE account_approved_legacy_tenant_associations "
-                        + "SET canonical_tenant_id = ? WHERE legacy_tenant_id = ?",
-                    UUID.randomUUID(),
-                    legacyId))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE account_approved_legacy_tenant_associations "
+                    + "SET canonical_tenant_id = ? WHERE legacy_tenant_id = ?",
+                UUID.randomUUID(),
+                legacyId))
         .hasMessageContaining("immutable");
 
     long expiredLegacyId = 89002;
@@ -190,10 +185,9 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
     insertLegacySource(insertAccount("association-expired"), expiredLegacyId, expiredAt);
     var expiredProjection = sourceEvidence.projection(expiredLegacyId);
     var expiredEvidence = evidence(expiredLegacyId, expiredProjection);
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> associations.importOwnerApproved(expiredLegacyId, expiredEvidence)))
+    assertThatThrownBy(() ->
+            transaction.execute(
+                status -> associations.importOwnerApproved(expiredLegacyId, expiredEvidence)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("expired");
 
@@ -230,12 +224,10 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
         .isNotNull();
     AccountConnectScopeRepository scopes = newConnectScopeRepository();
     var scopeReadback =
-        transaction.execute(
-            status ->
-                scopes
-                    .findCanonicalEvidenceByTokenHash(
-                        AccountJoinDigest.tokenHash(referencedScopeId))
-                    .orElseThrow());
+        transaction.execute(status ->
+            scopes
+                .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(referencedScopeId))
+                .orElseThrow());
     assertThat(scopeReadback.tenantProvenance().sourceOperationId())
         .isEqualTo(referencedEvidence.operationId());
     assertThat(scopeReadback.tenantProvenance().digest()).isEqualTo(MANIFEST_DIGEST);
@@ -245,10 +237,9 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
     assertThat(resolver.resolve(retainedEvidence.canonicalTenantId()).canonicalTenantId())
         .isEqualTo(retainedEvidence.canonicalTenantId());
 
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> associations.importOwnerApproved(retainedLegacyId, retainedEvidence)))
+    assertThatThrownBy(() ->
+            transaction.execute(
+                status -> associations.importOwnerApproved(retainedLegacyId, retainedEvidence)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("expired");
     assertThat(
@@ -284,10 +275,9 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
         insertAccount("association-future"), futureLegacyId, Instant.now().plusSeconds(60));
     var futureProjection = sourceEvidence.projection(futureLegacyId);
     var futureEvidence = evidence(futureLegacyId, futureProjection);
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> associations.importOwnerApproved(futureLegacyId, futureEvidence)))
+    assertThatThrownBy(() ->
+            transaction.execute(
+                status -> associations.importOwnerApproved(futureLegacyId, futureEvidence)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("future");
   }
@@ -309,15 +299,13 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
         "approval_writer_first_" + UUID.randomUUID().toString().replace("-", "");
     try {
       Future<?> writerFirst =
-          executor.submit(
-              () ->
-                  transaction.executeWithoutResult(
-                      status -> {
-                        setLocalApplicationName(writerFirstApplication);
-                        insertApprovedMembership(writerFirstAccountId, writerFirstEvidence);
-                        writerFirstInserted.countDown();
-                        awaitLatch(allowWriterFirstCommit, "writer-first Account reference");
-                      }));
+          executor.submit(() ->
+              transaction.executeWithoutResult(status -> {
+                setLocalApplicationName(writerFirstApplication);
+                insertApprovedMembership(writerFirstAccountId, writerFirstEvidence);
+                writerFirstInserted.countDown();
+                awaitLatch(allowWriterFirstCommit, "writer-first Account reference");
+              }));
       assertThat(writerFirstInserted.await(5, TimeUnit.SECONDS)).isTrue();
 
       assertThat(associations.deleteExpiredApprovalPayloads(1)).isZero();
@@ -344,32 +332,28 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
     String deleteFirstApplication =
         "approval_delete_first_" + UUID.randomUUID().toString().replace("-", "");
     Future<Integer> cleanup =
-        executor.submit(
-            () ->
-                transaction.execute(
-                    status -> {
-                      int removed = associations.deleteExpiredApprovalPayloads(1);
-                      payloadDeletedInTransaction.countDown();
-                      awaitLatch(allowCleanupCommit, "payload cleanup commit");
-                      return removed;
-                    }));
+        executor.submit(() ->
+            transaction.execute(status -> {
+              int removed = associations.deleteExpiredApprovalPayloads(1);
+              payloadDeletedInTransaction.countDown();
+              awaitLatch(allowCleanupCommit, "payload cleanup commit");
+              return removed;
+            }));
     try {
       assertThat(payloadDeletedInTransaction.await(5, TimeUnit.SECONDS)).isTrue();
       Future<RuntimeException> writer =
-          executor.submit(
-              () -> {
-                try {
-                  transaction.executeWithoutResult(
-                      status -> {
-                        setLocalApplicationName(deleteFirstApplication);
-                        writerStarted.countDown();
-                        insertApprovedMembership(deleteFirstAccountId, deleteFirstEvidence);
-                      });
-                  return null;
-                } catch (RuntimeException failure) {
-                  return failure;
-                }
+          executor.submit(() -> {
+            try {
+              transaction.executeWithoutResult(status -> {
+                setLocalApplicationName(deleteFirstApplication);
+                writerStarted.countDown();
+                insertApprovedMembership(deleteFirstAccountId, deleteFirstEvidence);
               });
+              return null;
+            } catch (RuntimeException failure) {
+              return failure;
+            }
+          });
       assertThat(writerStarted.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(awaitTransactionLock(deleteFirstApplication)).isTrue();
 
@@ -427,11 +411,10 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
             Instant.now().minusSeconds(120).toString(),
             Instant.now().minusSeconds(60).toString());
     AccountConnectScopeRepository scopes = newConnectScopeRepository();
-    transaction.executeWithoutResult(
-        status -> {
-          insertApprovedMembership(accountId, evidence);
-          scopes.insertCanonical(accountId, scope, provenance);
-        });
+    transaction.executeWithoutResult(status -> {
+      insertApprovedMembership(accountId, evidence);
+      scopes.insertCanonical(accountId, scope, provenance);
+    });
     return connectScopeId;
   }
 
@@ -451,11 +434,10 @@ class ApprovedLegacyTenantAssociationIntegrationTest {
             "account_connect_scope_records_approved_payload_operation_idx");
     assertThat(indexes)
         .extracting(record -> record.get("indexdef", String.class))
-        .allSatisfy(
-            definition -> {
-              assertThat(definition).contains("(approved_tenant_payload_operation_id)");
-              assertThat(definition).contains("approved_tenant_payload_operation_id IS NOT NULL");
-            });
+        .allSatisfy(definition -> {
+          assertThat(definition).contains("(approved_tenant_payload_operation_id)");
+          assertThat(definition).contains("approved_tenant_payload_operation_id IS NOT NULL");
+        });
   }
 
   private AccountConnectScopeRepository newConnectScopeRepository() {

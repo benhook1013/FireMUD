@@ -89,43 +89,42 @@ final class CanonicalGameplayLegacyMigrationRepository {
     requireNonNil(cohortId, "cohortId");
     requireNonNil(legacyWriterFence, "legacyWriterFence");
     Objects.requireNonNull(storageIdentity, "storageIdentity");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          Record existing =
-              transaction.fetchOne(
-                  "SELECT * FROM " + OPERATION + " WHERE cohort_id = ? FOR UPDATE", cohortId);
-          if (existing != null) {
-            CanonicalGameplayLegacyMigrationOperation operation = toOperation(existing);
-            if (!operation.legacyWriterFence().equals(legacyWriterFence)
-                || !operation.storageIdentity().equals(storageIdentity)) {
-              throw conflict(
-                  "The cohort is already bound to a different retained writer/storage fence");
-            }
-            if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED) {
-              requirePublishedDispositionMatches(transaction, operation);
-            }
-            return operation;
-          }
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      Record existing =
+          transaction.fetchOne(
+              "SELECT * FROM " + OPERATION + " WHERE cohort_id = ? FOR UPDATE", cohortId);
+      if (existing != null) {
+        CanonicalGameplayLegacyMigrationOperation operation = toOperation(existing);
+        if (!operation.legacyWriterFence().equals(legacyWriterFence)
+            || !operation.storageIdentity().equals(storageIdentity)) {
+          throw conflict(
+              "The cohort is already bound to a different retained writer/storage fence");
+        }
+        if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED) {
+          requirePublishedDispositionMatches(transaction, operation);
+        }
+        return operation;
+      }
 
-          Record disposition =
-              transaction.fetchOne(
-                  "SELECT disposition_state FROM "
-                      + LEGACY_DISPOSITION
-                      + " WHERE singleton_id = 1 FOR UPDATE");
-          if (disposition == null
-              || !"REQUIRED".equals(disposition.get("disposition_state", String.class))) {
-            throw conflict(
-                "Legacy migration can start only while the V31 disposition remains REQUIRED");
-          }
+      Record disposition =
+          transaction.fetchOne(
+              "SELECT disposition_state FROM "
+                  + LEGACY_DISPOSITION
+                  + " WHERE singleton_id = 1 FOR UPDATE");
+      if (disposition == null
+          || !"REQUIRED".equals(disposition.get("disposition_state", String.class))) {
+        throw conflict(
+            "Legacy migration can start only while the V31 disposition remains REQUIRED");
+      }
 
-          UUID operationId = UUID.randomUUID();
-          if (operationId.equals(new UUID(0L, 0L))) {
-            throw new IllegalStateException("UUID generator returned nil migration operation id");
-          }
-          insertOperation(transaction, operationId, cohortId, legacyWriterFence, storageIdentity);
-          return readOperation(transaction, operationId, false);
-        });
+      UUID operationId = UUID.randomUUID();
+      if (operationId.equals(new UUID(0L, 0L))) {
+        throw new IllegalStateException("UUID generator returned nil migration operation id");
+      }
+      insertOperation(transaction, operationId, cohortId, legacyWriterFence, storageIdentity);
+      return readOperation(transaction, operationId, false);
+    });
   }
 
   CanonicalGameplayLegacyMigrationOperation read(UUID operationId) {
@@ -166,18 +165,15 @@ final class CanonicalGameplayLegacyMigrationRepository {
       blockState = CanonicalGameplayLegacyMigrationOperation.State.BLOCKED;
       blockReason = "SOURCE_INVENTORY_INCOMPLETE";
     } else if (source.entries().stream()
-        .anyMatch(
-            entry ->
-                entry.disposition()
-                    == CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition
-                        .CREDENTIAL_BEARING)) {
+        .anyMatch(entry ->
+            entry.disposition()
+                == CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.CREDENTIAL_BEARING)) {
       blockState = CanonicalGameplayLegacyMigrationOperation.State.BLOCKED;
       blockReason = "CREDENTIAL_BEARING_SOURCE";
     } else if (source.entries().stream()
-        .anyMatch(
-            entry ->
-                entry.disposition()
-                    == CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.UNKNOWN)) {
+        .anyMatch(entry ->
+            entry.disposition()
+                == CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.UNKNOWN)) {
       blockState = CanonicalGameplayLegacyMigrationOperation.State.BLOCKED;
       blockReason = "UNKNOWN_SOURCE_RECORD";
     } else if (!source.everyEntryIsReconciled()) {
@@ -187,81 +183,79 @@ final class CanonicalGameplayLegacyMigrationRepository {
     final CanonicalGameplayLegacyMigrationOperation.State finalBlockState = blockState;
     final String finalBlockReason = blockReason;
     String sourceDigest = digestSource(source);
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-          Record operationRow = lockOperation(transaction, operationId);
-          CanonicalGameplayLegacyMigrationOperation current = toOperation(operationRow);
-          if (current.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED
-              || current.state() == CanonicalGameplayLegacyMigrationOperation.State.BLOCKED) {
-            return current;
-          }
-          SnapshotJson snapshotJson = readCanonicalSnapshot(transaction);
-          if (!snapshotJson.revision().equals(canonical.inventoryRevision())) {
-            return block(transaction, operationId, "CANONICAL_SNAPSHOT_CHANGED");
-          }
-          String canonicalDigest = sha256(snapshotJson.json());
-          if (current.state() != CanonicalGameplayLegacyMigrationOperation.State.FENCED) {
-            if (!Objects.equals(current.sourceSnapshotDigest(), sourceDigest)
-                || !Objects.equals(
-                    current.canonicalSnapshotRevision(), canonical.inventoryRevision())
-                || !Objects.equals(current.canonicalSnapshotDigest(), canonicalDigest)) {
-              return block(transaction, operationId, "SNAPSHOT_CHANGED_ON_REPLAY");
-            }
-            return current;
-          }
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      Record operationRow = lockOperation(transaction, operationId);
+      CanonicalGameplayLegacyMigrationOperation current = toOperation(operationRow);
+      if (current.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED
+          || current.state() == CanonicalGameplayLegacyMigrationOperation.State.BLOCKED) {
+        return current;
+      }
+      SnapshotJson snapshotJson = readCanonicalSnapshot(transaction);
+      if (!snapshotJson.revision().equals(canonical.inventoryRevision())) {
+        return block(transaction, operationId, "CANONICAL_SNAPSHOT_CHANGED");
+      }
+      String canonicalDigest = sha256(snapshotJson.json());
+      if (current.state() != CanonicalGameplayLegacyMigrationOperation.State.FENCED) {
+        if (!Objects.equals(current.sourceSnapshotDigest(), sourceDigest)
+            || !Objects.equals(current.canonicalSnapshotRevision(), canonical.inventoryRevision())
+            || !Objects.equals(current.canonicalSnapshotDigest(), canonicalDigest)) {
+          return block(transaction, operationId, "SNAPSHOT_CHANGED_ON_REPLAY");
+        }
+        return current;
+      }
 
-          BigInteger sourceRevision =
-              readBigInteger(
-                  Objects.requireNonNull(
-                      transaction.fetchOne(
-                          "SELECT nextval('game_session_canonical_legacy_migration_source_revision_seq') AS revision"),
-                      "legacy migration source revision sequence must exist"),
-                  "revision");
-          long ordinal = 0L;
-          List<CanonicalGameplayLegacyMigrationSourceSnapshot.Entry> entries =
-              source.entries().stream()
-                  .sorted(
-                      Comparator.comparing(
-                          CanonicalGameplayLegacyMigrationSourceSnapshot.Entry::sourceKeyDigest))
-                  .toList();
-          for (CanonicalGameplayLegacyMigrationSourceSnapshot.Entry entry : entries) {
-            transaction.execute(
-                "INSERT INTO "
-                    + SOURCE_ENTRY
-                    + " (operation_id, row_ordinal, source_family, source_key_digest, disposition)"
-                    + " VALUES (?, ?, ?, ?, ?)",
-                operationId,
-                ordinal++,
-                entry.family().name(),
-                entry.sourceKeyDigest(),
-                entry.disposition().name());
-          }
+      BigInteger sourceRevision =
+          readBigInteger(
+              Objects.requireNonNull(
+                  transaction.fetchOne(
+                      "SELECT nextval('game_session_canonical_legacy_migration_source_revision_seq') AS revision"),
+                  "legacy migration source revision sequence must exist"),
+              "revision");
+      long ordinal = 0L;
+      List<CanonicalGameplayLegacyMigrationSourceSnapshot.Entry> entries =
+          source.entries().stream()
+              .sorted(
+                  Comparator.comparing(
+                      CanonicalGameplayLegacyMigrationSourceSnapshot.Entry::sourceKeyDigest))
+              .toList();
+      for (CanonicalGameplayLegacyMigrationSourceSnapshot.Entry entry : entries) {
+        transaction.execute(
+            "INSERT INTO "
+                + SOURCE_ENTRY
+                + " (operation_id, row_ordinal, source_family, source_key_digest, disposition)"
+                + " VALUES (?, ?, ?, ?, ?)",
+            operationId,
+            ordinal++,
+            entry.family().name(),
+            entry.sourceKeyDigest(),
+            entry.disposition().name());
+      }
 
-          String nextState = finalBlockState == null ? "SNAPSHOTTED" : "BLOCKED";
-          requireOne(
-              transaction.execute(
-                  "UPDATE "
-                      + OPERATION
-                      + " SET state = ?, source_snapshot_revision = ?, source_snapshot_digest = ?,"
-                      + " source_snapshot_entry_count = ?, canonical_snapshot_revision = ?,"
-                      + " source_snapshot_families = ?::jsonb, canonical_snapshot_digest = ?, canonical_snapshot = ?::jsonb,"
-                      + " blocked_reason = ?, updated_at = CURRENT_TIMESTAMP"
-                      + " WHERE operation_id = ? AND state = 'FENCED'",
-                  nextState,
-                  decimal(sourceRevision),
-                  sourceDigest,
-                  entries.size(),
-                  decimal(canonical.inventoryRevision()),
-                  familiesJson(source.scannedFamilies()),
-                  canonicalDigest,
-                  snapshotJson.json(),
-                  finalBlockReason,
-                  operationId),
-              "Migration operation changed while its snapshots were being staged");
-          return readOperation(transaction, operationId, false);
-        });
+      String nextState = finalBlockState == null ? "SNAPSHOTTED" : "BLOCKED";
+      requireOne(
+          transaction.execute(
+              "UPDATE "
+                  + OPERATION
+                  + " SET state = ?, source_snapshot_revision = ?, source_snapshot_digest = ?,"
+                  + " source_snapshot_entry_count = ?, canonical_snapshot_revision = ?,"
+                  + " source_snapshot_families = ?::jsonb, canonical_snapshot_digest = ?, canonical_snapshot = ?::jsonb,"
+                  + " blocked_reason = ?, updated_at = CURRENT_TIMESTAMP"
+                  + " WHERE operation_id = ? AND state = 'FENCED'",
+              nextState,
+              decimal(sourceRevision),
+              sourceDigest,
+              entries.size(),
+              decimal(canonical.inventoryRevision()),
+              familiesJson(source.scannedFamilies()),
+              canonicalDigest,
+              snapshotJson.json(),
+              finalBlockReason,
+              operationId),
+          "Migration operation changed while its snapshots were being staged");
+      return readOperation(transaction, operationId, false);
+    });
   }
 
   /**
@@ -270,38 +264,36 @@ final class CanonicalGameplayLegacyMigrationRepository {
   CanonicalGameplayLegacyMigrationOperation markRebuilt(UUID operationId) {
     requireNoAmbientTransaction();
     requireNonNil(operationId, "operationId");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-          Record row = lockOperation(transaction, operationId);
-          CanonicalGameplayLegacyMigrationOperation operation = toOperation(row);
-          if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.BLOCKED
-              || operation.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED
-              || operation.state()
-                  == CanonicalGameplayLegacyMigrationOperation.State.READBACK_VERIFIED) {
-            return operation;
-          }
-          if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.REBUILT) {
-            return operation;
-          }
-          if (operation.state() != CanonicalGameplayLegacyMigrationOperation.State.SNAPSHOTTED) {
-            throw conflict("Only a complete staged source and canonical snapshot may be rebuilt");
-          }
-          requireStoredSnapshotsConsistent(transaction, operation);
-          String expectedProjectionDigest =
-              expectedActiveProjectionDigest(transaction, operationId);
-          requireOne(
-              transaction.execute(
-                  "UPDATE "
-                      + OPERATION
-                      + " SET state = 'REBUILT', rebuild_digest = ?, updated_at = CURRENT_TIMESTAMP"
-                      + " WHERE operation_id = ? AND state = 'SNAPSHOTTED'",
-                  expectedProjectionDigest,
-                  operationId),
-              "Migration operation changed before exact index rebuild was retained");
-          return readOperation(transaction, operationId, false);
-        });
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      Record row = lockOperation(transaction, operationId);
+      CanonicalGameplayLegacyMigrationOperation operation = toOperation(row);
+      if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.BLOCKED
+          || operation.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED
+          || operation.state()
+              == CanonicalGameplayLegacyMigrationOperation.State.READBACK_VERIFIED) {
+        return operation;
+      }
+      if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.REBUILT) {
+        return operation;
+      }
+      if (operation.state() != CanonicalGameplayLegacyMigrationOperation.State.SNAPSHOTTED) {
+        throw conflict("Only a complete staged source and canonical snapshot may be rebuilt");
+      }
+      requireStoredSnapshotsConsistent(transaction, operation);
+      String expectedProjectionDigest = expectedActiveProjectionDigest(transaction, operationId);
+      requireOne(
+          transaction.execute(
+              "UPDATE "
+                  + OPERATION
+                  + " SET state = 'REBUILT', rebuild_digest = ?, updated_at = CURRENT_TIMESTAMP"
+                  + " WHERE operation_id = ? AND state = 'SNAPSHOTTED'",
+              expectedProjectionDigest,
+              operationId),
+          "Migration operation changed before exact index rebuild was retained");
+      return readOperation(transaction, operationId, false);
+    });
   }
 
   /**
@@ -320,65 +312,63 @@ final class CanonicalGameplayLegacyMigrationRepository {
     if (!actualCanonical.equals(canonical)) {
       return block(operationId, "CANONICAL_READBACK_NOT_FROM_OWNER_REPOSITORY");
     }
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-          Record row = lockOperation(transaction, operationId);
-          CanonicalGameplayLegacyMigrationOperation operation = toOperation(row);
-          if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.BLOCKED
-              || operation.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED) {
-            return operation;
-          }
-          if (operation.state() != CanonicalGameplayLegacyMigrationOperation.State.REBUILT
-              && operation.state()
-                  != CanonicalGameplayLegacyMigrationOperation.State.READBACK_VERIFIED) {
-            throw conflict("Exact namespace readback is not available before rebuild");
-          }
-          requireStoredSnapshotsConsistent(transaction, operation);
-          SnapshotJson snapshotJson = readCanonicalSnapshot(transaction);
-          if (!snapshotJson.revision().equals(canonical.inventoryRevision())
-              || !snapshotJson.revision().equals(operation.canonicalSnapshotRevision())
-              || !sha256(snapshotJson.json()).equals(operation.canonicalSnapshotDigest())) {
-            return block(transaction, operationId, "CANONICAL_SNAPSHOT_CHANGED_BEFORE_READBACK");
-          }
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      Record row = lockOperation(transaction, operationId);
+      CanonicalGameplayLegacyMigrationOperation operation = toOperation(row);
+      if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.BLOCKED
+          || operation.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED) {
+        return operation;
+      }
+      if (operation.state() != CanonicalGameplayLegacyMigrationOperation.State.REBUILT
+          && operation.state()
+              != CanonicalGameplayLegacyMigrationOperation.State.READBACK_VERIFIED) {
+        throw conflict("Exact namespace readback is not available before rebuild");
+      }
+      requireStoredSnapshotsConsistent(transaction, operation);
+      SnapshotJson snapshotJson = readCanonicalSnapshot(transaction);
+      if (!snapshotJson.revision().equals(canonical.inventoryRevision())
+          || !snapshotJson.revision().equals(operation.canonicalSnapshotRevision())
+          || !sha256(snapshotJson.json()).equals(operation.canonicalSnapshotDigest())) {
+        return block(transaction, operationId, "CANONICAL_SNAPSHOT_CHANGED_BEFORE_READBACK");
+      }
 
-          List<CanonicalGameplayBindingInventoryEntry> expected = activeBindings(actualCanonical);
-          if (!sameRows(expected, readback.sessionRecords())
-              || !sameRows(expected, readback.characterIndexRecords())
-              || !readback.remainingLegacySourceKeyDigests().isEmpty()
-              || !readback.unexpectedNamespaceKeyDigests().isEmpty()) {
-            return block(transaction, operationId, "INDEX_READBACK_MISMATCH");
-          }
+      List<CanonicalGameplayBindingInventoryEntry> expected = activeBindings(actualCanonical);
+      if (!sameRows(expected, readback.sessionRecords())
+          || !sameRows(expected, readback.characterIndexRecords())
+          || !readback.remainingLegacySourceKeyDigests().isEmpty()
+          || !readback.unexpectedNamespaceKeyDigests().isEmpty()) {
+        return block(transaction, operationId, "INDEX_READBACK_MISMATCH");
+      }
 
-          String readbackDigest = digestReadback(readback);
-          if (operation.state()
-              == CanonicalGameplayLegacyMigrationOperation.State.READBACK_VERIFIED) {
-            if (!operation.namespaceIndexReadbackDigest().equals(readbackDigest)) {
-              return block(transaction, operationId, "READBACK_CHANGED_ON_REPLAY");
-            }
-            return operation;
-          }
-          BigInteger readbackRevision =
-              readBigInteger(
-                  Objects.requireNonNull(
-                      transaction.fetchOne(
-                          "SELECT nextval('game_session_canonical_legacy_migration_readback_revision_seq') AS revision"),
-                      "legacy migration readback revision sequence must exist"),
-                  "revision");
-          requireOne(
-              transaction.execute(
-                  "UPDATE "
-                      + OPERATION
-                      + " SET state = 'READBACK_VERIFIED', namespace_index_readback_revision = ?,"
-                      + " namespace_index_readback_digest = ?, updated_at = CURRENT_TIMESTAMP"
-                      + " WHERE operation_id = ? AND state = 'REBUILT'",
-                  decimal(readbackRevision),
-                  readbackDigest,
-                  operationId),
-              "Migration operation changed before exact index readback was retained");
-          return readOperation(transaction, operationId, false);
-        });
+      String readbackDigest = digestReadback(readback);
+      if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.READBACK_VERIFIED) {
+        if (!operation.namespaceIndexReadbackDigest().equals(readbackDigest)) {
+          return block(transaction, operationId, "READBACK_CHANGED_ON_REPLAY");
+        }
+        return operation;
+      }
+      BigInteger readbackRevision =
+          readBigInteger(
+              Objects.requireNonNull(
+                  transaction.fetchOne(
+                      "SELECT nextval('game_session_canonical_legacy_migration_readback_revision_seq') AS revision"),
+                  "legacy migration readback revision sequence must exist"),
+              "revision");
+      requireOne(
+          transaction.execute(
+              "UPDATE "
+                  + OPERATION
+                  + " SET state = 'READBACK_VERIFIED', namespace_index_readback_revision = ?,"
+                  + " namespace_index_readback_digest = ?, updated_at = CURRENT_TIMESTAMP"
+                  + " WHERE operation_id = ? AND state = 'REBUILT'",
+              decimal(readbackRevision),
+              readbackDigest,
+              operationId),
+          "Migration operation changed before exact index readback was retained");
+      return readOperation(transaction, operationId, false);
+    });
   }
 
   /**
@@ -391,87 +381,85 @@ final class CanonicalGameplayLegacyMigrationRepository {
     requireNoAmbientTransaction();
     requireNonNil(operationId, "operationId");
     Objects.requireNonNull(cohort, "cohort");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-          Record row = lockOperation(transaction, operationId);
-          CanonicalGameplayLegacyMigrationOperation operation = toOperation(row);
-          requireSameCohort(operation, cohort);
-          cohort.requireStillFenced(operation.storageIdentity());
-          if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED) {
-            requirePublishedDispositionMatches(transaction, operation);
-            return operation;
-          }
-          if (operation.state()
-              != CanonicalGameplayLegacyMigrationOperation.State.READBACK_VERIFIED) {
-            throw conflict("Only exact complete readback evidence may publish the V31 disposition");
-          }
+    return dsl.transactionResult(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      Record row = lockOperation(transaction, operationId);
+      CanonicalGameplayLegacyMigrationOperation operation = toOperation(row);
+      requireSameCohort(operation, cohort);
+      cohort.requireStillFenced(operation.storageIdentity());
+      if (operation.state() == CanonicalGameplayLegacyMigrationOperation.State.VERIFIED) {
+        requirePublishedDispositionMatches(transaction, operation);
+        return operation;
+      }
+      if (operation.state() != CanonicalGameplayLegacyMigrationOperation.State.READBACK_VERIFIED) {
+        throw conflict("Only exact complete readback evidence may publish the V31 disposition");
+      }
 
-          Record clock =
-              Objects.requireNonNull(
-                  transaction.fetchOne(
-                      "SELECT inventory_revision FROM "
-                          + INVENTORY_CLOCK
-                          + " WHERE singleton_id = 1 FOR UPDATE"),
-                  "canonical inventory clock row must exist");
-          BigInteger currentRevision = readBigInteger(clock, "inventory_revision");
-          requireStoredSourceSnapshotConsistent(transaction, operation);
-          requireStoredCanonicalSnapshotConsistent(transaction, operation);
-          if (!currentRevision.equals(operation.canonicalSnapshotRevision())) {
-            throw conflict("Canonical inventory revision changed while migration fences were held");
-          }
-          SnapshotJson currentSnapshot = readCanonicalSnapshot(transaction);
-          if (!currentSnapshot.revision().equals(currentRevision)
-              || !sha256(currentSnapshot.json()).equals(operation.canonicalSnapshotDigest())) {
-            throw conflict("Canonical durable inventory changed after staged readback");
-          }
+      Record clock =
+          Objects.requireNonNull(
+              transaction.fetchOne(
+                  "SELECT inventory_revision FROM "
+                      + INVENTORY_CLOCK
+                      + " WHERE singleton_id = 1 FOR UPDATE"),
+              "canonical inventory clock row must exist");
+      BigInteger currentRevision = readBigInteger(clock, "inventory_revision");
+      requireStoredSourceSnapshotConsistent(transaction, operation);
+      requireStoredCanonicalSnapshotConsistent(transaction, operation);
+      if (!currentRevision.equals(operation.canonicalSnapshotRevision())) {
+        throw conflict("Canonical inventory revision changed while migration fences were held");
+      }
+      SnapshotJson currentSnapshot = readCanonicalSnapshot(transaction);
+      if (!currentSnapshot.revision().equals(currentRevision)
+          || !sha256(currentSnapshot.json()).equals(operation.canonicalSnapshotDigest())) {
+        throw conflict("Canonical durable inventory changed after staged readback");
+      }
 
-          BigInteger publicationRevision = currentRevision;
-          if (publicationRevision.signum() == 0) {
-            publicationRevision = BigInteger.ONE;
-            requireOne(
-                transaction.execute(
-                    "UPDATE "
-                        + INVENTORY_CLOCK
-                        + " SET inventory_revision = ? WHERE singleton_id = 1 AND inventory_revision = 0",
-                    decimal(publicationRevision)),
-                "Empty canonical snapshot could not acquire its owner publication revision");
-          }
-          String evidenceDigest = digestEvidence(operation, publicationRevision);
-          requireOne(
-              transaction.execute(
-                  "UPDATE "
-                      + LEGACY_DISPOSITION
-                      + " SET disposition_state = 'VERIFIED', cohort_id = ?, owner_operation_id = ?,"
-                      + " legacy_writer_fence = ?, source_snapshot_revision = ?,"
-                      + " canonical_inventory_revision = ?, namespace_index_readback_revision = ?,"
-                      + " evidence_digest = ? WHERE singleton_id = 1 AND disposition_state = 'REQUIRED'",
-                  operation.cohortId(),
-                  operation.operationId(),
-                  operation.legacyWriterFence(),
-                  decimal(operation.sourceSnapshotRevision()),
-                  decimal(publicationRevision),
-                  decimal(operation.namespaceIndexReadbackRevision()),
-                  evidenceDigest),
-              "V31 disposition was already changed by a different migration owner");
-          requireOne(
-              transaction.execute(
-                  "UPDATE "
-                      + OPERATION
-                      + " SET state = 'VERIFIED', publication_inventory_revision = ?,"
-                      + " evidence_digest = ?, updated_at = CURRENT_TIMESTAMP"
-                      + " WHERE operation_id = ? AND state = 'READBACK_VERIFIED'",
-                  decimal(publicationRevision),
-                  evidenceDigest,
-                  operationId),
-              "Migration operation changed before atomic V31 publication");
-          cohort.requireStillFenced(operation.storageIdentity());
-          CanonicalGameplayLegacyMigrationOperation published =
-              readOperation(transaction, operationId, false);
-          requirePublishedDispositionMatches(transaction, published);
-          return published;
-        });
+      BigInteger publicationRevision = currentRevision;
+      if (publicationRevision.signum() == 0) {
+        publicationRevision = BigInteger.ONE;
+        requireOne(
+            transaction.execute(
+                "UPDATE "
+                    + INVENTORY_CLOCK
+                    + " SET inventory_revision = ? WHERE singleton_id = 1 AND inventory_revision = 0",
+                decimal(publicationRevision)),
+            "Empty canonical snapshot could not acquire its owner publication revision");
+      }
+      String evidenceDigest = digestEvidence(operation, publicationRevision);
+      requireOne(
+          transaction.execute(
+              "UPDATE "
+                  + LEGACY_DISPOSITION
+                  + " SET disposition_state = 'VERIFIED', cohort_id = ?, owner_operation_id = ?,"
+                  + " legacy_writer_fence = ?, source_snapshot_revision = ?,"
+                  + " canonical_inventory_revision = ?, namespace_index_readback_revision = ?,"
+                  + " evidence_digest = ? WHERE singleton_id = 1 AND disposition_state = 'REQUIRED'",
+              operation.cohortId(),
+              operation.operationId(),
+              operation.legacyWriterFence(),
+              decimal(operation.sourceSnapshotRevision()),
+              decimal(publicationRevision),
+              decimal(operation.namespaceIndexReadbackRevision()),
+              evidenceDigest),
+          "V31 disposition was already changed by a different migration owner");
+      requireOne(
+          transaction.execute(
+              "UPDATE "
+                  + OPERATION
+                  + " SET state = 'VERIFIED', publication_inventory_revision = ?,"
+                  + " evidence_digest = ?, updated_at = CURRENT_TIMESTAMP"
+                  + " WHERE operation_id = ? AND state = 'READBACK_VERIFIED'",
+              decimal(publicationRevision),
+              evidenceDigest,
+              operationId),
+          "Migration operation changed before atomic V31 publication");
+      cohort.requireStillFenced(operation.storageIdentity());
+      CanonicalGameplayLegacyMigrationOperation published =
+          readOperation(transaction, operationId, false);
+      requirePublishedDispositionMatches(transaction, published);
+      return published;
+    });
   }
 
   CanonicalGameplayLegacyMigrationOperation block(UUID operationId, String reason) {
@@ -582,15 +570,14 @@ final class CanonicalGameplayLegacyMigrationRepository {
                     + SOURCE_ENTRY
                     + " WHERE operation_id = ? ORDER BY row_ordinal",
                 operationId)
-            .map(
-                row -> {
-                  return new CanonicalGameplayLegacyMigrationSourceSnapshot.Entry(
-                      CanonicalGameplayLegacyMigrationSourceSnapshot.Family.valueOf(
-                          row.get("source_family", String.class)),
-                      row.get("source_key_digest", String.class),
-                      CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.valueOf(
-                          row.get("disposition", String.class)));
-                });
+            .map(row -> {
+              return new CanonicalGameplayLegacyMigrationSourceSnapshot.Entry(
+                  CanonicalGameplayLegacyMigrationSourceSnapshot.Family.valueOf(
+                      row.get("source_family", String.class)),
+                  row.get("source_key_digest", String.class),
+                  CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.valueOf(
+                      row.get("disposition", String.class)));
+            });
     Long storedEntryCount = operation.get("source_snapshot_entry_count", Long.class);
     if (!Objects.equals(storedEntryCount, (long) entries.size())) {
       throw conflict("Persisted legacy source inventory entry count is incomplete");
@@ -709,9 +696,8 @@ final class CanonicalGameplayLegacyMigrationRepository {
   private static List<CanonicalGameplayBindingInventoryEntry> activeBindings(
       CanonicalGameplayBindingInventorySnapshot snapshot) {
     return snapshot.bindings().stream()
-        .filter(
-            binding ->
-                binding.lifecycle() == CanonicalGameplayBindingInventoryEntry.Lifecycle.ACTIVE)
+        .filter(binding ->
+            binding.lifecycle() == CanonicalGameplayBindingInventoryEntry.Lifecycle.ACTIVE)
         .sorted(Comparator.comparing(binding -> hex(binding.bindingRef().bytes())))
         .toList();
   }
@@ -739,12 +725,11 @@ final class CanonicalGameplayLegacyMigrationRepository {
         .sorted(
             Comparator.comparing(
                 CanonicalGameplayLegacyMigrationSourceSnapshot.Entry::sourceKeyDigest))
-        .forEach(
-            entry -> {
-              append(framed, entry.family().name());
-              append(framed, entry.sourceKeyDigest());
-              append(framed, entry.disposition().name());
-            });
+        .forEach(entry -> {
+          append(framed, entry.family().name());
+          append(framed, entry.sourceKeyDigest());
+          append(framed, entry.disposition().name());
+        });
     return sha256(framed.toString());
   }
 

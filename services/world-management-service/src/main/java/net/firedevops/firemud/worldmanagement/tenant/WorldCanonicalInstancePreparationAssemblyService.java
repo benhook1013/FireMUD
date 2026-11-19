@@ -63,19 +63,17 @@ public final class WorldCanonicalInstancePreparationAssemblyService {
     WorldCompleteLaunchBindingRepository.StoredBinding storedBinding =
         launchBindings
             .read(workloadNamespace, selector.canonicalTenantId(), selector.controlPlaneRequestId())
-            .orElseThrow(
-                () ->
-                    new AssemblyRejectedException(
-                        "No committed World complete launch binding matches the stable selector"));
+            .orElseThrow(() ->
+                new AssemblyRejectedException(
+                    "No committed World complete launch binding matches the stable selector"));
     requireStoredSelector(storedBinding, selector);
 
     WorldAuthoredSourceIntakeReceipt sourceReceipt =
         sourceIntakes
             .read(workloadNamespace, storedBinding.intakeRequestId())
-            .orElseThrow(
-                () ->
-                    new AssemblyRejectedException(
-                        "World launch binding has no exact committed source intake"));
+            .orElseThrow(() ->
+                new AssemblyRejectedException(
+                    "World launch binding has no exact committed source intake"));
     WorldCompleteLaunchBindingReceipt launchBinding =
         launchBindings.toReceipt(storedBinding, sourceReceipt);
 
@@ -96,10 +94,9 @@ public final class WorldCanonicalInstancePreparationAssemblyService {
                 selector.canonicalTenantId(),
                 descriptor.worldSlug(),
                 release.canonicalVersionId())
-            .orElseThrow(
-                () ->
-                    new AssemblyRejectedException(
-                        "World has no committed source-qualified Version identity for the release UUID"));
+            .orElseThrow(() ->
+                new AssemblyRejectedException(
+                    "World has no committed source-qualified Version identity for the release UUID"));
     if (!versionIdentity.sourceIntakeReceipt().equals(sourceReceipt)
         || !versionIdentity.canonicalVersionId().equals(release.canonicalVersionId())
         || !versionIdentity.worldSlug().equals(descriptor.worldSlug())) {
@@ -111,10 +108,9 @@ public final class WorldCanonicalInstancePreparationAssemblyService {
     WorldCanonicalFrozenTopology frozen =
         frozenTopologies
             .readCommitted(captureRequest)
-            .orElseThrow(
-                () ->
-                    new AssemblyRejectedException(
-                        "Published release selector has no exact committed frozen World topology"));
+            .orElseThrow(() ->
+                new AssemblyRejectedException(
+                    "Published release selector has no exact committed frozen World topology"));
     WorldCanonicalInstanceTopologyPlan topologyPlan =
         WorldCanonicalInstanceTopologyPlan.create(frozen);
     WorldCanonicalInstancePreparation.requireExactReleaseGraph(release, topologyPlan);
@@ -181,15 +177,14 @@ public final class WorldCanonicalInstancePreparationAssemblyService {
         request.contentDigest(),
         request.digestSchemaVersion(),
         request.worldAffectedTuples().stream()
-            .map(
-                tuple ->
-                    new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
-                        tuple.owner(),
-                        tuple.aggregateType(),
-                        tuple.aggregateId(),
-                        tuple.scopeType(),
-                        tuple.scopeId(),
-                        tuple.expectedEpoch()))
+            .map(tuple ->
+                new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                    tuple.owner(),
+                    tuple.aggregateType(),
+                    tuple.aggregateId(),
+                    tuple.scopeType(),
+                    tuple.scopeId(),
+                    tuple.expectedEpoch()))
             .toList());
   }
 

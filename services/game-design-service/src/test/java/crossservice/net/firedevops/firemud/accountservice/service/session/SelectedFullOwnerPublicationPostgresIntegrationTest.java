@@ -270,12 +270,11 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             commit.digest());
     var selection =
         gds.write()
-            .execute(
-                ignored ->
-                    new AuthoredDraftPublishSelectionRepository(
-                            gds.dsl(), new DraftCommitCoordinatorRepository(gds.dsl()))
-                        .reserve(intent)
-                        .selection());
+            .execute(ignored ->
+                new AuthoredDraftPublishSelectionRepository(
+                        gds.dsl(), new DraftCommitCoordinatorRepository(gds.dsl()))
+                    .reserve(intent)
+                    .selection());
     try (var accountFixture =
         new AccountControlUiOriginalOrderFixture(
             ACCOUNT_POSTGRES.getJdbcUrl(),
@@ -405,12 +404,11 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       var glOwner = new GameLogicGameplayRuleIntakeRepository(gameLogic.dsl());
       gameLogic
           .write()
-          .execute(
-              ignored -> {
-                glOwner.lockOperation(glAuthorization.operationId());
-                glOwner.insertTerminal(glTerminal);
-                return null;
-              });
+          .execute(ignored -> {
+            glOwner.lockOperation(glAuthorization.operationId());
+            glOwner.insertTerminal(glTerminal);
+            return null;
+          });
       var committedGlTerminal = glOwner.findTerminal(glAuthorization.operationId()).orElseThrow();
       assertThat(committedGlTerminal.canonicalBytes()).containsExactly(glTerminal.canonicalBytes());
 
@@ -625,10 +623,9 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
           assertThat(participantDigests)
               .filteredOn(digest -> "WORLD_MANAGEMENT".equals(digest.participantKey()))
               .singleElement()
-              .satisfies(
-                  digest ->
-                      assertThat(digest.contentDigest())
-                          .isEqualTo(worldOwners.selectedWorldDigest().contentDigest()));
+              .satisfies(digest ->
+                  assertThat(digest.contentDigest())
+                      .isEqualTo(worldOwners.selectedWorldDigest().contentDigest()));
           assertThat(participantDigests)
               .filteredOn(digest -> "GAME_LOGIC".equals(digest.participantKey()))
               .singleElement()
@@ -652,10 +649,9 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                   validAutomation.errorMessage()));
           assertThatThrownBy(() -> gate.assertSelectedGatePassed(versionDto, altered))
               .isInstanceOf(PublishGateFailureException.class)
-              .satisfies(
-                  failure ->
-                      assertThat(((PublishGateFailureException) failure).failureCode())
-                          .isEqualTo(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA));
+              .satisfies(failure ->
+                  assertThat(((PublishGateFailureException) failure).failureCode())
+                      .isEqualTo(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA));
 
           var releaseService =
               new PublishedReleaseBundleServiceImpl(
@@ -683,19 +679,17 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                   gds.dsl());
           var exportSnapshot =
               gds.write()
-                  .execute(
-                      ignored ->
-                          assetPublication.freezeOrReadSnapshot(
-                              versionDto.tenantId(), versionDto.versionNumber()));
+                  .execute(ignored ->
+                      assetPublication.freezeOrReadSnapshot(
+                          versionDto.tenantId(), versionDto.versionNumber()));
           assertThat(exportSnapshot.items()).isEmpty();
           gds.write()
-              .execute(
-                  ignored ->
-                      artifactService.stageExport(
-                          versionDto.tenantId(),
-                          versionDto.id(),
-                          versionDto.versionNumber(),
-                          publicationRequest.derivedWorkflowIdentity()));
+              .execute(ignored ->
+                  artifactService.stageExport(
+                      versionDto.tenantId(),
+                      versionDto.id(),
+                      versionDto.versionNumber(),
+                      publicationRequest.derivedWorkflowIdentity()));
           var candidateService =
               new net.firedevops.firemud.gamedesign.service.impl
                   .VersionAssetExportCandidateServiceImpl(
@@ -720,18 +714,16 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                   candidateService.readExportCandidate(
                       versionDto.tenantId(), versionDto.versionNumber()))
               .isEqualTo(candidate);
-          assertThatThrownBy(
-                  () ->
-                      gds.write()
-                          .execute(
-                              ignored ->
-                                  releaseService.createFullVersionBundle(
-                                      versionDto,
-                                      publicationRequest.derivedWorkflowIdentity(),
-                                      controlledEmptyManifest,
-                                      "controlled-generation-input",
-                                      altered,
-                                      worldOwners.startLocationEvidence())))
+          assertThatThrownBy(() ->
+                  gds.write()
+                      .execute(ignored ->
+                          releaseService.createFullVersionBundle(
+                              versionDto,
+                              publicationRequest.derivedWorkflowIdentity(),
+                              controlledEmptyManifest,
+                              "controlled-generation-input",
+                              altered,
+                              worldOwners.startLocationEvidence())))
               .isInstanceOf(IllegalArgumentException.class)
               .hasMessageContaining("Selected-full release requires the exact 4/3/1/6/2");
           assertThat(
@@ -746,58 +738,54 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
           PublishedReleaseBundleService releaseOwner = releaseService;
           var written =
               gds.write()
-                  .execute(
-                      ignored -> {
-                        String workflow = publicationRequest.derivedWorkflowIdentity();
-                        var exported =
-                            artifactService.markExportedUnattested(
-                                versionDto.tenantId(),
-                                versionDto.id(),
-                                versionDto.versionNumber(),
-                                workflow,
-                                controlledEmptyManifest);
-                        var result =
-                            releaseOwner.createFullVersionBundle(
-                                versionDto,
-                                workflow,
-                                controlledEmptyManifest,
-                                "controlled-generation-input",
-                                participantDigests,
-                                worldOwners.startLocationEvidence());
-                        var version =
-                            versions
-                                .findByTenantIdAndIdForUpdate(
-                                    versionDto.tenantId(), versionDto.id())
-                                .orElseThrow();
-                        version.setVersionState(VersionLifecycleState.PUBLISHED);
-                        version.setVersionStateEpoch(
-                            Math.addExact(version.getVersionStateEpoch(), 1L));
-                        versions.save(version);
-                        artifactService.markPublished(
+                  .execute(ignored -> {
+                    String workflow = publicationRequest.derivedWorkflowIdentity();
+                    var exported =
+                        artifactService.markExportedUnattested(
                             versionDto.tenantId(),
                             versionDto.id(),
-                            exported.stateEpoch(),
+                            versionDto.versionNumber(),
                             workflow,
-                            controlledEmptyManifest.manifestHash());
-                        var attempts =
-                            new net.firedevops.firemud.gamedesign.repository
-                                .PublishAttemptRepository(gds.dsl());
-                        var attempt =
-                            attempts.findByPublishWorkflowIdForUpdate(workflow).orElseThrow();
-                        attempt.setStatus(
-                            net.firedevops.firemud.gamedesign.model.PublishAttemptStatus.SUCCEEDED);
-                        attempts.save(attempt);
-                        var operation = selectedOwnerReservation.operation();
-                        new net.firedevops.firemud.gamedesign.publication
-                                .GameDesignPublicationOperationRepository(gds.dsl())
-                            .seal(
-                                operation.tenantKey(),
-                                workflow,
-                                operation.versionId(),
-                                operation.selectionDigest(),
-                                true);
-                        return result;
-                      });
+                            controlledEmptyManifest);
+                    var result =
+                        releaseOwner.createFullVersionBundle(
+                            versionDto,
+                            workflow,
+                            controlledEmptyManifest,
+                            "controlled-generation-input",
+                            participantDigests,
+                            worldOwners.startLocationEvidence());
+                    var version =
+                        versions
+                            .findByTenantIdAndIdForUpdate(versionDto.tenantId(), versionDto.id())
+                            .orElseThrow();
+                    version.setVersionState(VersionLifecycleState.PUBLISHED);
+                    version.setVersionStateEpoch(Math.addExact(version.getVersionStateEpoch(), 1L));
+                    versions.save(version);
+                    artifactService.markPublished(
+                        versionDto.tenantId(),
+                        versionDto.id(),
+                        exported.stateEpoch(),
+                        workflow,
+                        controlledEmptyManifest.manifestHash());
+                    var attempts =
+                        new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(
+                            gds.dsl());
+                    var attempt = attempts.findByPublishWorkflowIdForUpdate(workflow).orElseThrow();
+                    attempt.setStatus(
+                        net.firedevops.firemud.gamedesign.model.PublishAttemptStatus.SUCCEEDED);
+                    attempts.save(attempt);
+                    var operation = selectedOwnerReservation.operation();
+                    new net.firedevops.firemud.gamedesign.publication
+                            .GameDesignPublicationOperationRepository(gds.dsl())
+                        .seal(
+                            operation.tenantKey(),
+                            workflow,
+                            operation.versionId(),
+                            operation.selectionDigest(),
+                            true);
+                    return result;
+                  });
           assertThat(written.attestationSchemaVersion()).isEqualTo("v4");
           assertThat(written.participantDigests()).containsExactlyElementsOf(participantDigests);
           assertThat(written.worldPublishedStartLocationEvidence().canonicalBytes())
@@ -817,15 +805,14 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
 
           var replay =
               gds.write()
-                  .execute(
-                      ignored ->
-                          releaseOwner.createFullVersionBundle(
-                              versionDto,
-                              publicationRequest.derivedWorkflowIdentity(),
-                              controlledEmptyManifest,
-                              "controlled-generation-input",
-                              participantDigests,
-                              worldOwners.startLocationEvidence()));
+                  .execute(ignored ->
+                      releaseOwner.createFullVersionBundle(
+                          versionDto,
+                          publicationRequest.derivedWorkflowIdentity(),
+                          controlledEmptyManifest,
+                          "controlled-generation-input",
+                          participantDigests,
+                          worldOwners.startLocationEvidence()));
           assertThat(replay).isEqualTo(written);
           assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
           completeActualWorldAndAccountTerminals(
@@ -871,18 +858,17 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     when(thirdServer.awaitTermination(5, TimeUnit.SECONDS)).thenReturn(false);
 
     Throwable thrown =
-        catchThrowable(
-            () -> {
-              Throwable primaryFailure = null;
-              try {
-                throw bodyFailure;
-              } catch (RuntimeException failure) {
-                primaryFailure = failure;
-                throw failure;
-              } finally {
-                stopServers(primaryFailure, firstServer, secondServer, thirdServer);
-              }
-            });
+        catchThrowable(() -> {
+          Throwable primaryFailure = null;
+          try {
+            throw bodyFailure;
+          } catch (RuntimeException failure) {
+            primaryFailure = failure;
+            throw failure;
+          } finally {
+            stopServers(primaryFailure, firstServer, secondServer, thirdServer);
+          }
+        });
 
     assertThat(thrown).isSameAs(bodyFailure);
     assertThat(bodyFailure.getSuppressed()).hasSize(3);
@@ -911,11 +897,10 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
 
     assertThatThrownBy(() -> stopServers(null, firstServer, secondServer, thirdServer))
         .isInstanceOf(AssertionError.class)
-        .satisfies(
-            failure -> {
-              assertThat(failure.getSuppressed()).hasSize(1);
-              assertThat(failure.getSuppressed()[0].getCause()).isSameAs(waitFailure);
-            });
+        .satisfies(failure -> {
+          assertThat(failure.getSuppressed()).hasSize(1);
+          assertThat(failure.getSuppressed()[0].getCause()).isSameAs(waitFailure);
+        });
 
     verify(firstServer).shutdownNow();
     verify(secondServer).shutdownNow();
@@ -939,11 +924,10 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     try {
       assertThatThrownBy(() -> stopServers(null, firstServer, secondServer, thirdServer))
           .isInstanceOf(AssertionError.class)
-          .satisfies(
-              failure -> {
-                assertThat(failure.getSuppressed()).hasSize(1);
-                assertThat(failure.getSuppressed()[0].getCause()).isSameAs(interruption);
-              });
+          .satisfies(failure -> {
+            assertThat(failure.getSuppressed()).hasSize(1);
+            assertThat(failure.getSuppressed()[0].getCause()).isSameAs(interruption);
+          });
       assertThat(Thread.currentThread().isInterrupted()).isTrue();
       verify(firstServer).awaitTermination(5, TimeUnit.SECONDS);
       verify(secondServer).awaitTermination(5, TimeUnit.SECONDS);
@@ -1006,10 +990,9 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         assertThat(before.get("account_selected_publication_sources")).isEmpty();
         assertThatThrownBy(() -> client.authorize(request))
             .isInstanceOf(io.grpc.StatusRuntimeException.class)
-            .satisfies(
-                error ->
-                    assertThat(io.grpc.Status.fromThrowable(error).getCode())
-                        .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
+            .satisfies(error ->
+                assertThat(io.grpc.Status.fromThrowable(error).getCode())
+                    .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
         assertThat(publicationOrderRows(sources.dsl)).isEqualTo(before);
         assertThat(reads.get()).isEqualTo(1);
         unavailable.set(false);
@@ -1186,10 +1169,9 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
               .isEqualTo("OPEN");
           assertThatThrownBy(() -> freeze.begin(request))
               .isInstanceOf(io.grpc.StatusRuntimeException.class)
-              .satisfies(
-                  error ->
-                      assertThat(io.grpc.Status.fromThrowable(error).getCode())
-                          .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
+              .satisfies(error ->
+                  assertThat(io.grpc.Status.fromThrowable(error).getCode())
+                      .isEqualTo(io.grpc.Status.Code.UNAVAILABLE));
           assertThat(freezeOwnerRows(world.dsl())).isEqualTo(before);
           assertThat(selectionCalls.get()).isEqualTo(1);
           assertThat(versionCalls.get()).isEqualTo(1);
@@ -1384,25 +1366,22 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             wrongCaller.init();
             assertThatThrownBy(() -> wrongCaller.settle(settlementRequest))
                 .isInstanceOf(io.grpc.StatusRuntimeException.class)
-                .satisfies(
-                    error ->
-                        assertThat(io.grpc.Status.fromThrowable(error).getCode())
-                            .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+                .satisfies(error ->
+                    assertThat(io.grpc.Status.fromThrowable(error).getCode())
+                        .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
           }
           diagnostics.phase(
               "account-settlement-before-world-terminal",
               () -> {
-                assertThatThrownBy(
-                        () ->
-                            settlementClient.settle(
-                                net.firedevops.firemud.common.publication
-                                    .AccountSelectedPublicationSettlementGrpcCodec.Request.create(
-                                    NAMESPACE, operation.canonicalBytes())))
+                assertThatThrownBy(() ->
+                        settlementClient.settle(
+                            net.firedevops.firemud.common.publication
+                                .AccountSelectedPublicationSettlementGrpcCodec.Request.create(
+                                NAMESPACE, operation.canonicalBytes())))
                     .isInstanceOf(io.grpc.StatusRuntimeException.class)
-                    .satisfies(
-                        error ->
-                            assertThat(io.grpc.Status.fromThrowable(error).getCode())
-                                .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+                    .satisfies(error ->
+                        assertThat(io.grpc.Status.fromThrowable(error).getCode())
+                            .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
                 return null;
               });
           assertThat(
@@ -1559,20 +1538,17 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
           "sha256:"
               + java.util.HexFormat.of()
                   .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(inventory)));
-      assertThatThrownBy(
-              () ->
-                  dsl.fetch(
-                      "SELECT require_selected_inventory_operation_v2(?::bytea)",
-                      raw.toByteArray()))
+      assertThatThrownBy(() ->
+              dsl.fetch(
+                  "SELECT require_selected_inventory_operation_v2(?::bytea)", raw.toByteArray()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
-          .satisfies(
-              failure -> {
-                var cause = failure;
-                while (cause != null && !(cause instanceof java.sql.SQLException))
-                  cause = cause.getCause();
-                assertThat(cause).isInstanceOf(java.sql.SQLException.class);
-                assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("23514");
-              });
+          .satisfies(failure -> {
+            var cause = failure;
+            while (cause != null && !(cause instanceof java.sql.SQLException))
+              cause = cause.getCause();
+            assertThat(cause).isInstanceOf(java.sql.SQLException.class);
+            assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("23514");
+          });
     }
     assertThat(
             dsl.fetch(
@@ -1584,19 +1560,18 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
   private static Draft createDraft(Store gds) {
     Version savedVersion =
         gds.write()
-            .execute(
-                ignored -> {
-                  Game game = new Game();
-                  game.setTenantId(UUID.randomUUID().toString());
-                  game.setName("Controlled selected full owner proof");
-                  Game savedGame = new GameRepository(gds.dsl()).save(game);
-                  Version version = new Version();
-                  version.setTenantId(savedGame.getTenantId());
-                  version.setVersionNumber(1);
-                  version.setVersionState(VersionLifecycleState.DRAFT);
-                  version.setVersionStateEpoch(1L);
-                  return new VersionRepository(gds.dsl()).save(version);
-                });
+            .execute(ignored -> {
+              Game game = new Game();
+              game.setTenantId(UUID.randomUUID().toString());
+              game.setName("Controlled selected full owner proof");
+              Game savedGame = new GameRepository(gds.dsl()).save(game);
+              Version version = new Version();
+              version.setTenantId(savedGame.getTenantId());
+              version.setVersionNumber(1);
+              version.setVersionState(VersionLifecycleState.DRAFT);
+              version.setVersionStateEpoch(1L);
+              return new VersionRepository(gds.dsl()).save(version);
+            });
     var target =
         new TargetProof(
             savedVersion.getCanonicalTenantId(),
@@ -1613,15 +1588,14 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       Store gds, TargetProof target) {
     var repository = new GameAuthoredWorldSourceRepository(gds.dsl());
     return gds.write()
-        .execute(
-            ignored ->
-                repository.register(
-                    NAMESPACE,
-                    UUID.randomUUID(),
-                    target.canonicalTenantId(),
-                    "controlled-selected-tenant",
-                    "controlled-selected-world",
-                    "Controlled selected World source"));
+        .execute(ignored ->
+            repository.register(
+                NAMESPACE,
+                UUID.randomUUID(),
+                target.canonicalTenantId(),
+                "controlled-selected-tenant",
+                "controlled-selected-world",
+                "Controlled selected World source"));
   }
 
   private static DraftCommitBinding selectedCommit(Store gds, TargetProof target)
@@ -1864,17 +1838,16 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     var coordinator = new DraftCommitCoordinatorRepository(gds.dsl());
     var sources = new GameDesignSourceRepository(gds.dsl());
     gds.write()
-        .execute(
-            ignored -> {
-              var reviewed =
-                  new GameDesignReviewedBaseRepository(gds.dsl())
-                      .resolve(binding.target(), DraftBaseReference.parse(binding.baseCommitId()));
-              sources.claimReviewed(binding, reviewed);
-              coordinator.claimApplicationSlot(binding);
-              for (Owner owner : binding.requiredOwners())
-                coordinator.markOwnerInProgress(binding, owner);
-              return null;
-            });
+        .execute(ignored -> {
+          var reviewed =
+              new GameDesignReviewedBaseRepository(gds.dsl())
+                  .resolve(binding.target(), DraftBaseReference.parse(binding.baseCommitId()));
+          sources.claimReviewed(binding, reviewed);
+          coordinator.claimApplicationSlot(binding);
+          for (Owner owner : binding.requiredOwners())
+            coordinator.markOwnerInProgress(binding, owner);
+          return null;
+        });
   }
 
   private static void completeGameDesignCommit(
@@ -1893,34 +1866,31 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             worldApplied.resultIdentity(),
             worldApplied.canonicalBytes(),
             worldApplied.appliedEpochs().stream()
-                .map(
-                    epoch ->
-                        new DraftCommitCoordinatorRepository.AppliedEpoch(
-                            epoch.aggregateType(),
-                            epoch.aggregateId(),
-                            epoch.scopeType(),
-                            epoch.scopeId(),
-                            epoch.expectedEpoch(),
-                            epoch.resultingEpoch()))
+                .map(epoch ->
+                    new DraftCommitCoordinatorRepository.AppliedEpoch(
+                        epoch.aggregateType(),
+                        epoch.aggregateId(),
+                        epoch.scopeType(),
+                        epoch.scopeId(),
+                        epoch.expectedEpoch(),
+                        epoch.resultingEpoch()))
                 .toList());
     gds.write()
-        .execute(
-            ignored -> {
-              coordinator.recordOwnerOutcome(binding, gameDesignApplied.ownerOutcome());
-              coordinator.recordOwnerOutcome(binding, worldOutcome);
-              List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes =
-                  binding.requiredOwners().stream()
-                      .map(
-                          owner ->
-                              owner == Owner.WORLD_MANAGEMENT
-                                  ? worldOutcome
-                                  : gameDesignApplied.ownerOutcome())
-                      .toList();
-              net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
-                  .advanceIsolatedSourceVisibility(gds.dsl(), binding, outcomes);
-              coordinator.releaseApplicationSlot(binding);
-              return null;
-            });
+        .execute(ignored -> {
+          coordinator.recordOwnerOutcome(binding, gameDesignApplied.ownerOutcome());
+          coordinator.recordOwnerOutcome(binding, worldOutcome);
+          List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes =
+              binding.requiredOwners().stream()
+                  .map(owner ->
+                      owner == Owner.WORLD_MANAGEMENT
+                          ? worldOutcome
+                          : gameDesignApplied.ownerOutcome())
+                  .toList();
+          net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+              .advanceIsolatedSourceVisibility(gds.dsl(), binding, outcomes);
+          coordinator.releaseApplicationSlot(binding);
+          return null;
+        });
   }
 
   private static SelectedOwnerIntakeAuthorizationBinding selectedOwnerAuthorization(

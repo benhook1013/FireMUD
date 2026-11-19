@@ -239,12 +239,10 @@ class CommandSourceTest {
             selected.baseCommitId(),
             selected.revisions(),
             selected.affectedUnits());
-    assertThatThrownBy(
-            () ->
-                new CommandSnapshot.Capture(
-                    operation,
-                    new CommandSnapshot(
-                        wrongCommit, "0", null, "sha256:" + "a".repeat(64), List.of())))
+    assertThatThrownBy(() ->
+            new CommandSnapshot.Capture(
+                operation,
+                new CommandSnapshot(wrongCommit, "0", null, "sha256:" + "a".repeat(64), List.of())))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

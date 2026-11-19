@@ -34,12 +34,11 @@ class AccountBootstrapRosterPeerInterceptorTest {
     var call = call("spiffe://firemud/ns/test/sa/account-service");
     ServerCallHandler<String, String> next = mock(ServerCallHandler.class);
     when(next.startCall(any(), any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(GrpcPeerIdentity.current().isService("account-service")).isTrue();
-              assertThat(GrpcPeerIdentity.current().isInNamespace("test")).isTrue();
-              return new ServerCall.Listener<String>() {};
-            });
+        .thenAnswer(ignored -> {
+          assertThat(GrpcPeerIdentity.current().isService("account-service")).isTrue();
+          assertThat(GrpcPeerIdentity.current().isInNamespace("test")).isTrue();
+          return new ServerCall.Listener<String>() {};
+        });
     new AccountBootstrapRosterPeerInterceptor("test").interceptCall(call, new Metadata(), next);
     verify(next).startCall(any(), any());
   }
@@ -58,12 +57,11 @@ class AccountBootstrapRosterPeerInterceptorTest {
       verify(next, never()).startCall(any(), any());
       verify(call)
           .close(
-              argThat(
-                  status ->
-                      status.getCode()
-                          == (identity == null
-                              ? Status.Code.UNAUTHENTICATED
-                              : Status.Code.PERMISSION_DENIED)),
+              argThat(status ->
+                  status.getCode()
+                      == (identity == null
+                          ? Status.Code.UNAUTHENTICATED
+                          : Status.Code.PERMISSION_DENIED)),
               any());
     }
   }

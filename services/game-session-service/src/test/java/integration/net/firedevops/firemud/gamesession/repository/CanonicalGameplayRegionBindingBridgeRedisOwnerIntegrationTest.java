@@ -154,23 +154,21 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
               ascii(key),
               java.util.Map.of(
                   ascii("session_id"), foreignSession, ascii("binding_generation"), ascii("2")));
-      assertThatThrownBy(
-              () ->
-                  owner.probeSessionBinding(
-                      grant,
-                      status,
-                      actor.runtimeEntityId(),
-                      SESSION_ID.toString(),
-                      java.math.BigInteger.ONE))
+      assertThatThrownBy(() ->
+              owner.probeSessionBinding(
+                  grant,
+                  status,
+                  actor.runtimeEntityId(),
+                  SESSION_ID.toString(),
+                  java.math.BigInteger.ONE))
           .isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(
-              () ->
-                  owner.applySessionBinding(
-                      grant,
-                      status,
-                      actor.runtimeEntityId(),
-                      SESSION_ID.toString(),
-                      java.math.BigInteger.ONE))
+      assertThatThrownBy(() ->
+              owner.applySessionBinding(
+                  grant,
+                  status,
+                  actor.runtimeEntityId(),
+                  SESSION_ID.toString(),
+                  java.math.BigInteger.ONE))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().hget(ascii(key), ascii("session_id")))
           .containsExactly(foreignSession);
@@ -197,27 +195,25 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
       byte[] leaseValue = redis.admin().get(leaseKey);
       redis.admin().del(ascii(meta));
 
-      assertThatThrownBy(
-              () ->
-                  owner.probeSessionBinding(
-                      grant,
-                      status,
-                      actor.runtimeEntityId(),
-                      SESSION_ID.toString(),
-                      java.math.BigInteger.ONE))
+      assertThatThrownBy(() ->
+              owner.probeSessionBinding(
+                  grant,
+                  status,
+                  actor.runtimeEntityId(),
+                  SESSION_ID.toString(),
+                  java.math.BigInteger.ONE))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().type(ascii(key))).isEqualTo("none");
 
       seedMeta(redis.admin(), source, "1");
       assertThat(redis.admin().hdel(ascii(meta), ascii("current_tick_id"))).isEqualTo(1L);
-      assertThatThrownBy(
-              () ->
-                  owner.probeSessionBinding(
-                      grant,
-                      status,
-                      actor.runtimeEntityId(),
-                      SESSION_ID.toString(),
-                      java.math.BigInteger.ONE))
+      assertThatThrownBy(() ->
+              owner.probeSessionBinding(
+                  grant,
+                  status,
+                  actor.runtimeEntityId(),
+                  SESSION_ID.toString(),
+                  java.math.BigInteger.ONE))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Canonical Game Session region lease is unavailable")
           .satisfies(failure -> assertThat(failure.getCause()).isNull());
@@ -229,27 +225,25 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
 
       seedMeta(redis.admin(), source, "1");
       redis.admin().hset(ascii(meta), ascii("region_epoch"), ascii("2"));
-      assertThatThrownBy(
-              () ->
-                  owner.probeSessionBinding(
-                      grant,
-                      status,
-                      actor.runtimeEntityId(),
-                      SESSION_ID.toString(),
-                      java.math.BigInteger.ONE))
+      assertThatThrownBy(() ->
+              owner.probeSessionBinding(
+                  grant,
+                  status,
+                  actor.runtimeEntityId(),
+                  SESSION_ID.toString(),
+                  java.math.BigInteger.ONE))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().type(ascii(key))).isEqualTo("none");
 
       seedMeta(redis.admin(), source, "1");
       redis.admin().pexpire(ascii(grant.key()), 0L);
-      assertThatThrownBy(
-              () ->
-                  owner.probeSessionBinding(
-                      grant,
-                      status,
-                      actor.runtimeEntityId(),
-                      SESSION_ID.toString(),
-                      java.math.BigInteger.ONE))
+      assertThatThrownBy(() ->
+              owner.probeSessionBinding(
+                  grant,
+                  status,
+                  actor.runtimeEntityId(),
+                  SESSION_ID.toString(),
+                  java.math.BigInteger.ONE))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().type(ascii(key))).isEqualTo("none");
     }
@@ -290,14 +284,13 @@ class CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest {
           .containsExactly(ascii(SESSION_ID.toString()));
 
       assertThat(redis.admin().pexpire(ascii(meta), 60_000L)).isTrue();
-      assertThatThrownBy(
-              () ->
-                  owner.readBackSessionBinding(
-                      grant,
-                      status,
-                      actor.runtimeEntityId(),
-                      SESSION_ID.toString(),
-                      java.math.BigInteger.ONE))
+      assertThatThrownBy(() ->
+              owner.readBackSessionBinding(
+                  grant,
+                  status,
+                  actor.runtimeEntityId(),
+                  SESSION_ID.toString(),
+                  java.math.BigInteger.ONE))
           .isInstanceOf(IllegalStateException.class);
     }
   }

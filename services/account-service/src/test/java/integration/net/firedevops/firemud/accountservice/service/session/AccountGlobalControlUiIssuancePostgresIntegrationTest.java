@@ -46,9 +46,8 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
     assertNoMembership(fixture, account);
 
     var passwordIdentity =
-        fixture.tx(
-            () ->
-                fixture.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD));
+        fixture.tx(() ->
+            fixture.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD));
     assertThat(passwordIdentity.accountId()).isEqualTo(account.getAccountUuid());
     assertThat(passwordIdentity.accountId()).isNotEqualTo(fixture.account.getAccountUuid());
     fixture.installGlobalOtp(account, OTP);
@@ -90,10 +89,8 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
     // it.
     assertThat(
             fixture
-                .tx(
-                    () ->
-                        fixture.primary.authenticateControlUiPrimaryIdentity(
-                            account.getEmail(), OTP))
+                .tx(() ->
+                    fixture.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), OTP))
                 .accountId())
         .isEqualTo(account.getAccountUuid());
     assertThat(fixture.challenges.findByAccountId(account.getId())).isEmpty();
@@ -134,12 +131,9 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
           .isInstanceOf(
               AccountPlatformRestrictionOperationRepository.OwnerAuthorizationUnresolvedException
                   .class);
-      assertThatThrownBy(
-              () ->
-                  fixture.tx(
-                      () ->
-                          fixture.restrictionOperations.readCurrent(
-                              account.getAccountUuid(), category)))
+      assertThatThrownBy(() ->
+              fixture.tx(() ->
+                  fixture.restrictionOperations.readCurrent(account.getAccountUuid(), category)))
           .isInstanceOf(
               AccountPlatformRestrictionOperationRepository
                   .RestrictionProjectionUnavailableException.class);
@@ -162,9 +156,8 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
     var fixture = fixture();
     var account = fixture.createGlobalAccount(PASSWORD);
     var identity =
-        fixture.tx(
-            () ->
-                fixture.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD));
+        fixture.tx(() ->
+            fixture.primary.authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD));
 
     assertThatThrownBy(
             () -> fixture.tx(() -> fixture.authority.captureAccount(identity.accountId())))

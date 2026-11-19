@@ -81,14 +81,13 @@ class TickQueueControlServiceTest {
     gameplayCommandRepository = mock(GameplayCommandRepository.class);
     AtomicLong commandIds = new AtomicLong();
     when(gameplayCommandRepository.save(any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayCommand command = invocation.getArgument(0);
-              if (command.getId() == null) {
-                command.setId(commandIds.incrementAndGet());
-              }
-              return command;
-            });
+        .thenAnswer(invocation -> {
+          GameplayCommand command = invocation.getArgument(0);
+          if (command.getId() == null) {
+            command.setId(commandIds.incrementAndGet());
+          }
+          return command;
+        });
     when(gameplayCommandRepository.markAcceptedCommandStaged(
             any(Long.class), any(Long.class), any(String.class), any(Instant.class)))
         .thenReturn(true);
@@ -104,15 +103,14 @@ class TickQueueControlServiceTest {
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(runtimeRegionStatusRepository.claimObservedOwnership(
             any(), any(String.class), any(String.class), any(String.class), any(Instant.class)))
-        .thenAnswer(
-            invocation -> {
-              RuntimeRegionStatus status = invocation.getArgument(0);
-              status.setOwnerService(invocation.getArgument(1));
-              status.setOwnerInstanceId(invocation.getArgument(2));
-              status.setExecutorFence(invocation.getArgument(3));
-              status.setUpdatedAt(invocation.getArgument(4));
-              return Optional.of(status);
-            });
+        .thenAnswer(invocation -> {
+          RuntimeRegionStatus status = invocation.getArgument(0);
+          status.setOwnerService(invocation.getArgument(1));
+          status.setOwnerInstanceId(invocation.getArgument(2));
+          status.setExecutorFence(invocation.getArgument(3));
+          status.setUpdatedAt(invocation.getArgument(4));
+          return Optional.of(status);
+        });
     when(runtimeRegionStatusRepository.advanceOwnershipEpoch(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
     sessionAuthenticationService = mock(SessionAuthenticationService.class);
@@ -273,9 +271,8 @@ class TickQueueControlServiceTest {
       verify(listOps, never()).remove(any(), anyLong(), any());
 
       TransactionSynchronizationManager.getSynchronizations()
-          .forEach(
-              synchronization ->
-                  synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+          .forEach(synchronization ->
+              synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
 
       verify(listOps).remove("gamesession:tick:queue:1:2", -1, "N|cmd-rollback|look");
     } finally {
@@ -296,9 +293,8 @@ class TickQueueControlServiceTest {
               TransactionSynchronizationManager.getSynchronizations()
                   .forEach(synchronization -> synchronization.beforeCommit(false)));
       TransactionSynchronizationManager.getSynchronizations()
-          .forEach(
-              synchronization ->
-                  synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+          .forEach(synchronization ->
+              synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
 
       verify(listOps).remove("gamesession:tick:queue:1:2", -1, "N|cmd-lease-loss|look");
     } finally {
@@ -528,9 +524,8 @@ class TickQueueControlServiceTest {
       verify(listOps).remove("gamesession:tick:queue:1:2", 0, "N|cmd-rollback|say recover");
       verify(listOps).remove("gamesession:tick:pending:1:2", 0, "N|cmd-rollback|say recover");
       TransactionSynchronizationManager.getSynchronizations()
-          .forEach(
-              synchronization ->
-                  synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
+          .forEach(synchronization ->
+              synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -583,10 +578,9 @@ class TickQueueControlServiceTest {
               1L, 2L, "region-1", "patch-1", "rollback", logger));
       org.mockito.Mockito.clearInvocations(scriptTemplate);
 
-      assertDoesNotThrow(
-          () ->
-              TransactionSynchronizationManager.getSynchronizations()
-                  .forEach(TransactionSynchronization::afterCommit));
+      assertDoesNotThrow(() ->
+          TransactionSynchronizationManager.getSynchronizations()
+              .forEach(TransactionSynchronization::afterCommit));
 
       verify(scriptTemplate, times(1))
           .execute(
@@ -606,9 +600,8 @@ class TickQueueControlServiceTest {
               any(TickQueueControlService.QueueUnavailableException.class));
     } finally {
       TransactionSynchronizationManager.getSynchronizations()
-          .forEach(
-              synchronization ->
-                  synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
+          .forEach(synchronization ->
+              synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
       TransactionSynchronizationManager.clearSynchronization();
     }
   }
@@ -640,10 +633,9 @@ class TickQueueControlServiceTest {
           service.purgeQueuedAutomationCommandsForScriptPatch(
               1L, 2L, "region-1", "patch-1", "rollback", logger));
 
-      assertDoesNotThrow(
-          () ->
-              TransactionSynchronizationManager.getSynchronizations()
-                  .forEach(TransactionSynchronization::afterCommit));
+      assertDoesNotThrow(() ->
+          TransactionSynchronizationManager.getSynchronizations()
+              .forEach(TransactionSynchronization::afterCommit));
 
       verify(listOps)
           .remove("gamesession:tick:queue:1:2", 0, "N|cmd-valid-after-malformed|say continue");

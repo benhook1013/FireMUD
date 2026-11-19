@@ -192,29 +192,25 @@ class LegacyDemoSeedingPostgresIntegrationTest {
 
     try {
       Future<?> legacyClaim =
-          executor.submit(
-              () ->
-                  transactionTemplate()
-                      .executeWithoutResult(
-                          status -> {
-                            setSearchPath();
-                            sourceIntakeRepository.claimLegacyDemoTenant();
-                            claimCommittedToTransaction.countDown();
-                            await(allowClaimCommit);
-                          }));
+          executor.submit(() ->
+              transactionTemplate()
+                  .executeWithoutResult(status -> {
+                    setSearchPath();
+                    sourceIntakeRepository.claimLegacyDemoTenant();
+                    claimCommittedToTransaction.countDown();
+                    await(allowClaimCommit);
+                  }));
       assertThat(claimCommittedToTransaction.await(5, TimeUnit.SECONDS)).isTrue();
 
       Future<WorldAuthoredSourceIntakeReceipt> canonicalAllocation =
-          executor.submit(
-              () ->
-                  transactionTemplate()
-                      .execute(
-                          status -> {
-                            setSearchPath();
-                            allocatorBackendPid.set(backendPid());
-                            allocationStarted.countDown();
-                            return sourceIntakeRepository.acceptFresh(NAMESPACE, requestId, source);
-                          }));
+          executor.submit(() ->
+              transactionTemplate()
+                  .execute(status -> {
+                    setSearchPath();
+                    allocatorBackendPid.set(backendPid());
+                    allocationStarted.countDown();
+                    return sourceIntakeRepository.acceptFresh(NAMESPACE, requestId, source);
+                  }));
 
       try {
         assertThat(allocationStarted.await(5, TimeUnit.SECONDS)).isTrue();
@@ -237,20 +233,18 @@ class LegacyDemoSeedingPostgresIntegrationTest {
 
   private void runSeeder() {
     transactionTemplate()
-        .executeWithoutResult(
-            status -> {
-              setSearchPath();
-              seeder.run(new DefaultApplicationArguments(new String[0]));
-            });
+        .executeWithoutResult(status -> {
+          setSearchPath();
+          seeder.run(new DefaultApplicationArguments(new String[0]));
+        });
   }
 
   private WorldAuthoredSourceIntakeReceipt acceptFresh(AuthoredWorldSourceEvidence source) {
     return transactionTemplate()
-        .execute(
-            status -> {
-              setSearchPath();
-              return sourceIntakeRepository.acceptFresh(NAMESPACE, UUID.randomUUID(), source);
-            });
+        .execute(status -> {
+          setSearchPath();
+          return sourceIntakeRepository.acceptFresh(NAMESPACE, UUID.randomUUID(), source);
+        });
   }
 
   private TransactionTemplate transactionTemplate() {

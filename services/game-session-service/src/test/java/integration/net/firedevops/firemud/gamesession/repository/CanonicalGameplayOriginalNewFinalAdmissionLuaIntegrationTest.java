@@ -850,27 +850,25 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     ScriptCase original = seed();
     var start = new java.util.concurrent.CountDownLatch(1);
     var finalized =
-        java.util.concurrent.CompletableFuture.supplyAsync(
-            () -> {
-              try {
-                start.await();
-                return eval(original);
-              } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(interrupted);
-              }
-            });
+        java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+          try {
+            start.await();
+            return eval(original);
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(interrupted);
+          }
+        });
     var closed =
-        java.util.concurrent.CompletableFuture.supplyAsync(
-            () -> {
-              try {
-                start.await();
-                return eval(action(original, "CLOSE"));
-              } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(interrupted);
-              }
-            });
+        java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+          try {
+            start.await();
+            return eval(action(original, "CLOSE"));
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(interrupted);
+          }
+        });
     start.countDown();
     long finalResult = finalized.get(5, java.util.concurrent.TimeUnit.SECONDS);
     long closeResult = closed.get(5, java.util.concurrent.TimeUnit.SECONDS);

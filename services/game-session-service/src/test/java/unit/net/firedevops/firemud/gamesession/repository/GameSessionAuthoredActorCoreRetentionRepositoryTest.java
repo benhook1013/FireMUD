@@ -27,10 +27,9 @@ class GameSessionAuthoredActorCoreRetentionRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
 
-    assertThatThrownBy(
-            () ->
-                new GameSessionAuthoredActorCoreRetentionRepository(
-                    dsl, transactionManager, "Not a DNS label"))
+    assertThatThrownBy(() ->
+            new GameSessionAuthoredActorCoreRetentionRepository(
+                dsl, transactionManager, "Not a DNS label"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload namespace");
 

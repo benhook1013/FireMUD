@@ -141,13 +141,12 @@ class GameDesignStartSessionLaunchDescriptorGrpcServiceTest {
           .when(() -> StartSessionLaunchDescriptorGrpcCodec.fromRequest(request))
           .thenReturn(decoded);
       codec
-          .when(
-              () ->
-                  StartSessionLaunchDescriptorGrpcCodec.toFailureResponse(
-                      decoded,
-                      association,
-                      "INVALID_TEMPLATE_CONFIGURATION",
-                      "INVALID_TEMPLATE_CONFIGURATION: captured source is unsupported"))
+          .when(() ->
+              StartSessionLaunchDescriptorGrpcCodec.toFailureResponse(
+                  decoded,
+                  association,
+                  "INVALID_TEMPLATE_CONFIGURATION",
+                  "INVALID_TEMPLATE_CONFIGURATION: captured source is unsupported"))
           .thenReturn(response);
 
       var observer = invokeAs(request, "game-session-service");
@@ -156,13 +155,12 @@ class GameDesignStartSessionLaunchDescriptorGrpcServiceTest {
       assertThat(observer.value).isEqualTo(response);
       assertThat(observer.completed).isTrue();
       verify(producer).resolve(decoded);
-      codec.verify(
-          () ->
-              StartSessionLaunchDescriptorGrpcCodec.toFailureResponse(
-                  decoded,
-                  association,
-                  "INVALID_TEMPLATE_CONFIGURATION",
-                  "INVALID_TEMPLATE_CONFIGURATION: captured source is unsupported"));
+      codec.verify(() ->
+          StartSessionLaunchDescriptorGrpcCodec.toFailureResponse(
+              decoded,
+              association,
+              "INVALID_TEMPLATE_CONFIGURATION",
+              "INVALID_TEMPLATE_CONFIGURATION: captured source is unsupported"));
     }
   }
 

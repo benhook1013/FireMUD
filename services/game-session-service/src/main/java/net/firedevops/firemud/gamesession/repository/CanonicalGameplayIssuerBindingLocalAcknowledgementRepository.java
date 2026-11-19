@@ -58,55 +58,53 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
     CanonicalGameplayIssuerBindingLocalOperation operation = readback.operation();
     var before = readCurrentIssuerState("before acknowledgement");
     CanonicalGameplayIssuerBindingLocalAcknowledgement acknowledged =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext transaction = org.jooq.impl.DSL.using(configuration);
-              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-              var work =
-                  projectionRepository.readPreparedPartitionWorkInTransaction(
-                      transaction, operation, before);
-              requireCurrentIssuerSource(operation, before);
-              requireEligibleCandidate(work);
+        dsl.transactionResult(configuration -> {
+          DSLContext transaction = org.jooq.impl.DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          var work =
+              projectionRepository.readPreparedPartitionWorkInTransaction(
+                  transaction, operation, before);
+          requireCurrentIssuerSource(operation, before);
+          requireEligibleCandidate(work);
 
-              Record existing =
-                  transaction.fetchOne(
-                      "SELECT * FROM " + ACKNOWLEDGEMENT + " WHERE operation_id = ? FOR UPDATE",
-                      operation.operationId());
-              if (existing != null) {
-                var prior = readAcknowledgement(transaction, existing);
-                requireSameOperation(prior.evidence(), operation);
-                requireSameCurrentSources(prior.evidence(), operation, before);
-                requireReadbackTargetStillMatches(prior.evidence(), readback);
-                return prior;
-              }
+          Record existing =
+              transaction.fetchOne(
+                  "SELECT * FROM " + ACKNOWLEDGEMENT + " WHERE operation_id = ? FOR UPDATE",
+                  operation.operationId());
+          if (existing != null) {
+            var prior = readAcknowledgement(transaction, existing);
+            requireSameOperation(prior.evidence(), operation);
+            requireSameCurrentSources(prior.evidence(), operation, before);
+            requireReadbackTargetStillMatches(prior.evidence(), readback);
+            return prior;
+          }
 
-              if (!Arrays.equals(readback.sqlCurrentnessDigest(), work.sqlCurrentnessDigest())) {
-                throw unavailable(
-                    "SQL issuer cohort changed after physical readback; retry the original operation");
-              }
-              ReadbackProof proof = validateReadback(operation, work, readback, before);
-              // The independent transition generation advances only in this SQL transaction,
-              // after both the exact current SQL operation and private physical readback validate.
-              // Counter advancement and immutable receipt insertion commit or roll back together.
-              BigInteger acknowledgementGeneration =
-                  allocateAcknowledgementGeneration(transaction, operation.anchor().issuerId());
-              Evidence evidence =
-                  buildEvidence(operation, readback, before, proof, acknowledgementGeneration);
-              var result = CanonicalGameplayIssuerBindingLocalAcknowledgement.create(evidence);
-              insert(transaction, result);
-              Record stored =
-                  transaction.fetchOne(
-                      "SELECT * FROM " + ACKNOWLEDGEMENT + " WHERE operation_id = ? FOR UPDATE",
-                      operation.operationId());
-              if (stored == null) throw unavailable("Durable issuer acknowledgement disappeared");
-              var durable = readAcknowledgement(transaction, stored);
-              if (!Arrays.equals(result.exactBytes(), durable.exactBytes())
-                  || !result.digest().equals(durable.digest())) {
-                throw unavailable(
-                    "Durable issuer acknowledgement readback differs from its source");
-              }
-              return durable;
-            });
+          if (!Arrays.equals(readback.sqlCurrentnessDigest(), work.sqlCurrentnessDigest())) {
+            throw unavailable(
+                "SQL issuer cohort changed after physical readback; retry the original operation");
+          }
+          ReadbackProof proof = validateReadback(operation, work, readback, before);
+          // The independent transition generation advances only in this SQL transaction,
+          // after both the exact current SQL operation and private physical readback validate.
+          // Counter advancement and immutable receipt insertion commit or roll back together.
+          BigInteger acknowledgementGeneration =
+              allocateAcknowledgementGeneration(transaction, operation.anchor().issuerId());
+          Evidence evidence =
+              buildEvidence(operation, readback, before, proof, acknowledgementGeneration);
+          var result = CanonicalGameplayIssuerBindingLocalAcknowledgement.create(evidence);
+          insert(transaction, result);
+          Record stored =
+              transaction.fetchOne(
+                  "SELECT * FROM " + ACKNOWLEDGEMENT + " WHERE operation_id = ? FOR UPDATE",
+                  operation.operationId());
+          if (stored == null) throw unavailable("Durable issuer acknowledgement disappeared");
+          var durable = readAcknowledgement(transaction, stored);
+          if (!Arrays.equals(result.exactBytes(), durable.exactBytes())
+              || !result.digest().equals(durable.digest())) {
+            throw unavailable("Durable issuer acknowledgement readback differs from its source");
+          }
+          return durable;
+        });
     var after = readCurrentIssuerState("after acknowledgement");
     if (!sameCurrentIssuerState(before, after)) {
       throw unavailable(
@@ -772,13 +770,12 @@ final class CanonicalGameplayIssuerBindingLocalAcknowledgementRepository {
   private void requireNoAmbientTransaction() {
     requireNoAmbientSpringTransaction();
     try {
-      dsl.connectionResult(
-          connection -> {
-            if (!connection.getAutoCommit()) {
-              throw unavailable("Issuer acknowledgement owner cannot join a jOOQ transaction");
-            }
-            return Boolean.TRUE;
-          });
+      dsl.connectionResult(connection -> {
+        if (!connection.getAutoCommit()) {
+          throw unavailable("Issuer acknowledgement owner cannot join a jOOQ transaction");
+        }
+        return Boolean.TRUE;
+      });
     } catch (RuntimeException failure) {
       if (failure instanceof IllegalStateException state
           && state.getMessage() != null

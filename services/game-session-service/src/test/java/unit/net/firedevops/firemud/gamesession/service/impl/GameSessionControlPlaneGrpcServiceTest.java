@@ -136,45 +136,43 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(
             client.getPublishedScriptPatchVersion(
                 Mockito.anyLong(), Mockito.anyString(), Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              long requestedBaseVersionId = invocation.getArgument(2, Long.class);
-              if (requestedBaseVersionId <= 0L) {
-                throw new AssertionError(
-                    "Game Design must not be called without an exact positive patch base");
-              }
-              return GetPublishedScriptPatchVersionResponse.newBuilder()
-                  .setScriptPatch(
-                      PublishedScriptPatchVersion.newBuilder()
-                          .setTenantId("1")
-                          .setScriptPatchVersion(invocation.getArgument(1, String.class))
-                          .setVersionId(17L)
-                          .setBaseVersionId(requestedBaseVersionId)
-                          .setPublicationState(
-                              net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                  .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                          .setLastChangedAtMs(150L)
-                          .build())
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          long requestedBaseVersionId = invocation.getArgument(2, Long.class);
+          if (requestedBaseVersionId <= 0L) {
+            throw new AssertionError(
+                "Game Design must not be called without an exact positive patch base");
+          }
+          return GetPublishedScriptPatchVersionResponse.newBuilder()
+              .setScriptPatch(
+                  PublishedScriptPatchVersion.newBuilder()
+                      .setTenantId("1")
+                      .setScriptPatchVersion(invocation.getArgument(1, String.class))
+                      .setVersionId(17L)
+                      .setBaseVersionId(requestedBaseVersionId)
+                      .setPublicationState(
+                          net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                              .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                      .setLastChangedAtMs(150L)
+                      .build())
+              .build();
+        });
     Mockito.when(
             client.getPublishedPluginVersion(
                 Mockito.anyLong(), Mockito.anyString(), Mockito.anyString()))
-        .thenAnswer(
-            invocation ->
-                GetPublishedPluginVersionResponse.newBuilder()
-                    .setPluginVersion(
-                        PublishedPluginVersion.newBuilder()
-                            .setPluginId(invocation.getArgument(1))
-                            .setPluginVersionId(invocation.getArgument(2))
-                            .setPublicationId(31L)
-                            .setPublicationState(
-                                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                    .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                            .setStatusReason("signature_verified")
-                            .setLastChangedAtMs(275L)
-                            .build())
-                    .build());
+        .thenAnswer(invocation ->
+            GetPublishedPluginVersionResponse.newBuilder()
+                .setPluginVersion(
+                    PublishedPluginVersion.newBuilder()
+                        .setPluginId(invocation.getArgument(1))
+                        .setPluginVersionId(invocation.getArgument(2))
+                        .setPublicationId(31L)
+                        .setPublicationState(
+                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setStatusReason("signature_verified")
+                        .setLastChangedAtMs(275L)
+                        .build())
+                .build());
     return client;
   }
 
@@ -6423,22 +6421,21 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(
             gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
                 Mockito.eq(1L), Mockito.anyLong()))
-        .thenAnswer(
-            invocation ->
-                List.of(
-                    new GameplayAdmissionPointerSnapshot(
-                        "partial-world-" + invocation.getArgument(1, Long.class),
-                        "Partial World",
-                        null,
-                        null,
-                        1L,
-                        invocation.getArgument(1, Long.class),
-                        0L,
-                        true,
-                        true,
-                        true,
-                        "SHARED",
-                        "interactive")));
+        .thenAnswer(invocation ->
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "partial-world-" + invocation.getArgument(1, Long.class),
+                    "Partial World",
+                    null,
+                    null,
+                    1L,
+                    invocation.getArgument(1, Long.class),
+                    0L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "interactive")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
@@ -6890,24 +6887,23 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(authorityService.listByRuntimeTarget(Mockito.eq(1L), Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              long gameInstanceId = invocation.getArgument(1, Long.class);
-              return List.of(
-                  new GameplayAdmissionPointerSnapshot(
-                      "world-" + gameInstanceId,
-                      "World " + gameInstanceId,
-                      "realm-" + gameInstanceId,
-                      "Realm " + gameInstanceId,
-                      1L,
-                      gameInstanceId,
-                      gameInstanceId + 100L,
-                      true,
-                      true,
-                      true,
-                      gameInstanceId % 2L == 0L ? "ISOLATED" : "SHARED",
-                      "interactive"));
-            });
+        .thenAnswer(invocation -> {
+          long gameInstanceId = invocation.getArgument(1, Long.class);
+          return List.of(
+              new GameplayAdmissionPointerSnapshot(
+                  "world-" + gameInstanceId,
+                  "World " + gameInstanceId,
+                  "realm-" + gameInstanceId,
+                  "Realm " + gameInstanceId,
+                  1L,
+                  gameInstanceId,
+                  gameInstanceId + 100L,
+                  true,
+                  true,
+                  true,
+                  gameInstanceId % 2L == 0L ? "ISOLATED" : "SHARED",
+                  "interactive"));
+        });
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameDesignClient gameDesignClient = gameDesignClient();
     GameSessionControlPlaneGrpcService service =
@@ -7248,22 +7244,21 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(
             gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
                 Mockito.eq(1L), Mockito.anyLong()))
-        .thenAnswer(
-            invocation ->
-                List.of(
-                    new GameplayAdmissionPointerSnapshot(
-                        "partial-world-" + invocation.getArgument(1, Long.class),
-                        "Partial World",
-                        null,
-                        null,
-                        1L,
-                        invocation.getArgument(1, Long.class),
-                        0L,
-                        true,
-                        true,
-                        true,
-                        "SHARED",
-                        "interactive")));
+        .thenAnswer(invocation ->
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "partial-world-" + invocation.getArgument(1, Long.class),
+                    "Partial World",
+                    null,
+                    null,
+                    1L,
+                    invocation.getArgument(1, Long.class),
+                    0L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "interactive")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
@@ -7777,22 +7772,21 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(
             gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
                 Mockito.eq(1L), Mockito.anyLong()))
-        .thenAnswer(
-            invocation ->
-                List.of(
-                    new GameplayAdmissionPointerSnapshot(
-                        "world-" + invocation.getArgument(1, Long.class),
-                        "World " + invocation.getArgument(1, Long.class),
-                        "production",
-                        "Production",
-                        1L,
-                        0L,
-                        17L,
-                        true,
-                        true,
-                        true,
-                        "SHARED",
-                        "interactive")));
+        .thenAnswer(invocation ->
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "world-" + invocation.getArgument(1, Long.class),
+                    "World " + invocation.getArgument(1, Long.class),
+                    "production",
+                    "Production",
+                    1L,
+                    0L,
+                    17L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "interactive")));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         remoteControlPlaneService(
@@ -7855,46 +7849,45 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(true, responseRef.get().getFollowupCreated());
     Mockito.verify(runtimeService)
         .scheduleFollowup(
-            Mockito.argThat(
-                request ->
-                    request.tenantId() == 1L
-                        && "cmd-1".equals(request.commandId())
-                        && "coord-1".equals(request.coordinatorId())
-                        && request.originGameInstanceId() == 7L
-                        && "region-a".equals(request.originRegionId())
-                        && request.originRegionEpoch() == 4L
-                        && request.targetGameInstanceId() == 9L
-                        && "region-b".equals(request.targetRegionId())
-                        && request.targetRegionEpoch() == 8L
-                        && request.targetDueTickId() == 55L
-                        && request.originDeadlineRegionEpoch() == 4L
-                        && request.originDeadlineTickId() == 60L
-                        && "late_result_safe_to_ignore".equals(request.lateResultPolicy())
-                        && "followup-1".equals(request.followupId())
-                        && "effect-1".equals(request.effectKey())
-                        && "entity-9".equals(request.targetEntityId())
-                        && request.payloadJson().contains("\"kind\":\"enqueue_automation_command\"")
-                        && "enqueue_automation_command".equals(request.payloadKind())
-                        && "LOOK".equals(request.requestedCommand())
-                        && request.requiresSoloTick()
-                        && "SHARED".equals(request.playableStateScope())
-                        && "demo".equals(request.worldSlug())
-                        && "production".equals(request.realmSlug())
-                        && Objects.equals(Long.valueOf(17L), request.pointerVersion())
-                        && "patch-1".equals(request.scriptPatchVersion())
-                        && Objects.equals(Long.valueOf(100L), request.scriptPatchBaseVersionId())
-                        && Objects.equals(Long.valueOf(3L), request.scriptPinEpoch())
-                        && "pin-request-1".equals(request.scriptPinControlPlaneRequestId())
-                        && "plugin-1".equals(request.pluginId())
-                        && "plugin-v1".equals(request.pluginVersionId())
-                        && "dispatch-1".equals(request.automationDispatchId())
-                        && "work-1".equals(request.automationWorkItemId())
-                        && "script-1".equals(request.scriptId())
-                        && "REMOTE_FOLLOWUP".equals(request.originSourceKind())
-                        && "TARGET_REGION_EXECUTED".equals(request.originSourceState())
-                        && Objects.equals(Long.valueOf(44L), request.originSourceOrdinal())
-                        && Objects.equals(Long.valueOf(55L), request.originSourceDueTickId())
-                        && Objects.equals(Long.valueOf(1700L), request.originSourceDueAtMs())));
+            Mockito.argThat(request ->
+                request.tenantId() == 1L
+                    && "cmd-1".equals(request.commandId())
+                    && "coord-1".equals(request.coordinatorId())
+                    && request.originGameInstanceId() == 7L
+                    && "region-a".equals(request.originRegionId())
+                    && request.originRegionEpoch() == 4L
+                    && request.targetGameInstanceId() == 9L
+                    && "region-b".equals(request.targetRegionId())
+                    && request.targetRegionEpoch() == 8L
+                    && request.targetDueTickId() == 55L
+                    && request.originDeadlineRegionEpoch() == 4L
+                    && request.originDeadlineTickId() == 60L
+                    && "late_result_safe_to_ignore".equals(request.lateResultPolicy())
+                    && "followup-1".equals(request.followupId())
+                    && "effect-1".equals(request.effectKey())
+                    && "entity-9".equals(request.targetEntityId())
+                    && request.payloadJson().contains("\"kind\":\"enqueue_automation_command\"")
+                    && "enqueue_automation_command".equals(request.payloadKind())
+                    && "LOOK".equals(request.requestedCommand())
+                    && request.requiresSoloTick()
+                    && "SHARED".equals(request.playableStateScope())
+                    && "demo".equals(request.worldSlug())
+                    && "production".equals(request.realmSlug())
+                    && Objects.equals(Long.valueOf(17L), request.pointerVersion())
+                    && "patch-1".equals(request.scriptPatchVersion())
+                    && Objects.equals(Long.valueOf(100L), request.scriptPatchBaseVersionId())
+                    && Objects.equals(Long.valueOf(3L), request.scriptPinEpoch())
+                    && "pin-request-1".equals(request.scriptPinControlPlaneRequestId())
+                    && "plugin-1".equals(request.pluginId())
+                    && "plugin-v1".equals(request.pluginVersionId())
+                    && "dispatch-1".equals(request.automationDispatchId())
+                    && "work-1".equals(request.automationWorkItemId())
+                    && "script-1".equals(request.scriptId())
+                    && "REMOTE_FOLLOWUP".equals(request.originSourceKind())
+                    && "TARGET_REGION_EXECUTED".equals(request.originSourceState())
+                    && Objects.equals(Long.valueOf(44L), request.originSourceOrdinal())
+                    && Objects.equals(Long.valueOf(55L), request.originSourceDueTickId())
+                    && Objects.equals(Long.valueOf(1700L), request.originSourceDueAtMs())));
   }
 
   @Test
@@ -8911,13 +8904,12 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(
             RemoteFollowupResultRepository.class,
             Mockito.withSettings()
-                .defaultAnswer(
-                    invocation -> {
-                      if ("findForControlPlane".equals(invocation.getMethod().getName())) {
-                        return List.of(result);
-                      }
-                      return Mockito.RETURNS_DEFAULTS.answer(invocation);
-                    }));
+                .defaultAnswer(invocation -> {
+                  if ("findForControlPlane".equals(invocation.getMethod().getName())) {
+                    return List.of(result);
+                  }
+                  return Mockito.RETURNS_DEFAULTS.answer(invocation);
+                }));
     Mockito.when(
             repository.findForControlPlane(
                 Mockito.anyLong(),
@@ -10099,11 +10091,10 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(
             RemoteFollowupResultRepository.class,
             Mockito.withSettings()
-                .defaultAnswer(
-                    invocation ->
-                        "findForControlPlane".equals(invocation.getMethod().getName())
-                            ? List.of(result)
-                            : Mockito.RETURNS_DEFAULTS.answer(invocation)));
+                .defaultAnswer(invocation ->
+                    "findForControlPlane".equals(invocation.getMethod().getName())
+                        ? List.of(result)
+                        : Mockito.RETURNS_DEFAULTS.answer(invocation)));
     RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
     RemoteFollowup followup = new RemoteFollowup();
     followup.setTenantId(1L);
@@ -10179,27 +10170,25 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameplayCommandRepository repository = Mockito.mock(GameplayCommandRepository.class);
     AtomicLong idSequence = new AtomicLong();
     Mockito.when(repository.save(Mockito.any(GameplayCommand.class)))
-        .thenAnswer(
-            invocation -> {
-              GameplayCommand command = invocation.getArgument(0);
-              if (command.getId() == null) {
-                long id = idSequence.incrementAndGet();
-                command.setId(id);
-                command.setEnqueueSeq(id);
-              }
-              return command;
-            });
+        .thenAnswer(invocation -> {
+          GameplayCommand command = invocation.getArgument(0);
+          if (command.getId() == null) {
+            long id = idSequence.incrementAndGet();
+            command.setId(id);
+            command.setEnqueueSeq(id);
+          }
+          return command;
+        });
     Mockito.when(repository.insertIfAbsentByIdempotencyIdentity(Mockito.any(GameplayCommand.class)))
-        .thenAnswer(
-            invocation -> {
-              GameplayCommand command = invocation.getArgument(0);
-              if (command.getId() == null) {
-                long id = idSequence.incrementAndGet();
-                command.setId(id);
-                command.setEnqueueSeq(id);
-              }
-              return new GameplayCommandRepository.IdempotentInsertResult(command, true);
-            });
+        .thenAnswer(invocation -> {
+          GameplayCommand command = invocation.getArgument(0);
+          if (command.getId() == null) {
+            long id = idSequence.incrementAndGet();
+            command.setId(id);
+            command.setEnqueueSeq(id);
+          }
+          return new GameplayCommandRepository.IdempotentInsertResult(command, true);
+        });
     return repository;
   }
 
@@ -10250,23 +10239,22 @@ class GameSessionControlPlaneGrpcServiceTest {
       String responseTenantId, String responseGameInstanceId, WorldInstanceLifecycleStatus status) {
     WorldManagementClient client = Mockito.mock(WorldManagementClient.class);
     Mockito.when(client.getWorldInstanceLifecycle(Mockito.anyLong(), Mockito.anyLong()))
-        .thenAnswer(
-            invocation ->
-                GetWorldInstanceLifecycleResponse.newBuilder()
-                    .setWorldInstance(
-                        WorldInstanceLifecycleSnapshot.newBuilder()
-                            .setTenantId(
-                                responseTenantId == null
-                                    ? Long.toString(invocation.getArgument(0))
-                                    : responseTenantId)
-                            .setGameInstanceId(
-                                responseGameInstanceId == null
-                                    ? Long.toString(invocation.getArgument(1))
-                                    : responseGameInstanceId)
-                            .setLifecycleEpoch(1L)
-                            .setStatus(status)
-                            .build())
-                    .build());
+        .thenAnswer(invocation ->
+            GetWorldInstanceLifecycleResponse.newBuilder()
+                .setWorldInstance(
+                    WorldInstanceLifecycleSnapshot.newBuilder()
+                        .setTenantId(
+                            responseTenantId == null
+                                ? Long.toString(invocation.getArgument(0))
+                                : responseTenantId)
+                        .setGameInstanceId(
+                            responseGameInstanceId == null
+                                ? Long.toString(invocation.getArgument(1))
+                                : responseGameInstanceId)
+                        .setLifecycleEpoch(1L)
+                        .setStatus(status)
+                        .build())
+                .build());
     return client;
   }
 
@@ -10379,24 +10367,23 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(
             gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
                 Mockito.eq(1L), Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              Long gameInstanceId = invocation.getArgument(1, Long.class);
-              return List.of(
-                  new net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot(
-                      "world-" + gameInstanceId,
-                      "World " + gameInstanceId,
-                      "realm-" + gameInstanceId,
-                      "Realm " + gameInstanceId,
-                      1L,
-                      gameInstanceId,
-                      gameInstanceId + 100L,
-                      true,
-                      true,
-                      true,
-                      gameInstanceId % 2 == 0 ? "ISOLATED" : "SHARED",
-                      "interactive"));
-            });
+        .thenAnswer(invocation -> {
+          Long gameInstanceId = invocation.getArgument(1, Long.class);
+          return List.of(
+              new net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot(
+                  "world-" + gameInstanceId,
+                  "World " + gameInstanceId,
+                  "realm-" + gameInstanceId,
+                  "Realm " + gameInstanceId,
+                  1L,
+                  gameInstanceId,
+                  gameInstanceId + 100L,
+                  true,
+                  true,
+                  true,
+                  gameInstanceId % 2 == 0 ? "ISOLATED" : "SHARED",
+                  "interactive"));
+        });
     return remoteControlPlaneFixture(
         remoteFollowupRepository,
         remoteCommandCoordinatorRepository,
@@ -10465,15 +10452,14 @@ class GameSessionControlPlaneGrpcServiceTest {
       MeterRegistry meterRegistry) {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     Mockito.when(gameInstanceRepository.findById(Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              Long gameInstanceId = invocation.getArgument(0, Long.class);
-              GameInstance instance = runningGameInstance();
-              instance.setId(gameInstanceId);
-              instance.setTenantId(1L);
-              instance.setVersionId(99L);
-              return Optional.of(instance);
-            });
+        .thenAnswer(invocation -> {
+          Long gameInstanceId = invocation.getArgument(0, Long.class);
+          GameInstance instance = runningGameInstance();
+          instance.setId(gameInstanceId);
+          instance.setTenantId(1L);
+          instance.setVersionId(99L);
+          return Optional.of(instance);
+        });
     return controlPlaneFixture(
         gameInstanceRepository,
         gameplayCommandRepository == null

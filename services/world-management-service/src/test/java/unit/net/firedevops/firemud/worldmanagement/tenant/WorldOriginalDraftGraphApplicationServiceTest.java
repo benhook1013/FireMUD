@@ -225,54 +225,51 @@ class WorldOriginalDraftGraphApplicationServiceTest {
         .isInstanceOf(WorldAuthoredVersionIdentityRepository.RegistrationConflictException.class)
         .hasMessageContaining("retained World source");
 
-    assertThatThrownBy(
-            () ->
-                service.apply(
-                    NAMESPACE,
-                    accountBinding(
-                            binding(
-                                id(22),
-                                VERSION,
-                                GAME_DESIGN_VERSION_ROW,
-                                GAME_TENANT_KEY,
-                                SOURCE_GAME_ROW,
-                                GAME_TENANT_KEY,
-                                "NEW_GAME_ROW"))
-                        .canonicalBytes()))
+    assertThatThrownBy(() ->
+            service.apply(
+                NAMESPACE,
+                accountBinding(
+                        binding(
+                            id(22),
+                            VERSION,
+                            GAME_DESIGN_VERSION_ROW,
+                            GAME_TENANT_KEY,
+                            SOURCE_GAME_ROW,
+                            GAME_TENANT_KEY,
+                            "NEW_GAME_ROW"))
+                    .canonicalBytes()))
         .isInstanceOf(WorldAuthoredVersionIdentityRepository.RegistrationConflictException.class)
         .hasMessageContaining("retained World source");
 
-    assertThatThrownBy(
-            () ->
-                service.apply(
-                    NAMESPACE,
-                    accountBinding(
-                            binding(
-                                TENANT,
-                                id(23),
-                                GAME_DESIGN_VERSION_ROW,
-                                GAME_TENANT_KEY,
-                                SOURCE_GAME_ROW,
-                                GAME_TENANT_KEY,
-                                "NEW_GAME_ROW"))
-                        .canonicalBytes()))
+    assertThatThrownBy(() ->
+            service.apply(
+                NAMESPACE,
+                accountBinding(
+                        binding(
+                            TENANT,
+                            id(23),
+                            GAME_DESIGN_VERSION_ROW,
+                            GAME_TENANT_KEY,
+                            SOURCE_GAME_ROW,
+                            GAME_TENANT_KEY,
+                            "NEW_GAME_ROW"))
+                    .canonicalBytes()))
         .isInstanceOf(WorldAuthoredVersionIdentityRepository.RegistrationConflictException.class)
         .hasMessageContaining("retained World source");
 
-    assertThatThrownBy(
-            () ->
-                service.apply(
-                    NAMESPACE,
-                    accountBinding(
-                            binding(
-                                TENANT,
-                                VERSION,
-                                GAME_DESIGN_VERSION_ROW + 1,
-                                GAME_TENANT_KEY,
-                                SOURCE_GAME_ROW,
-                                GAME_TENANT_KEY,
-                                "NEW_GAME_ROW"))
-                        .canonicalBytes()))
+    assertThatThrownBy(() ->
+            service.apply(
+                NAMESPACE,
+                accountBinding(
+                        binding(
+                            TENANT,
+                            VERSION,
+                            GAME_DESIGN_VERSION_ROW + 1,
+                            GAME_TENANT_KEY,
+                            SOURCE_GAME_ROW,
+                            GAME_TENANT_KEY,
+                            "NEW_GAME_ROW"))
+                    .canonicalBytes()))
         .isInstanceOf(WorldAuthoredVersionIdentityRepository.RegistrationConflictException.class)
         .hasMessageContaining("retained World source");
     verify(graphApplications, never()).apply(any(WorldDraftGraphApplication.class));

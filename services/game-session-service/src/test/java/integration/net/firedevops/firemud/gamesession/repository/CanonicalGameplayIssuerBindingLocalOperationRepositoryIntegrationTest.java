@@ -244,18 +244,17 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
         .containsExactly(anchor.sourceEventBytes());
     assertThat(sourceEventPair.get("anchor_source_event_digest", String.class))
         .isEqualTo(anchor.sourceEventDigest());
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO game_session_canonical_issuer_binding_local_operation"
-                        + " SELECT (jsonb_populate_record(NULL::"
-                        + "game_session_canonical_issuer_binding_local_operation,"
-                        + " to_jsonb(operation) || jsonb_build_object('operation_id', ?::text,"
-                        + " 'anchor_source_event_digest', NULL))).*"
-                        + " FROM game_session_canonical_issuer_binding_local_operation operation"
-                        + " WHERE operation_id = ?",
-                    UUID.randomUUID(),
-                    first.operationId()))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "INSERT INTO game_session_canonical_issuer_binding_local_operation"
+                    + " SELECT (jsonb_populate_record(NULL::"
+                    + "game_session_canonical_issuer_binding_local_operation,"
+                    + " to_jsonb(operation) || jsonb_build_object('operation_id', ?::text,"
+                    + " 'anchor_source_event_digest', NULL))).*"
+                    + " FROM game_session_canonical_issuer_binding_local_operation operation"
+                    + " WHERE operation_id = ?",
+                UUID.randomUUID(),
+                first.operationId()))
         .hasMessageContaining("chk_gs_issuer_binding_local_operation_source_event_pair");
     assertThat(first.memberValue().incarnation()).isEqualTo(incarnation);
     assertThat(first.memberValue().memberOperation().coverageGeneration())
@@ -319,29 +318,24 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     assertThat(proofImage(dsl)).isEqualTo(installedProofImage);
 
     String beforeRefusals = localRegistrationImage(dsl);
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request("changed-first-request", "first-new-transition", firstCandidate)))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("changed-first-request", "first-new-transition", firstCandidate)))
         .isInstanceOf(IllegalStateException.class);
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request("first-new-request", "other-transition", identity("changed-first"))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("first-new-request", "other-transition", identity("changed-first"))))
         .isInstanceOf(IllegalStateException.class);
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
 
     currentState.set(
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             checkpointShape(BigInteger.valueOf(8)), incarnation));
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request(
-                        "moved-source-request",
-                        "moved-source-transition",
-                        identity("moved-source"))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request(
+                    "moved-source-request", "moved-source-transition", identity("moved-source"))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("source");
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
@@ -350,33 +344,30 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     currentState.set(
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             intent.sourceCheckpoint(), stableIncarnation("moved-incarnation")));
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request(
-                        "moved-incarnation-request",
-                        "moved-incarnation-transition",
-                        identity("moved-incarnation"))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request(
+                    "moved-incarnation-request",
+                    "moved-incarnation-transition",
+                    identity("moved-incarnation"))))
         .isInstanceOf(IllegalStateException.class);
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
     currentState.set(initialState);
 
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request(
-                        "wrong-layout-request",
-                        "wrong-layout-transition",
-                        identityWithLayout("wrong-layout", BigInteger.TWO))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request(
+                    "wrong-layout-request",
+                    "wrong-layout-transition",
+                    identityWithLayout("wrong-layout", BigInteger.TWO))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("layout");
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
 
     var sameController = sameControllerDifferentBinding(firstCandidate, "same-controller");
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request("controller-request", "controller-transition", sameController)))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("controller-request", "controller-transition", sameController)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("controller");
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusals);
@@ -385,11 +376,9 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     new CanonicalGameplayAccountAdmissionBarrierRepository(dsl)
         .beginFenceIntent(firstCandidate.accountId(), UUID.randomUUID());
     String accountFencedImage = localRegistrationImage(dsl);
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request(
-                        "account-fenced-request", "account-fenced-transition", fencedCandidate)))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("account-fenced-request", "account-fenced-transition", fencedCandidate)))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("Account");
     assertThat(localRegistrationImage(dsl)).isEqualTo(accountFencedImage);
@@ -428,10 +417,9 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     assertThat(proofImage(dsl)).isEqualTo(installedProofImage);
 
     String beforeCapacityRefusal = localRegistrationImage(dsl);
-    assertThatThrownBy(
-            () ->
-                operationRepository.beginOrResumeOrdinaryNew(
-                    request("capacity-request", "capacity-transition", identity("capacity-new"))))
+    assertThatThrownBy(() ->
+            operationRepository.beginOrResumeOrdinaryNew(
+                request("capacity-request", "capacity-transition", identity("capacity-new"))))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("capacity");
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeCapacityRefusal);
@@ -530,13 +518,12 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     String beforeRefusal = localRegistrationImage(dsl);
     String anchorBefore = anchorImage(dsl);
     String proofBefore = proofImage(dsl);
-    assertThatThrownBy(
-            () ->
-                repository.beginOrResumeOrdinaryNew(
-                    request(
-                        "physical-bound-request-256",
-                        "physical-bound-transition-256",
-                        identityWithLayout("physical-bound-256", LAYOUT_VERSION, capacity))))
+    assertThatThrownBy(() ->
+            repository.beginOrResumeOrdinaryNew(
+                request(
+                    "physical-bound-request-256",
+                    "physical-bound-transition-256",
+                    identityWithLayout("physical-bound-256", LAYOUT_VERSION, capacity))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("physical owner bound");
     assertThat(localRegistrationImage(dsl)).isEqualTo(beforeRefusal);
@@ -586,48 +573,47 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     // Controlled pre-upgrade SQL receipts exercise retention, immutability and the pending FK.
     // They do not claim an ordinary NEW producer, Redis mutation/readback or admission. The
     // bootstrap above uses the actual SQL/Redis owner with controlled Account/incarnation inputs.
-    dsl.transaction(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          insertPreLineageMutation(
-              transaction,
-              committedId,
-              historicalOwnerId,
-              "ADD_CAPACITY",
-              initialRevision,
-              successor,
-              intended);
-          transaction.execute(
-              "UPDATE game_session_canonical_issuer_partition_mutation_head"
-                  + " SET pending_mutation_id = ? WHERE issuer_id = ?",
-              committedId,
-              ISSUER);
-          transaction.execute(
-              "UPDATE game_session_canonical_issuer_partition_mutation"
-                  + " SET status = 'COMMITTED', exact_readback_field_set_bytes = ?,"
-                  + " exact_readback_field_set_digest = ?, completed_at = CURRENT_TIMESTAMP WHERE mutation_id = ?",
-              readback,
-              digest(readback),
-              committedId);
-          transaction.execute(
-              "UPDATE game_session_canonical_issuer_partition_mutation_head"
-                  + " SET current_revision = ?, pending_mutation_id = NULL WHERE issuer_id = ?",
-              successor,
-              ISSUER);
-          insertPreLineageMutation(
-              transaction,
-              pendingId,
-              historicalOwnerId,
-              "ADD_BINDING",
-              successor,
-              laterSuccessor,
-              intended);
-          transaction.execute(
-              "UPDATE game_session_canonical_issuer_partition_mutation_head"
-                  + " SET pending_mutation_id = ? WHERE issuer_id = ?",
-              pendingId,
-              ISSUER);
-        });
+    dsl.transaction(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      insertPreLineageMutation(
+          transaction,
+          committedId,
+          historicalOwnerId,
+          "ADD_CAPACITY",
+          initialRevision,
+          successor,
+          intended);
+      transaction.execute(
+          "UPDATE game_session_canonical_issuer_partition_mutation_head"
+              + " SET pending_mutation_id = ? WHERE issuer_id = ?",
+          committedId,
+          ISSUER);
+      transaction.execute(
+          "UPDATE game_session_canonical_issuer_partition_mutation"
+              + " SET status = 'COMMITTED', exact_readback_field_set_bytes = ?,"
+              + " exact_readback_field_set_digest = ?, completed_at = CURRENT_TIMESTAMP WHERE mutation_id = ?",
+          readback,
+          digest(readback),
+          committedId);
+      transaction.execute(
+          "UPDATE game_session_canonical_issuer_partition_mutation_head"
+              + " SET current_revision = ?, pending_mutation_id = NULL WHERE issuer_id = ?",
+          successor,
+          ISSUER);
+      insertPreLineageMutation(
+          transaction,
+          pendingId,
+          historicalOwnerId,
+          "ADD_BINDING",
+          successor,
+          laterSuccessor,
+          intended);
+      transaction.execute(
+          "UPDATE game_session_canonical_issuer_partition_mutation_head"
+              + " SET pending_mutation_id = ? WHERE issuer_id = ?",
+          pendingId,
+          ISSUER);
+    });
     List<String> beforeHistory =
         dsl.fetch(
                 "SELECT to_jsonb(mutation)::text FROM game_session_canonical_issuer_partition_mutation mutation ORDER BY mutation_id")
@@ -663,45 +649,42 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
                     "SELECT DISTINCT bootstrap_operation_id FROM game_session_canonical_issuer_partition_mutation")
                 .getValues(0, UUID.class))
         .containsExactly(anchor.bootstrapOperationId());
-    dsl.transaction(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          var head =
-              CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
-                  transaction, anchor.bootstrapOperationId(), BigInteger.ZERO);
-          assertThat(head.pendingMutationId()).isEqualTo(pendingId);
-          assertThat(head.currentRevision()).isEqualTo(successor);
-          var history =
-              List.of(
-                  CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
-                      transaction,
-                      CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY,
-                      historicalOwnerId,
-                      BigInteger.ZERO),
-                  CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
-                      transaction,
-                      CanonicalGameplayIssuerPartitionMutation.Kind.ADD_BINDING,
-                      historicalOwnerId,
-                      BigInteger.ZERO));
-          assertThat(history).hasSize(2);
-          assertThat(history.stream().map(CanonicalGameplayIssuerPartitionMutation::status))
-              .containsExactlyInAnyOrder(
-                  CanonicalGameplayIssuerPartitionMutation.Status.COMMITTED,
-                  CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF);
-        });
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE game_session_canonical_issuer_partition_mutation SET bootstrap_operation_id = ? WHERE mutation_id = ?",
-                    UUID.randomUUID(),
-                    pendingId))
+    dsl.transaction(configuration -> {
+      DSLContext transaction = DSL.using(configuration);
+      var head =
+          CanonicalGameplayIssuerPartitionMutationRepository.readHeadInTransaction(
+              transaction, anchor.bootstrapOperationId(), BigInteger.ZERO);
+      assertThat(head.pendingMutationId()).isEqualTo(pendingId);
+      assertThat(head.currentRevision()).isEqualTo(successor);
+      var history =
+          List.of(
+              CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
+                  transaction,
+                  CanonicalGameplayIssuerPartitionMutation.Kind.ADD_CAPACITY,
+                  historicalOwnerId,
+                  BigInteger.ZERO),
+              CanonicalGameplayIssuerPartitionMutationRepository.readInTransaction(
+                  transaction,
+                  CanonicalGameplayIssuerPartitionMutation.Kind.ADD_BINDING,
+                  historicalOwnerId,
+                  BigInteger.ZERO));
+      assertThat(history).hasSize(2);
+      assertThat(history.stream().map(CanonicalGameplayIssuerPartitionMutation::status))
+          .containsExactlyInAnyOrder(
+              CanonicalGameplayIssuerPartitionMutation.Status.COMMITTED,
+              CanonicalGameplayIssuerPartitionMutation.Status.PENDING_PHYSICAL_PROOF);
+    });
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE game_session_canonical_issuer_partition_mutation SET bootstrap_operation_id = ? WHERE mutation_id = ?",
+                UUID.randomUUID(),
+                pendingId))
         .hasMessageContaining("immutable");
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE game_session_canonical_issuer_partition_mutation_head SET bootstrap_operation_id = ? WHERE issuer_id = ?",
-                    UUID.randomUUID(),
-                    ISSUER))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE game_session_canonical_issuer_partition_mutation_head SET bootstrap_operation_id = ? WHERE issuer_id = ?",
+                UUID.randomUUID(),
+                ISSUER))
         .hasMessageContaining("immutable");
     assertThat(
             dsl.fetch(

@@ -253,18 +253,15 @@ public final class CanonicalHumanRuntimeCompletionRepository {
   private void requireWritableReadCommittedTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
-        || dsl.connectionResult(
-            connection -> {
-              try {
-                return connection.getAutoCommit()
-                    || connection.isReadOnly()
-                    || connection.getTransactionIsolation()
-                        != Connection.TRANSACTION_READ_COMMITTED;
-              } catch (java.sql.SQLException exception) {
-                throw new IllegalStateException(
-                    "Unable to inspect completion transaction", exception);
-              }
-            })) {
+        || dsl.connectionResult(connection -> {
+          try {
+            return connection.getAutoCommit()
+                || connection.isReadOnly()
+                || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED;
+          } catch (java.sql.SQLException exception) {
+            throw new IllegalStateException("Unable to inspect completion transaction", exception);
+          }
+        })) {
       throw new IllegalStateException(
           "Human runtime completion requires a writable READ COMMITTED transaction");
     }

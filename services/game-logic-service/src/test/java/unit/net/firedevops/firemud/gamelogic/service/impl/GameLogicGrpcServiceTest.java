@@ -393,24 +393,23 @@ class GameLogicGrpcServiceTest {
             publicationReadGuard());
 
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
-    runAsGameDesign(
-        () ->
-            service.getDraftDesignDigest(
-                fullDigestRequest(TEST_TENANT.toString(), "7"),
-                new StreamObserver<>() {
-                  @Override
-                  public void onNext(GetDraftDesignDigestResponse value) {
-                    ref.set(value);
-                  }
+    runAsGameDesign(() ->
+        service.getDraftDesignDigest(
+            fullDigestRequest(TEST_TENANT.toString(), "7"),
+            new StreamObserver<>() {
+              @Override
+              public void onNext(GetDraftDesignDigestResponse value) {
+                ref.set(value);
+              }
 
-                  @Override
-                  public void onError(Throwable t) {
-                    fail(t);
-                  }
+              @Override
+              public void onError(Throwable t) {
+                fail(t);
+              }
 
-                  @Override
-                  public void onCompleted() {}
-                }));
+              @Override
+              public void onCompleted() {}
+            }));
 
     assertTrue(ref.get().hasError());
     assertEquals("UNSUPPORTED_SCOPE", ref.get().getError().getCode());
@@ -471,17 +470,16 @@ class GameLogicGrpcServiceTest {
         valid.toBuilder().clearSourceReadBinding().clearSourceReadBindingDigest().build();
     var unversionedScope = valid.toBuilder().clearScope().build();
 
-    runAsGameDesign(
-        () -> {
-          var missingResponse = invokeDigest(service, missingBinding);
-          assertEquals("INVALID_ARGUMENT", missingResponse.getError().getCode());
-          assertEquals("", missingResponse.getContentDigest());
-          assertEquals(0, missingResponse.getDigestSchemaVersion());
-          var scopeResponse = invokeDigest(service, unversionedScope);
-          assertEquals("INVALID_ARGUMENT", scopeResponse.getError().getCode());
-          assertEquals("", scopeResponse.getContentDigest());
-          assertEquals(0, scopeResponse.getDigestSchemaVersion());
-        });
+    runAsGameDesign(() -> {
+      var missingResponse = invokeDigest(service, missingBinding);
+      assertEquals("INVALID_ARGUMENT", missingResponse.getError().getCode());
+      assertEquals("", missingResponse.getContentDigest());
+      assertEquals(0, missingResponse.getDigestSchemaVersion());
+      var scopeResponse = invokeDigest(service, unversionedScope);
+      assertEquals("INVALID_ARGUMENT", scopeResponse.getError().getCode());
+      assertEquals("", scopeResponse.getContentDigest());
+      assertEquals(0, scopeResponse.getDigestSchemaVersion());
+    });
     Mockito.verifyNoInteractions(digestService);
   }
 
@@ -509,9 +507,8 @@ class GameLogicGrpcServiceTest {
         null, List.of(), Map.of(), true, "game-design-service", "test-instance");
 
     AtomicReference<StatusRuntimeException> failureReference = new AtomicReference<>();
-    runAsGameDesign(
-        () ->
-            failureReference.set(invokeDigestFailure(service, fullDigestRequest(changedBinding))));
+    runAsGameDesign(() ->
+        failureReference.set(invokeDigestFailure(service, fullDigestRequest(changedBinding))));
 
     assertThat(failureReference.get().getStatus().getCode()).isEqualTo(Status.Code.ALREADY_EXISTS);
     Mockito.verify(repository).findTerminal(authorization.operationId());
@@ -558,10 +555,9 @@ class GameLogicGrpcServiceTest {
                   .withDescription("database-password-secret")
                   .asRuntimeException());
       AtomicReference<StatusRuntimeException> failure = new AtomicReference<>();
-      runAsGameDesign(
-          () ->
-              failure.set(
-                  invokeDigestFailure(service, fullDigestRequest(TEST_TENANT.toString(), "7"))));
+      runAsGameDesign(() ->
+          failure.set(
+              invokeDigestFailure(service, fullDigestRequest(TEST_TENANT.toString(), "7"))));
 
       var statusFailure = failure.get();
       assertThat(statusFailure.getStatus().getCode()).isEqualTo(code);
@@ -598,22 +594,21 @@ class GameLogicGrpcServiceTest {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, null)
-        .run(
-            () ->
-                service.getDraftDesignDigest(
-                    fullDigestRequest(TEST_TENANT.toString(), "7"),
-                    new StreamObserver<>() {
-                      @Override
-                      public void onNext(GetDraftDesignDigestResponse value) {
-                        ref.set(value);
-                      }
+        .run(() ->
+            service.getDraftDesignDigest(
+                fullDigestRequest(TEST_TENANT.toString(), "7"),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(GetDraftDesignDigestResponse value) {
+                    ref.set(value);
+                  }
 
-                      @Override
-                      public void onError(Throwable t) {}
+                  @Override
+                  public void onError(Throwable t) {}
 
-                      @Override
-                      public void onCompleted() {}
-                    }));
+                  @Override
+                  public void onCompleted() {}
+                }));
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     Mockito.verifyNoInteractions(digestService);
   }
@@ -681,13 +676,12 @@ class GameLogicGrpcServiceTest {
     for (String workloadNamespace : new String[] {null, " ", "not a namespace"}) {
       GameLogicGrpcService service = newDigestService(digestService, workloadNamespace);
 
-      runAsGameDesign(
-          () ->
-              assertEquals(
-                  "PERMISSION_DENIED",
-                  invokeDigest(service, fullDigestRequest(TEST_TENANT.toString(), "7"))
-                      .getError()
-                      .getCode()));
+      runAsGameDesign(() ->
+          assertEquals(
+              "PERMISSION_DENIED",
+              invokeDigest(service, fullDigestRequest(TEST_TENANT.toString(), "7"))
+                  .getError()
+                  .getCode()));
     }
     Mockito.verifyNoInteractions(digestService);
   }

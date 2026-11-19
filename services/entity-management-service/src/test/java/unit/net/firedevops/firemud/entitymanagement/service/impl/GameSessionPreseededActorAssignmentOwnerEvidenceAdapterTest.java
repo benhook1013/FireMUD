@@ -126,16 +126,13 @@ class GameSessionPreseededActorAssignmentOwnerEvidenceAdapterTest {
                 PreseededActorAssignmentOwnerReadEvidence.Request.class)))
         .thenReturn(fixture.evidence());
 
-    assertThatThrownBy(
-            () ->
-                new GameSessionPreseededActorAssignmentOwnerEvidenceAdapter(client, sourceNamespace)
-                    .resolveCurrentEligibleTarget(
-                        request,
-                        identity(
-                            sourceNamespace,
-                            request.assignmentUuid(),
-                            request.canonicalAccountUuid()),
-                        staging))
+    assertThatThrownBy(() ->
+            new GameSessionPreseededActorAssignmentOwnerEvidenceAdapter(client, sourceNamespace)
+                .resolveCurrentEligibleTarget(
+                    request,
+                    identity(
+                        sourceNamespace, request.assignmentUuid(), request.canonicalAccountUuid()),
+                    staging))
         .isInstanceOf(
             PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException.class);
   }
@@ -145,10 +142,9 @@ class GameSessionPreseededActorAssignmentOwnerEvidenceAdapterTest {
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
     var adapter = adapter(channelFactory);
 
-    assertThatThrownBy(
-            () ->
-                adapter.resolveCurrentEligibleTarget(
-                    request(INSTANCE.toString()), identity(), staging(OTHER_TENANT)))
+    assertThatThrownBy(() ->
+            adapter.resolveCurrentEligibleTarget(
+                request(INSTANCE.toString()), identity(), staging(OTHER_TENANT)))
         .isInstanceOf(
             PreseededActorAssignmentOwnerEvidencePort.OwnerEvidenceUnavailableException.class);
 

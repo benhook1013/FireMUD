@@ -113,10 +113,9 @@ class CanonicalGameplayAdmissionDecisionReadClientMtlsTest {
         assertThatThrownBy(
                 () -> client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.UNAUTHENTICATED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.UNAUTHENTICATED));
         assertThat(service.calls()).hasValue(0);
       }
     }
@@ -128,10 +127,9 @@ class CanonicalGameplayAdmissionDecisionReadClientMtlsTest {
     try (var server = startServer("game-session", service);
         var client = newClient(server.port(), "account")) {
       client.init();
-      service.respondWith(
-          request ->
-              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
-                  new DiscoveryRequest(UUID.randomUUID(), request.targetNamespace()), List.of()));
+      service.respondWith(request ->
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+              new DiscoveryRequest(UUID.randomUUID(), request.targetNamespace()), List.of()));
 
       assertThatThrownBy(
               () -> client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
@@ -151,29 +149,27 @@ class CanonicalGameplayAdmissionDecisionReadClientMtlsTest {
   @Test
   void oversizedAuthenticatedResponsePreservesResourceExhaustedFromInboundLimit() throws Exception {
     var service = new DiscoveryProbeService();
-    service.respondWith(
-        request ->
-            CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(request, List.of())
-                .toBuilder()
-                .setUnknownFields(
-                    UnknownFieldSet.newBuilder()
-                        .addField(
-                            100,
-                            UnknownFieldSet.Field.newBuilder()
-                                .addLengthDelimited(ByteString.copyFrom(new byte[4 * 1024 * 1024]))
-                                .build())
-                        .build())
-                .build());
+    service.respondWith(request ->
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(request, List.of())
+            .toBuilder()
+            .setUnknownFields(
+                UnknownFieldSet.newBuilder()
+                    .addField(
+                        100,
+                        UnknownFieldSet.Field.newBuilder()
+                            .addLengthDelimited(ByteString.copyFrom(new byte[4 * 1024 * 1024]))
+                            .build())
+                    .build())
+            .build());
     try (var server = startServer("game-session", service);
         var client = newClient(server.port(), "account")) {
       client.init();
       assertThatThrownBy(
               () -> client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
       assertThat(service.calls()).hasValue(1);
     }
   }
@@ -228,10 +224,9 @@ class CanonicalGameplayAdmissionDecisionReadClientMtlsTest {
     private final AtomicReference<
             Function<DiscoveryRequest, ListVisiblePublicProductionAdmissionTargetsResponse>>
         responseFactory =
-            new AtomicReference<>(
-                request ->
-                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
-                        request, List.of()));
+            new AtomicReference<>(request ->
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                    request, List.of()));
 
     @Override
     public void listVisiblePublicProductionAdmissionTargets(

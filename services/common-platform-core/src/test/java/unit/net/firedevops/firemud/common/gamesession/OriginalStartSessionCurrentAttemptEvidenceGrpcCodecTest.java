@@ -73,18 +73,14 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
                 request,
                 Instant.parse("2030-01-01T00:00:00Z"),
                 request.canonicalPostAuthorizationTuple()));
-    assertThatThrownBy(
-            () ->
-                OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
-                    request, response.toBuilder().setPhaseState("COMMITTED").build()))
+    assertThatThrownBy(() ->
+            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
+                request, response.toBuilder().setPhaseState("COMMITTED").build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setAccountRedemptionProjectionDigest("0".repeat(64))
-                        .build()))
+    assertThatThrownBy(() ->
+            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
+                request,
+                response.toBuilder().setAccountRedemptionProjectionDigest("0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class);
     var unknownTimestamp =
         response.toBuilder()
@@ -96,27 +92,24 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
                             .build())
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
-                    request, unknownTimestamp))
+    assertThatThrownBy(() ->
+            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
+                request, unknownTimestamp))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
-                    new Request(
-                        UUID.fromString("04444444-4444-4444-8444-444444444444"),
-                        "world-runtime",
-                        request.canonicalPostAuthorizationTuple(),
-                        ATTEMPT,
-                        MUTATION,
-                        8L),
-                    response))
+    assertThatThrownBy(() ->
+            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
+                new Request(
+                    UUID.fromString("04444444-4444-4444-8444-444444444444"),
+                    "world-runtime",
+                    request.canonicalPostAuthorizationTuple(),
+                    ATTEMPT,
+                    MUTATION,
+                    8L),
+                response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromRequest(
-                    wire.toBuilder().setExpectedOwnerFence(0L).build()))
+    assertThatThrownBy(() ->
+            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromRequest(
+                wire.toBuilder().setExpectedOwnerFence(0L).build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -147,10 +140,9 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
         new Instant[] {
           Instant.ofEpochSecond(-62_135_596_801L), Instant.ofEpochSecond(253_402_300_800L)
         }) {
-      assertThatThrownBy(
-              () ->
-                  OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
-                      new Result(request, outside, projection)))
+      assertThatThrownBy(() ->
+              OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
+                  new Result(request, outside, projection)))
           .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -163,10 +155,8 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
               .setOriginalLeaseExpiresAt(
                   Timestamp.newBuilder().setSeconds(outsideSeconds).setNanos(0).build())
               .build();
-      assertThatThrownBy(
-              () ->
-                  OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
-                      request, response))
+      assertThatThrownBy(() ->
+              OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(request, response))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -190,10 +180,8 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
                       .setNanos(invalidNanos)
                       .build())
               .build();
-      assertThatThrownBy(
-              () ->
-                  OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
-                      request, response))
+      assertThatThrownBy(() ->
+              OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(request, response))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

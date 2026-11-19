@@ -157,25 +157,23 @@ public final class AccountStartSessionWorldParticipationAcquisitionService {
     requireNoAmbientTransaction();
     Readback readback =
         Objects.requireNonNull(
-            readbackTransaction.execute(
-                ignored -> {
-                  Optional<StoredParticipation> participation =
-                      Objects.requireNonNull(
-                          participationRepository.findCurrentExact(commit.candidate()),
-                          "Current participation lookup returned no optional");
-                  if (participation.isEmpty()) {
-                    throw denied("Committed exact World participation is not readable as current");
-                  }
-                  StoredParticipation actualParticipation = participation.orElseThrow();
-                  StoredEvidence actualEvidence =
-                      attemptEvidenceRepository
-                          .findCurrentExact(actualParticipation, commit.request())
-                          .orElseThrow(
-                              () ->
-                                  denied(
-                                      "Committed original Game Session attempt evidence is not readable"));
-                  return new Readback(actualParticipation, actualEvidence);
-                }),
+            readbackTransaction.execute(ignored -> {
+              Optional<StoredParticipation> participation =
+                  Objects.requireNonNull(
+                      participationRepository.findCurrentExact(commit.candidate()),
+                      "Current participation lookup returned no optional");
+              if (participation.isEmpty()) {
+                throw denied("Committed exact World participation is not readable as current");
+              }
+              StoredParticipation actualParticipation = participation.orElseThrow();
+              StoredEvidence actualEvidence =
+                  attemptEvidenceRepository
+                      .findCurrentExact(actualParticipation, commit.request())
+                      .orElseThrow(() ->
+                          denied(
+                              "Committed original Game Session attempt evidence is not readable"));
+              return new Readback(actualParticipation, actualEvidence);
+            }),
             "Account World participation readback transaction returned no result");
 
     if (!sameParticipation(commit.participation(), readback.participation())

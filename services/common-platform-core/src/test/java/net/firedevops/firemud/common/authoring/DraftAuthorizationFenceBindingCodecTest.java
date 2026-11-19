@@ -71,16 +71,15 @@ class DraftAuthorizationFenceBindingCodecTest {
 
     for (String unsupportedScope :
         List.of("PLATFORM", "OTHER/PLATFORM", "SELF_SERVICE_GAME_CREATION/OTHER")) {
-      assertThatThrownBy(
-              () ->
-                  new SourceEvidence(
-                      SourceKind.RECENT_REAUTH_POLICY,
-                      unsupportedScope,
-                      null,
-                      "1",
-                      null,
-                      null,
-                      new byte[] {1}))
+      assertThatThrownBy(() ->
+              new SourceEvidence(
+                  SourceKind.RECENT_REAUTH_POLICY,
+                  unsupportedScope,
+                  null,
+                  "1",
+                  null,
+                  null,
+                  new byte[] {1}))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Unsupported recent reauthentication policy scope");
     }
@@ -90,16 +89,15 @@ class DraftAuthorizationFenceBindingCodecTest {
   void recentReauthenticationPolicySourcesRejectInventedGenerationAndCheckpoints() {
     for (var fields :
         List.of(new String[] {"1", null, null}, new String[] {null, "invented-stream", "1"})) {
-      assertThatThrownBy(
-              () ->
-                  new SourceEvidence(
-                      SourceKind.RECENT_REAUTH_POLICY,
-                      "SELF_SERVICE_GAME_CREATION/PLATFORM",
-                      fields[0],
-                      "1",
-                      fields[1],
-                      fields[2],
-                      new byte[] {1}))
+      assertThatThrownBy(() ->
+              new SourceEvidence(
+                  SourceKind.RECENT_REAUTH_POLICY,
+                  "SELF_SERVICE_GAME_CREATION/PLATFORM",
+                  fields[0],
+                  "1",
+                  fields[1],
+                  fields[2],
+                  new byte[] {1}))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Reauthentication policy has no generation or checkpoint");
     }
@@ -249,19 +247,15 @@ class DraftAuthorizationFenceBindingCodecTest {
             case 6 -> utf8("sha256:" + "f".repeat(64));
             default -> binding(List.of(source())).canonicalBytes();
           });
-      assertThatThrownBy(
-              () ->
-                  DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
-                      writeFrames(changedBinding)))
+      assertThatThrownBy(() ->
+              DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(changedBinding)))
           .isInstanceOf(IllegalArgumentException.class);
     }
 
     var mismatchedVersion = new ArrayList<>(frames);
     mismatchedVersion.set(0, utf8("account-draft-owner-readback/v1"));
-    assertThatThrownBy(
-            () ->
-                DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
-                    writeFrames(mismatchedVersion)))
+    assertThatThrownBy(() ->
+            DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(mismatchedVersion)))
         .isInstanceOf(IllegalArgumentException.class);
 
     var changedResult = new ArrayList<>(frames);
@@ -435,15 +429,13 @@ class DraftAuthorizationFenceBindingCodecTest {
               () -> DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(fields)))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
-                    Arrays.copyOf(bytes, bytes.length - 1)))
+    assertThatThrownBy(() ->
+            DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
+                Arrays.copyOf(bytes, bytes.length - 1)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
-                    Arrays.copyOf(bytes, bytes.length + 1)))
+    assertThatThrownBy(() ->
+            DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
+                Arrays.copyOf(bytes, bytes.length + 1)))
         .isInstanceOf(IllegalArgumentException.class);
     byte[] negative = bytes.clone();
     ByteBuffer.wrap(negative).putInt(-1);
@@ -457,10 +449,8 @@ class DraftAuthorizationFenceBindingCodecTest {
 
     var expandedV1Owner = readFrames(bytes);
     expandedV1Owner.set(1, utf8("ENTITY"));
-    assertThatThrownBy(
-            () ->
-                DraftAuthorizationFenceBinding.OwnerReadback.fromStored(
-                    writeFrames(expandedV1Owner)))
+    assertThatThrownBy(() ->
+            DraftAuthorizationFenceBinding.OwnerReadback.fromStored(writeFrames(expandedV1Owner)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

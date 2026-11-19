@@ -322,13 +322,12 @@ final class AccountTenantCreationSourceOrderRepository {
     }
     sql += " ORDER BY order_row.created_at, order_row.creation_operation_id LIMIT ?";
     return dsl.fetch(sql, parameters).stream()
-        .map(
-            row -> {
-              AccountTenantCreationSourceOrderBinding binding = mapOriginal(row);
-              OffsetDateTime createdAt = required(row, "created_at", OffsetDateTime.class);
-              return new PendingSourceOrder(
-                  binding, createdAt, new PendingCursor(createdAt, binding.creationOperationId()));
-            })
+        .map(row -> {
+          AccountTenantCreationSourceOrderBinding binding = mapOriginal(row);
+          OffsetDateTime createdAt = required(row, "created_at", OffsetDateTime.class);
+          return new PendingSourceOrder(
+              binding, createdAt, new PendingCursor(createdAt, binding.creationOperationId()));
+        })
         .toList();
   }
 
@@ -410,15 +409,14 @@ final class AccountTenantCreationSourceOrderRepository {
     }
     List<SourceEvidence> stored =
         rows.stream()
-            .map(
-                row -> {
-                  byte[] evidence = required(row, "source_evidence", byte[].class);
-                  SourceEvidence source = SourceEvidence.fromStored(evidence);
-                  if (!source.key().equals(row.get("source_key", String.class))) {
-                    throw conflict("Stored source key differs from canonical owner evidence");
-                  }
-                  return source;
-                })
+            .map(row -> {
+              byte[] evidence = required(row, "source_evidence", byte[].class);
+              SourceEvidence source = SourceEvidence.fromStored(evidence);
+              if (!source.key().equals(row.get("source_key", String.class))) {
+                throw conflict("Stored source key differs from canonical owner evidence");
+              }
+              return source;
+            })
             .toList();
     List<SourceEvidence> expected =
         binding.sources().stream().sorted(Comparator.comparing(SourceEvidence::key)).toList();

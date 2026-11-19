@@ -23,14 +23,13 @@ public class NpcAggressionServiceImpl implements NpcAggressionService {
     NpcMemory mem =
         memoryRepository
             .findByNpcIdAndKeyAndTenantId(npcId, AGGRESSION_KEY, tenantId)
-            .orElseGet(
-                () -> {
-                  NpcMemory newMem = new NpcMemory();
-                  newMem.setNpcId(npcId);
-                  newMem.setKey(AGGRESSION_KEY);
-                  newMem.setTenantId(tenantId);
-                  return newMem;
-                });
+            .orElseGet(() -> {
+              NpcMemory newMem = new NpcMemory();
+              newMem.setNpcId(npcId);
+              newMem.setKey(AGGRESSION_KEY);
+              newMem.setTenantId(tenantId);
+              return newMem;
+            });
     mem.setValue(state.name());
     memoryRepository.save(mem);
   }

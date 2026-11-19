@@ -58,9 +58,8 @@ class WorldRuntimeFamilyCatalogTest {
             + "],\"schemaFacts\":["
             + fact
             + "]}";
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalog.fromStored(manyFamilies.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalog.fromStored(manyFamilies.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(IllegalArgumentException.class);
     String compactFact =
         "{\"kind\":\"TYPE\",\"identity\":\"x\",\"definitionDigest\":\"sha256:"
@@ -135,50 +134,43 @@ class WorldRuntimeFamilyCatalogTest {
   void rejectsUnknownDuplicateOversizedAndChangedCorrelationWireValues() {
     var read = new Request(UUID.randomUUID(), "test");
     var request = WorldRuntimeFamilyCatalogCodec.toRequest(read);
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalogCodec.fromRequest(
-                    request.toBuilder()
-                        .addCanonicalRequestBytes(request.getCanonicalRequestBytes(0))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalogCodec.fromRequest(
+                request.toBuilder()
+                    .addCanonicalRequestBytes(request.getCanonicalRequestBytes(0))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalogCodec.fromRequest(
-                    request.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    9, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalogCodec.fromRequest(
+                request.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(9, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalogCodec.fromRequest(
-                    request.toBuilder()
-                        .setCanonicalRequestBytes(0, ByteString.copyFrom(new byte[1025]))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalogCodec.fromRequest(
+                request.toBuilder()
+                    .setCanonicalRequestBytes(0, ByteString.copyFrom(new byte[1025]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
     var evidence = new Evidence(read, UUID.randomUUID(), catalog());
     var response = WorldRuntimeFamilyCatalogCodec.toResponse(read, evidence);
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalogCodec.fromResponse(
-                    new Request(UUID.randomUUID(), "test"), response))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalogCodec.fromResponse(
+                new Request(UUID.randomUUID(), "test"), response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalogCodec.fromResponse(
-                    new Request(read.readRequestId(), "other"), response))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalogCodec.fromResponse(
+                new Request(read.readRequestId(), "other"), response))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalogCodec.fromResponse(
-                    read,
-                    response.toBuilder()
-                        .addCanonicalResponseBytes(response.getCanonicalResponseBytes(0))
-                        .build()))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalogCodec.fromResponse(
+                read,
+                response.toBuilder()
+                    .addCanonicalResponseBytes(response.getCanonicalResponseBytes(0))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -187,15 +179,13 @@ class WorldRuntimeFamilyCatalogTest {
     var evidence =
         new Evidence(new Request(UUID.randomUUID(), "test"), UUID.randomUUID(), catalog());
     byte[] bytes = WorldRuntimeFamilyCatalogCodec.evidenceBytes(evidence);
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalogCodec.evidenceFromStored(
-                    Arrays.copyOf(bytes, bytes.length - 1)))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalogCodec.evidenceFromStored(
+                Arrays.copyOf(bytes, bytes.length - 1)))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalogCodec.evidenceFromStored(
-                    Arrays.copyOf(bytes, bytes.length + 1)))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalogCodec.evidenceFromStored(
+                Arrays.copyOf(bytes, bytes.length + 1)))
         .isInstanceOf(IllegalArgumentException.class);
     // The digest string is outside the catalog bytes, so a complete parse must still refuse it.
     int digestOffset =
@@ -205,10 +195,9 @@ class WorldRuntimeFamilyCatalogTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> WorldRuntimeFamilyCatalog.fromStored(new byte[] {(byte) 0xc3, 0x28}))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                WorldRuntimeFamilyCatalog.fromStored(
-                    new byte[WorldRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
+    assertThatThrownBy(() ->
+            WorldRuntimeFamilyCatalog.fromStored(
+                new byte[WorldRuntimeFamilyCatalog.MAX_CATALOG_BYTES + 1]))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new Request(new UUID(0, 0), "test"))
         .isInstanceOf(IllegalArgumentException.class);

@@ -156,14 +156,13 @@ class PlayerCommandHistoryRecorderTest {
         .when(storageService)
         .append(7L, 11L, 17L, "LOOK", 10);
 
-    assertDoesNotThrow(
-        () ->
-            recorder.record(
-                new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
-                true,
-                CommandEnqueueResult.success(),
-                Optional.of(context),
-                Optional.of(context)));
+    assertDoesNotThrow(() ->
+        recorder.record(
+            new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+            true,
+            CommandEnqueueResult.success(),
+            Optional.of(context),
+            Optional.of(context)));
   }
 
   @Test
@@ -173,14 +172,13 @@ class PlayerCommandHistoryRecorderTest {
         .when(settingsResolver)
         .commandHistory(context);
 
-    assertDoesNotThrow(
-        () ->
-            recorder.record(
-                new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
-                true,
-                CommandEnqueueResult.success(),
-                Optional.of(context),
-                Optional.of(context)));
+    assertDoesNotThrow(() ->
+        recorder.record(
+            new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+            true,
+            CommandEnqueueResult.success(),
+            Optional.of(context),
+            Optional.of(context)));
 
     verify(storageService, never())
         .append(
@@ -219,14 +217,13 @@ class PlayerCommandHistoryRecorderTest {
             PlayerCommandCapability.COMMAND_HISTORY, 7L, 11L))
         .thenThrow(new IllegalStateException("settings authority unavailable"));
 
-    assertDoesNotThrow(
-        () ->
-            recorder.record(
-                new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
-                true,
-                CommandEnqueueResult.success(),
-                Optional.of(context),
-                Optional.of(context)));
+    assertDoesNotThrow(() ->
+        recorder.record(
+            new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+            true,
+            CommandEnqueueResult.success(),
+            Optional.of(context),
+            Optional.of(context)));
 
     verify(storageService, never())
         .append(

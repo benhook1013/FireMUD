@@ -151,15 +151,14 @@ class SessionResumptionFlowTest {
     when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
         .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L, false)));
     when(instanceRepository.findById(Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              long sessionId = invocation.getArgument(0);
-              GameInstance perCall = new GameInstance();
-              perCall.setId(sessionId);
-              perCall.setTenantId(22L);
-              perCall.setOwnerAccountId(77L);
-              return Optional.of(perCall);
-            });
+        .thenAnswer(invocation -> {
+          long sessionId = invocation.getArgument(0);
+          GameInstance perCall = new GameInstance();
+          perCall.setId(sessionId);
+          perCall.setTenantId(22L);
+          perCall.setOwnerAccountId(77L);
+          return Optional.of(perCall);
+        });
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
@@ -191,16 +190,15 @@ class SessionResumptionFlowTest {
                 .setAllowed(true)
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenAnswer(
-            invocation ->
-                GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                    .setTenantId("22")
-                    .setGameplayAvailable(true)
-                    .setAllowPublicJoin(true)
-                    .setEntitlementVersion(1L)
-                    .setTenantBillingSequence(1L)
-                    .setEvaluatedAt(java.time.Instant.now().toString())
-                    .build());
+        .thenAnswer(invocation ->
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId("22")
+                .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(java.time.Instant.now().toString())
+                .build());
     when(entityManagementClient.listCharactersByAccount(
             Mockito.anyString(),
             Mockito.anyString(),
@@ -422,12 +420,11 @@ class SessionResumptionFlowTest {
         .recordDisconnect(1L, AccountRecentPresenceDisposition.LOGOUT);
     verify(scriptEventPublisher)
         .publishRegionExitEvent(
-            Mockito.argThat(
-                context ->
-                    context.sessionId() == 1L
-                        && context.gameInstanceId() == 1L
-                        && context.characterId() == 7001L
-                        && "R-1021".equals(context.roomInstanceId())),
+            Mockito.argThat(context ->
+                context.sessionId() == 1L
+                    && context.gameInstanceId() == 1L
+                    && context.characterId() == 7001L
+                    && "R-1021".equals(context.roomInstanceId())),
             Mockito.eq("logout:1:1:7001"),
             Mockito.eq("LOGOUT"));
 
@@ -549,15 +546,14 @@ class SessionResumptionFlowTest {
             "LOGIN demo@example.com swordfish");
 
     when(instanceRepository.findById(Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> {
-              long sessionId = invocation.getArgument(0);
-              GameInstance perCall = new GameInstance();
-              perCall.setId(sessionId);
-              perCall.setTenantId(22L);
-              perCall.setOwnerAccountId(77L);
-              return Optional.of(perCall);
-            });
+        .thenAnswer(invocation -> {
+          long sessionId = invocation.getArgument(0);
+          GameInstance perCall = new GameInstance();
+          perCall.setId(sessionId);
+          perCall.setTenantId(22L);
+          perCall.setOwnerAccountId(77L);
+          return Optional.of(perCall);
+        });
 
     interpreter.interpret("1", command, false);
     interpreter.interpret(

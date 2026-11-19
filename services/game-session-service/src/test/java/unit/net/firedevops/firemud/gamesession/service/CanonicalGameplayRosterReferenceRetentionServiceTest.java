@@ -85,17 +85,15 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
     when(repository.purgeRetiredTarget(any()))
         .thenThrow(new IllegalStateException("Entity observation outstanding"));
     when(repository.purgeConfirmedRetirementAcknowledgements(2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return 1;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return 1;
+        });
     when(repository.transferHealth())
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return new CanonicalGameplayRosterReferenceRepository.TransferHealth(19, 7);
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return new CanonicalGameplayRosterReferenceRepository.TransferHealth(19, 7);
+        });
     when(repository.health()).thenReturn(new Health(0, 0));
     service.sweep();
     verify(repository).purgeConfirmedRetirementAcknowledgements(2);
@@ -182,17 +180,15 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
   void blockingHealthFailureInvalidatesHealthyGaugesAndLaterObservationRecoversThem() {
     when(repository.targetCandidates(null, 2)).thenReturn(List.of());
     when(repository.health())
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return new Health(0, 0);
-            })
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return new Health(0, 0);
+        })
         .thenThrow(new IllegalStateException("blocking health unavailable"))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return new Health(13, 9);
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return new Health(13, 9);
+        });
     var oldest = metrics.get("firemud.canonical.roster.reference.oldest_blocking_seconds").gauge();
     var lag = metrics.get("firemud.canonical.roster.reference.cleanup_lag_seconds").gauge();
 
@@ -231,46 +227,40 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
     var last = candidate(2, "ACTIVE");
     var retired = candidate(3, "RETIRED");
     when(repository.targetCandidates(null, 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of(first, last);
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of(first, last);
+        });
     when(repository.targetCandidates(last.operationUuid(), 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              throw new IllegalStateException("candidate storage unavailable");
-            })
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          throw new IllegalStateException("candidate storage unavailable");
+        })
         .thenThrow(new IllegalStateException("candidate storage still unavailable"))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of(retired);
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of(retired);
+        });
     when(repository.purgeRetiredTarget(retired)).thenReturn(true);
     when(repository.purgeConfirmedRetirementAcknowledgements(2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return 1;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return 1;
+        });
     when(repository.transferHealth())
         .thenReturn(new CanonicalGameplayRosterReferenceRepository.TransferHealth(0, 0))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return new CanonicalGameplayRosterReferenceRepository.TransferHealth(19, 7);
-            })
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return new CanonicalGameplayRosterReferenceRepository.TransferHealth(19, 7);
+        })
         .thenThrow(new IllegalStateException("transfer health unavailable"))
         .thenReturn(new CanonicalGameplayRosterReferenceRepository.TransferHealth(23, 11));
     when(repository.health())
         .thenReturn(new Health(0, 0))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return new Health(13, 9);
-            })
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return new Health(13, 9);
+        })
         .thenThrow(new IllegalStateException("blocking health unavailable"))
         .thenReturn(new Health(17, 12));
     var blocking =
@@ -340,58 +330,49 @@ class CanonicalGameplayRosterReferenceRetentionServiceTest {
     var eligible = candidate(3, "ACTIVE");
     var retired = candidate(4, "RETIRED");
     when(repository.targetCandidates(null, 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of(protectedTarget, unavailable);
-            })
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of();
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of(protectedTarget, unavailable);
+        })
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of();
+        });
     when(repository.targetCandidates(unavailable.operationUuid(), 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of(eligible, retired);
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of(eligible, retired);
+        });
     when(repository.targetCandidates(retired.operationUuid(), 2))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return List.of();
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return List.of();
+        });
     when(owner.retireTarget(protectedTarget.original()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return false;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return false;
+        });
     when(owner.retireTarget(unavailable.original()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              throw new IllegalStateException("Owner unavailable");
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          throw new IllegalStateException("Owner unavailable");
+        });
     when(owner.retireTarget(eligible.original()))
-        .thenAnswer(
-            ignored -> {
-              assertOutsideTransaction();
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          assertOutsideTransaction();
+          return true;
+        });
     when(repository.purgeRetiredTarget(retired))
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return true;
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return true;
+        });
     when(repository.health())
-        .thenAnswer(
-            ignored -> {
-              assertSqlTransaction();
-              return new Health(91, 17);
-            });
+        .thenAnswer(ignored -> {
+          assertSqlTransaction();
+          return new Health(91, 17);
+        });
 
     service.sweep();
     verify(repository, never()).purgeRetiredTarget(any());

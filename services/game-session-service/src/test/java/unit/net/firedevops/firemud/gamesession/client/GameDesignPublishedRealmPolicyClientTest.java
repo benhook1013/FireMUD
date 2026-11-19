@@ -46,13 +46,12 @@ class GameDesignPublishedRealmPolicyClientTest {
     var evidence = evidence();
     var stub = mockStub();
     when(stub.listPublishedRealmEntryPolicies(any()))
-        .thenAnswer(
-            invocation -> {
-              var request =
-                  PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
-                      invocation.getArgument(0, ListPublishedRealmEntryPoliciesRequest.class));
-              return PublishedRealmEntryPolicyReadGrpcCodec.toResponse(request, evidence);
-            });
+        .thenAnswer(invocation -> {
+          var request =
+              PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(
+                  invocation.getArgument(0, ListPublishedRealmEntryPoliciesRequest.class));
+          return PublishedRealmEntryPolicyReadGrpcCodec.toResponse(request, evidence);
+        });
     var client = newClient(stub);
 
     PublishedRealmEntryPolicySetEvidence result =
@@ -112,15 +111,13 @@ class GameDesignPublishedRealmPolicyClientTest {
     var expectedEvidence = evidence();
     var stub = mockStub();
     when(stub.listPublishedRealmEntryPolicies(any()))
-        .thenAnswer(
-            invocation -> {
-              ListPublishedRealmEntryPoliciesRequest request = invocation.getArgument(0);
-              return ListPublishedRealmEntryPoliciesResponse.newBuilder()
-                  .setRequest(
-                      request.toBuilder().setCanonicalVersionId(TENANT_ID.toString()).build())
-                  .setPolicySetEvidence(ByteString.copyFrom(expectedEvidence.canonicalBytes()))
-                  .build();
-            });
+        .thenAnswer(invocation -> {
+          ListPublishedRealmEntryPoliciesRequest request = invocation.getArgument(0);
+          return ListPublishedRealmEntryPoliciesResponse.newBuilder()
+              .setRequest(request.toBuilder().setCanonicalVersionId(TENANT_ID.toString()).build())
+              .setPolicySetEvidence(ByteString.copyFrom(expectedEvidence.canonicalBytes()))
+              .build();
+        });
     assertThatThrownBy(() -> newClient(stub).listPublishedRealmEntryPolicies(TENANT_ID, VERSION_ID))
         .isInstanceOf(GameDesignPublishedRealmPolicyClient.InvalidResponseException.class)
         .hasMessageContaining("response is invalid");
@@ -207,31 +204,27 @@ class GameDesignPublishedRealmPolicyClientTest {
     var channelFactory = mock(GrpcChannelFactory.class);
     var plaintext = mtlsProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GameDesignPublishedRealmPolicyClient(
-                    new ServiceEndpointsProperties(), plaintext, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new GameDesignPublishedRealmPolicyClient(
+                new ServiceEndpointsProperties(), plaintext, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
-    assertThatThrownBy(
-            () ->
-                new GameDesignPublishedRealmPolicyClient(
-                    new ServiceEndpointsProperties(), null, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new GameDesignPublishedRealmPolicyClient(
+                new ServiceEndpointsProperties(), null, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("TLS configuration is required");
 
     var classpath = mtlsProperties();
     classpath.setPrivateKey("classpath:certs/client.key");
-    assertThatThrownBy(
-            () ->
-                new GameDesignPublishedRealmPolicyClient(
-                    new ServiceEndpointsProperties(), classpath, channelFactory, NAMESPACE))
+    assertThatThrownBy(() ->
+            new GameDesignPublishedRealmPolicyClient(
+                new ServiceEndpointsProperties(), classpath, channelFactory, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("file-backed");
-    assertThatThrownBy(
-            () ->
-                new GameDesignPublishedRealmPolicyClient(
-                    new ServiceEndpointsProperties(), mtlsProperties(), channelFactory, "bad.ns"))
+    assertThatThrownBy(() ->
+            new GameDesignPublishedRealmPolicyClient(
+                new ServiceEndpointsProperties(), mtlsProperties(), channelFactory, "bad.ns"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("one DNS label");
     verifyNoInteractions(channelFactory);

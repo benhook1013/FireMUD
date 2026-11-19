@@ -48,10 +48,9 @@ class WorldOriginalStartSessionProtectedActivationGrpcCodecTest {
             .addTargetNamespace("world-runtime")
             .addAcquisitionInput(nested)
             .build();
-    assertThatThrownBy(
-            () ->
-                WorldOriginalStartSessionProtectedActivationGrpcCodec.fromRequest(
-                    duplicate, "world-runtime"))
+    assertThatThrownBy(() ->
+            WorldOriginalStartSessionProtectedActivationGrpcCodec.fromRequest(
+                duplicate, "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate");
 
@@ -65,18 +64,15 @@ class WorldOriginalStartSessionProtectedActivationGrpcCodecTest {
                     .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                WorldOriginalStartSessionProtectedActivationGrpcCodec.fromRequest(
-                    unknown, "world-runtime"))
+    assertThatThrownBy(() ->
+            WorldOriginalStartSessionProtectedActivationGrpcCodec.fromRequest(
+                unknown, "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
 
-    assertThatThrownBy(
-            () ->
-                WorldOriginalStartSessionProtectedActivationGrpcCodec.fromRequest(
-                    ActivateOriginalStartSessionProtectedRequest.getDefaultInstance(),
-                    "world-runtime"))
+    assertThatThrownBy(() ->
+            WorldOriginalStartSessionProtectedActivationGrpcCodec.fromRequest(
+                ActivateOriginalStartSessionProtectedRequest.getDefaultInstance(), "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -84,10 +80,9 @@ class WorldOriginalStartSessionProtectedActivationGrpcCodecTest {
   void rejectsMissingResponseReceiptAndOversizedResponseCarrier() {
     var empty =
         ActivateOriginalStartSessionProtectedResponse.newBuilder().addSchemaVersion(1).build();
-    assertThatThrownBy(
-            () ->
-                WorldOriginalStartSessionProtectedActivationGrpcCodec.fromResponse(
-                    mockInput(), "world-runtime", empty))
+    assertThatThrownBy(() ->
+            WorldOriginalStartSessionProtectedActivationGrpcCodec.fromResponse(
+                mockInput(), "world-runtime", empty))
         .isInstanceOf(IllegalArgumentException.class);
 
     assertThat(WorldOriginalStartSessionProtectedActivationGrpcCodec.MAX_RESPONSE_WIRE_BYTES)

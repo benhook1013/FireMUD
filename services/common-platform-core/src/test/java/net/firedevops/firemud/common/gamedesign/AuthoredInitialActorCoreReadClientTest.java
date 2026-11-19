@@ -42,10 +42,8 @@ class AuthoredInitialActorCoreReadClientTest {
     assertThatThrownBy(() -> client.read(request))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not initialized");
-    assertThatThrownBy(
-            () ->
-                client.read(
-                    new ReadRequest(AuthoredInitialActorCoreReadTestFixture.request("other"))))
+    assertThatThrownBy(() ->
+            client.read(new ReadRequest(AuthoredInitialActorCoreReadTestFixture.request("other"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("client identity");
 

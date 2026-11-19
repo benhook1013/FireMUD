@@ -109,10 +109,9 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
                   .CanonicalGameplayRosterReferenceRepository.OriginalUnavailableException());
       assertThatThrownBy(() -> stub(channel.channel()).getCanonicalGameplayRosterReference(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAVAILABLE));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE));
     }
   }
 
@@ -199,24 +198,23 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
             any(
                 net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
                     .class)))
-        .thenAnswer(
-            call -> {
-              assertThat(
-                      org.springframework.transaction.support.TransactionSynchronizationManager
-                          .isActualTransactionActive())
-                  .isFalse();
-              assertThat(
-                      org.springframework.transaction.support.TransactionSynchronizationManager
-                          .isSynchronizationActive())
-                  .isFalse();
-              var evidence =
-                  mock(
-                      net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
-                          .class);
-              when(evidence.request()).thenReturn(call.getArgument(0));
-              when(evidence.admissionPointerSnapshotDigest()).thenReturn("0".repeat(64));
-              return evidence;
-            });
+        .thenAnswer(call -> {
+          assertThat(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isActualTransactionActive())
+              .isFalse();
+          assertThat(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isSynchronizationActive())
+              .isFalse();
+          var evidence =
+              mock(
+                  net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                      .class);
+          when(evidence.request()).thenReturn(call.getArgument(0));
+          when(evidence.admissionPointerSnapshotDigest()).thenReturn("0".repeat(64));
+          return evidence;
+        });
     // Real owner comparison and authenticated handler; repositories/source remain controlled
     // doubles. This does not establish SQL or genuine upstream source custody.
     var actualOwner =
@@ -268,11 +266,10 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
               failure ->
                   assertThat(failure.getStatus().getCode())
                       .isEqualTo(Status.Code.FAILED_PRECONDITION));
-      assertThatThrownBy(
-              () ->
-                  stub(channel.channel())
-                      .getCanonicalGameplayRosterReference(
-                          request.toBuilder().setSchemaVersion(2).build()))
+      assertThatThrownBy(() ->
+              stub(channel.channel())
+                  .getCanonicalGameplayRosterReference(
+                      request.toBuilder().setSchemaVersion(2).build()))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               failure ->
@@ -304,10 +301,9 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
         assertThatThrownBy(
                 () -> stub(channel.channel()).getCanonicalGameplayRosterReference(request()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
       }
     }
     verifyNoInteractions(owner);
@@ -320,10 +316,9 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
       assertThatThrownBy(
               () -> stub(channel.channel()).getCanonicalGameplayRosterReference(request()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAUTHENTICATED));
     }
     verifyNoInteractions(owner);
   }
@@ -351,38 +346,31 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
           .thenReturn(ack.toBuilder().setObservationUuid(UUID.randomUUID().toString()).build());
       assertThatThrownBy(
               () -> stub(channel.channel()).acknowledgeCanonicalGameplayRosterRetirement(request))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
-      assertThatThrownBy(
-              () ->
-                  stub(channel.channel())
-                      .acknowledgeCanonicalGameplayRosterRetirement(
-                          request.toBuilder().setSchemaVersion(2).build()))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.INVALID_ARGUMENT));
-      assertThatThrownBy(
-              () ->
-                  stub(channel.channel())
-                      .confirmCanonicalGameplayRosterRetirementAcknowledgement(
-                          confirmation.toBuilder().setSchemaVersion(2).build()))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.INVALID_ARGUMENT));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
+      assertThatThrownBy(() ->
+              stub(channel.channel())
+                  .acknowledgeCanonicalGameplayRosterRetirement(
+                      request.toBuilder().setSchemaVersion(2).build()))
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.INVALID_ARGUMENT));
+      assertThatThrownBy(() ->
+              stub(channel.channel())
+                  .confirmCanonicalGameplayRosterRetirementAcknowledgement(
+                      confirmation.toBuilder().setSchemaVersion(2).build()))
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.INVALID_ARGUMENT));
       when(owner.confirmRetirementAcknowledgement(confirmation, principal))
           .thenReturn(confirmed.toBuilder().setRequestDigest("f".repeat(64)).build());
-      assertThatThrownBy(
-              () ->
-                  stub(channel.channel())
-                      .confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+      assertThatThrownBy(() ->
+              stub(channel.channel())
+                  .confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION));
       var cases =
           List.of(
               java.util.Map.entry(
@@ -404,18 +392,13 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
             .confirmRetirementAcknowledgement(confirmation, principal);
         assertThatThrownBy(
                 () -> stub(channel.channel()).acknowledgeCanonicalGameplayRosterRetirement(request))
-            .satisfies(
-                result ->
-                    assertThat(Status.fromThrowable(result).getCode())
-                        .isEqualTo(failure.getValue()));
-        assertThatThrownBy(
-                () ->
-                    stub(channel.channel())
-                        .confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
-            .satisfies(
-                result ->
-                    assertThat(Status.fromThrowable(result).getCode())
-                        .isEqualTo(failure.getValue()));
+            .satisfies(result ->
+                assertThat(Status.fromThrowable(result).getCode()).isEqualTo(failure.getValue()));
+        assertThatThrownBy(() ->
+                stub(channel.channel())
+                    .confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+            .satisfies(result ->
+                assertThat(Status.fromThrowable(result).getCode()).isEqualTo(failure.getValue()));
       }
     }
   }
@@ -432,18 +415,15 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
       try (var channel = channel(identity)) {
         assertThatThrownBy(
                 () -> stub(channel.channel()).acknowledgeCanonicalGameplayRosterRetirement(request))
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
-        assertThatThrownBy(
-                () ->
-                    stub(channel.channel())
-                        .confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
+        assertThatThrownBy(() ->
+                stub(channel.channel())
+                    .confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.PERMISSION_DENIED));
       }
     }
     verifyNoInteractions(owner);
@@ -460,18 +440,15 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
     try (var channel = channel("entity")) {
       assertThatThrownBy(
               () -> stub(channel.channel()).acknowledgeCanonicalGameplayRosterRetirement(request))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAVAILABLE));
-      assertThatThrownBy(
-              () ->
-                  stub(channel.channel())
-                      .confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNAVAILABLE));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE));
+      assertThatThrownBy(() ->
+              stub(channel.channel())
+                  .confirmCanonicalGameplayRosterRetirementAcknowledgement(confirmation))
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE));
     }
     verifyNoInteractions(owner);
   }

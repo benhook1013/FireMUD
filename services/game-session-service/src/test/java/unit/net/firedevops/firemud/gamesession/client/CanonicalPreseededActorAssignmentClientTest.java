@@ -268,32 +268,28 @@ class CanonicalPreseededActorAssignmentClientTest {
   void constructorRejectsPlaintextMissingTlsAndInvalidNamespace() {
     var plaintext = tls.copy();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new CanonicalPreseededActorAssignmentClient(
-                    new ServiceEndpointsProperties(), plaintext, channels, NAMESPACE))
+    assertThatThrownBy(() ->
+            new CanonicalPreseededActorAssignmentClient(
+                new ServiceEndpointsProperties(), plaintext, channels, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
 
     var classpath = tls.copy();
     classpath.setCertChain("classpath:client.crt");
-    assertThatThrownBy(
-            () ->
-                new CanonicalPreseededActorAssignmentClient(
-                    new ServiceEndpointsProperties(), classpath, channels, NAMESPACE))
+    assertThatThrownBy(() ->
+            new CanonicalPreseededActorAssignmentClient(
+                new ServiceEndpointsProperties(), classpath, channels, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
 
     var missing = tls.copy();
     missing.setCaCert(directory.resolve("missing-ca.crt").toString());
-    assertThatThrownBy(
-            () ->
-                new CanonicalPreseededActorAssignmentClient(
-                    new ServiceEndpointsProperties(), missing, channels, NAMESPACE))
+    assertThatThrownBy(() ->
+            new CanonicalPreseededActorAssignmentClient(
+                new ServiceEndpointsProperties(), missing, channels, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalPreseededActorAssignmentClient(
-                    new ServiceEndpointsProperties(), tls, channels, "bad/namespace"))
+    assertThatThrownBy(() ->
+            new CanonicalPreseededActorAssignmentClient(
+                new ServiceEndpointsProperties(), tls, channels, "bad/namespace"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

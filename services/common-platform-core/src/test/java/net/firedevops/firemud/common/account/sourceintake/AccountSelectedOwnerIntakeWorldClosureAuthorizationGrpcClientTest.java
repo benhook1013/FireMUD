@@ -27,22 +27,19 @@ class AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClientTest {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient(
-                    endpoints, plaintext, new GrpcChannelFactory(), "test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient(
+                endpoints, plaintext, new GrpcChannelFactory(), "test"))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient(
-                    endpoints, new CommonGrpcClientProperties(), new GrpcChannelFactory(), "test"))
+    assertThatThrownBy(() ->
+            new AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient(
+                endpoints, new CommonGrpcClientProperties(), new GrpcChannelFactory(), "test"))
         .isInstanceOf(IllegalArgumentException.class);
 
-    assertThatThrownBy(
-            () ->
-                new AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient(
-                    endpoints, tlsFiles(), new GrpcChannelFactory(), "not/a/namespace"))
+    assertThatThrownBy(() ->
+            new AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient(
+                endpoints, tlsFiles(), new GrpcChannelFactory(), "not/a/namespace"))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

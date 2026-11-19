@@ -31,13 +31,12 @@ class WorldDraftTopologyCommitEvidenceTest {
 
   @Test
   void incompleteEvidenceCannotBeReturnedAsSuccessfulComponentStorage() {
-    assertThatThrownBy(
-            () ->
-                new WorldDraftTopologyCommitEvidence(
-                    mock(DraftCommitBinding.class),
-                    mock(WorldDesignPublicationFenceEvidence.OwnerBinding.class),
-                    new byte[0],
-                    new byte[] {1}))
+    assertThatThrownBy(() ->
+            new WorldDraftTopologyCommitEvidence(
+                mock(DraftCommitBinding.class),
+                mock(WorldDesignPublicationFenceEvidence.OwnerBinding.class),
+                new byte[0],
+                new byte[] {1}))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

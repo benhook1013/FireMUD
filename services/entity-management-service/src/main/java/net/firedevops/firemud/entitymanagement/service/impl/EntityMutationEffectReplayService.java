@@ -58,10 +58,9 @@ public class EntityMutationEffectReplayService {
       EntityMutationEffect raced =
           repository
               .findByTenantIdAndEffectId(tenantId, normalizedEffectId)
-              .orElseThrow(
-                  () ->
-                      new ResponseStatusException(
-                          HttpStatus.CONFLICT, "Mutation effect is already being applied"));
+              .orElseThrow(() ->
+                  new ResponseStatusException(
+                      HttpStatus.CONFLICT, "Mutation effect is already being applied"));
       return replay(raced, normalizedOperationName, parser);
     }
     return executeFirstApplication(tenantId, normalizedEffectId, normalizedOperationName, mutation);
@@ -86,10 +85,9 @@ public class EntityMutationEffectReplayService {
     EntityMutationEffect effect =
         repository
             .findByTenantIdAndEffectId(tenantId, effectId)
-            .orElseThrow(
-                () ->
-                    new ResponseStatusException(
-                        HttpStatus.CONFLICT, "Mutation effect marker was not created"));
+            .orElseThrow(() ->
+                new ResponseStatusException(
+                    HttpStatus.CONFLICT, "Mutation effect marker was not created"));
     T response = mutation.get();
     effect.setStatus(STATUS_APPLIED);
     effect.setResponseType(response.getClass().getName());

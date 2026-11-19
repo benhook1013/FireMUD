@@ -83,22 +83,21 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
             commandId ->
                 builtInMetadataResolver
                     .resolve(commandId)
-                    .or(
-                        () ->
-                            "wave".equalsIgnoreCase(commandId)
-                                    || "wave-salute".equalsIgnoreCase(commandId)
+                    .or(() ->
+                        "wave".equalsIgnoreCase(commandId)
+                                || "wave-salute".equalsIgnoreCase(commandId)
+                            ? Optional.of(
+                                new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
+                                    TextCommandDispatchGroup.AUTHORED,
+                                    TextCommandActionCategory.SOCIAL,
+                                    java.util.List.of(TextCommandActionTag.COMMUNICATION)))
+                            : "taunt".equalsIgnoreCase(commandId)
                                 ? Optional.of(
                                     new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
-                                        TextCommandDispatchGroup.AUTHORED,
-                                        TextCommandActionCategory.SOCIAL,
-                                        java.util.List.of(TextCommandActionTag.COMMUNICATION)))
-                                : "taunt".equalsIgnoreCase(commandId)
-                                    ? Optional.of(
-                                        new TextCommandMetadataResolver.ResolvedTextCommandMetadata(
-                                            TextCommandDispatchGroup.ACTIVITY,
-                                            TextCommandActionCategory.GAMEPLAY,
-                                            java.util.List.of(TextCommandActionTag.COMBAT)))
-                                    : Optional.empty()),
+                                        TextCommandDispatchGroup.ACTIVITY,
+                                        TextCommandActionCategory.GAMEPLAY,
+                                        java.util.List.of(TextCommandActionTag.COMBAT)))
+                                : Optional.empty()),
             durableGameplayReplayService,
             movementEffectIdempotencyService,
             playerOutputDeliveryService,
@@ -910,22 +909,22 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
 
   private String authoredActionEffectsJson() {
     return """
-        [{
-          "effectKind": "APPLY_ACTION_STATE",
-          "schemaVersion": 1,
-          "targeting": "SELF",
-          "replayPolicy": "EFFECT_IDEMPOTENT",
-          "payload": {
-            "conditionKey": "SALUTING",
-            "durationSeconds": 30,
-            "effectPayload": {
-              "modifiers": [
-                {"operation": "ADD", "target_key": "block_mitigation", "value": 1}
-              ]
-            }
-          }
-        }]
-        """;
+    [{
+      "effectKind": "APPLY_ACTION_STATE",
+      "schemaVersion": 1,
+      "targeting": "SELF",
+      "replayPolicy": "EFFECT_IDEMPOTENT",
+      "payload": {
+        "conditionKey": "SALUTING",
+        "durationSeconds": 30,
+        "effectPayload": {
+          "modifiers": [
+            {"operation": "ADD", "target_key": "block_mitigation", "value": 1}
+          ]
+        }
+      }
+    }]
+    """;
   }
 
   private GameplayCommand gameplayCommand(String commandName, String commandText) {

@@ -247,23 +247,22 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
 
   private static void assertMalformedReservationCreatesNoSourceRows(JdbcTemplate jdbc) {
     UUID operationId = UUID.randomUUID();
-    assertThatThrownBy(
-            () ->
-                jdbc.update(
-                    "INSERT INTO account_selected_owner_intake_source_read_reservations ("
-                        + "operation_id, fence_id, intake_request_id, owner, actor_account_uuid, "
-                        + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
-                        + "issuance_operation_id, issuance_fence, source_payload, issuance_bundle, "
-                        + "outbox_checkpoints) VALUES (?, ?, ?, 'UNDECLARED_OWNER', ?, ?, ?, "
-                        + "decode('00', 'hex'), 'sha256:' || repeat('0', 64), ?, 1, "
-                        + "decode('7b7d', 'hex'), decode('7b7d', 'hex'), decode('7b7d', 'hex'))",
-                    operationId,
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            jdbc.update(
+                "INSERT INTO account_selected_owner_intake_source_read_reservations ("
+                    + "operation_id, fence_id, intake_request_id, owner, actor_account_uuid, "
+                    + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
+                    + "issuance_operation_id, issuance_fence, source_payload, issuance_bundle, "
+                    + "outbox_checkpoints) VALUES (?, ?, ?, 'UNDECLARED_OWNER', ?, ?, ?, "
+                    + "decode('00', 'hex'), 'sha256:' || repeat('0', 64), ?, 1, "
+                    + "decode('7b7d', 'hex'), decode('7b7d', 'hex'), decode('7b7d', 'hex'))",
+                operationId,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID()))
         .isInstanceOf(RuntimeException.class);
 
     assertThat(count(jdbc, "account_selected_owner_intake_source_read_reservations")).isZero();
@@ -399,40 +398,37 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
     assertThat(wrongScopeDigest).matches("^sha256:[0-9a-f]{64}$").isNotEqualTo(correctScopeDigest);
 
     int[] insertedRows = {0};
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> {
-                      insertedRows[0] =
-                          jdbc.update(
-                              "INSERT INTO account_selected_owner_intake_source_read_reservations ("
-                                  + "operation_id, fence_id, intake_request_id, owner, actor_account_uuid, "
-                                  + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
-                                  + "issuance_operation_id, issuance_fence, source_payload, "
-                                  + "issuance_bundle, outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                                  + "1, ?, ?, ?)",
-                              operationId,
-                              fenceId,
-                              intakeRequestId,
-                              scope.owner().name(),
-                              actorAccountUuid,
-                              tenantUuid,
-                              versionUuid,
-                              scope.canonicalBytes(),
-                              wrongScopeDigest,
-                              issuanceOperationId,
-                              sourcePayload,
-                              issuanceBundle,
-                              outboxCheckpoints);
-                      return null;
-                    }))
-        .satisfies(
-            failure -> {
-              PSQLException postgresFailure = postgresException(failure);
-              assertThat(postgresFailure.getSQLState()).isEqualTo("23514");
-              assertThat(postgresFailure.getServerErrorMessage().getMessage())
-                  .isEqualTo("Preliminary owner scope digest does not match canonical bytes");
-            });
+    assertThatThrownBy(() ->
+            transaction.execute(status -> {
+              insertedRows[0] =
+                  jdbc.update(
+                      "INSERT INTO account_selected_owner_intake_source_read_reservations ("
+                          + "operation_id, fence_id, intake_request_id, owner, actor_account_uuid, "
+                          + "tenant_uuid, version_uuid, scope_bytes, scope_digest, "
+                          + "issuance_operation_id, issuance_fence, source_payload, "
+                          + "issuance_bundle, outbox_checkpoints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                          + "1, ?, ?, ?)",
+                      operationId,
+                      fenceId,
+                      intakeRequestId,
+                      scope.owner().name(),
+                      actorAccountUuid,
+                      tenantUuid,
+                      versionUuid,
+                      scope.canonicalBytes(),
+                      wrongScopeDigest,
+                      issuanceOperationId,
+                      sourcePayload,
+                      issuanceBundle,
+                      outboxCheckpoints);
+              return null;
+            }))
+        .satisfies(failure -> {
+          PSQLException postgresFailure = postgresException(failure);
+          assertThat(postgresFailure.getSQLState()).isEqualTo("23514");
+          assertThat(postgresFailure.getServerErrorMessage().getMessage())
+              .isEqualTo("Preliminary owner scope digest does not match canonical bytes");
+        });
 
     assertThat(insertedRows[0]).isEqualTo(1);
     assertThat(ownerReservationRowCounts(jdbc)).isEqualTo(existingRows);

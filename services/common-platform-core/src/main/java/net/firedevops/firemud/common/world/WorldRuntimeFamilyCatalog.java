@@ -225,10 +225,9 @@ public final class WorldRuntimeFamilyCatalog {
     }
     RuntimeFamilyCatalogValidation.requireComplete(
         families.stream()
-            .map(
-                family ->
-                    new RuntimeFamilyCatalogValidation.FamilyComponent(
-                        family.relation(), family.component()))
+            .map(family ->
+                new RuntimeFamilyCatalogValidation.FamilyComponent(
+                    family.relation(), family.component()))
             .toList(),
         structuralFacts);
     return new WorldRuntimeFamilyCatalog(epoch, families, facts, bytes);

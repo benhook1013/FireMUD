@@ -112,10 +112,9 @@ class AutomationScriptingClientTest {
             stub);
     client.initialize();
 
-    assertThatThrownBy(
-            () ->
-                client.notifyScriptVersionUpdate(
-                    "tenant-1", 7L, "patch-7", java.util.List.of("script-a")))
+    assertThatThrownBy(() ->
+            client.notifyScriptVersionUpdate(
+                "tenant-1", 7L, "patch-7", java.util.List.of("script-a")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SCRIPT_PATCH_NOTIFICATION_REJECTED");
     var requestCaptor = org.mockito.ArgumentCaptor.forClass(NotifyScriptVersionUpdateRequest.class);
@@ -269,10 +268,9 @@ class AutomationScriptingClientTest {
     client.initialize();
 
     for (Long baseVersionId : java.util.Arrays.asList(null, 0L, -1L)) {
-      assertThatThrownBy(
-              () ->
-                  client.notifyScriptVersionUpdate(
-                      "tenant-1", baseVersionId, "patch-7", java.util.List.of("script-a")))
+      assertThatThrownBy(() ->
+              client.notifyScriptVersionUpdate(
+                  "tenant-1", baseVersionId, "patch-7", java.util.List.of("script-a")))
           .isInstanceOf(IllegalArgumentException.class);
     }
     assertThatThrownBy(() -> client.notifyScriptVersionUpdate("tenant-1", 7L, "patch-7", null))

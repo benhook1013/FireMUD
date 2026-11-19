@@ -126,10 +126,9 @@ class WorldSelectedOwnerInventoryReadGrpcServiceTest {
       var fixture = WorldSelectedOwnerInventoryTestFixtures.fixture(Owner.ENTITY_MANAGEMENT);
       var account = mock(SelectedOwnerIntakeWorldClosureAuthorizationReadClient.class);
       when(account.readHeld(any()))
-          .thenAnswer(
-              invocation ->
-                  new SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence(
-                      invocation.getArgument(0)));
+          .thenAnswer(invocation ->
+              new SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence(
+                  invocation.getArgument(0)));
       var inventory = mock(WorldSelectedPublicationArtifactInventoryReadService.class);
       var trailers = new Metadata();
       trailers.put(
@@ -163,10 +162,9 @@ class WorldSelectedOwnerInventoryReadGrpcServiceTest {
     var fixture = WorldSelectedOwnerInventoryTestFixtures.fixture(Owner.ENTITY_MANAGEMENT);
     var account = mock(SelectedOwnerIntakeWorldClosureAuthorizationReadClient.class);
     when(account.readHeld(any()))
-        .thenAnswer(
-            invocation ->
-                new SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence(
-                    invocation.getArgument(0)));
+        .thenAnswer(invocation ->
+            new SelectedOwnerIntakeWorldClosureAuthorizationReadEvidence(
+                invocation.getArgument(0)));
     var inventory = mock(WorldSelectedPublicationArtifactInventoryReadService.class);
     when(inventory.readRetained(any()))
         .thenThrow(new DataAccessResourceFailureException("secret World storage detail"));

@@ -359,19 +359,18 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
       var worldSelector = publishedRelease.worldStartLocationEvidence();
       var participants =
           publishedRelease.participantDigests().stream()
-              .map(
-                  participant ->
-                      new net.firedevops.firemud.common.gamedesign
-                          .AuthoredWorldReleaseAttestationEvidence.Participant(
-                          participant.participantKey(),
-                          participant.scopeValue(),
-                          false,
-                          null,
-                          participant.appliedCommitId(),
-                          participant.contentDigest(),
-                          participant.digestSchemaVersion(),
-                          participant.abilitySchemaDigest() != null,
-                          participant.abilitySchemaDigest()))
+              .map(participant ->
+                  new net.firedevops.firemud.common.gamedesign
+                      .AuthoredWorldReleaseAttestationEvidence.Participant(
+                      participant.participantKey(),
+                      participant.scopeValue(),
+                      false,
+                      null,
+                      participant.appliedCommitId(),
+                      participant.contentDigest(),
+                      participant.digestSchemaVersion(),
+                      participant.abilitySchemaDigest() != null,
+                      participant.abilitySchemaDigest()))
               .toList();
       var release =
           net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence.create(
@@ -541,12 +540,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                     response) {
               var placement =
                   placements.values().stream()
-                      .filter(
-                          entry ->
-                              entry
-                                  .request()
-                                  .getAssignmentUuid()
-                                  .equals(incoming.getAssignmentUuid()))
+                      .filter(entry ->
+                          entry.request().getAssignmentUuid().equals(incoming.getAssignmentUuid()))
                       .findFirst()
                       .orElse(null);
               if (!isPeer(caller)

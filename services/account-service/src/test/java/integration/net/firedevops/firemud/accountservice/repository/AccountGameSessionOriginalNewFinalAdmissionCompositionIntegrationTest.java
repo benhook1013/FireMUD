@@ -192,15 +192,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   void missingCapacityInputRefusesBeforeAnyFinalSessionOrReservationMutation() throws Exception {
     try (Session session = session()) {
       byte[] candidate = session.gs.physicalSession();
-      assertThatThrownBy(
-              () ->
-                  session.gs.complete(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      System.currentTimeMillis() + 10_000L,
-                      session.capacityClient,
-                      null))
+      assertThatThrownBy(() ->
+              session.gs.complete(
+                  session.client,
+                  session.jwks,
+                  session.jwt,
+                  System.currentTimeMillis() + 10_000L,
+                  session.capacityClient,
+                  null))
           .isInstanceOf(IllegalStateException.class);
       assertThat(session.gs.physicalSession()).containsExactly(candidate);
       assertThat(
@@ -226,15 +225,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
       var physical = session.gs.capacityStateImage();
       String capacity = session.capacityImage();
-      assertThatThrownBy(
-              () ->
-                  session.gs.complete(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      System.currentTimeMillis() + 10_000L,
-                      session.capacityClient,
-                      null))
+      assertThatThrownBy(() ->
+              session.gs.complete(
+                  session.client,
+                  session.jwks,
+                  session.jwt,
+                  System.currentTimeMillis() + 10_000L,
+                  session.capacityClient,
+                  null))
           .isInstanceOf(IllegalStateException.class);
       assertThat(session.gs.capacityStateImage()).isEqualTo(physical);
       assertThat(session.capacityImage()).isEqualTo(capacity);
@@ -263,15 +261,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       String capacityBefore = session.capacityImage();
       var gsBefore = session.gs.capacityStateImage();
       byte[] candidate = session.gs.physicalSession();
-      assertThatThrownBy(
-              () ->
-                  session.gs.complete(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      System.currentTimeMillis() + 10_000L,
-                      session.capacityClient,
-                      changed))
+      assertThatThrownBy(() ->
+              session.gs.complete(
+                  session.client,
+                  session.jwks,
+                  session.jwt,
+                  System.currentTimeMillis() + 10_000L,
+                  session.capacityClient,
+                  changed))
           .isInstanceOf(IllegalStateException.class)
           .hasCauseInstanceOf(IllegalStateException.class)
           .hasRootCauseMessage("Original NEW capacity execution is indeterminate");
@@ -311,15 +308,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       String capacityBefore = session.capacityImage();
       var gsBefore = session.gs.capacityStateImage();
       for (int attempt = 0; attempt < 2; attempt++) {
-        assertThatThrownBy(
-                () ->
-                    session.gs.complete(
-                        session.client,
-                        session.jwks,
-                        session.jwt,
-                        System.currentTimeMillis() + 10_000L,
-                        session.capacityClient,
-                        mismatched))
+        assertThatThrownBy(() ->
+                session.gs.complete(
+                    session.client,
+                    session.jwks,
+                    session.jwt,
+                    System.currentTimeMillis() + 10_000L,
+                    session.capacityClient,
+                    mismatched))
             .isInstanceOf(IllegalStateException.class);
         assertThat(session.capacityImage()).isEqualTo(capacityBefore);
         assertThat(session.gs.capacityStateImage()).isEqualTo(gsBefore);
@@ -331,15 +327,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       denied.requireStructurallyValid();
       String beforeDenial = session.capacityImage();
       byte[] candidate = session.gs.physicalSession();
-      assertThatThrownBy(
-              () ->
-                  session.gs.complete(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      System.currentTimeMillis() + 10_000L,
-                      session.capacityClient,
-                      denied))
+      assertThatThrownBy(() ->
+              session.gs.complete(
+                  session.client,
+                  session.jwks,
+                  session.jwt,
+                  System.currentTimeMillis() + 10_000L,
+                  session.capacityClient,
+                  denied))
           .isInstanceOfSatisfying(
               CapacityRefusedException.class,
               failure -> assertThat(failure.code()).isEqualTo(Failure.TENANT_BILLING_BLOCKED));
@@ -493,14 +488,12 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
               .CapacityException.class,
           () ->
-              session.serializable.execute(
-                  status ->
-                      new AccountCapacityRefusalBudgetRepository(session.dsl)
-                          .requireReady(request.identity().tenantId(), 1, 1)));
-      session.serializable.executeWithoutResult(
-          status ->
-              new AccountCapacityRefusalBudgetRepository(session.dsl)
-                  .provision(request.identity().tenantId(), 1));
+              session.serializable.execute(status ->
+                  new AccountCapacityRefusalBudgetRepository(session.dsl)
+                      .requireReady(request.identity().tenantId(), 1, 1)));
+      session.serializable.executeWithoutResult(status ->
+          new AccountCapacityRefusalBudgetRepository(session.dsl)
+              .provision(request.identity().tenantId(), 1));
       assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
       var replay =
           assertThrows(
@@ -685,11 +678,10 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(charges).hasSize(2).contains(firstCharge);
       var secondCharge =
           charges.stream()
-              .filter(
-                  charge ->
-                      secondRequest
-                          .admissionAttemptId()
-                          .equals(charge.get("admission_attempt_id", UUID.class)))
+              .filter(charge ->
+                  secondRequest
+                      .admissionAttemptId()
+                      .equals(charge.get("admission_attempt_id", UUID.class)))
               .findFirst()
               .orElseThrow();
       assertThat(secondCharge.get("account_denial_id", UUID.class)).isNull();
@@ -786,23 +778,22 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           session, quotaRefusal, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
       var player = (TenantCapacityAdmission.PlayerContext) session.capacityRequest.context();
       try (var replayCaller = Executors.newVirtualThreadPerTaskExecutor()) {
-        session.serializable.executeWithoutResult(
-            status -> {
-              assertThat(
-                      session.dsl.fetchOne(
-                          "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
-                          player.accountId()))
-                  .isNotNull();
-              assertThat(
-                      CompletableFuture.supplyAsync(
-                              () ->
-                                  session.capacityClient.commit(
-                                      session.capacityRequest, CLOCK.millis() + 5_000L),
-                              replayCaller)
-                          .orTimeout(6L, TimeUnit.SECONDS)
-                          .join())
-                  .isEqualTo(first);
-            });
+        session.serializable.executeWithoutResult(status -> {
+          assertThat(
+                  session.dsl.fetchOne(
+                      "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+                      player.accountId()))
+              .isNotNull();
+          assertThat(
+                  CompletableFuture.supplyAsync(
+                          () ->
+                              session.capacityClient.commit(
+                                  session.capacityRequest, CLOCK.millis() + 5_000L),
+                          replayCaller)
+                      .orTimeout(6L, TimeUnit.SECONDS)
+                      .join())
+              .isEqualTo(first);
+        });
       }
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
       assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
@@ -1154,13 +1145,11 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private void provisionCapacityRefusalBudget() {
-      serializable.executeWithoutResult(
-          status -> {
-            var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
-            budgets.provision(capacityRequest.identity().tenantId(), 1);
-            assertThat(budgets.requireReady(capacityRequest.identity().tenantId(), 1, 1))
-                .isEqualTo(1);
-          });
+      serializable.executeWithoutResult(status -> {
+        var budgets = new AccountCapacityRefusalBudgetRepository(dsl);
+        budgets.provision(capacityRequest.identity().tenantId(), 1);
+        assertThat(budgets.requireReady(capacityRequest.identity().tenantId(), 1, 1)).isEqualTo(1);
+      });
     }
 
     private void stopCapacityServer() throws InterruptedException {
@@ -1173,10 +1162,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private Genesis genesis() {
-      return serializable.execute(
-          status ->
-              new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
-                  .readByLease(UUID.fromString((String) lease.carrier().get("leaseId"))));
+      return serializable.execute(status ->
+          new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
+              .readByLease(UUID.fromString((String) lease.carrier().get("leaseId"))));
     }
 
     /** Controlled evaluation inputs with actual immutable retention. */

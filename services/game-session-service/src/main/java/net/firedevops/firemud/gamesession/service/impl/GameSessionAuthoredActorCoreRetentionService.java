@@ -100,10 +100,9 @@ public final class GameSessionAuthoredActorCoreRetentionService {
     OriginalStartSessionAssociation originalLaunch =
         launches
             .readOriginalStartSessionAssociation(historicalRequest.associationSelector())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Exact actual Game Session launch association is unavailable"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Exact actual Game Session launch association is unavailable"));
     requireLaunchMatchesHistorical(originalLaunch, historical, currentAttemptRequest);
     CanonicalGameInstanceLaunchAssociation launch = originalLaunch.association();
 
@@ -117,13 +116,12 @@ public final class GameSessionAuthoredActorCoreRetentionService {
         candidate(launch, historical, firstAttempt, sourceReadRequestBytes, source);
 
     StoredSource committed =
-        retentionTransaction.execute(
-            status -> {
-              AttemptSnapshot finalAttempt =
-                  readCurrentAttemptInOwnerTransaction(currentAttemptRequest);
-              requireSameLiveAttempt(firstAttempt, finalAttempt);
-              return retention.retainInOwnerTransaction(candidate);
-            });
+        retentionTransaction.execute(status -> {
+          AttemptSnapshot finalAttempt =
+              readCurrentAttemptInOwnerTransaction(currentAttemptRequest);
+          requireSameLiveAttempt(firstAttempt, finalAttempt);
+          return retention.retainInOwnerTransaction(candidate);
+        });
     if (committed == null) {
       throw new IllegalStateException("Authored-core retention transaction returned no row");
     }
@@ -131,10 +129,9 @@ public final class GameSessionAuthoredActorCoreRetentionService {
     StoredSource independentReadback =
         retention
             .readByOriginalOperation(workloadNamespace, requestId)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Committed authored-core source retention is unavailable on independent readback"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Committed authored-core source retention is unavailable on independent readback"));
     requireSameStoredSource(candidate, committed, independentReadback);
     return independentReadback;
   }

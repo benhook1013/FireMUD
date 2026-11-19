@@ -452,10 +452,9 @@ public class CanonicalInitialAdmissionRepository {
 
     CanonicalInitialAdmissionOwnerProof proof =
         read(targetNamespace, requestId)
-            .orElseThrow(
-                () ->
-                    new CanonicalInitialAdmissionReconciliationRequiredException(
-                        "Current canonical OPEN pointer has no durable owner attempt"));
+            .orElseThrow(() ->
+                new CanonicalInitialAdmissionReconciliationRequiredException(
+                    "Current canonical OPEN pointer has no durable owner attempt"));
     if (!proof.provesCommit() || !before.matches(proof)) {
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
           "Current canonical OPEN pointer does not match its exact committed owner proof");
@@ -533,18 +532,17 @@ public class CanonicalInitialAdmissionRepository {
       throw new IllegalStateException(
           "Exact current OPEN lock requires a joined writable READ COMMITTED owner transaction");
     }
-    dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()) {
-            throw new IllegalStateException(
-                "Exact current OPEN lock requires the DSL connection to join the owner transaction");
-          }
-          if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Exact current OPEN lock requires READ COMMITTED isolation");
-          }
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()) {
+        throw new IllegalStateException(
+            "Exact current OPEN lock requires the DSL connection to join the owner transaction");
+      }
+      if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Exact current OPEN lock requires READ COMMITTED isolation");
+      }
+      return null;
+    });
     if (!"off"
         .equalsIgnoreCase(
             dsl.fetchSingle("SHOW transaction_read_only").get(0, String.class).trim())) {
@@ -817,10 +815,9 @@ public class CanonicalInitialAdmissionRepository {
     AccountInitialAdmissionProtectionBindingRepository.RetainedProtection retained =
         protectionRepository()
             .read(attempt.targetNamespace(), attempt.initialAdmissionRequestId())
-            .orElseThrow(
-                () ->
-                    new CanonicalInitialAdmissionConflictException(
-                        "Terminal admission has no complete protected association"));
+            .orElseThrow(() ->
+                new CanonicalInitialAdmissionConflictException(
+                    "Terminal admission has no complete protected association"));
     if (!java.util.Arrays.equals(
         retained.protection().canonicalBytes(), protection.canonicalBytes())) {
       throw new CanonicalInitialAdmissionConflictException(
@@ -1040,15 +1037,14 @@ public class CanonicalInitialAdmissionRepository {
       throw new IllegalStateException(
           "Canonical initial-admission owner mutation requires a writable transaction");
     }
-    dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()
-              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Canonical initial-admission owner mutation requires READ COMMITTED isolation");
-          }
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()
+          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Canonical initial-admission owner mutation requires READ COMMITTED isolation");
+      }
+      return null;
+    });
     Record isolation =
         dsl.fetchOne(
             "SELECT current_setting('transaction_isolation') AS isolation, "
@@ -1243,16 +1239,15 @@ public class CanonicalInitialAdmissionRepository {
     }
     String expectedProof =
         protectedTerminalProofDigest(attempt)
-            .orElseGet(
-                () ->
-                    commitProofDigest(
-                        attempt,
-                        attempt.pointerVersion(),
-                        attempt.auditEventId(),
-                        attempt.terminalAt(),
-                        attempt.priorPointerRequestId(),
-                        attempt.priorPointerRequestDigest(),
-                        attempt.priorPointerAuditEventId()));
+            .orElseGet(() ->
+                commitProofDigest(
+                    attempt,
+                    attempt.pointerVersion(),
+                    attempt.auditEventId(),
+                    attempt.terminalAt(),
+                    attempt.priorPointerRequestId(),
+                    attempt.priorPointerRequestDigest(),
+                    attempt.priorPointerAuditEventId()));
     if (!expectedProof.equals(attempt.commitProofDigest())) {
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
           "Committed initial-admission proof digest does not match the durable result");
@@ -1281,15 +1276,14 @@ public class CanonicalInitialAdmissionRepository {
     }
     String expectedProof =
         protectedTerminalProofDigest(attempt)
-            .orElseGet(
-                () ->
-                    abortProofDigest(
-                        attempt,
-                        attempt.abortReason(),
-                        attempt.terminalAt(),
-                        attempt.priorPointerRequestId(),
-                        attempt.priorPointerRequestDigest(),
-                        attempt.priorPointerAuditEventId()));
+            .orElseGet(() ->
+                abortProofDigest(
+                    attempt,
+                    attempt.abortReason(),
+                    attempt.terminalAt(),
+                    attempt.priorPointerRequestId(),
+                    attempt.priorPointerRequestDigest(),
+                    attempt.priorPointerAuditEventId()));
     if (!expectedProof.equals(attempt.abortProofDigest())) {
       throw new CanonicalInitialAdmissionReconciliationRequiredException(
           "Durable ABORTED proof digest does not match the fenced result");
@@ -1328,10 +1322,9 @@ public class CanonicalInitialAdmissionRepository {
                     attempt.targetNamespace(), attempt.priorPointerRequestId())
                 : pointerRepository.readOriginalClosedOrigin(
                     attempt.targetNamespace(), attempt.priorPointerRequestId()))
-            .orElseThrow(
-                () ->
-                    new CanonicalInitialAdmissionReconciliationRequiredException(
-                        "Immutable original CLOSED request/event evidence is unavailable"));
+            .orElseThrow(() ->
+                new CanonicalInitialAdmissionReconciliationRequiredException(
+                    "Immutable original CLOSED request/event evidence is unavailable"));
     if (!origin.canonicalTenantId().equals(attempt.canonicalTenantId())
         || !origin.realmId().equals(attempt.realmId())
         || !origin.requestDigest().equals(attempt.priorPointerRequestDigest())
@@ -1367,10 +1360,9 @@ public class CanonicalInitialAdmissionRepository {
     CanonicalRealmCatalogSnapshot catalog =
         catalogRepository
             .readByRealm(request.targetNamespace(), request.canonicalTenantId(), request.realmId())
-            .orElseThrow(
-                () ->
-                    new CanonicalInitialAdmissionReconciliationRequiredException(
-                        "Exact canonical realm catalog is unavailable for owner readback"));
+            .orElseThrow(() ->
+                new CanonicalInitialAdmissionReconciliationRequiredException(
+                    "Exact canonical realm catalog is unavailable for owner readback"));
     requireRequestMatchesCatalog(request, catalog);
     return catalog;
   }

@@ -177,11 +177,10 @@ class AccountControlUiCurrentActorVerifierTest {
       Map<String, Object> changedCheckpoint = new LinkedHashMap<>(accountCutoff(3L));
       changedCheckpoint.put("outboxSequence", "1");
       Fixture substituted = advancedAccountFixture(accountOnly, changedCheckpoint);
-      assertDenied(
-          () -> {
-            if (accountOnly) substituted.verifier.verifyAccount(substituted.compactJwt);
-            else substituted.verifier.verify(substituted.compactJwt, TENANT_ID);
-          });
+      assertDenied(() -> {
+        if (accountOnly) substituted.verifier.verifyAccount(substituted.compactJwt);
+        else substituted.verifier.verify(substituted.compactJwt, TENANT_ID);
+      });
       for (String field : List.of("accountAuthorityGeneration", "outboxSequence")) {
         Map<String, Object> numericCutoff = new LinkedHashMap<>(accountCutoff(3L));
         numericCutoff.put(field, Long.parseLong((String) numericCutoff.get(field)));
@@ -715,11 +714,10 @@ class AccountControlUiCurrentActorVerifierTest {
       PublicJwksSnapshot jwksSnapshot = new PublicJwksSnapshot(sourceIdentity, jwksBytes);
       when(publicJwks.sourceIdentity()).thenReturn(sourceIdentity);
       when(publicJwks.load())
-          .thenAnswer(
-              ignored -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                return jwksSnapshot;
-              });
+          .thenAnswer(ignored -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return jwksSnapshot;
+          });
 
       String trustBindingDigest =
           AccountJwtSignerMaterializerTrustBinding.computeBindingDigest(
@@ -1010,14 +1008,12 @@ class AccountControlUiCurrentActorVerifierTest {
         when(accountSnapshot.sources())
             .thenReturn(accountSources(globalRoles, currentAccountGeneration));
         when(authority.captureAccount(issuanceAccountId))
-            .thenAnswer(
-                ignored -> {
-                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
-                      .isTrue();
-                  assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
-                      .isFalse();
-                  return accountSnapshot;
-                });
+            .thenAnswer(ignored -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                  .isFalse();
+              return accountSnapshot;
+            });
       } else {
         configureCurrentSources(
             currentTenantGeneration,
@@ -1029,16 +1025,15 @@ class AccountControlUiCurrentActorVerifierTest {
 
       PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
       when(transactionManager.getTransaction(any(TransactionDefinition.class)))
-          .thenAnswer(
-              invocation -> {
-                TransactionDefinition definition = invocation.getArgument(0);
-                assertThat(definition.getIsolationLevel())
-                    .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-                TransactionSynchronizationManager.setActualTransactionActive(true);
-                TransactionSynchronizationManager.setCurrentTransactionReadOnly(
-                    definition.isReadOnly());
-                return new SimpleTransactionStatus();
-              });
+          .thenAnswer(invocation -> {
+            TransactionDefinition definition = invocation.getArgument(0);
+            assertThat(definition.getIsolationLevel())
+                .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+            TransactionSynchronizationManager.setActualTransactionActive(true);
+            TransactionSynchronizationManager.setCurrentTransactionReadOnly(
+                definition.isReadOnly());
+            return new SimpleTransactionStatus();
+          });
       doAnswer(
               ignored -> {
                 TransactionSynchronizationManager.clear();
@@ -1125,11 +1120,10 @@ class AccountControlUiCurrentActorVerifierTest {
       when(connection.sync()).thenReturn(commands);
       when(commands.aclWhoami()).thenReturn(AccountControlUiRegistryReader.REQUIRED_ACL_IDENTITY);
       when(commands.get(any(byte[].class)))
-          .thenAnswer(
-              ignored -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                return activeRegistry;
-              });
+          .thenAnswer(ignored -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return activeRegistry;
+          });
       when(commands.pexpiretime(any(byte[].class))).thenReturn(CLEANUP_DEADLINE_MILLIS);
       registry = new AccountControlUiRegistryReader(() -> connection);
     }

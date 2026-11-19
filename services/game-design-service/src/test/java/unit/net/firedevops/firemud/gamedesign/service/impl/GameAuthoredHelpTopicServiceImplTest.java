@@ -84,12 +84,11 @@ class GameAuthoredHelpTopicServiceImplTest {
     assertThat(savedCaptor.getValue().getCanonicalTopicKey()).isEqualTo("movement");
     assertThat(result.canonicalTopicId()).isEqualTo("movement");
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.putTopic(
-                    "42",
-                    7L,
-                    new HelpTopicDto("look", "Look", "Inspect.", List.of("SEE", "see"), false)))
+        .isThrownBy(() ->
+            service.putTopic(
+                "42",
+                7L,
+                new HelpTopicDto("look", "Look", "Inspect.", List.of("SEE", "see"), false)))
         .withMessage("aliases must be unique after normalization");
   }
 
@@ -103,12 +102,11 @@ class GameAuthoredHelpTopicServiceImplTest {
     when(repository.findByScopeAndCanonicalKey("42", 7L, "move")).thenReturn(Optional.of(existing));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.putTopic(
-                    "42",
-                    7L,
-                    new HelpTopicDto("travel", "Travel", "Walk onward.", List.of("move"), true)))
+        .isThrownBy(() ->
+            service.putTopic(
+                "42",
+                7L,
+                new HelpTopicDto("travel", "Travel", "Walk onward.", List.of("move"), true)))
         .withMessage("alias conflicts with an existing canonicalTopicId");
   }
 

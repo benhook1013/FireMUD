@@ -87,13 +87,12 @@ public final class WorldDraftTopologyInputGraph {
       content.put(
           "familyCounts",
           familyCounts.stream()
-              .map(
-                  family -> {
-                    Map<String, Object> entry = new LinkedHashMap<>();
-                    entry.put("family", family.family().name());
-                    entry.put("count", family.count());
-                    return entry;
-                  })
+              .map(family -> {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("family", family.family().name());
+                entry.put("count", family.count());
+                return entry;
+              })
               .toList());
       return content;
     }

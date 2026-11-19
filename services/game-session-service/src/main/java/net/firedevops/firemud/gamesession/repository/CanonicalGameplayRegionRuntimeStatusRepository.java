@@ -100,105 +100,101 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             evidence, worldRequest, resolvedRegion, source, incarnation, absenceProof.digest());
     try {
       TimelinePreparation prepared =
-          dsl.transactionResult(
-              configuration -> {
-                DSLContext transaction = DSL.using(configuration);
-                lockRegionScope(transaction, inputs.tenantRegionTag());
-                Record existingStatus =
-                    transaction.fetchOne(
-                        "SELECT * FROM "
-                            + TABLE
-                            + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
-                            + " FOR UPDATE",
-                        source.tenantId(),
-                        source.gameInstanceId(),
-                        source.regionId());
-                if (existingStatus != null) throw unavailable();
-                Record existingTransition =
-                    transaction.fetchOne(
-                        "SELECT * FROM "
-                            + PREPARATION_TABLE
-                            + " WHERE transition_id = ? FOR UPDATE",
-                        evidence.transition().transitionId());
-                if (existingTransition != null) {
-                  TimelinePreparation current = toTimelinePreparation(existingTransition);
-                  if (!matchesPreparation(current, evidence, inputs, source)
-                      || current.phase == TimelinePreparationPhase.INSTALLED) {
-                    throw unavailable();
-                  }
-                  return current;
-                }
-                Record existingScope =
-                    transaction.fetchOne(
-                        "SELECT initialization_operation_id FROM "
-                            + PREPARATION_TABLE
-                            + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
-                            + " FOR UPDATE",
-                        source.tenantId(),
-                        source.gameInstanceId(),
-                        source.regionId());
-                if (existingScope != null) throw unavailable();
-                UUID operationId = UUID.randomUUID();
-                transaction.execute(
-                    "INSERT INTO "
+          dsl.transactionResult(configuration -> {
+            DSLContext transaction = DSL.using(configuration);
+            lockRegionScope(transaction, inputs.tenantRegionTag());
+            Record existingStatus =
+                transaction.fetchOne(
+                    "SELECT * FROM "
+                        + TABLE
+                        + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
+                        + " FOR UPDATE",
+                    source.tenantId(),
+                    source.gameInstanceId(),
+                    source.regionId());
+            if (existingStatus != null) throw unavailable();
+            Record existingTransition =
+                transaction.fetchOne(
+                    "SELECT * FROM " + PREPARATION_TABLE + " WHERE transition_id = ? FOR UPDATE",
+                    evidence.transition().transitionId());
+            if (existingTransition != null) {
+              TimelinePreparation current = toTimelinePreparation(existingTransition);
+              if (!matchesPreparation(current, evidence, inputs, source)
+                  || current.phase == TimelinePreparationPhase.INSTALLED) {
+                throw unavailable();
+              }
+              return current;
+            }
+            Record existingScope =
+                transaction.fetchOne(
+                    "SELECT initialization_operation_id FROM "
                         + PREPARATION_TABLE
-                        + " (initialization_operation_id, transition_id, account_id, tenant_id,"
-                        + " playable_state_namespace_id, character_id, playable_state_scope,"
-                        + " game_instance_id, runtime_game_instance_id, binding_ref, session_id,"
-                        + " binding_generation, canonical_region_id, region_id, tenant_region_tag,"
-                        + " lifecycle_epoch, lifecycle_row_version, capture_id,"
-                        + " lifecycle_request_bytes, graph_sha256, preparation_input_digest,"
-                        + " assignment_uuid, assignment_intent_digest, world_source_digest,"
-                        + " preparation_digest, stable_incarnation_scope_bytes,"
-                        + " stable_incarnation_source_bytes, stable_incarnation_qualification_bytes,"
-                        + " stable_incarnation_digest,"
-                        + " timeline_preimage_state, timeline_absence_proof_digest, region_epoch,"
-                        + " last_committed_tick_id, phase, created_at, updated_at, entity_created_origin)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ABSENT', ?, 1, -1, 'PREPARED', ?, ?, CAST(? AS jsonb))",
-                    operationId,
-                    evidence.transition().transitionId(),
-                    evidence.candidate().identity().accountId(),
-                    evidence.candidate().identity().tenantId(),
-                    evidence.candidate().identity().playableStateNamespaceId(),
-                    evidence.candidate().identity().characterId(),
-                    evidence.candidate().identity().playableStateScope(),
-                    evidence.candidate().identity().gameInstanceId(),
-                    evidence.candidate().identity().runtimeGameInstanceId(),
-                    evidence.candidate().bindingRef().bytes(),
-                    evidence.candidate().identity().sessionId(),
-                    new BigDecimal(evidence.candidate().bindingGeneration()),
-                    source.canonicalRegionId(),
-                    source.regionId(),
-                    inputs.tenantRegionTag(),
-                    source.lifecycleEpoch(),
-                    source.lifecycleRowVersion(),
-                    source.captureId(),
-                    source.lifecycleRequest().canonicalBytes(),
-                    source.graphSha256(),
-                    source.preparationInputDigest(),
-                    CanonicalGameplayActorOrigins.assignmentId(inputs.actorOrigin()),
-                    CanonicalGameplayActorOrigins.assignmentDigest(inputs.actorOrigin()),
-                    inputs.worldSourceDigest(),
-                    inputs.preparationDigest(),
-                    inputs.incarnationScopeBytes(),
-                    inputs.incarnationSourceBytes(),
-                    inputs.incarnationQualificationBytes(),
-                    inputs.incarnationDigest(),
-                    inputs.absenceProofDigest(),
-                    java.sql.Timestamp.from(now),
-                    java.sql.Timestamp.from(now),
-                    CanonicalGameplayActorOrigins.creationJson(inputs.actorOrigin()));
-                Record inserted =
-                    transaction.fetchOne(
-                        "SELECT * FROM " + PREPARATION_TABLE + " WHERE transition_id = ?",
-                        evidence.transition().transitionId());
-                TimelinePreparation result =
-                    inserted == null ? null : toTimelinePreparation(inserted);
-                if (result == null || !matchesPreparation(result, evidence, inputs, source)) {
-                  throw unavailable();
-                }
-                return result;
-              });
+                        + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
+                        + " FOR UPDATE",
+                    source.tenantId(),
+                    source.gameInstanceId(),
+                    source.regionId());
+            if (existingScope != null) throw unavailable();
+            UUID operationId = UUID.randomUUID();
+            transaction.execute(
+                "INSERT INTO "
+                    + PREPARATION_TABLE
+                    + " (initialization_operation_id, transition_id, account_id, tenant_id,"
+                    + " playable_state_namespace_id, character_id, playable_state_scope,"
+                    + " game_instance_id, runtime_game_instance_id, binding_ref, session_id,"
+                    + " binding_generation, canonical_region_id, region_id, tenant_region_tag,"
+                    + " lifecycle_epoch, lifecycle_row_version, capture_id,"
+                    + " lifecycle_request_bytes, graph_sha256, preparation_input_digest,"
+                    + " assignment_uuid, assignment_intent_digest, world_source_digest,"
+                    + " preparation_digest, stable_incarnation_scope_bytes,"
+                    + " stable_incarnation_source_bytes, stable_incarnation_qualification_bytes,"
+                    + " stable_incarnation_digest,"
+                    + " timeline_preimage_state, timeline_absence_proof_digest, region_epoch,"
+                    + " last_committed_tick_id, phase, created_at, updated_at, entity_created_origin)"
+                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ABSENT', ?, 1, -1, 'PREPARED', ?, ?, CAST(? AS jsonb))",
+                operationId,
+                evidence.transition().transitionId(),
+                evidence.candidate().identity().accountId(),
+                evidence.candidate().identity().tenantId(),
+                evidence.candidate().identity().playableStateNamespaceId(),
+                evidence.candidate().identity().characterId(),
+                evidence.candidate().identity().playableStateScope(),
+                evidence.candidate().identity().gameInstanceId(),
+                evidence.candidate().identity().runtimeGameInstanceId(),
+                evidence.candidate().bindingRef().bytes(),
+                evidence.candidate().identity().sessionId(),
+                new BigDecimal(evidence.candidate().bindingGeneration()),
+                source.canonicalRegionId(),
+                source.regionId(),
+                inputs.tenantRegionTag(),
+                source.lifecycleEpoch(),
+                source.lifecycleRowVersion(),
+                source.captureId(),
+                source.lifecycleRequest().canonicalBytes(),
+                source.graphSha256(),
+                source.preparationInputDigest(),
+                CanonicalGameplayActorOrigins.assignmentId(inputs.actorOrigin()),
+                CanonicalGameplayActorOrigins.assignmentDigest(inputs.actorOrigin()),
+                inputs.worldSourceDigest(),
+                inputs.preparationDigest(),
+                inputs.incarnationScopeBytes(),
+                inputs.incarnationSourceBytes(),
+                inputs.incarnationQualificationBytes(),
+                inputs.incarnationDigest(),
+                inputs.absenceProofDigest(),
+                java.sql.Timestamp.from(now),
+                java.sql.Timestamp.from(now),
+                CanonicalGameplayActorOrigins.creationJson(inputs.actorOrigin()));
+            Record inserted =
+                transaction.fetchOne(
+                    "SELECT * FROM " + PREPARATION_TABLE + " WHERE transition_id = ?",
+                    evidence.transition().transitionId());
+            TimelinePreparation result = inserted == null ? null : toTimelinePreparation(inserted);
+            if (result == null || !matchesPreparation(result, evidence, inputs, source)) {
+              throw unavailable();
+            }
+            return result;
+          });
       if (find(source).isPresent()) throw unavailable();
       return prepared;
     } catch (RuntimeException failure) {
@@ -367,50 +363,48 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                       .derive(observed)
                       .derive(new org.jooq.impl.DefaultTransactionProvider(observed)))
               : dsl;
-      return claim.transactionResult(
-          configuration -> {
-            DSLContext transaction = DSL.using(configuration);
-            lockRegionScope(transaction, preparation.tenantRegionTag);
-            if (transaction.fetchOne(
-                    "SELECT 1 FROM "
-                        + TABLE
-                        + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
-                    preparation.source.tenantId(),
-                    preparation.source.gameInstanceId(),
-                    preparation.source.regionId())
-                != null) {
-              throw unavailable();
-            }
-            Record row =
-                transaction.fetchOne(
-                    "SELECT * FROM "
-                        + PREPARATION_TABLE
-                        + " WHERE initialization_operation_id = ? FOR UPDATE",
-                    preparation.operationId);
-            if (row == null) throw unavailable();
-            TimelinePreparation current = toTimelinePreparation(row);
-            if (!samePreparation(preparation, current)) throw unavailable();
-            if (current.phase == TimelinePreparationPhase.INSTALLED) {
-              return Optional.empty();
-            }
-            if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
-            // Lock waits and source checks cannot consume the installation deadline and still
-            // grant irreversible permission to create Redis meta.
-            if (installationBudget != null) installationBudget.check();
-            int updated =
-                transaction.execute(
-                    "UPDATE "
-                        + PREPARATION_TABLE
-                        + " SET phase = 'INITIALIZING', updated_at = ?"
-                        + " WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
-                    java.sql.Timestamp.from(now),
-                    current.operationId);
-            if (updated != 1) throw unavailable();
-            var permit =
-                new InitialInitializationPermit(current.operationId, current.sourceDigest());
-            issued.set(permit);
-            return Optional.of(permit);
-          });
+      return claim.transactionResult(configuration -> {
+        DSLContext transaction = DSL.using(configuration);
+        lockRegionScope(transaction, preparation.tenantRegionTag);
+        if (transaction.fetchOne(
+                "SELECT 1 FROM "
+                    + TABLE
+                    + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
+                preparation.source.tenantId(),
+                preparation.source.gameInstanceId(),
+                preparation.source.regionId())
+            != null) {
+          throw unavailable();
+        }
+        Record row =
+            transaction.fetchOne(
+                "SELECT * FROM "
+                    + PREPARATION_TABLE
+                    + " WHERE initialization_operation_id = ? FOR UPDATE",
+                preparation.operationId);
+        if (row == null) throw unavailable();
+        TimelinePreparation current = toTimelinePreparation(row);
+        if (!samePreparation(preparation, current)) throw unavailable();
+        if (current.phase == TimelinePreparationPhase.INSTALLED) {
+          return Optional.empty();
+        }
+        if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
+        // Lock waits and source checks cannot consume the installation deadline and still
+        // grant irreversible permission to create Redis meta.
+        if (installationBudget != null) installationBudget.check();
+        int updated =
+            transaction.execute(
+                "UPDATE "
+                    + PREPARATION_TABLE
+                    + " SET phase = 'INITIALIZING', updated_at = ?"
+                    + " WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
+                java.sql.Timestamp.from(now),
+                current.operationId);
+        if (updated != 1) throw unavailable();
+        var permit = new InitialInitializationPermit(current.operationId, current.sourceDigest());
+        issued.set(permit);
+        return Optional.of(permit);
+      });
     } catch (RuntimeException failure) {
       // The capability has not escaped this call. Revoke it before issuing no-dispatch proof.
       // Do not recover a rolled-back or unacknowledged claim by inspecting Redis absence.
@@ -441,29 +435,28 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       // already-consumed exact capability against durable PREPARED state; never restore or
       // re-use it to mutate a later INITIALIZING claim.
       if (!proof.consumedFor(preparation)) throw unavailable();
-      dsl.transaction(
-          configuration -> {
-            DSLContext transaction = DSL.using(configuration);
-            lockRegionScope(transaction, preparation.tenantRegionTag);
-            Record row =
-                transaction.fetchOne(
-                    "SELECT * FROM "
-                        + PREPARATION_TABLE
-                        + " WHERE initialization_operation_id = ? FOR UPDATE",
-                    preparation.operationId);
-            if (row == null) throw unavailable();
-            TimelinePreparation current = toTimelinePreparation(row);
-            if (!samePreparation(preparation, current)
-                || current.phase != TimelinePreparationPhase.PREPARED
-                || transaction.fetchExists(
-                    DSL.selectOne()
-                        .from(DSL.table(TABLE))
-                        .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
-                        .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
-                        .and(DSL.field("region_id").eq(preparation.source.regionId())))) {
-              throw unavailable();
-            }
-          });
+      dsl.transaction(configuration -> {
+        DSLContext transaction = DSL.using(configuration);
+        lockRegionScope(transaction, preparation.tenantRegionTag);
+        Record row =
+            transaction.fetchOne(
+                "SELECT * FROM "
+                    + PREPARATION_TABLE
+                    + " WHERE initialization_operation_id = ? FOR UPDATE",
+                preparation.operationId);
+        if (row == null) throw unavailable();
+        TimelinePreparation current = toTimelinePreparation(row);
+        if (!samePreparation(preparation, current)
+            || current.phase != TimelinePreparationPhase.PREPARED
+            || transaction.fetchExists(
+                DSL.selectOne()
+                    .from(DSL.table(TABLE))
+                    .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
+                    .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
+                    .and(DSL.field("region_id").eq(preparation.source.regionId())))) {
+          throw unavailable();
+        }
+      });
       return;
     }
     var provider = dsl.configuration().transactionProvider();
@@ -497,38 +490,36 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
           }
         };
     DSL.using(dsl.configuration().derive(guardedProvider))
-        .transaction(
-            configuration -> {
-              DSLContext transaction = DSL.using(configuration);
-              lockRegionScope(transaction, preparation.tenantRegionTag);
-              Record row =
-                  transaction.fetchOne(
-                      "SELECT * FROM "
-                          + PREPARATION_TABLE
-                          + " WHERE initialization_operation_id = ? FOR UPDATE",
-                      preparation.operationId);
-              if (row == null) throw unavailable();
-              TimelinePreparation current = toTimelinePreparation(row);
-              if (!samePreparation(preparation, current)
-                  || current.phase != TimelinePreparationPhase.INITIALIZING
-                  || transaction.fetchExists(
-                      DSL.selectOne()
-                          .from(DSL.table(TABLE))
-                          .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
-                          .and(
-                              DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
-                          .and(DSL.field("region_id").eq(preparation.source.regionId()))))
-                throw unavailable();
-              int changed =
-                  transaction.execute(
-                      "UPDATE "
-                          + PREPARATION_TABLE
-                          + " SET phase = 'PREPARED', updated_at = ?"
-                          + " WHERE initialization_operation_id = ? AND phase = 'INITIALIZING'",
-                      java.sql.Timestamp.from(now),
-                      preparation.operationId);
-              if (changed != 1) throw unavailable();
-            });
+        .transaction(configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          lockRegionScope(transaction, preparation.tenantRegionTag);
+          Record row =
+              transaction.fetchOne(
+                  "SELECT * FROM "
+                      + PREPARATION_TABLE
+                      + " WHERE initialization_operation_id = ? FOR UPDATE",
+                  preparation.operationId);
+          if (row == null) throw unavailable();
+          TimelinePreparation current = toTimelinePreparation(row);
+          if (!samePreparation(preparation, current)
+              || current.phase != TimelinePreparationPhase.INITIALIZING
+              || transaction.fetchExists(
+                  DSL.selectOne()
+                      .from(DSL.table(TABLE))
+                      .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
+                      .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
+                      .and(DSL.field("region_id").eq(preparation.source.regionId()))))
+            throw unavailable();
+          int changed =
+              transaction.execute(
+                  "UPDATE "
+                      + PREPARATION_TABLE
+                      + " SET phase = 'PREPARED', updated_at = ?"
+                      + " WHERE initialization_operation_id = ? AND phase = 'INITIALIZING'",
+                  java.sql.Timestamp.from(now),
+                  preparation.operationId);
+          if (changed != 1) throw unavailable();
+        });
   }
 
   TimelinePreparation markRedisInitialized(
@@ -579,87 +570,84 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       CanonicalGameplayRegionRuntimeStatus expectedInstalled,
       Instant now) {
     try {
-      return dsl.transactionResult(
-          configuration -> {
-            DSLContext transaction = DSL.using(configuration);
-            lockRegionScope(transaction, preparation.tenantRegionTag);
-            Record currentStatus =
+      return dsl.transactionResult(configuration -> {
+        DSLContext transaction = DSL.using(configuration);
+        lockRegionScope(transaction, preparation.tenantRegionTag);
+        Record currentStatus =
+            transaction.fetchOne(
+                "SELECT * FROM "
+                    + TABLE
+                    + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
+                preparation.source.tenantId(),
+                preparation.source.gameInstanceId(),
+                preparation.source.regionId());
+        Record row =
+            transaction.fetchOne(
+                "SELECT * FROM "
+                    + PREPARATION_TABLE
+                    + " WHERE initialization_operation_id = ? FOR UPDATE",
+                preparation.operationId);
+        if (row == null) throw unavailable();
+        TimelinePreparation current = toTimelinePreparation(row);
+        if (!samePreparation(preparation, current)) throw unavailable();
+        String expectedMetaDigest =
+            CanonicalGameplayRegionBindingBridgeProofs.initialMetaDigest(
+                current.tenantRegionTag, current.operationId, current.sourceDigest());
+        if (!expectedMetaDigest.equals(redisMetaDigest)
+            || current.redisMetaDigest != null
+                && !current.redisMetaDigest.equals(redisMetaDigest)) {
+          throw unavailable();
+        }
+        String nextPhase;
+        if (executorFence == null) {
+          if (currentStatus != null
+              || (current.phase != TimelinePreparationPhase.INITIALIZING
+                  && current.phase != TimelinePreparationPhase.REDIS_INITIALIZED)) {
+            throw unavailable();
+          }
+          nextPhase = "REDIS_INITIALIZED";
+        } else {
+          if (currentStatus == null
+              || (current.phase != TimelinePreparationPhase.REDIS_INITIALIZED
+                  && current.phase != TimelinePreparationPhase.INSTALLED)) {
+            throw unavailable();
+          }
+          CanonicalGameplayRegionRuntimeStatus status = toStatus(currentStatus);
+          if (!status.equals(expectedInstalled)
+              || !matchesSource(status, preparation.source)
+              || status.executorFence().longValueExact() != executorFence
+              || !status.leaseTokenCorrelation().equals(leaseTokenCorrelation)) {
+            throw unavailable();
+          }
+          if (current.phase == TimelinePreparationPhase.INSTALLED
+              && status.executorFence().equals(current.executorFence)
+              && leaseTokenCorrelation.equals(current.leaseTokenCorrelation)
+              && redisMetaDigest.equals(current.redisMetaDigest)) {
+            return current;
+          }
+          nextPhase = "INSTALLED";
+        }
+        int updated =
+            transaction.execute(
+                "UPDATE "
+                    + PREPARATION_TABLE
+                    + " SET phase = ?, lease_token_correlation = ?, executor_fence = ?,"
+                    + " redis_meta_digest = ?, updated_at = ?"
+                    + " WHERE initialization_operation_id = ?",
+                nextPhase,
+                leaseTokenCorrelation,
+                executorFence,
+                redisMetaDigest,
+                java.sql.Timestamp.from(now),
+                current.operationId);
+        if (updated != 1) throw unavailable();
+        return toTimelinePreparation(
+            Objects.requireNonNull(
                 transaction.fetchOne(
-                    "SELECT * FROM "
-                        + TABLE
-                        + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
-                    preparation.source.tenantId(),
-                    preparation.source.gameInstanceId(),
-                    preparation.source.regionId());
-            Record row =
-                transaction.fetchOne(
-                    "SELECT * FROM "
-                        + PREPARATION_TABLE
-                        + " WHERE initialization_operation_id = ? FOR UPDATE",
-                    preparation.operationId);
-            if (row == null) throw unavailable();
-            TimelinePreparation current = toTimelinePreparation(row);
-            if (!samePreparation(preparation, current)) throw unavailable();
-            String expectedMetaDigest =
-                CanonicalGameplayRegionBindingBridgeProofs.initialMetaDigest(
-                    current.tenantRegionTag, current.operationId, current.sourceDigest());
-            if (!expectedMetaDigest.equals(redisMetaDigest)
-                || current.redisMetaDigest != null
-                    && !current.redisMetaDigest.equals(redisMetaDigest)) {
-              throw unavailable();
-            }
-            String nextPhase;
-            if (executorFence == null) {
-              if (currentStatus != null
-                  || (current.phase != TimelinePreparationPhase.INITIALIZING
-                      && current.phase != TimelinePreparationPhase.REDIS_INITIALIZED)) {
-                throw unavailable();
-              }
-              nextPhase = "REDIS_INITIALIZED";
-            } else {
-              if (currentStatus == null
-                  || (current.phase != TimelinePreparationPhase.REDIS_INITIALIZED
-                      && current.phase != TimelinePreparationPhase.INSTALLED)) {
-                throw unavailable();
-              }
-              CanonicalGameplayRegionRuntimeStatus status = toStatus(currentStatus);
-              if (!status.equals(expectedInstalled)
-                  || !matchesSource(status, preparation.source)
-                  || status.executorFence().longValueExact() != executorFence
-                  || !status.leaseTokenCorrelation().equals(leaseTokenCorrelation)) {
-                throw unavailable();
-              }
-              if (current.phase == TimelinePreparationPhase.INSTALLED
-                  && status.executorFence().equals(current.executorFence)
-                  && leaseTokenCorrelation.equals(current.leaseTokenCorrelation)
-                  && redisMetaDigest.equals(current.redisMetaDigest)) {
-                return current;
-              }
-              nextPhase = "INSTALLED";
-            }
-            int updated =
-                transaction.execute(
-                    "UPDATE "
-                        + PREPARATION_TABLE
-                        + " SET phase = ?, lease_token_correlation = ?, executor_fence = ?,"
-                        + " redis_meta_digest = ?, updated_at = ?"
-                        + " WHERE initialization_operation_id = ?",
-                    nextPhase,
-                    leaseTokenCorrelation,
-                    executorFence,
-                    redisMetaDigest,
-                    java.sql.Timestamp.from(now),
-                    current.operationId);
-            if (updated != 1) throw unavailable();
-            return toTimelinePreparation(
-                Objects.requireNonNull(
-                    transaction.fetchOne(
-                        "SELECT * FROM "
-                            + PREPARATION_TABLE
-                            + " WHERE initialization_operation_id = ?",
-                        current.operationId),
-                    "region timeline preparation must survive phase readback"));
-          });
+                    "SELECT * FROM " + PREPARATION_TABLE + " WHERE initialization_operation_id = ?",
+                    current.operationId),
+                "region timeline preparation must survive phase readback"));
+      });
     } catch (RuntimeException failure) {
       throw unavailable(failure);
     }
@@ -915,87 +903,84 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     if (prior != null && !expectedTag.equals(prior.tenantRegionTag())) throw unavailable();
 
     try {
-      return dsl.transactionResult(
-          configuration -> {
-            DSLContext transaction = DSL.using(configuration);
-            transaction.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-            lockRegionScope(transaction, expectedTag);
-            Record currentRow =
-                transaction.fetchOne(
-                    "SELECT * FROM "
-                        + TABLE
-                        + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
-                    source.tenantId(),
-                    source.gameInstanceId(),
-                    source.regionId());
-            CanonicalGameplayRegionRuntimeStatus current =
-                currentRow == null ? null : toStatus(currentRow);
-            if (current != null) {
-              if (!matchesSource(current, source)
-                  || !expectedTag.equals(current.tenantRegionTag())) {
-                throw unavailable();
-              }
-              if (current.leaseTokenCorrelation().equals(leaseTokenCorrelation)) {
-                if (matchesLeaseGeneration(
-                    current,
-                    expectedRegionEpoch,
-                    leaseTokenCorrelation,
-                    ownerService,
-                    ownerInstanceId)) {
-                  return current;
-                }
-                throw unavailable();
-              }
-              // This parent keeps replacement held under the existing owner and scope locks.
-              throw unavailable();
-            } else if (prior != null || expectedRegionEpoch != 1L) {
-              throw unavailable();
+      return dsl.transactionResult(configuration -> {
+        DSLContext transaction = DSL.using(configuration);
+        transaction.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+        lockRegionScope(transaction, expectedTag);
+        Record currentRow =
+            transaction.fetchOne(
+                "SELECT * FROM "
+                    + TABLE
+                    + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
+                source.tenantId(),
+                source.gameInstanceId(),
+                source.regionId());
+        CanonicalGameplayRegionRuntimeStatus current =
+            currentRow == null ? null : toStatus(currentRow);
+        if (current != null) {
+          if (!matchesSource(current, source) || !expectedTag.equals(current.tenantRegionTag())) {
+            throw unavailable();
+          }
+          if (current.leaseTokenCorrelation().equals(leaseTokenCorrelation)) {
+            if (matchesLeaseGeneration(
+                current,
+                expectedRegionEpoch,
+                leaseTokenCorrelation,
+                ownerService,
+                ownerInstanceId)) {
+              return current;
             }
+            throw unavailable();
+          }
+          // This parent keeps replacement held under the existing owner and scope locks.
+          throw unavailable();
+        } else if (prior != null || expectedRegionEpoch != 1L) {
+          throw unavailable();
+        }
 
-            Record fenceRow =
-                transaction.fetchOne("SELECT nextval('" + FENCE_SEQUENCE + "') AS fence");
-            Long fence = fenceRow == null ? null : fenceRow.get("fence", Long.class);
-            if (fence == null || fence <= 0L) throw unavailable();
-            Record installed =
-                transaction.fetchOne(
-                    "INSERT INTO "
-                        + TABLE
-                        + " (tenant_id, game_instance_id, canonical_region_id, region_id,"
-                        + " tenant_region_tag, lifecycle_epoch, lifecycle_row_version, capture_id,"
-                        + " lifecycle_request_bytes, graph_sha256, preparation_input_digest,"
-                        + " region_epoch, executor_fence,"
-                        + " lease_token_correlation, owner_service, owner_instance_id, paused,"
-                        + " last_committed_tick_id, updated_at)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, false, -1, ?)"
-                        + " ON CONFLICT (tenant_id, game_instance_id, region_id) DO NOTHING"
-                        + " RETURNING *",
-                    source.tenantId(),
-                    source.gameInstanceId(),
-                    source.canonicalRegionId(),
-                    source.regionId(),
-                    expectedTag,
-                    source.lifecycleEpoch(),
-                    source.lifecycleRowVersion(),
-                    source.captureId(),
-                    source.lifecycleRequest().canonicalBytes(),
-                    source.graphSha256(),
-                    source.preparationInputDigest(),
-                    fence,
-                    leaseTokenCorrelation,
-                    ownerService,
-                    ownerInstanceId,
-                    localDateTime(now));
-            if (installed == null) throw unavailable();
-            CanonicalGameplayRegionRuntimeStatus result = toStatus(installed);
-            if (!matchesSource(result, source)
-                || result.regionEpoch() != expectedRegionEpoch
-                || !result.executorFence().equals(BigInteger.valueOf(fence))
-                || !result.leaseTokenCorrelation().equals(leaseTokenCorrelation)
-                || !result.tenantRegionTag().equals(expectedTag)) {
-              throw unavailable();
-            }
-            return result;
-          });
+        Record fenceRow = transaction.fetchOne("SELECT nextval('" + FENCE_SEQUENCE + "') AS fence");
+        Long fence = fenceRow == null ? null : fenceRow.get("fence", Long.class);
+        if (fence == null || fence <= 0L) throw unavailable();
+        Record installed =
+            transaction.fetchOne(
+                "INSERT INTO "
+                    + TABLE
+                    + " (tenant_id, game_instance_id, canonical_region_id, region_id,"
+                    + " tenant_region_tag, lifecycle_epoch, lifecycle_row_version, capture_id,"
+                    + " lifecycle_request_bytes, graph_sha256, preparation_input_digest,"
+                    + " region_epoch, executor_fence,"
+                    + " lease_token_correlation, owner_service, owner_instance_id, paused,"
+                    + " last_committed_tick_id, updated_at)"
+                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, false, -1, ?)"
+                    + " ON CONFLICT (tenant_id, game_instance_id, region_id) DO NOTHING"
+                    + " RETURNING *",
+                source.tenantId(),
+                source.gameInstanceId(),
+                source.canonicalRegionId(),
+                source.regionId(),
+                expectedTag,
+                source.lifecycleEpoch(),
+                source.lifecycleRowVersion(),
+                source.captureId(),
+                source.lifecycleRequest().canonicalBytes(),
+                source.graphSha256(),
+                source.preparationInputDigest(),
+                fence,
+                leaseTokenCorrelation,
+                ownerService,
+                ownerInstanceId,
+                localDateTime(now));
+        if (installed == null) throw unavailable();
+        CanonicalGameplayRegionRuntimeStatus result = toStatus(installed);
+        if (!matchesSource(result, source)
+            || result.regionEpoch() != expectedRegionEpoch
+            || !result.executorFence().equals(BigInteger.valueOf(fence))
+            || !result.leaseTokenCorrelation().equals(leaseTokenCorrelation)
+            || !result.tenantRegionTag().equals(expectedTag)) {
+          throw unavailable();
+        }
+        return result;
+      });
     } catch (RuntimeException failure) {
       throw unavailable(failure);
     }

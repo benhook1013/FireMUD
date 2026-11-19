@@ -2,7 +2,7 @@ name: Publish PR Runtime Images
 
 on:
   workflow_run:
-    workflows: [Build Runtime Images]
+    workflows: [Build Runtime Images, "CI — Validation"]
     types: [completed]
   repository_dispatch:
     types: [pr-runtime-image-publication]
@@ -14,7 +14,7 @@ permissions: {}
 jobs:
   reconcile-failed-pr-runtime:
     name: Reconcile Failed Original PR Runtime
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && contains(fromJSON('["failure","cancelled","timed_out"]'), github.event.workflow_run.conclusion) && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && ((github.event.workflow_run.path == '.github/workflows/runtime-images.yml' && contains(fromJSON('["failure","cancelled","timed_out"]'), github.event.workflow_run.conclusion)) || (github.event.workflow_run.path == '.github/workflows/ci.yml' && github.event.workflow_run.conclusion == 'cancelled')) && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
@@ -34,7 +34,8 @@ jobs:
         with:
           script: |
             const repository = `${context.repo.owner}/${context.repo.repo}`;
-            const event = context.payload.workflow_run;
+            const callback = context.payload.workflow_run;
+            let event = callback;
             const positive = value => Number.isSafeInteger(value) && value > 0;
             const sha = value => typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
             const titlePattern = /^Build Runtime Images secure-pr-artifact pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40}) merge-([0-9a-f]{40}) mode-required$/;
@@ -51,6 +52,68 @@ jobs:
             const trusted = run => run?.workflow_id === workflow.id && matchesPath(run.path, workflow.path) &&
               run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
               [workflow.name, run.display_title].includes(run.name) && positive(run.id) && positive(run.run_attempt);
+            // Inventory incompleteness is unknown, never permission to dispatch duplicates.
+            const inventory = async (workflowId, filter) => {
+              const runs = [], ids = new Set();
+              let total;
+              for (let page = 1; page <= 10; page++) {
+                const {data} = await github.rest.actions.listWorkflowRuns({
+                  ...context.repo, workflow_id: workflowId, per_page: 100, page, ...filter,
+                });
+                total ??= data?.total_count;
+                if (!Number.isInteger(total) || total < 0 || total >= 1000 || data?.total_count !== total ||
+                    !Array.isArray(data.workflow_runs) || data.workflow_runs.length !== Math.min(100, total - runs.length)) {
+                  throw new Error("Reconciliation inventory is incomplete; no dispatch issued");
+                }
+                for (const run of data.workflow_runs) {
+                  if (!positive(run.id) || ids.has(run.id)) throw new Error("Reconciliation inventory shifted; no dispatch issued");
+                  ids.add(run.id); runs.push(run);
+                }
+                if (runs.length === total) return runs;
+              }
+              throw new Error("Reconciliation inventory exceeds bounded pagination");
+            };
+            const validationTitle = /^CI — Validation pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40})$/;
+            const validationWake = validationTitle.exec(callback.display_title || "");
+            let ciWorkflow = null;
+            let wakeCurrent = async () => true;
+            if (validationWake) {
+              const [, wakeNumber, wakeBase, wakeHead] = validationWake;
+              if (callback.conclusion !== "cancelled" || callback.head_sha !== wakeHead ||
+                  typeof callback.head_branch !== "string" || !callback.head_branch ||
+                  !positive(Number(wakeNumber))) return;
+              ({data: ciWorkflow} = await github.rest.actions.getWorkflow({...context.repo, workflow_id: "ci.yml"}));
+              if (!positive(ciWorkflow.id) || ciWorkflow.path !== ".github/workflows/ci.yml" ||
+                  ciWorkflow.name !== "CI — Validation") throw new Error("Untrusted CI workflow identity");
+              const matchesWake = run => run?.id === callback.id && run.run_attempt === callback.run_attempt &&
+                run.workflow_id === ciWorkflow.id && matchesPath(run.path, ciWorkflow.path) &&
+                run.event === "pull_request" && run.status === "completed" && run.conclusion === "cancelled" &&
+                run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
+                run.head_sha === wakeHead && run.head_branch === callback.head_branch &&
+                run.display_title === callback.display_title && [ciWorkflow.name, callback.display_title].includes(run.name);
+              if (!matchesWake(callback)) return;
+              wakeCurrent = async () => {
+                const {data: current} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: callback.id});
+                return matchesWake(current);
+              };
+              if (!await wakeCurrent()) return;
+              let pr;
+              for (let attempt = 0; attempt < 6; attempt++) {
+                ({data: pr} = await github.rest.pulls.get({...context.repo, pull_number: Number(wakeNumber)}));
+                if (pr.state !== "open" || pr.head?.sha !== wakeHead ||
+                    pr.mergeable !== null || attempt === 5) break;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+              }
+              if (pr.state !== "open" || pr.head?.repo?.full_name !== repository ||
+                  pr.base?.repo?.full_name !== repository || pr.head?.sha !== wakeHead ||
+                  pr.head?.ref !== callback.head_branch || pr.mergeable !== true || !sha(pr.merge_commit_sha)) return;
+              const exactTitle = `Build Runtime Images secure-pr-artifact pr-${wakeNumber} base-${wakeBase} head-${wakeHead} merge-${pr.merge_commit_sha} mode-required`;
+              const runs = await inventory("runtime-images.yml", {event: "pull_request", head_sha: wakeHead});
+              event = runs.filter(run => run.display_title === exactTitle).sort((a, b) => b.id - a.id)[0];
+              if (!trusted(event) || event.event !== "pull_request" || event.status !== "completed" ||
+                  !["failure", "cancelled", "timed_out"].includes(event.conclusion) ||
+                  event.head_sha !== wakeHead || event.head_branch !== callback.head_branch) return;
+            }
             const match = titlePattern.exec(event.display_title || "");
             if (!match) return;
             const [ , number, base, head, merge] = match;
@@ -80,33 +143,12 @@ jobs:
             };
             const baseRef = await currentTuple();
             if (!baseRef) return;
-            // Inventory incompleteness is unknown, never permission to dispatch duplicates.
-            const inventory = async (workflowId, filter) => {
-              const runs = [], ids = new Set();
-              let total;
-              for (let page = 1; page <= 10; page++) {
-                const {data} = await github.rest.actions.listWorkflowRuns({
-                  ...context.repo, workflow_id: workflowId, per_page: 100, page, ...filter,
-                });
-                total ??= data?.total_count;
-                if (!Number.isInteger(total) || total < 0 || total >= 1000 || data?.total_count !== total ||
-                    !Array.isArray(data.workflow_runs) || data.workflow_runs.length !== Math.min(100, total - runs.length)) {
-                  throw new Error("Reconciliation inventory is incomplete; no dispatch issued");
-                }
-                for (const run of data.workflow_runs) {
-                  if (!positive(run.id) || ids.has(run.id)) throw new Error("Reconciliation inventory shifted; no dispatch issued");
-                  ids.add(run.id); runs.push(run);
-                }
-                if (runs.length === total) return runs;
-              }
-              throw new Error("Reconciliation inventory exceeds bounded pagination");
-            };
             const originalSuperseded = async () => {
               const runs = await inventory("runtime-images.yml", {event: "pull_request", head_sha: head});
               return runs.some(run => run.display_title === event.display_title && run.id > event.id);
             };
             if (await originalSuperseded()) return;
-            const {data: ciWorkflow} = await github.rest.actions.getWorkflow({...context.repo, workflow_id: "ci.yml"});
+            if (!ciWorkflow) ({data: ciWorkflow} = await github.rest.actions.getWorkflow({...context.repo, workflow_id: "ci.yml"}));
             if (!positive(ciWorkflow.id) || ciWorkflow.path !== ".github/workflows/ci.yml" || ciWorkflow.name !== "CI — Validation") {
               throw new Error("Untrusted CI workflow identity");
             }
@@ -123,6 +165,7 @@ jobs:
               const ciRuns = (await inventory("ci.yml", {event: "pull_request", head_sha: head}))
                 .filter(run => run.display_title === ciTitle).sort((a, b) => b.id - a.id);
               let skippedPreEnforcementCancellation = false;
+              let skippedExactWake = false;
               // Metadata-only completions cannot conceal an earlier substantive attempt for this exact tuple.
               for (const candidate of ciRuns) {
                 ci = candidate;
@@ -190,6 +233,10 @@ jobs:
                   const {data: latestCancelled} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
                   if (!matchesCi(latestCancelled) || latestCancelled.conclusion !== "cancelled") return null;
                   skippedPreEnforcementCancellation = true;
+                  if (validationWake && !skippedExactWake) {
+                    if (ci.id !== callback.id || ci.run_attempt !== callback.run_attempt) return null;
+                    skippedExactWake = true;
+                  }
                   ci = null;
                   continue;
                 }
@@ -220,7 +267,7 @@ jobs:
                      gate.conclusion !== "success" || enforcement[0].conclusion !== "success")) return null;
                 break;
               }
-              return ci;
+              return validationWake && !skippedExactWake ? null : ci;
             };
             ci = await selectCi();
             if (!ci) return;
@@ -245,7 +292,7 @@ jobs:
             const currentCi = await selectCi();
             if (!currentCi || currentCi.id !== selectedCi.id || currentCi.run_attempt !== selectedCi.run_attempt) return;
             const {data: finalCi} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: ci.id});
-            if (!matchesCi(finalCi) || finalCi.conclusion !== ci.conclusion || !await sourceCurrent() || await originalSuperseded() || await currentTuple() !== baseRef) return;
+            if (!matchesCi(finalCi) || finalCi.conclusion !== ci.conclusion || !await wakeCurrent() || !await sourceCurrent() || await originalSuperseded() || await currentTuple() !== baseRef) return;
             const dispatchStarted = new Date(Date.now() - 1000).toISOString();
             let responseUnknown = false;
             try {
@@ -261,19 +308,30 @@ jobs:
             }
             // Keep the shared lock during observation even when the one POST response was lost.
             const deadline = Date.now() + 120000;
-            while (!await newerRefresh(dispatchStarted)) {
+            for (;;) {
+              try {
+                if (await newerRefresh(dispatchStarted)) break;
+              } catch (error) {
+                const status = error?.status ?? error?.response?.status;
+                const code = error?.code ?? error?.cause?.code;
+                const transient = [408, 425, 429, 500, 502, 503, 504].includes(status) ||
+                  (status == null && ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EHOSTUNREACH",
+                    "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code));
+                if (!transient) throw error;
+                core.warning("Exact refresh visibility read is temporarily unavailable; keep observing without retrying the POST.");
+              }
               if (Date.now() >= deadline) {
                 throw new Error(responseUnknown
                   ? "Refresh dispatch attempted but visibility is unknown; no retry issued"
                   : "Refresh dispatch accepted but visibility is unknown; no retry issued");
               }
-              await new Promise(resolve => setTimeout(resolve, 5000));
+              await new Promise(resolve => setTimeout(resolve, Math.min(5000, deadline - Date.now())));
             }
             core.info(`Reconciled failed original runtime for PR #${number}; exact refresh is visible.`);
 
   source:
     name: Resolve Exact Runtime Publication Source
-    if: ${{ (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-image-publication' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
+    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/runtime-images.yml' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-image-publication' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

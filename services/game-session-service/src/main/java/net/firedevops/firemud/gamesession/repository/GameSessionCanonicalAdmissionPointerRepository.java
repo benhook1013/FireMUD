@@ -69,10 +69,9 @@ public class GameSessionCanonicalAdmissionPointerRepository {
     CanonicalRealmCatalogSnapshot catalog =
         catalogRepository
             .readByRequest(request.targetNamespace(), request.catalogCreationRequestId())
-            .orElseThrow(
-                () ->
-                    new InvalidCanonicalClosedPointerEvidenceException(
-                        "Exact committed initial catalog request is missing"));
+            .orElseThrow(() ->
+                new InvalidCanonicalClosedPointerEvidenceException(
+                    "Exact committed initial catalog request is missing"));
     requireExactInitialCatalog(request, catalog);
     return new PreparedInitialClosed(request, catalog, requestDigest(request, catalog));
   }
@@ -208,10 +207,9 @@ public class GameSessionCanonicalAdmissionPointerRepository {
 
     CanonicalClosedAdmissionPointerSnapshot origin =
         readByRequest(targetNamespace, originalRequestId)
-            .orElseThrow(
-                () ->
-                    new InvalidCanonicalClosedPointerEvidenceException(
-                        "Exact original committed canonical CLOSED origin is missing"));
+            .orElseThrow(() ->
+                new InvalidCanonicalClosedPointerEvidenceException(
+                    "Exact original committed canonical CLOSED origin is missing"));
     requireExpectedVersions(origin, expectedPointerVersion, expectedCatalogRevision);
     return new PreparedExpectedClosed(origin, expectedPointerVersion, expectedCatalogRevision);
   }
@@ -267,10 +265,9 @@ public class GameSessionCanonicalAdmissionPointerRepository {
       CanonicalRealmCatalogSnapshot catalog =
           catalogRepository
               .readByRequest(targetNamespace, request.catalogCreationRequestId())
-              .orElseThrow(
-                  () ->
-                      new InvalidCanonicalClosedPointerEvidenceException(
-                          "Canonical CLOSED origin lost its exact catalog evidence"));
+              .orElseThrow(() ->
+                  new InvalidCanonicalClosedPointerEvidenceException(
+                      "Canonical CLOSED origin lost its exact catalog evidence"));
       return Optional.of(
           verifyOrigin(targetNamespace, originalRequestId, outcome, catalog, null, false));
     } catch (InvalidCanonicalClosedPointerEvidenceException
@@ -348,10 +345,9 @@ public class GameSessionCanonicalAdmissionPointerRepository {
     UUID originalRequestId = required(outcomes.getFirst(), "request_id", UUID.class);
     CanonicalClosedAdmissionPointerSnapshot origin =
         lockOriginalClosedOrigin(targetNamespace, originalRequestId)
-            .orElseThrow(
-                () ->
-                    new InvalidCanonicalClosedPointerEvidenceException(
-                        "Exact historical original CLOSED request outcome is missing"));
+            .orElseThrow(() ->
+                new InvalidCanonicalClosedPointerEvidenceException(
+                    "Exact historical original CLOSED request outcome is missing"));
     if (!targetNamespace.equals(origin.targetNamespace())
         || !canonicalTenantId.equals(origin.canonicalTenantId())
         || !realmId.equals(origin.realmId())) {
@@ -571,10 +567,9 @@ public class GameSessionCanonicalAdmissionPointerRepository {
       CanonicalRealmCatalogSnapshot catalog =
           catalogRepository
               .readByRequest(targetNamespace, request.catalogCreationRequestId())
-              .orElseThrow(
-                  () ->
-                      new InvalidCanonicalClosedPointerEvidenceException(
-                          "Canonical CLOSED pointer outcome lost its catalog reference"));
+              .orElseThrow(() ->
+                  new InvalidCanonicalClosedPointerEvidenceException(
+                      "Canonical CLOSED pointer outcome lost its catalog reference"));
       Record pointer = findCanonicalPointer(request);
       return Optional.of(verifyOrigin(targetNamespace, requestId, outcome, catalog, pointer));
     } catch (InvalidCanonicalClosedPointerEvidenceException
@@ -1054,18 +1049,17 @@ public class GameSessionCanonicalAdmissionPointerRepository {
       throw new IllegalStateException(
           "Canonical CLOSED pointer creation requires a read-write transaction");
     }
-    dsl.connectionResult(
-        connection -> {
-          if (connection.getAutoCommit()) {
-            throw new IllegalStateException(
-                "Canonical CLOSED pointer DSL connection must join the owner transaction");
-          }
-          if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
-            throw new IllegalStateException(
-                "Canonical CLOSED pointer creation requires READ COMMITTED isolation");
-          }
-          return null;
-        });
+    dsl.connectionResult(connection -> {
+      if (connection.getAutoCommit()) {
+        throw new IllegalStateException(
+            "Canonical CLOSED pointer DSL connection must join the owner transaction");
+      }
+      if (connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+        throw new IllegalStateException(
+            "Canonical CLOSED pointer creation requires READ COMMITTED isolation");
+      }
+      return null;
+    });
     Record isolationRow = dsl.fetchOne("SHOW transaction_isolation");
     if (isolationRow == null
         || !"read committed".equalsIgnoreCase(isolationRow.get(0, String.class).trim())) {

@@ -42,10 +42,9 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("FEATURE_UNAVAILABLE");
     assertThat(result.outputs())
         .singleElement()
-        .satisfies(
-            output ->
-                assertThat(output.text())
-                    .isEqualTo("ERROR FEATURE_UNAVAILABLE JOIN is not available."));
+        .satisfies(output ->
+            assertThat(output.text())
+                .isEqualTo("ERROR FEATURE_UNAVAILABLE JOIN is not available."));
     Mockito.verifyNoInteractions(scriptEventPublisher);
   }
 
@@ -65,11 +64,10 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.outputs())
         .singleElement()
-        .satisfies(
-            output ->
-                assertThat(output.text())
-                    .isEqualTo(
-                        "ERROR INVALID_ARGUMENT REALMS requires a valid world selector. Use WORLDS first."));
+        .satisfies(output ->
+            assertThat(output.text())
+                .isEqualTo(
+                    "ERROR INVALID_ARGUMENT REALMS requires a valid world selector. Use WORLDS first."));
     Mockito.verifyNoInteractions(scriptEventPublisher);
   }
 
@@ -91,18 +89,16 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
         .singleElement()
-        .satisfies(
-            output -> {
-              assertThat(output.payload()).isInstanceOf(RealmBrowseViewOutput.class);
-              assertThat(((RealmBrowseViewOutput) output.payload()).worldSlug()).isEqualTo("1");
-            });
+        .satisfies(output -> {
+          assertThat(output.payload()).isInstanceOf(RealmBrowseViewOutput.class);
+          assertThat(((RealmBrowseViewOutput) output.payload()).worldSlug()).isEqualTo("1");
+        });
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "REALMS".equals(gameplayCommand.getCommandName())
-                        && "REALMS 1".equals(gameplayCommand.getCommandText())));
+            Mockito.argThat(gameplayCommand ->
+                "REALMS".equals(gameplayCommand.getCommandName())
+                    && "REALMS 1".equals(gameplayCommand.getCommandText())));
   }
 
   @Test
@@ -126,12 +122,11 @@ class WorldsTextCommandDispatchHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "WORLDS".equals(gameplayCommand.getCommandName())
-                        && "WORLDS".equals(gameplayCommand.getCommandText())
-                        && gameplayCommand.getCommandId() != null
-                        && gameplayCommand.getCommandId().startsWith("worlds-")));
+            Mockito.argThat(gameplayCommand ->
+                "WORLDS".equals(gameplayCommand.getCommandName())
+                    && "WORLDS".equals(gameplayCommand.getCommandText())
+                    && gameplayCommand.getCommandId() != null
+                    && gameplayCommand.getCommandId().startsWith("worlds-")));
   }
 
   @Test
@@ -156,10 +151,9 @@ class WorldsTextCommandDispatchHandlerTest {
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "REALMS".equals(gameplayCommand.getCommandName())
-                        && "REALMS demo".equals(gameplayCommand.getCommandText())));
+            Mockito.argThat(gameplayCommand ->
+                "REALMS".equals(gameplayCommand.getCommandName())
+                    && "REALMS demo".equals(gameplayCommand.getCommandText())));
   }
 
   @Test

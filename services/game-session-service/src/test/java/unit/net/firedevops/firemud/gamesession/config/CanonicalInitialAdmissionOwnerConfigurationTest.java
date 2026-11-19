@@ -27,12 +27,11 @@ class CanonicalInitialAdmissionOwnerConfigurationTest {
   void disabledOwnerCompositionDoesNotRequireCanonicalLaunchRepositories() {
     new ApplicationContextRunner()
         .withUserConfiguration(CanonicalInitialAdmissionOwnerConfiguration.class)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).doesNotHaveBean(CanonicalInitialAdmissionRepository.class);
-              assertThat(context).doesNotHaveBean(CanonicalInitialAdmissionService.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).doesNotHaveBean(CanonicalInitialAdmissionRepository.class);
+          assertThat(context).doesNotHaveBean(CanonicalInitialAdmissionService.class);
+        });
   }
 
   @Test
@@ -51,12 +50,11 @@ class CanonicalInitialAdmissionOwnerConfigurationTest {
             CanonicalInitialAdmissionOwnerConfiguration.class,
             OwnerDependencies.class)
         .withPropertyValues(OWNER_OPT_IN + "=true", "firemud.grpc.workload-namespace=gameplay")
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(CanonicalInitialAdmissionRepository.class);
-              assertThat(context).hasSingleBean(CanonicalInitialAdmissionService.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).hasSingleBean(CanonicalInitialAdmissionRepository.class);
+          assertThat(context).hasSingleBean(CanonicalInitialAdmissionService.class);
+        });
   }
 
   @Test

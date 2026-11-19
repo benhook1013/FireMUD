@@ -920,9 +920,8 @@ public final class AccountJwtValidatorInventorySource {
     result.put(
         "profiles",
         validator.profiles().stream()
-            .map(
-                profile ->
-                    Map.of("tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
+            .map(profile ->
+                Map.of("tokenProfile", profile.tokenProfile(), "audience", profile.audience()))
             .toList());
     result.put(
         "pods", validator.pods().stream().map(AccountJwtValidatorInventorySource::podMap).toList());

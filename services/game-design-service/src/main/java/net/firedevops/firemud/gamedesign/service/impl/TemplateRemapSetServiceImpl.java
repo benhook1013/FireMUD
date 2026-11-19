@@ -151,13 +151,12 @@ public class TemplateRemapSetServiceImpl implements TemplateRemapSetService {
         remapSet.getCreatedAt(),
         remapSet.getApprovedAt(),
         remapSet.getRemapEntries().stream()
-            .map(
-                entry ->
-                    new TemplateRemapEntryDto(
-                        entry.getMappingDomain(),
-                        entry.getMappingType(),
-                        entry.getSourceTemplateKey(),
-                        entry.getTargetTemplateKey()))
+            .map(entry ->
+                new TemplateRemapEntryDto(
+                    entry.getMappingDomain(),
+                    entry.getMappingType(),
+                    entry.getSourceTemplateKey(),
+                    entry.getTargetTemplateKey()))
             .toList());
   }
 

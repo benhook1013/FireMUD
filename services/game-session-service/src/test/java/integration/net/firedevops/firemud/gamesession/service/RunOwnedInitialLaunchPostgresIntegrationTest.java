@@ -86,13 +86,11 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
 
       assertThatThrownBy(() -> insertDuplicateIdentity(dsl, firstId + 1L))
           .isInstanceOf(DataAccessException.class)
-          .satisfies(
-              failure -> {
-                assertThat(sqlState(failure)).isEqualTo("23505");
-                assertThat(
-                        hasCauseMessage(failure, "game_instances_run_owned_start_request_unique"))
-                    .isTrue();
-              });
+          .satisfies(failure -> {
+            assertThat(sqlState(failure)).isEqualTo("23505");
+            assertThat(hasCauseMessage(failure, "game_instances_run_owned_start_request_unique"))
+                .isTrue();
+          });
 
       GameInstance savedOrdinaryOne = repository.save(ordinaryInstance(1001L));
       GameInstance savedOrdinaryTwo = repository.save(ordinaryInstance(1002L));
@@ -121,20 +119,17 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
       throw new IllegalStateException("concurrent allocation start gate timed out");
     }
     Long id =
-        transactions.execute(
-            status -> {
-              repository.lockRunOwnedStartIdentity(TENANT_ID, REQUEST_ID);
-              var existing =
-                  repository.findByTenantIdAndRunOwnedStartRequestIdForUpdate(
-                      TENANT_ID, REQUEST_ID);
-              if (existing.isPresent()) {
-                assertThat(existing.get().getRunOwnedStartRequestDigest())
-                    .isEqualTo(REQUEST_DIGEST);
-                return existing.get().getId();
-              }
-              GameInstance instance = runOwnedInstance();
-              return repository.save(instance).getId();
-            });
+        transactions.execute(status -> {
+          repository.lockRunOwnedStartIdentity(TENANT_ID, REQUEST_ID);
+          var existing =
+              repository.findByTenantIdAndRunOwnedStartRequestIdForUpdate(TENANT_ID, REQUEST_ID);
+          if (existing.isPresent()) {
+            assertThat(existing.get().getRunOwnedStartRequestDigest()).isEqualTo(REQUEST_DIGEST);
+            return existing.get().getId();
+          }
+          GameInstance instance = runOwnedInstance();
+          return repository.save(instance).getId();
+        });
     if (id == null) {
       throw new IllegalStateException("run-owned instance allocation returned no id");
     }

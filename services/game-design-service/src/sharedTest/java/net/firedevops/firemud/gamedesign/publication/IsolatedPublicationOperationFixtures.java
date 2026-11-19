@@ -68,21 +68,20 @@ public final class IsolatedPublicationOperationFixtures {
             originalDraftAccount.inputDigest());
     var appliedEpochs =
         draft.affectedUnits().stream()
-            .map(
-                unit ->
-                    Map.of(
-                        "aggregateType",
-                        unit.aggregateType(),
-                        "aggregateId",
-                        unit.aggregateId(),
-                        "scopeType",
-                        unit.scopeType(),
-                        "scopeId",
-                        unit.scopeId(),
-                        "expectedEpoch",
-                        unit.expectedEpoch(),
-                        "resultingEpoch",
-                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+            .map(unit ->
+                Map.of(
+                    "aggregateType",
+                    unit.aggregateType(),
+                    "aggregateId",
+                    unit.aggregateId(),
+                    "scopeType",
+                    unit.scopeType(),
+                    "scopeId",
+                    unit.scopeId(),
+                    "expectedEpoch",
+                    unit.expectedEpoch(),
+                    "resultingEpoch",
+                    new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
             .toList();
     String vector =
         new String(
@@ -172,32 +171,31 @@ public final class IsolatedPublicationOperationFixtures {
             new AccountPublicationAuthorizationBinding.PreallocationInput(
                 originalDraftAccount.actorAccountId(), selected),
             java.util.Arrays.stream(DraftAuthorizationFenceBinding.SourceKind.values())
-                .flatMap(
-                    kind -> {
-                      if (kind == DraftAuthorizationFenceBinding.SourceKind.RECENT_REAUTH_POLICY) {
-                        return java.util.stream.Stream.of(
-                            recentReauthenticationPolicyEvidence("PLATFORM", 300L, 30L),
-                            recentReauthenticationPolicyEvidence("DEPLOYMENT", 240L, 30L));
-                      }
-                      return java.util.stream.Stream.of(
-                          new DraftAuthorizationFenceBinding.SourceEvidence(
-                              kind,
-                              switch (kind) {
-                                case ACCOUNT, GLOBAL_ROLES ->
-                                    originalDraftAccount.actorAccountId().toString();
-                                case TENANT -> target.canonicalTenantId().toString();
-                                case MEMBERSHIP ->
-                                    originalDraftAccount.actorAccountId()
-                                        + "/"
-                                        + target.canonicalTenantId();
-                                default -> "ISOLATED-" + kind;
-                              },
-                              "1",
-                              "1",
-                              null,
-                              null,
-                              ("ISOLATED-stipulated-" + kind).getBytes(StandardCharsets.UTF_8)));
-                    })
+                .flatMap(kind -> {
+                  if (kind == DraftAuthorizationFenceBinding.SourceKind.RECENT_REAUTH_POLICY) {
+                    return java.util.stream.Stream.of(
+                        recentReauthenticationPolicyEvidence("PLATFORM", 300L, 30L),
+                        recentReauthenticationPolicyEvidence("DEPLOYMENT", 240L, 30L));
+                  }
+                  return java.util.stream.Stream.of(
+                      new DraftAuthorizationFenceBinding.SourceEvidence(
+                          kind,
+                          switch (kind) {
+                            case ACCOUNT, GLOBAL_ROLES ->
+                                originalDraftAccount.actorAccountId().toString();
+                            case TENANT -> target.canonicalTenantId().toString();
+                            case MEMBERSHIP ->
+                                originalDraftAccount.actorAccountId()
+                                    + "/"
+                                    + target.canonicalTenantId();
+                            default -> "ISOLATED-" + kind;
+                          },
+                          "1",
+                          "1",
+                          null,
+                          null,
+                          ("ISOLATED-stipulated-" + kind).getBytes(StandardCharsets.UTF_8)));
+                })
                 .toList());
     var world =
         new WorldPublishedStartLocationEvidence(

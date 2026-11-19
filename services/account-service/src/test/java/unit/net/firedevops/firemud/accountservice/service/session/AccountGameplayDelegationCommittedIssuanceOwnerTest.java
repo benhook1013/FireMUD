@@ -50,10 +50,9 @@ class AccountGameplayDelegationCommittedIssuanceOwnerTest {
     AccountGameplayDelegationCommittedIssuanceOwner owner =
         owner(repository, signer, registry, mock(PlatformTransactionManager.class));
 
-    assertThatThrownBy(
-            () ->
-                owner.inspectCurrentCommittedIssuance(
-                    UUID.fromString("00000000-0000-0000-0000-000000000000")))
+    assertThatThrownBy(() ->
+            owner.inspectCurrentCommittedIssuance(
+                UUID.fromString("00000000-0000-0000-0000-000000000000")))
         .isInstanceOf(OwnerUnavailableException.class)
         .hasNoCause();
 

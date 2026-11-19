@@ -86,24 +86,23 @@ public final class AccountDraftTerminalReconciliationService {
             : Optional.empty();
 
     Settlement settled =
-        ownerTransaction.execute(
-            status -> {
-              DraftAuthorizationFenceBinding current =
-                  repository
-                      .readOriginalBinding(operationId)
-                      .orElseThrow(
-                          () -> new IllegalStateException("Original Draft operation disappeared"));
-              if (!Arrays.equals(current.canonicalBytes(), before.binding().canonicalBytes())) {
-                throw new IllegalStateException("Original Draft binding changed during recovery");
-              }
-              Snapshot after = snapshot(current);
-              if (after.ordering() != before.ordering()) {
-                throw new IllegalStateException("Original Draft ordering changed during recovery");
-              }
-              retainExactMissing(current, Owner.GAME_DESIGN, gameDesignReadback, after);
-              retainExactMissing(current, Owner.WORLD, worldReadback, after);
-              return repository.readSettlement(current);
-            });
+        ownerTransaction.execute(status -> {
+          DraftAuthorizationFenceBinding current =
+              repository
+                  .readOriginalBinding(operationId)
+                  .orElseThrow(
+                      () -> new IllegalStateException("Original Draft operation disappeared"));
+          if (!Arrays.equals(current.canonicalBytes(), before.binding().canonicalBytes())) {
+            throw new IllegalStateException("Original Draft binding changed during recovery");
+          }
+          Snapshot after = snapshot(current);
+          if (after.ordering() != before.ordering()) {
+            throw new IllegalStateException("Original Draft ordering changed during recovery");
+          }
+          retainExactMissing(current, Owner.GAME_DESIGN, gameDesignReadback, after);
+          retainExactMissing(current, Owner.WORLD, worldReadback, after);
+          return repository.readSettlement(current);
+        });
     return Optional.of(Objects.requireNonNull(settled));
   }
 
@@ -143,14 +142,13 @@ public final class AccountDraftTerminalReconciliationService {
     if (!binding.requiredOwners().contains(owner)) return Optional.empty();
     return repository
         .readOwnerResult(binding, owner)
-        .map(
-            stored -> {
-              OwnerReadback readback = OwnerReadback.fromStored(stored.readback());
-              if (stored.outcome() != readback.outcome()) {
-                throw new IllegalStateException("Stored Draft outcome differs from its readback");
-              }
-              return verifyOwnerReadback(binding, owner, readback);
-            });
+        .map(stored -> {
+          OwnerReadback readback = OwnerReadback.fromStored(stored.readback());
+          if (stored.outcome() != readback.outcome()) {
+            throw new IllegalStateException("Stored Draft outcome differs from its readback");
+          }
+          return verifyOwnerReadback(binding, owner, readback);
+        });
   }
 
   private static OwnerReadback verifyOwnerReadback(

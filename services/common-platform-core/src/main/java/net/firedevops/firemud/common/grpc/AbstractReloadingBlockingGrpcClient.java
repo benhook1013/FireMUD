@@ -273,24 +273,25 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       closed = true;
       initialGeneration = publishGeneration(null, null);
     }
-    try {
-      retire(initialGeneration);
-    } catch (RuntimeException cleanupFailure) {
-      failure.addSuppressed(cleanupFailure);
+    if (markRetiredAndReadyToShutdown(initialGeneration)) {
+      try {
+        initialGeneration.channel.shutdown();
+      } catch (RuntimeException cleanupFailure) {
+        if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+      }
     }
   }
 
   private void retire(ChannelGeneration previous) {
+    if (markRetiredAndReadyToShutdown(previous)) shutdownRetired(previous);
+  }
+
+  private boolean markRetiredAndReadyToShutdown(ChannelGeneration previous) {
     synchronized (generationLock) {
-      if (previous == null || previous.retired) {
-        return;
-      }
+      if (previous == null || previous.retired) return false;
       previous.retired = true;
-      if (previous.activeCalls != 0) {
-        return;
-      }
+      return previous.activeCalls == 0;
     }
-    shutdownRetired(previous);
   }
 
   private void shutdownRetired(ChannelGeneration retired) {

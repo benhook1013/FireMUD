@@ -162,13 +162,12 @@ public final class AccountPlayerAdmissionSharedEntitlementFixture {
             outbox);
     // Missing rows alone are not evidence. Enroll the exact account-fenced absence baseline.
     demo =
-        sources.tx(
-            () -> {
-              sources.accounts.findByAccountUuidForUpdate(login.accountId()).orElseThrow();
-              generations.initialize(AuthorityScope.membership(login.accountId(), sources.tenant));
-              members.prepareFreshCreatorAbsence(login.accountId(), sources.tenant);
-              return demos.provision(demoRequest, creation);
-            });
+        sources.tx(() -> {
+          sources.accounts.findByAccountUuidForUpdate(login.accountId()).orElseThrow();
+          generations.initialize(AuthorityScope.membership(login.accountId(), sources.tenant));
+          members.prepareFreshCreatorAbsence(login.accountId(), sources.tenant);
+          return demos.provision(demoRequest, creation);
+        });
 
     var retainedScopes =
         new AccountConnectScopeRepository(
@@ -316,55 +315,50 @@ public final class AccountPlayerAdmissionSharedEntitlementFixture {
     assertThat(scope.tenantId()).isEqualTo(sources.tenant);
     requireCurrentTarget(issued, scope);
     var before =
-        joinTransaction.execute(
-            status -> {
-              sources.accounts.findByAccountUuidForUpdate(login.accountId()).orElseThrow();
-              operations.insertCanonicalIntent(requestId, scope, controlledCallerBinding);
-              return authority.readCurrentIssuerAccountSources(
-                  GameSessionAccountDelegationProfile.ISSUER, login.accountId());
-            });
+        joinTransaction.execute(status -> {
+          sources.accounts.findByAccountUuidForUpdate(login.accountId()).orElseThrow();
+          operations.insertCanonicalIntent(requestId, scope, controlledCallerBinding);
+          return authority.readCurrentIssuerAccountSources(
+              GameSessionAccountDelegationProfile.ISSUER, login.accountId());
+        });
     // The second actual target read detects pre-commit drift, but is intentionally not a hold.
     requireCurrentTarget(issued, scope);
     CanonicalJoinTerminalProof proof =
-        joinTransaction.execute(
-            status -> {
-              sources.accounts.findByAccountUuidForUpdate(login.accountId()).orElseThrow();
-              requireLiveScope(scope);
-              var currentDemo = demos.revalidate(demo);
-              operations.bindCanonicalPolicyEvidence(
-                  requestId,
-                  scope,
-                  controlledCallerBinding,
-                  currentDemo.allowPublicJoin(),
-                  currentDemo.entitlementVersion());
-              var committed =
-                  firstJoin.commitCanonicalFirstJoin(scope, requestId, controlledCallerBinding);
-              assertFirstJoinReceipt(scope, requestId, controlledCallerBinding, committed);
-              requireLiveScope(scope);
-              return committed;
-            });
+        joinTransaction.execute(status -> {
+          sources.accounts.findByAccountUuidForUpdate(login.accountId()).orElseThrow();
+          requireLiveScope(scope);
+          var currentDemo = demos.revalidate(demo);
+          operations.bindCanonicalPolicyEvidence(
+              requestId,
+              scope,
+              controlledCallerBinding,
+              currentDemo.allowPublicJoin(),
+              currentDemo.entitlementVersion());
+          var committed =
+              firstJoin.commitCanonicalFirstJoin(scope, requestId, controlledCallerBinding);
+          assertFirstJoinReceipt(scope, requestId, controlledCallerBinding, committed);
+          requireLiveScope(scope);
+          return committed;
+        });
     Objects.requireNonNull(proof, "Committed first-JOIN receipt is required");
     // Independent transaction proves durable terminal replay, not merely same-transaction reads.
     var replay =
-        joinTransaction.execute(
-            status -> {
-              sources.accounts.findByAccountUuidForUpdate(login.accountId()).orElseThrow();
-              requireLiveScope(scope);
-              assertThat(
-                      operations.insertCanonicalIntent(requestId, scope, controlledCallerBinding))
-                  .isFalse();
-              var repeated =
-                  firstJoin.commitCanonicalFirstJoin(scope, requestId, controlledCallerBinding);
-              assertFirstJoinReceipt(scope, requestId, controlledCallerBinding, repeated);
-              return repeated;
-            });
+        joinTransaction.execute(status -> {
+          sources.accounts.findByAccountUuidForUpdate(login.accountId()).orElseThrow();
+          requireLiveScope(scope);
+          assertThat(operations.insertCanonicalIntent(requestId, scope, controlledCallerBinding))
+              .isFalse();
+          var repeated =
+              firstJoin.commitCanonicalFirstJoin(scope, requestId, controlledCallerBinding);
+          assertFirstJoinReceipt(scope, requestId, controlledCallerBinding, repeated);
+          return repeated;
+        });
     assertThat(replay).isEqualTo(proof);
     assertThat(scopeReader.read(login.accountId(), scope.connectScopeId())).isEqualTo(scope);
     var after =
-        sources.tx(
-            () ->
-                authority.readCurrentIssuerAccountSources(
-                    GameSessionAccountDelegationProfile.ISSUER, login.accountId()));
+        sources.tx(() ->
+            authority.readCurrentIssuerAccountSources(
+                GameSessionAccountDelegationProfile.ISSUER, login.accountId()));
     Objects.requireNonNull(before, "Original LOGIN authority sources are required");
     assertThat(after.issuer()).isEqualTo(before.issuer());
     assertThat(after.account()).isEqualTo(before.account());
@@ -508,20 +502,19 @@ public final class AccountPlayerAdmissionSharedEntitlementFixture {
 
   /** Confirms actual absence enrollment and current tenant DEMO source without editing history. */
   public void assertAbsentMembership() {
-    sources.tx(
-        () -> {
-          var current = snapshots.readCurrent(login.accountId(), sources.tenant);
-          assertThat(current.accountId()).isEqualTo(login.accountId().toString());
-          assertThat(current.tenantId()).isEqualTo(sources.tenant.toString());
-          assertThat(current.membershipExists()).isFalse();
-          assertThat(current.membershipLifecycleState()).isEqualTo("MISSING");
-          assertThat(current.gameplayAdmissionAllowed()).isFalse();
-          assertThat(current.roles()).isEmpty();
-          assertThat(current.membershipVersion()).containsEntry(sources.tenant.toString(), "1");
-          assertThat(current.membershipAuthorityGeneration()).isEqualTo("1");
-          assertThat(demos.revalidate(demo)).isEqualTo(demo);
-          return null;
-        });
+    sources.tx(() -> {
+      var current = snapshots.readCurrent(login.accountId(), sources.tenant);
+      assertThat(current.accountId()).isEqualTo(login.accountId().toString());
+      assertThat(current.tenantId()).isEqualTo(sources.tenant.toString());
+      assertThat(current.membershipExists()).isFalse();
+      assertThat(current.membershipLifecycleState()).isEqualTo("MISSING");
+      assertThat(current.gameplayAdmissionAllowed()).isFalse();
+      assertThat(current.roles()).isEmpty();
+      assertThat(current.membershipVersion()).containsEntry(sources.tenant.toString(), "1");
+      assertThat(current.membershipAuthorityGeneration()).isEqualTo("1");
+      assertThat(demos.revalidate(demo)).isEqualTo(demo);
+      return null;
+    });
     login.assertCreatorRemainsNonAdmitting();
     verifyNoInteractions(unusedPaidRepository, unusedProvider, unusedBrowserSessions);
   }

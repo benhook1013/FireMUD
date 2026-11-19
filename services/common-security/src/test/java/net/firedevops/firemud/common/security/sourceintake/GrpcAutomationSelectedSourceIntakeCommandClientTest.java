@@ -36,10 +36,9 @@ class GrpcAutomationSelectedSourceIntakeCommandClientTest {
     var channelFactory = mock(GrpcChannelFactory.class);
     var plaintext = tls(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new GrpcAutomationSelectedSourceIntakeCommandClient(
-                    new ServiceEndpointsProperties(), plaintext, channelFactory, "test"))
+    assertThatThrownBy(() ->
+            new GrpcAutomationSelectedSourceIntakeCommandClient(
+                new ServiceEndpointsProperties(), plaintext, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
 
@@ -53,30 +52,26 @@ class GrpcAutomationSelectedSourceIntakeCommandClientTest {
         }) {
       var invalidCertificate = tls(directory);
       invalidCertificate.setCertChain(invalidPath);
-      assertThatThrownBy(
-              () ->
-                  new GrpcAutomationSelectedSourceIntakeCommandClient(
-                      new ServiceEndpointsProperties(), invalidCertificate, channelFactory, "test"))
+      assertThatThrownBy(() ->
+              new GrpcAutomationSelectedSourceIntakeCommandClient(
+                  new ServiceEndpointsProperties(), invalidCertificate, channelFactory, "test"))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var invalidKey = tls(directory);
     invalidKey.setPrivateKey(directory.resolve("missing-key.pem").toString());
-    assertThatThrownBy(
-            () ->
-                new GrpcAutomationSelectedSourceIntakeCommandClient(
-                    new ServiceEndpointsProperties(), invalidKey, channelFactory, "test"))
+    assertThatThrownBy(() ->
+            new GrpcAutomationSelectedSourceIntakeCommandClient(
+                new ServiceEndpointsProperties(), invalidKey, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     var invalidCa = tls(directory);
     invalidCa.setCaCert(directory.resolve("missing-ca.pem").toString());
-    assertThatThrownBy(
-            () ->
-                new GrpcAutomationSelectedSourceIntakeCommandClient(
-                    new ServiceEndpointsProperties(), invalidCa, channelFactory, "test"))
+    assertThatThrownBy(() ->
+            new GrpcAutomationSelectedSourceIntakeCommandClient(
+                new ServiceEndpointsProperties(), invalidCa, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new GrpcAutomationSelectedSourceIntakeCommandClient(
-                    new ServiceEndpointsProperties(), tls(directory), channelFactory, "Test"))
+    assertThatThrownBy(() ->
+            new GrpcAutomationSelectedSourceIntakeCommandClient(
+                new ServiceEndpointsProperties(), tls(directory), channelFactory, "Test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("namespace");
 

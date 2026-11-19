@@ -179,23 +179,21 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
   @Test
   void currentPolicyResolutionReturnsExactSortedValuesFromBothCurrentPointers() {
     Context c = context();
-    c.tx(
-        () -> {
-          c.dsl.execute(
-              "INSERT INTO account_recent_reauthentication_policy_values "
-                  + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                  + "VALUES ('DEPLOYMENT', 2, 100, 10)");
-          c.dsl.execute(
-              "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
-                  + "WHERE policy_scope = 'DEPLOYMENT'");
-          return null;
-        });
+    c.tx(() -> {
+      c.dsl.execute(
+          "INSERT INTO account_recent_reauthentication_policy_values "
+              + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+              + "VALUES ('DEPLOYMENT', 2, 100, 10)");
+      c.dsl.execute(
+          "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
+              + "WHERE policy_scope = 'DEPLOYMENT'");
+      return null;
+    });
 
     var resolved =
-        c.tx(
-            () ->
-                new AccountRecentReauthenticationPolicyRepository(c.dsl)
-                    .resolveCurrentSourcesForGameCreation());
+        c.tx(() ->
+            new AccountRecentReauthenticationPolicyRepository(c.dsl)
+                .resolveCurrentSourcesForGameCreation());
     var effective = resolved.effectivePolicy();
     assertThat(effective.platformVersion()).isEqualTo(1L);
     assertThat(effective.deploymentVersion()).isEqualTo(2L);
@@ -623,51 +621,44 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
             c.request(account, reauthenticationRequestId, creationOperationId, PASSWORD));
     var repository = new AccountTenantCreationIntentRepository(c.dsl, c.evidenceRepository);
     UUID intentRequestId = UUID.randomUUID();
-    c.tx(
-        () ->
-            repository.claim(
-                intentRequest(
-                    account,
-                    intentRequestId,
-                    creationOperationId,
-                    UUID.randomUUID(),
-                    evidence.evidenceId(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    1)));
+    c.tx(() ->
+        repository.claim(
+            intentRequest(
+                account,
+                intentRequestId,
+                creationOperationId,
+                UUID.randomUUID(),
+                evidence.evidenceId(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                1)));
     Record original =
         Objects.requireNonNull(
             c.dsl.fetchOne(
                 "SELECT * FROM account_tenant_creation_original_intents WHERE request_id = ?",
                 intentRequestId));
 
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "UPDATE account_tenant_creation_original_intents SET name = ? "
-                                + "WHERE request_id = ?",
-                            "Changed game name",
-                            intentRequestId)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "UPDATE account_tenant_creation_original_intents SET name = ? "
+                        + "WHERE request_id = ?",
+                    "Changed game name",
+                    intentRequestId)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "UPDATE account_tenant_creation_original_intents SET request_digest = ? "
-                                + "WHERE request_id = ?",
-                            "sha256:" + "0".repeat(64),
-                            intentRequestId)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "UPDATE account_tenant_creation_original_intents SET request_digest = ? "
+                        + "WHERE request_id = ?",
+                    "sha256:" + "0".repeat(64),
+                    intentRequestId)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "DELETE FROM account_tenant_creation_original_intents WHERE request_id = ?",
-                            intentRequestId)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "DELETE FROM account_tenant_creation_original_intents WHERE request_id = ?",
+                    intentRequestId)))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
             () -> c.tx(() -> c.dsl.execute("TRUNCATE account_tenant_creation_original_intents")))
@@ -706,23 +697,19 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var first =
-          executor.submit(
-              () ->
-                  c.tx(
-                      () -> {
-                        ready.countDown();
-                        awaitLatch(start);
-                        return repository.claim(request);
-                      }));
+          executor.submit(() ->
+              c.tx(() -> {
+                ready.countDown();
+                awaitLatch(start);
+                return repository.claim(request);
+              }));
       var second =
-          executor.submit(
-              () ->
-                  c.tx(
-                      () -> {
-                        ready.countDown();
-                        awaitLatch(start);
-                        return repository.claim(request);
-                      }));
+          executor.submit(() ->
+              c.tx(() -> {
+                ready.countDown();
+                awaitLatch(start);
+                return repository.claim(request);
+              }));
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
       var firstResult = first.get(10, TimeUnit.SECONDS);
@@ -750,44 +737,39 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     var executor = Executors.newSingleThreadExecutor();
     try {
       var sourceLockHolder =
-          executor.submit(
-              () ->
-                  c.tx(
-                      () -> {
-                        c.dsl.fetchOne(
-                            "SELECT account_control_ui_hold_required_sources(ARRAY[?]::TEXT[])",
-                            platformKey);
-                        sourceLockHeld.countDown();
-                        awaitLatch(releaseSourceLock);
-                        return null;
-                      }));
+          executor.submit(() ->
+              c.tx(() -> {
+                c.dsl.fetchOne(
+                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::TEXT[])",
+                    platformKey);
+                sourceLockHeld.countDown();
+                awaitLatch(releaseSourceLock);
+                return null;
+              }));
       assertThat(sourceLockHeld.await(5, TimeUnit.SECONDS)).isTrue();
 
-      c.tx(
-          () -> {
-            c.dsl.execute(
-                "INSERT INTO account_recent_reauthentication_policy_values "
-                    + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                    + "VALUES ('DEPLOYMENT', 2, 100, 10)");
-            c.dsl.execute(
-                "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
-                    + "WHERE policy_scope = 'DEPLOYMENT'");
-            return null;
-          });
+      c.tx(() -> {
+        c.dsl.execute(
+            "INSERT INTO account_recent_reauthentication_policy_values "
+                + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+                + "VALUES ('DEPLOYMENT', 2, 100, 10)");
+        c.dsl.execute(
+            "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
+                + "WHERE policy_scope = 'DEPLOYMENT'");
+        return null;
+      });
 
-      assertThatThrownBy(
-              () ->
-                  c.tx(
-                      () -> {
-                        c.dsl.execute(
-                            "INSERT INTO account_recent_reauthentication_policy_values "
-                                + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                                + "VALUES ('PLATFORM', 2, 240, 20)");
-                        c.dsl.execute(
-                            "UPDATE account_recent_reauthentication_policy_current "
-                                + "SET policy_version = 2 WHERE policy_scope = 'PLATFORM'");
-                        return null;
-                      }))
+      assertThatThrownBy(() ->
+              c.tx(() -> {
+                c.dsl.execute(
+                    "INSERT INTO account_recent_reauthentication_policy_values "
+                        + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+                        + "VALUES ('PLATFORM', 2, 240, 20)");
+                c.dsl.execute(
+                    "UPDATE account_recent_reauthentication_policy_current "
+                        + "SET policy_version = 2 WHERE policy_scope = 'PLATFORM'");
+                return null;
+              }))
           .isInstanceOf(DataAccessException.class);
       assertThat(
               Objects.requireNonNull(
@@ -800,17 +782,16 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
       releaseSourceLock.countDown();
       sourceLockHolder.get(10, TimeUnit.SECONDS);
 
-      c.tx(
-          () -> {
-            c.dsl.execute(
-                "INSERT INTO account_recent_reauthentication_policy_values "
-                    + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                    + "VALUES ('PLATFORM', 2, 240, 20)");
-            c.dsl.execute(
-                "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
-                    + "WHERE policy_scope = 'PLATFORM'");
-            return null;
-          });
+      c.tx(() -> {
+        c.dsl.execute(
+            "INSERT INTO account_recent_reauthentication_policy_values "
+                + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+                + "VALUES ('PLATFORM', 2, 240, 20)");
+        c.dsl.execute(
+            "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
+                + "WHERE policy_scope = 'PLATFORM'");
+        return null;
+      });
       assertThat(
               c.count(
                   "SELECT count(*) FROM account_recent_reauthentication_policy_current "
@@ -931,21 +912,18 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     UUID requestId = UUID.randomUUID(), operationId = UUID.randomUUID();
     var original = c.service.reauthenticate(c.request(account, requestId, operationId, PASSWORD));
     Record retained = c.evidenceRow(original.evidenceId());
-    assertThatThrownBy(
-            () ->
-                c.service.reauthenticate(
-                    c.request(account, requestId, operationId, "wrong-secret")))
+    assertThatThrownBy(() ->
+            c.service.reauthenticate(c.request(account, requestId, operationId, "wrong-secret")))
         .isInstanceOf(AuthenticationException.class);
-    assertThatThrownBy(
-            () ->
-                c.service.reauthenticate(
-                    new AccountRecentReauthenticationService.Request(
-                        requestId,
-                        account.getAccountUuid(),
-                        AccountRecentReauthenticationPolicy.PURPOSE,
-                        operationId,
-                        "different@example.test",
-                        PASSWORD)))
+    assertThatThrownBy(() ->
+            c.service.reauthenticate(
+                new AccountRecentReauthenticationService.Request(
+                    requestId,
+                    account.getAccountUuid(),
+                    AccountRecentReauthenticationPolicy.PURPOSE,
+                    operationId,
+                    "different@example.test",
+                    PASSWORD)))
         .isInstanceOf(AuthenticationException.class);
     var exact =
         c.service.reauthenticate(
@@ -1030,15 +1008,12 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     try {
       for (int i = 0; i < 12; i++) {
         attempts.add(
-            executor.submit(
-                () -> {
-                  awaitLatch(start);
-                  assertThatThrownBy(
-                          () ->
-                              c.service.reauthenticate(
-                                  c.request(account, requestId, operationId, "wrong")))
-                      .isInstanceOf(AuthenticationException.class);
-                }));
+            executor.submit(() -> {
+              awaitLatch(start);
+              assertThatThrownBy(() ->
+                      c.service.reauthenticate(c.request(account, requestId, operationId, "wrong")))
+                  .isInstanceOf(AuthenticationException.class);
+            }));
       }
       start.countDown();
       for (var attempt : attempts) attempt.get(10, TimeUnit.SECONDS);
@@ -1066,34 +1041,44 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         "INSERT INTO account_recent_reauthentication_replay_failures"
             + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, failure_number)"
             + " VALUES (?, ?, ?, ?, ?, ?)";
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            insert,
-                            original.evidenceId(),
-                            original.requestId(),
-                            original.accountId(),
-                            original.purpose(),
-                            original.creationOperationId(),
-                            2)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    insert,
+                    original.evidenceId(),
+                    original.requestId(),
+                    original.accountId(),
+                    original.purpose(),
+                    original.creationOperationId(),
+                    2)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            insert,
-                            original.evidenceId(),
-                            UUID.randomUUID(),
-                            original.accountId(),
-                            original.purpose(),
-                            original.creationOperationId(),
-                            1)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    insert,
+                    original.evidenceId(),
+                    UUID.randomUUID(),
+                    original.accountId(),
+                    original.purpose(),
+                    original.creationOperationId(),
+                    1)))
         .isInstanceOf(DataAccessException.class);
-    c.transaction.executeWithoutResult(
-        status -> {
+    c.transaction.executeWithoutResult(status -> {
+      c.dsl.execute(
+          insert,
+          original.evidenceId(),
+          original.requestId(),
+          original.accountId(),
+          original.purpose(),
+          original.creationOperationId(),
+          1);
+      status.setRollbackOnly();
+    });
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isZero();
+    for (int failure = 1; failure <= 5; failure++) {
+      int number = failure;
+      c.tx(() ->
           c.dsl.execute(
               insert,
               original.evidenceId(),
@@ -1101,23 +1086,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
               original.accountId(),
               original.purpose(),
               original.creationOperationId(),
-              1);
-          status.setRollbackOnly();
-        });
-    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
-        .isZero();
-    for (int failure = 1; failure <= 5; failure++) {
-      int number = failure;
-      c.tx(
-          () ->
-              c.dsl.execute(
-                  insert,
-                  original.evidenceId(),
-                  original.requestId(),
-                  original.accountId(),
-                  original.purpose(),
-                  original.creationOperationId(),
-                  number));
+              number));
     }
     for (String mutation :
         java.util.List.of(
@@ -1127,18 +1096,16 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
       assertThatThrownBy(() -> c.tx(() -> c.dsl.execute(mutation)))
           .isInstanceOf(DataAccessException.class);
     }
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            insert,
-                            original.evidenceId(),
-                            original.requestId(),
-                            original.accountId(),
-                            original.purpose(),
-                            original.creationOperationId(),
-                            6)))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    insert,
+                    original.evidenceId(),
+                    original.requestId(),
+                    original.accountId(),
+                    original.purpose(),
+                    original.creationOperationId(),
+                    6)))
         .isInstanceOf(DataAccessException.class);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
         .isEqualTo(5L);
@@ -1193,19 +1160,17 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     assertThatThrownBy(
             () -> c.service.reauthenticate(c.request(account, requestId, operationId, PASSWORD)))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "INSERT INTO account_recent_reauthentication_replay_credentials"
-                                + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
-                                + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, 'mac1', ?)",
-                            evidenceId,
-                            requestId,
-                            account.getAccountUuid(),
-                            operationId,
-                            "a".repeat(64))))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "INSERT INTO account_recent_reauthentication_replay_credentials"
+                        + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
+                        + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, 'mac1', ?)",
+                    evidenceId,
+                    requestId,
+                    account.getAccountUuid(),
+                    operationId,
+                    "a".repeat(64))))
         .isInstanceOf(DataAccessException.class);
     assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence"))
@@ -1220,20 +1185,19 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     Account account = c.account("PASSWORD");
     UUID requestId = UUID.randomUUID(), operationId = UUID.randomUUID();
     UUID evidenceId =
-        c.tx(
-            () -> {
-              UUID id = insertEvidenceWithoutMac(c, account, requestId, operationId);
-              c.dsl.execute(
-                  "INSERT INTO account_recent_reauthentication_replay_credentials"
-                      + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
-                      + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, 'mac1', ?)",
-                  id,
-                  requestId,
-                  account.getAccountUuid(),
-                  operationId,
-                  "a".repeat(64));
-              return id;
-            });
+        c.tx(() -> {
+          UUID id = insertEvidenceWithoutMac(c, account, requestId, operationId);
+          c.dsl.execute(
+              "INSERT INTO account_recent_reauthentication_replay_credentials"
+                  + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
+                  + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, 'mac1', ?)",
+              id,
+              requestId,
+              account.getAccountUuid(),
+              operationId,
+              "a".repeat(64));
+          return id;
+        });
     Record original = c.evidenceRow(evidenceId);
     Record proof =
         c.dsl.fetchOne("SELECT * FROM account_recent_reauthentication_replay_credentials");
@@ -1285,26 +1249,22 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     var original = c.request(account, requestId, operationId, PASSWORD);
     c.service.reauthenticate(original);
 
-    assertThatThrownBy(
-            () ->
-                c.service.reauthenticate(
-                    c.request(other, requestId, operationId, "not-the-secret")))
+    assertThatThrownBy(() ->
+            c.service.reauthenticate(c.request(other, requestId, operationId, "not-the-secret")))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                c.service.reauthenticate(
-                    new AccountRecentReauthenticationService.Request(
-                        requestId,
-                        account.getAccountUuid(),
-                        "ACCOUNT_SECURITY_CHANGE",
-                        operationId,
-                        account.getEmail(),
-                        "not-the-secret")))
+    assertThatThrownBy(() ->
+            c.service.reauthenticate(
+                new AccountRecentReauthenticationService.Request(
+                    requestId,
+                    account.getAccountUuid(),
+                    "ACCOUNT_SECURITY_CHANGE",
+                    operationId,
+                    account.getEmail(),
+                    "not-the-secret")))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                c.service.reauthenticate(
-                    c.request(account, requestId, UUID.randomUUID(), "not-the-secret")))
+    assertThatThrownBy(() ->
+            c.service.reauthenticate(
+                c.request(account, requestId, UUID.randomUUID(), "not-the-secret")))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
         .isZero();
@@ -1345,22 +1305,20 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     ScopeState before =
         c.tx(() -> c.generations.read(AuthorityScope.account(account.getAccountUuid())));
 
-    c.tx(
-        () -> {
-          account.setEmailVerified(true);
-          c.accounts.save(account);
-          return null;
-        });
+    c.tx(() -> {
+      account.setEmailVerified(true);
+      c.accounts.save(account);
+      return null;
+    });
     ScopeState after =
         c.tx(() -> c.generations.read(AuthorityScope.account(account.getAccountUuid())));
     assertThat(after.generation()).isGreaterThan(before.generation());
-    assertThatThrownBy(
-            () ->
-                c.consume(
-                    generationEvidence,
-                    account.getAccountUuid(),
-                    generationEvidence.purpose(),
-                    generationEvidence.creationOperationId()))
+    assertThatThrownBy(() ->
+            c.consume(
+                generationEvidence,
+                account.getAccountUuid(),
+                generationEvidence.purpose(),
+                generationEvidence.creationOperationId()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
         .isZero();
@@ -1371,20 +1329,18 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
             c.request(lifecycleAccount, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
     // This fixture changes only the persisted current lifecycle to isolate the AccountRepository
     // current-state denial. It does not claim the separate security-lock transition producer.
-    c.transaction.executeWithoutResult(
-        status -> {
-          c.dsl.execute("SET LOCAL session_replication_role = 'replica'");
-          c.dsl.execute(
-              "UPDATE accounts SET lifecycle_state = 'security_locked' WHERE account_uuid = ?",
-              lifecycleAccount.getAccountUuid());
-        });
-    assertThatThrownBy(
-            () ->
-                c.consume(
-                    lifecycleEvidence,
-                    lifecycleAccount.getAccountUuid(),
-                    lifecycleEvidence.purpose(),
-                    lifecycleEvidence.creationOperationId()))
+    c.transaction.executeWithoutResult(status -> {
+      c.dsl.execute("SET LOCAL session_replication_role = 'replica'");
+      c.dsl.execute(
+          "UPDATE accounts SET lifecycle_state = 'security_locked' WHERE account_uuid = ?",
+          lifecycleAccount.getAccountUuid());
+    });
+    assertThatThrownBy(() ->
+            c.consume(
+                lifecycleEvidence,
+                lifecycleAccount.getAccountUuid(),
+                lifecycleEvidence.purpose(),
+                lifecycleEvidence.creationOperationId()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
         .isZero();
@@ -1399,13 +1355,12 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         c.service.reauthenticate(
             c.request(exactDeadlineAccount, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
     c.clock.set(BASE.plusSeconds(270));
-    assertThatThrownBy(
-            () ->
-                c.consume(
-                    exactDeadline,
-                    exactDeadlineAccount.getAccountUuid(),
-                    exactDeadline.purpose(),
-                    exactDeadline.creationOperationId()))
+    assertThatThrownBy(() ->
+            c.consume(
+                exactDeadline,
+                exactDeadlineAccount.getAccountUuid(),
+                exactDeadline.purpose(),
+                exactDeadline.creationOperationId()))
         .isInstanceOf(IllegalStateException.class);
 
     Account futureAccount = c.account("PASSWORD");
@@ -1428,13 +1383,12 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         c.service.reauthenticate(
             c.request(beyondSkewAccount, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
     c.clock.set(BASE);
-    assertThatThrownBy(
-            () ->
-                c.consume(
-                    beyondSkew,
-                    beyondSkewAccount.getAccountUuid(),
-                    beyondSkew.purpose(),
-                    beyondSkew.creationOperationId()))
+    assertThatThrownBy(() ->
+            c.consume(
+                beyondSkew,
+                beyondSkewAccount.getAccountUuid(),
+                beyondSkew.purpose(),
+                beyondSkew.creationOperationId()))
         .isInstanceOf(IllegalStateException.class);
 
     Account policyAccount = c.account("PASSWORD");
@@ -1442,24 +1396,22 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     var priorPolicy =
         c.service.reauthenticate(
             c.request(policyAccount, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
-    c.tx(
-        () -> {
-          c.dsl.execute(
-              "INSERT INTO account_recent_reauthentication_policy_values "
-                  + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                  + "VALUES ('DEPLOYMENT', 2, 100, 10)");
-          c.dsl.execute(
-              "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
-                  + "WHERE policy_scope = 'DEPLOYMENT'");
-          return null;
-        });
-    assertThatThrownBy(
-            () ->
-                c.consume(
-                    priorPolicy,
-                    policyAccount.getAccountUuid(),
-                    priorPolicy.purpose(),
-                    priorPolicy.creationOperationId()))
+    c.tx(() -> {
+      c.dsl.execute(
+          "INSERT INTO account_recent_reauthentication_policy_values "
+              + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+              + "VALUES ('DEPLOYMENT', 2, 100, 10)");
+      c.dsl.execute(
+          "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
+              + "WHERE policy_scope = 'DEPLOYMENT'");
+      return null;
+    });
+    assertThatThrownBy(() ->
+            c.consume(
+                priorPolicy,
+                policyAccount.getAccountUuid(),
+                priorPolicy.purpose(),
+                priorPolicy.creationOperationId()))
         .isInstanceOf(IllegalStateException.class);
     var currentPolicy =
         c.service.reauthenticate(
@@ -1486,37 +1438,33 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     var executor = Executors.newFixedThreadPool(2);
     try {
       var first =
-          executor.submit(
-              () ->
-                  c.transaction.execute(
-                      status -> {
-                        firstPid.set(c.pid());
-                        var result =
-                            c.service.validateAndConsumeLocked(
-                                evidence,
-                                account.getAccountUuid(),
-                                evidence.purpose(),
-                                evidence.creationOperationId());
-                        enteredFirst.countDown();
-                        awaitLatch(releaseFirst);
-                        return result.disposition();
-                      }));
+          executor.submit(() ->
+              c.transaction.execute(status -> {
+                firstPid.set(c.pid());
+                var result =
+                    c.service.validateAndConsumeLocked(
+                        evidence,
+                        account.getAccountUuid(),
+                        evidence.purpose(),
+                        evidence.creationOperationId());
+                enteredFirst.countDown();
+                awaitLatch(releaseFirst);
+                return result.disposition();
+              }));
       awaitLatch(enteredFirst);
       var second =
-          executor.submit(
-              () ->
-                  c.transaction.execute(
-                      status -> {
-                        secondPid.set(c.pid());
-                        secondEntered.countDown();
-                        return c.service
-                            .validateAndConsumeLocked(
-                                evidence,
-                                account.getAccountUuid(),
-                                evidence.purpose(),
-                                evidence.creationOperationId())
-                            .disposition();
-                      }));
+          executor.submit(() ->
+              c.transaction.execute(status -> {
+                secondPid.set(c.pid());
+                secondEntered.countDown();
+                return c.service
+                    .validateAndConsumeLocked(
+                        evidence,
+                        account.getAccountUuid(),
+                        evidence.purpose(),
+                        evidence.creationOperationId())
+                    .disposition();
+              }));
       awaitLatch(secondEntered);
       awaitBlocked(c, secondPid.get(), firstPid.get());
       releaseFirst.countDown();
@@ -1530,10 +1478,8 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
         .isEqualTo(1L);
     assertThat(c.evidenceRow(evidence.evidenceId())).isEqualTo(locked);
-    assertThatThrownBy(
-            () ->
-                c.consume(
-                    evidence, account.getAccountUuid(), evidence.purpose(), UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            c.consume(evidence, account.getAccountUuid(), evidence.purpose(), UUID.randomUUID()))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
   }
 
@@ -1552,32 +1498,26 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
         .isZero();
 
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.service.validatePendingCreationLocked(
-                            evidence,
-                            UUID.randomUUID(),
-                            evidence.purpose(),
-                            evidence.creationOperationId())))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.service.validatePendingCreationLocked(
+                    evidence,
+                    UUID.randomUUID(),
+                    evidence.purpose(),
+                    evidence.creationOperationId())))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.service.validatePendingCreationLocked(
-                            evidence,
-                            evidence.accountId(),
-                            "ACCOUNT_SECURITY_CHANGE",
-                            evidence.creationOperationId())))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.service.validatePendingCreationLocked(
+                    evidence,
+                    evidence.accountId(),
+                    "ACCOUNT_SECURITY_CHANGE",
+                    evidence.creationOperationId())))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.service.validatePendingCreationLocked(
-                            evidence, evidence.accountId(), evidence.purpose(), UUID.randomUUID())))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.service.validatePendingCreationLocked(
+                    evidence, evidence.accountId(), evidence.purpose(), UUID.randomUUID())))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
         .isZero();
@@ -1595,11 +1535,10 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     ScopeState before =
         c.tx(() -> c.generations.read(AuthorityScope.account(account.getAccountUuid())));
 
-    c.tx(
-        () -> {
-          account.setEmailVerified(true);
-          return c.accounts.save(account);
-        });
+    c.tx(() -> {
+      account.setEmailVerified(true);
+      return c.accounts.save(account);
+    });
     ScopeState after =
         c.tx(() -> c.generations.read(AuthorityScope.account(account.getAccountUuid())));
 
@@ -1620,16 +1559,15 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
             c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
     assertThat(c.validatePending(evidence)).usingRecursiveComparison().isEqualTo(evidence);
 
-    c.tx(
-        () -> {
-          c.dsl.execute(
-              "INSERT INTO account_recent_reauthentication_policy_values "
-                  + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                  + "VALUES ('DEPLOYMENT', 2, 100, 10)");
-          return c.dsl.execute(
-              "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
-                  + "WHERE policy_scope = 'DEPLOYMENT'");
-        });
+    c.tx(() -> {
+      c.dsl.execute(
+          "INSERT INTO account_recent_reauthentication_policy_values "
+              + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+              + "VALUES ('DEPLOYMENT', 2, 100, 10)");
+      return c.dsl.execute(
+          "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
+              + "WHERE policy_scope = 'DEPLOYMENT'");
+    });
 
     assertThatThrownBy(() -> c.validatePending(evidence))
         .isInstanceOf(IllegalStateException.class)
@@ -1701,22 +1639,18 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
             c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
     Record original = c.evidenceRow(evidence.evidenceId());
 
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "UPDATE account_recent_reauthentication_evidence "
-                                + "SET issued_at = clock_timestamp() WHERE evidence_id = ?",
-                            evidence.evidenceId())))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "UPDATE account_recent_reauthentication_evidence "
+                        + "SET issued_at = clock_timestamp() WHERE evidence_id = ?",
+                    evidence.evidenceId())))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "DELETE FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
-                            evidence.evidenceId())))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "DELETE FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                    evidence.evidenceId())))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
             () -> c.tx(() -> c.dsl.execute("TRUNCATE account_recent_reauthentication_evidence")))
@@ -1725,26 +1659,21 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
 
     c.consume(
         evidence, account.getAccountUuid(), evidence.purpose(), evidence.creationOperationId());
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "UPDATE account_recent_reauthentication_consumptions "
-                                + "SET consumed_at = clock_timestamp() WHERE evidence_id = ?",
-                            evidence.evidenceId())))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "UPDATE account_recent_reauthentication_consumptions "
+                        + "SET consumed_at = clock_timestamp() WHERE evidence_id = ?",
+                    evidence.evidenceId())))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "DELETE FROM account_recent_reauthentication_consumptions WHERE evidence_id = ?",
-                            evidence.evidenceId())))
+    assertThatThrownBy(() ->
+            c.tx(() ->
+                c.dsl.execute(
+                    "DELETE FROM account_recent_reauthentication_consumptions WHERE evidence_id = ?",
+                    evidence.evidenceId())))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx(() -> c.dsl.execute("TRUNCATE account_recent_reauthentication_consumptions")))
+    assertThatThrownBy(() ->
+            c.tx(() -> c.dsl.execute("TRUNCATE account_recent_reauthentication_consumptions")))
         .isInstanceOf(DataAccessException.class);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
         .isEqualTo(1L);
@@ -1865,16 +1794,15 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     var transaction = new TransactionTemplate(manager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     if (installApprovedPolicySources) {
-      transaction.executeWithoutResult(
-          ignored -> {
-            dsl.execute(
-                "INSERT INTO account_recent_reauthentication_policy_values "
-                    + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                    + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
-            dsl.execute(
-                "INSERT INTO account_recent_reauthentication_policy_current "
-                    + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
-          });
+      transaction.executeWithoutResult(ignored -> {
+        dsl.execute(
+            "INSERT INTO account_recent_reauthentication_policy_values "
+                + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+                + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
+        dsl.execute(
+            "INSERT INTO account_recent_reauthentication_policy_current "
+                + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");
+      });
     }
     var generations = new AccountAuthorityGenerationRepository(dsl);
     var outbox = new AccountAuthorityOutboxRepository(dsl);
@@ -1997,33 +1925,32 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         AccountRecentReauthenticationPolicy.resolve(
             new AccountRecentReauthenticationPolicy.PlatformValue(1, 300, 30),
             new AccountRecentReauthenticationPolicy.DeploymentValue(1, 300, 30));
-    c.tx(
-        () -> {
-          var authority = c.generations.read(AuthorityScope.account(account.getAccountUuid()));
-          var fence = authority.issuanceFence();
-          return c.dsl.execute(
-              "INSERT INTO account_recent_reauthentication_evidence"
-                  + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, request_payload, request_digest,"
-                  + " identity_provenance, account_uuid_source_numeric_id, account_lifecycle_state, account_authority_generation,"
-                  + " account_authority_source_version, issuance_fence, issuance_fence_source_version, platform_policy_version,"
-                  + " deployment_policy_version, effective_policy_version, recent_age_seconds, max_clock_skew_seconds, issued_at)"
-                  + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, 300, 30, ?::timestamptz)",
-              evidenceId,
-              requestId,
-              account.getAccountUuid(),
-              operationId,
-              bytes,
-              digest,
-              account.getAccountUuidProvenance().name(),
-              account.getAccountUuidSourceNumericId(),
-              account.getLifecycleState().name(),
-              authority.generation(),
-              authority.sourceVersion(),
-              fence.value(),
-              fence.sourceVersion(),
-              policy.effectivePolicyVersion(),
-              java.time.OffsetDateTime.ofInstant(c.clock.instant(), ZoneOffset.UTC));
-        });
+    c.tx(() -> {
+      var authority = c.generations.read(AuthorityScope.account(account.getAccountUuid()));
+      var fence = authority.issuanceFence();
+      return c.dsl.execute(
+          "INSERT INTO account_recent_reauthentication_evidence"
+              + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, request_payload, request_digest,"
+              + " identity_provenance, account_uuid_source_numeric_id, account_lifecycle_state, account_authority_generation,"
+              + " account_authority_source_version, issuance_fence, issuance_fence_source_version, platform_policy_version,"
+              + " deployment_policy_version, effective_policy_version, recent_age_seconds, max_clock_skew_seconds, issued_at)"
+              + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, 300, 30, ?::timestamptz)",
+          evidenceId,
+          requestId,
+          account.getAccountUuid(),
+          operationId,
+          bytes,
+          digest,
+          account.getAccountUuidProvenance().name(),
+          account.getAccountUuidSourceNumericId(),
+          account.getLifecycleState().name(),
+          authority.generation(),
+          authority.sourceVersion(),
+          fence.value(),
+          fence.sourceVersion(),
+          policy.effectivePolicyVersion(),
+          java.time.OffsetDateTime.ofInstant(c.clock.instant(), ZoneOffset.UTC));
+    });
     return evidenceId;
   }
 
@@ -2088,18 +2015,17 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     }
 
     AccountEmailLoginChallenge challenge(Account account) {
-      return tx(
-          () -> {
-            var challenge = new AccountEmailLoginChallenge();
-            var now = LocalDateTime.now().withNano(0);
-            challenge.setAccountId(account.getId());
-            challenge.setCodeHash(hash(OTP));
-            challenge.setExpiresAt(now.plusMinutes(5));
-            challenge.setResendAvailableAt(now.plusMinutes(1));
-            challenge.setCreatedAt(now);
-            challenge.setUpdatedAt(now);
-            return challenges.save(challenge);
-          });
+      return tx(() -> {
+        var challenge = new AccountEmailLoginChallenge();
+        var now = LocalDateTime.now().withNano(0);
+        challenge.setAccountId(account.getId());
+        challenge.setCodeHash(hash(OTP));
+        challenge.setExpiresAt(now.plusMinutes(5));
+        challenge.setResendAvailableAt(now.plusMinutes(1));
+        challenge.setCreatedAt(now);
+        challenge.setUpdatedAt(now);
+        return challenges.save(challenge);
+      });
     }
 
     AccountRecentReauthenticationService.Validation consume(
@@ -2112,13 +2038,9 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
 
     AccountRecentReauthenticationEvidence validatePending(
         AccountRecentReauthenticationEvidence evidence) {
-      return tx(
-          () ->
-              service.validatePendingCreationLocked(
-                  evidence,
-                  evidence.accountId(),
-                  evidence.purpose(),
-                  evidence.creationOperationId()));
+      return tx(() ->
+          service.validatePendingCreationLocked(
+              evidence, evidence.accountId(), evidence.purpose(), evidence.creationOperationId()));
     }
 
     Record evidenceRow(UUID evidenceId) {

@@ -63,34 +63,30 @@ class InitialGameplayLoginJournalSnapshotTest {
   @Test
   void rejectsUnabandonedFreezeAndChangedOriginalCoordinates() {
     var request = InitialGameplayLoginJournalSnapshot.request(ORIGINAL, null);
-    assertThatThrownBy(
-            () ->
-                new InitialGameplayLoginJournalSnapshot(
-                    ORIGINAL, false, Optional.empty(), Optional.of(request), Optional.empty()))
+    assertThatThrownBy(() ->
+            new InitialGameplayLoginJournalSnapshot(
+                ORIGINAL, false, Optional.empty(), Optional.of(request), Optional.empty()))
         .isInstanceOf(IllegalArgumentException.class);
     var changed = request.toBuilder().setCallerContextId(uuid(9).toString()).build();
-    assertThatThrownBy(
-            () ->
-                new InitialGameplayLoginJournalSnapshot(
-                    ORIGINAL, true, Optional.empty(), Optional.of(changed), Optional.empty()))
+    assertThatThrownBy(() ->
+            new InitialGameplayLoginJournalSnapshot(
+                ORIGINAL, true, Optional.empty(), Optional.of(changed), Optional.empty()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void rejectsIncompleteWitnessAndMismatchedClosedDisposalPair() {
-    assertThatThrownBy(
-            () ->
-                InitialGameplayLoginJournalSnapshot.request(
-                    ORIGINAL, witness().toBuilder().clearTokenSha256().build()))
+    assertThatThrownBy(() ->
+            InitialGameplayLoginJournalSnapshot.request(
+                ORIGINAL, witness().toBuilder().clearTokenSha256().build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new InitialGameplayLoginDisposalResult(
-                    uuid(1),
-                    uuid(2),
-                    uuid(3),
-                    InitialGameplayLoginDisposalResult.Disposition.PENDING,
-                    InitialGameplayLoginDisposalResult.ProofKind.PHYSICAL_TOKEN_DENIAL))
+    assertThatThrownBy(() ->
+            new InitialGameplayLoginDisposalResult(
+                uuid(1),
+                uuid(2),
+                uuid(3),
+                InitialGameplayLoginDisposalResult.Disposition.PENDING,
+                InitialGameplayLoginDisposalResult.ProofKind.PHYSICAL_TOKEN_DENIAL))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

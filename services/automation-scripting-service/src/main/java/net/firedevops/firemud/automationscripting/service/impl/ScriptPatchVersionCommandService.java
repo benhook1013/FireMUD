@@ -86,11 +86,10 @@ public class ScriptPatchVersionCommandService {
           "affectedScripts must resolve exactly one definition per unique requested name");
     }
     if (defs.stream()
-        .anyMatch(
-            definition ->
-                definition.getBaseVersionId() == null
-                    || definition.getBaseVersionId() != baseVersionId
-                    || !scriptPatchVersion.equals(definition.getScriptVersion()))) {
+        .anyMatch(definition ->
+            definition.getBaseVersionId() == null
+                || definition.getBaseVersionId() != baseVersionId
+                || !scriptPatchVersion.equals(definition.getScriptVersion()))) {
       throw new IllegalArgumentException("script_patch_base_version_mismatch");
     }
     defs = defs.stream().sorted(java.util.Comparator.comparing(ScriptDefinition::getName)).toList();

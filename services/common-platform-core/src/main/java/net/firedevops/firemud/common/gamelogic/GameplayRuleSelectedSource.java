@@ -103,14 +103,13 @@ public record GameplayRuleSelectedSource(String snapshotJson) {
       String expectedPayload = GameplayRuleSourceRevision.upsertPayload(definition);
       boolean originalRevision =
           origin.revisions().stream()
-              .anyMatch(
-                  revision ->
-                      revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE
-                          && revision.revisionId().toString().equals(revisionId)
-                          && revision.revisionOrder().equals(revisionOrder)
-                          && expectedPayload.equals(
-                              GameplayRuleManifest.canonical(
-                                  GameplayRuleManifest.tree(revision.payload()))));
+              .anyMatch(revision ->
+                  revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE
+                      && revision.revisionId().toString().equals(revisionId)
+                      && revision.revisionOrder().equals(revisionOrder)
+                      && expectedPayload.equals(
+                          GameplayRuleManifest.canonical(
+                              GameplayRuleManifest.tree(revision.payload()))));
       if (!originalRevision)
         throw new IllegalArgumentException("Rule entry lacks exact original UPSERT revision");
       result.add(

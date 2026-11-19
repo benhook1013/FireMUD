@@ -50,10 +50,8 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
     verify(accountClient)
         .abort(
             eq("presented-initial-gsa"),
-            org.mockito.ArgumentMatchers.argThat(
-                bytes ->
-                    java.util.Arrays.equals(
-                        ORIGINAL_LEASE.getBytes(StandardCharsets.UTF_8), bytes)),
+            org.mockito.ArgumentMatchers.argThat(bytes ->
+                java.util.Arrays.equals(ORIGINAL_LEASE.getBytes(StandardCharsets.UTF_8), bytes)),
             eq(TRANSITION_ID));
     verify(repository, never()).recordFirstNewAccountAbort(any(), any());
   }
@@ -69,10 +67,9 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
         .thenReturn(terminalSource);
     when(client.abort(eq("expired-or-revoked-caller"), any(byte[].class), eq(TRANSITION_ID)))
         .thenThrow(new IllegalStateException("current caller refused"));
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayAdmissionAbortOwner(repository, client)
-                    .abortFirstNew(TRANSITION_ID, "expired-or-revoked-caller"))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayAdmissionAbortOwner(repository, client)
+                .abortFirstNew(TRANSITION_ID, "expired-or-revoked-caller"))
         .hasMessage("current caller refused");
     verify(client).abort(eq("expired-or-revoked-caller"), any(byte[].class), eq(TRANSITION_ID));
     verify(repository, never()).recordFirstNewAccountAbort(any(), any());
@@ -98,10 +95,9 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
     when(repository.readFirstNewAdmissionAbortRetrySource(TRANSITION_ID)).thenReturn(provisional);
     when(client.abort(any(), any(), any())).thenReturn(operation);
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayAdmissionAbortOwner(repository, client)
-                    .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayAdmissionAbortOwner(repository, client)
+                .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Account ABORTED result lacks exact cleanup evidence");
     verify(repository, never()).recordFirstNewAccountAbort(any(), any());
@@ -153,10 +149,9 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
             .setActualTransactionActive(true);
       }
       try {
-        assertThatThrownBy(
-                () ->
-                    new CanonicalGameplayAdmissionAbortOwner(repository, client)
-                        .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
+        assertThatThrownBy(() ->
+                new CanonicalGameplayAdmissionAbortOwner(repository, client)
+                    .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
             .hasMessage("First-NEW Account abort requires no ambient SQL scope");
         org.mockito.Mockito.verifyNoInteractions(repository, client);
       } finally {
@@ -200,10 +195,9 @@ class CanonicalGameplayAdmissionAbortOwnerTest {
       }
       when(repository.readFirstNewAdmissionAbortRetrySource(TRANSITION_ID)).thenReturn(retained);
       when(client.abort(any(), any(), any())).thenReturn(operation);
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayAdmissionAbortOwner(repository, client)
-                      .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayAdmissionAbortOwner(repository, client)
+                  .abortFirstNew(TRANSITION_ID, "presented-initial-gsa"))
           .hasMessage("Account replay contradicts the retained definitive abort");
       verify(repository, never()).recordFirstNewAccountAbort(any(), any());
     }

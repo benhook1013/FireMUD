@@ -185,30 +185,26 @@ class RunOwnedPreseededActorAssignmentCapabilityTest {
             RunOwnedPreseededActorAssignmentCapability.activeTrustRootFingerprint(
                 new TrustManager[] {loadedTrustManager}, configuredFingerprint))
         .isEqualTo(configuredFingerprint);
-    assertThatThrownBy(
-            () ->
-                RunOwnedPreseededActorAssignmentCapability.activeTrustRootFingerprint(
-                    new TrustManager[] {loadedTrustManager}, "c".repeat(64)))
+    assertThatThrownBy(() ->
+            RunOwnedPreseededActorAssignmentCapability.activeTrustRootFingerprint(
+                new TrustManager[] {loadedTrustManager}, "c".repeat(64)))
         .isInstanceOf(RunOwnedPreseededActorAssignmentCapability.InvalidCapabilityException.class);
     when(loadedTrustManager.getAcceptedIssuers())
         .thenReturn(new X509Certificate[] {trustedRoot, trustedRoot});
-    assertThatThrownBy(
-            () ->
-                RunOwnedPreseededActorAssignmentCapability.activeTrustRootFingerprint(
-                    new TrustManager[] {loadedTrustManager}, configuredFingerprint))
+    assertThatThrownBy(() ->
+            RunOwnedPreseededActorAssignmentCapability.activeTrustRootFingerprint(
+                new TrustManager[] {loadedTrustManager}, configuredFingerprint))
         .isInstanceOf(RunOwnedPreseededActorAssignmentCapability.InvalidCapabilityException.class);
 
-    assertThatThrownBy(
-            () ->
-                RunOwnedPreseededActorAssignmentCapability.fingerprintValidatedTrustRoot(
-                    List.of(trustedRoot, trustedRoot)))
+    assertThatThrownBy(() ->
+            RunOwnedPreseededActorAssignmentCapability.fingerprintValidatedTrustRoot(
+                List.of(trustedRoot, trustedRoot)))
         .isInstanceOf(RunOwnedPreseededActorAssignmentCapability.InvalidCapabilityException.class);
 
     doThrow(new CertificateExpiredException()).when(trustedRoot).checkValidity();
-    assertThatThrownBy(
-            () ->
-                RunOwnedPreseededActorAssignmentCapability.fingerprintValidatedTrustRoot(
-                    List.of(trustedRoot)))
+    assertThatThrownBy(() ->
+            RunOwnedPreseededActorAssignmentCapability.fingerprintValidatedTrustRoot(
+                List.of(trustedRoot)))
         .isInstanceOf(RunOwnedPreseededActorAssignmentCapability.InvalidCapabilityException.class);
   }
 

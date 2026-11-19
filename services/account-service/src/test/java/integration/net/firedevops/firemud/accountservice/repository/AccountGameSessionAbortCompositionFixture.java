@@ -294,12 +294,11 @@ abstract class AccountGameSessionAbortCompositionFixture {
               "game_session_canonical_issuer_binding_local_operation",
               "game_session_canonical_issuer_binding_local_release_operation")
           .stream()
-          .map(
-              table ->
-                  gs.dsl()
-                      .fetch("SELECT to_jsonb(t)::text AS image FROM " + table + " t ORDER BY 1")
-                      .getValues("image")
-                      .toString())
+          .map(table ->
+              gs.dsl()
+                  .fetch("SELECT to_jsonb(t)::text AS image FROM " + table + " t ORDER BY 1")
+                  .getValues("image")
+                  .toString())
           .collect(java.util.stream.Collectors.joining("\n"));
     }
 
@@ -322,15 +321,14 @@ abstract class AccountGameSessionAbortCompositionFixture {
               "game_session_canonical_issuer_binding_local_retirement",
               "game_session_canonical_issuer_partition_mutation")
           .stream()
-          .map(
-              table ->
-                  gs.dsl()
-                      .fetch(
-                          "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text AS image FROM "
-                              + table
-                              + " t ORDER BY 1")
-                      .getValues("image")
-                      .toString())
+          .map(table ->
+              gs.dsl()
+                  .fetch(
+                      "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text AS image FROM "
+                          + table
+                          + " t ORDER BY 1")
+                  .getValues("image")
+                  .toString())
           .collect(java.util.stream.Collectors.joining("\n"));
     }
 
@@ -366,15 +364,14 @@ abstract class AccountGameSessionAbortCompositionFixture {
               "game_session_canonical_issuer_partition_mutation_head",
               "game_session_canonical_binding_inventory_clock")
           .stream()
-          .map(
-              table ->
-                  gs.dsl()
-                      .fetch(
-                          "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text AS image FROM "
-                              + table
-                              + " t ORDER BY 1")
-                      .getValues("image")
-                      .toString())
+          .map(table ->
+              gs.dsl()
+                  .fetch(
+                      "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text AS image FROM "
+                          + table
+                          + " t ORDER BY 1")
+                  .getValues("image")
+                  .toString())
           .collect(java.util.stream.Collectors.joining("\n"));
     }
 

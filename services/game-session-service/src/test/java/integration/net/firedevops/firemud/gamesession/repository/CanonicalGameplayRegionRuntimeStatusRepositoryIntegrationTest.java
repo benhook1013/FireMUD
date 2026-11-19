@@ -22,16 +22,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
     extends CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupport {
   @Test
   void initializesOnlyAnAbsentRegionAtItsFirstEpochAndFirstTick() {
-    assertThatThrownBy(
-            () ->
-                repository.installOwner(
-                    source,
-                    2L,
-                    null,
-                    FIRST_LEASE_CORRELATION,
-                    "game-session-service",
-                    "instance-a",
-                    Instant.parse("2026-10-26T00:00:00Z")))
+    assertThatThrownBy(() ->
+            repository.installOwner(
+                source,
+                2L,
+                null,
+                FIRST_LEASE_CORRELATION,
+                "game-session-service",
+                "instance-a",
+                Instant.parse("2026-10-26T00:00:00Z")))
         .isInstanceOf(IllegalStateException.class);
     assertThat(repository.find(source)).isEmpty();
 
@@ -100,16 +99,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
         OPERATIONAL_REGION_ID);
     var current = repository.find(source).orElseThrow();
 
-    assertThatThrownBy(
-            () ->
-                repository.installOwner(
-                    source,
-                    1L,
-                    current,
-                    SECOND_LEASE_CORRELATION,
-                    "game-session-service",
-                    "instance-b",
-                    Instant.parse("2026-10-26T00:00:02Z")))
+    assertThatThrownBy(() ->
+            repository.installOwner(
+                source,
+                1L,
+                current,
+                SECOND_LEASE_CORRELATION,
+                "game-session-service",
+                "instance-b",
+                Instant.parse("2026-10-26T00:00:02Z")))
         .isInstanceOf(IllegalStateException.class);
     assertThat(repository.find(source)).contains(current);
     assertThat(fenceSequenceValue()).isEqualTo(sequenceAfterInstall);
@@ -126,12 +124,10 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest
         "instance-a",
         Instant.parse("2026-10-26T00:00:01Z"));
 
-    assertThatThrownBy(
-            () ->
-                repository.find(
-                    source(
-                        source.gameInstanceId(),
-                        new UUID(0x6666666666666666L, 0x8666666666666666L))))
+    assertThatThrownBy(() ->
+            repository.find(
+                source(
+                    source.gameInstanceId(), new UUID(0x6666666666666666L, 0x8666666666666666L))))
         .isInstanceOf(IllegalStateException.class);
   }
 

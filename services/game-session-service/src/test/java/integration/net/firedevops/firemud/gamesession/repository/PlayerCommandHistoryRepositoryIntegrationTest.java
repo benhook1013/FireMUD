@@ -149,11 +149,10 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
 
   @Test
   void appendCommitsIndependentlyWhenTheCallerTransactionRollsBack() {
-    transactionTemplate.executeWithoutResult(
-        status -> {
-          storageService.append(22L, 7L, 13L, "LOOK", 5);
-          status.setRollbackOnly();
-        });
+    transactionTemplate.executeWithoutResult(status -> {
+      storageService.append(22L, 7L, 13L, "LOOK", 5);
+      status.setRollbackOnly();
+    });
 
     assertThat(repository.findByScope(22L, 7L, 13L))
         .extracting(PlayerCommandHistoryEntry::getCommandText)
@@ -180,21 +179,18 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
   }
 
   private void appendAfterBarrier(String command, CountDownLatch ready, CountDownLatch start) {
-    transactionTemplate.executeWithoutResult(
-        status -> {
-          ready.countDown();
-          try {
-            if (!start.await(5, TimeUnit.SECONDS)) {
-              throw new IllegalStateException(
-                  "Timed out waiting to start concurrent history append");
-            }
-          } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(
-                "Interrupted while starting concurrent history append", ex);
-          }
-          storageService.append(22L, 7L, 13L, command, 1);
-        });
+    transactionTemplate.executeWithoutResult(status -> {
+      ready.countDown();
+      try {
+        if (!start.await(5, TimeUnit.SECONDS)) {
+          throw new IllegalStateException("Timed out waiting to start concurrent history append");
+        }
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("Interrupted while starting concurrent history append", ex);
+      }
+      storageService.append(22L, 7L, 13L, command, 1);
+    });
   }
 
   private PlayerCommandHistoryStorageService transactionalStorageService(

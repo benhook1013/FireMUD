@@ -53,15 +53,14 @@ class WorldSelectedPublicationSelectorCaptureTest {
     assertThat(frozen.digestSchemaVersion()).isEqualTo(acknowledgement.digestSchemaVersion());
     var expectedTuples =
         fixture.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
-            .map(
-                unit ->
-                    new OwnedAffectedTuple(
-                        unit.owner().name(),
-                        unit.aggregateType(),
-                        unit.aggregateId(),
-                        unit.scopeType(),
-                        unit.scopeId(),
-                        unit.expectedEpoch()))
+            .map(unit ->
+                new OwnedAffectedTuple(
+                    unit.owner().name(),
+                    unit.aggregateType(),
+                    unit.aggregateId(),
+                    unit.scopeType(),
+                    unit.scopeId(),
+                    unit.expectedEpoch()))
             .toList();
     assertThat(frozen.suppliedOwnedAffectedTuples()).containsExactlyElementsOf(expectedTuples);
   }

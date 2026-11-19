@@ -59,10 +59,9 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
     fixture.tx().executeWithoutResult(ignored -> repository.retain(value));
     fixture
         .tx()
-        .executeWithoutResult(
-            ignored ->
-                assertThat(repository.retain(value).receipt().canonicalBytes())
-                    .containsExactly(value.receipt().canonicalBytes()));
+        .executeWithoutResult(ignored ->
+            assertThat(repository.retain(value).receipt().canonicalBytes())
+                .containsExactly(value.receipt().canonicalBytes()));
     var recovered = repository.read(value.selection(), value.authorization()).orElseThrow();
     assertThat(recovered.receipt().canonicalBytes())
         .containsExactly(value.receipt().canonicalBytes());
@@ -96,21 +95,16 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
             value.authorization().sources());
     assertThatThrownBy(() -> repository.read(value.selection(), changed))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE game_design_selected_game_logic_receipt SET receipt_bytes = ?",
-                    new byte[] {1}))
+    assertThatThrownBy(() ->
+            dsl.execute(
+                "UPDATE game_design_selected_game_logic_receipt SET receipt_bytes = ?",
+                new byte[] {1}))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThatThrownBy(() -> dsl.execute("DELETE FROM game_design_selected_game_logic_receipt"))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                insert(
-                    dsl,
-                    value,
-                    value.selection().canonicalBytes(),
-                    value.receipt().canonicalBytes()))
+    assertThatThrownBy(() ->
+            insert(
+                dsl, value, value.selection().canonicalBytes(), value.receipt().canonicalBytes()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
   }
 
@@ -136,23 +130,21 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
                     Long.toString(value.selection().target().gameDesignVersionRowId()),
                     value.selection().intent().publishRequestId())))
         .isEmpty();
-    assertThatThrownBy(
-            () ->
-                repository.readForPublication(
-                    PublicationDigestRequestBinding.full(
-                        value.selection().intent().canonicalTenantId().toString(),
-                        Long.toString(value.selection().target().gameDesignVersionRowId() + 1),
-                        value.selection().intent().publishRequestId())))
+    assertThatThrownBy(() ->
+            repository.readForPublication(
+                PublicationDigestRequestBinding.full(
+                    value.selection().intent().canonicalTenantId().toString(),
+                    Long.toString(value.selection().target().gameDesignVersionRowId() + 1),
+                    value.selection().intent().publishRequestId())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("does not match publication request");
-    assertThatThrownBy(
-            () ->
-                repository.readForPublication(
-                    PublicationDigestRequestBinding.patch(
-                        value.selection().intent().canonicalTenantId().toString(),
-                        "1",
-                        "patch-1",
-                        value.selection().intent().publishRequestId())))
+    assertThatThrownBy(() ->
+            repository.readForPublication(
+                PublicationDigestRequestBinding.patch(
+                    value.selection().intent().canonicalTenantId().toString(),
+                    "1",
+                    "patch-1",
+                    value.selection().intent().publishRequestId())))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("FULL_VERSION");
     assertThat(
@@ -330,10 +322,9 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
     if (changeReceiptSource) {
       assertThatThrownBy(() -> digestReader.read("test", publicationBinding(readback), readback))
           .isInstanceOf(io.grpc.StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(io.grpc.Status.fromThrowable(failure).getCode())
-                      .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+          .satisfies(failure ->
+              assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                  .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
     } else {
       assertThat(
               digestReader
@@ -407,43 +398,40 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
     tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 
     DraftCommitBinding.TargetProof target =
-        tx.execute(
-            ignored -> {
-              var game = new Game();
-              game.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
-              game.setName("ISOLATED captured Gameplay join");
-              game = new GameRepository(dsl).save(game);
-              var version = new Version();
-              version.setTenantId(game.getTenantId());
-              version.setVersionNumber(1);
-              version = new VersionRepository(dsl).save(version);
-              var proof =
-                  new DraftCommitBinding.TargetProof(
-                      version.getCanonicalTenantId(),
-                      version.getCanonicalVersionId(),
-                      version.getId(),
-                      version.getTenantId(),
-                      version.getIdentitySourceGameRowId(),
-                      version.getIdentitySourceGameTenantKey(),
-                      version.getIdentitySourceProvenanceKind());
-              new GameDesignSourceRepository(dsl).enrollFreshDraft(proof);
-              return proof;
-            });
+        tx.execute(ignored -> {
+          var game = new Game();
+          game.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
+          game.setName("ISOLATED captured Gameplay join");
+          game = new GameRepository(dsl).save(game);
+          var version = new Version();
+          version.setTenantId(game.getTenantId());
+          version.setVersionNumber(1);
+          version = new VersionRepository(dsl).save(version);
+          var proof =
+              new DraftCommitBinding.TargetProof(
+                  version.getCanonicalTenantId(),
+                  version.getCanonicalVersionId(),
+                  version.getId(),
+                  version.getTenantId(),
+                  version.getIdentitySourceGameRowId(),
+                  version.getIdentitySourceGameTenantKey(),
+                  version.getIdentitySourceProvenanceKind());
+          new GameDesignSourceRepository(dsl).enrollFreshDraft(proof);
+          return proof;
+        });
     var sources = new GameDesignSourceRepository(dsl);
     GameDesignPublicationOperation operation =
-        tx.execute(
-            ignored -> {
-              try {
-                var retained =
-                    IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
-                        dsl, target, 1L, "controlled exact Gameplay receipt join");
-                sources.freeze(retained);
-                return retained;
-              } catch (Exception failure) {
-                throw new IllegalStateException(
-                    "Unable to retain controlled source capture", failure);
-              }
-            });
+        tx.execute(ignored -> {
+          try {
+            var retained =
+                IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
+                    dsl, target, 1L, "controlled exact Gameplay receipt join");
+            sources.freeze(retained);
+            return retained;
+          } catch (Exception failure) {
+            throw new IllegalStateException("Unable to retain controlled source capture", failure);
+          }
+        });
     return new CurrentCaptureFixture(dsl, tx, transactionManager, target, sources, operation);
   }
 

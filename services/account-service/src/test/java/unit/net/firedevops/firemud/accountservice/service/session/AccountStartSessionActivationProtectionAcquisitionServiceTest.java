@@ -101,17 +101,16 @@ class AccountStartSessionActivationProtectionAcquisitionServiceTest {
   @Test
   void rejectsInvalidAccountNamespaceAtConstruction() {
     var h = new Harness();
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionActivationProtectionAcquisitionService(
-                    h.issuer,
-                    h.participation,
-                    h.attempts,
-                    h.protections,
-                    h.launchReader,
-                    h.currentAttemptReader,
-                    h.transactions,
-                    "World_Runtime"))
+    assertThatThrownBy(() ->
+            new AccountStartSessionActivationProtectionAcquisitionService(
+                h.issuer,
+                h.participation,
+                h.attempts,
+                h.protections,
+                h.launchReader,
+                h.currentAttemptReader,
+                h.transactions,
+                "World_Runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Canonical Account workload namespace");
   }
@@ -401,27 +400,25 @@ class AccountStartSessionActivationProtectionAcquisitionServiceTest {
                       "sha256:" + "c".repeat(64),
                       OffsetDateTime.parse("2030-01-01T00:00:01Z"))));
       when(currentAttemptReader.read(any()))
-          .thenAnswer(
-              invocation ->
-                  new OriginalStartSessionCurrentAttemptEvidence.Result(
-                      invocation.getArgument(0), lease, tuple.canonicalBytes()));
+          .thenAnswer(invocation ->
+              new OriginalStartSessionCurrentAttemptEvidence.Result(
+                  invocation.getArgument(0), lease, tuple.canonicalBytes()));
       // Explicit controlled GS realm/catalog inputs; these mocks establish no owner provenance.
       when(launchReader.read(any()))
-          .thenAnswer(
-              invocation ->
-                  new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
-                      invocation.getArgument(0),
-                      world.playableStateNamespaceId(),
-                      RealmEntryPolicy.StateScope.SHARED,
-                      true,
-                      CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
-                          .STARTING,
-                      0L,
-                      attempt,
-                      fence,
-                      UUID.fromString("e8e8e8e8-e8e8-48e8-88e8-e8e8e8e8e8e8"),
-                      17L,
-                      preparing.launchBinding()));
+          .thenAnswer(invocation ->
+              new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+                  invocation.getArgument(0),
+                  world.playableStateNamespaceId(),
+                  RealmEntryPolicy.StateScope.SHARED,
+                  true,
+                  CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                      .STARTING,
+                  0L,
+                  attempt,
+                  fence,
+                  UUID.fromString("e8e8e8e8-e8e8-48e8-88e8-e8e8e8e8e8e8"),
+                  17L,
+                  preparing.launchBinding()));
       when(attempts.findHistoricalExact(any(), any()))
           .thenAnswer(invocation -> Optional.of(witness(invocation.getArgument(1), lease)));
       doAnswer(

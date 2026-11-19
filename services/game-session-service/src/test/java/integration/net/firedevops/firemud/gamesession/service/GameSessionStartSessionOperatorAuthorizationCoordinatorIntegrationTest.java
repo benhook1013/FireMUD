@@ -88,19 +88,17 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorIntegrationTest {
     StartSessionOperatorRedemptionClient redemptionClient = mockRedemptionClient();
     AtomicInteger accountCalls = new AtomicInteger();
     when(redemptionClient.redeem(any(), eq(OPAQUE_REFERENCE), any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(fixture.attemptCount())
-                  .as("the claim must be visible from an independent PostgreSQL connection")
-                  .isEqualTo(1);
-              accountCalls.incrementAndGet();
-              StartSessionPostAuthorizationExecutionTuple deliveredTuple =
-                  invocation.getArgument(0);
-              AttemptClaim claim = invocation.getArgument(2);
-              return new StartSessionOperatorRedemptionClient.RedemptionResult(
-                  claim, projection(deliveredTuple), false);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(fixture.attemptCount())
+              .as("the claim must be visible from an independent PostgreSQL connection")
+              .isEqualTo(1);
+          accountCalls.incrementAndGet();
+          StartSessionPostAuthorizationExecutionTuple deliveredTuple = invocation.getArgument(0);
+          AttemptClaim claim = invocation.getArgument(2);
+          return new StartSessionOperatorRedemptionClient.RedemptionResult(
+              claim, projection(deliveredTuple), false);
+        });
     GameSessionStartSessionOperatorAuthorizationCoordinator coordinator =
         coordinator(fixture, redemptionClient);
 
@@ -134,13 +132,12 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorIntegrationTest {
     StartSessionOperatorRedemptionClient redemptionClient = mockRedemptionClient();
     AtomicInteger accountCalls = new AtomicInteger();
     when(redemptionClient.redeem(any(), eq(OPAQUE_REFERENCE), any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(fixture.attemptCount()).isEqualTo(1);
-              accountCalls.incrementAndGet();
-              throw new StatusRuntimeException(Status.DEADLINE_EXCEEDED);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(fixture.attemptCount()).isEqualTo(1);
+          accountCalls.incrementAndGet();
+          throw new StatusRuntimeException(Status.DEADLINE_EXCEEDED);
+        });
     GameSessionStartSessionOperatorAuthorizationCoordinator coordinator =
         coordinator(fixture, redemptionClient);
 
@@ -173,18 +170,16 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorIntegrationTest {
     StartSessionOperatorRedemptionClient redemptionClient = mockRedemptionClient();
     AtomicInteger accountCalls = new AtomicInteger();
     when(redemptionClient.redeem(any(), eq(OPAQUE_REFERENCE), any()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(fixture.attemptCount()).isEqualTo(1);
-              accountCalls.incrementAndGet();
-              StartSessionPostAuthorizationExecutionTuple deliveredTuple =
-                  invocation.getArgument(0);
-              AttemptClaim claim = invocation.getArgument(2);
-              fixture.awaitClaimLeaseExpired(claim);
-              return new StartSessionOperatorRedemptionClient.RedemptionResult(
-                  claim, projection(deliveredTuple), false);
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(fixture.attemptCount()).isEqualTo(1);
+          accountCalls.incrementAndGet();
+          StartSessionPostAuthorizationExecutionTuple deliveredTuple = invocation.getArgument(0);
+          AttemptClaim claim = invocation.getArgument(2);
+          fixture.awaitClaimLeaseExpired(claim);
+          return new StartSessionOperatorRedemptionClient.RedemptionResult(
+              claim, projection(deliveredTuple), false);
+        });
     GameSessionStartSessionOperatorAuthorizationCoordinator coordinator =
         coordinator(fixture, redemptionClient);
 

@@ -43,10 +43,9 @@ class AccountMembershipPairAuthorityRepositoryTest {
             null, TenantProvenanceKind.FRESH_GAME_DESIGN, OPERATION_ID, DIGEST);
 
     org.assertj.core.api.Assertions.assertThat(fresh.legacyTenantId()).isNull();
-    assertThatThrownBy(
-            () ->
-                new VerifiedTenantProvenance(
-                    87L, TenantProvenanceKind.FRESH_GAME_DESIGN, OPERATION_ID, DIGEST))
+    assertThatThrownBy(() ->
+            new VerifiedTenantProvenance(
+                87L, TenantProvenanceKind.FRESH_GAME_DESIGN, OPERATION_ID, DIGEST))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("must not carry a legacy tenant ID");
   }
@@ -61,10 +60,9 @@ class AccountMembershipPairAuthorityRepositoryTest {
         new PairAuthority(ACCOUNT_UUID, TENANT_UUID, fresh, false, 1L, 1L, 0L, null, null, false);
     assertThat(baseline.membershipExists()).isFalse();
     assertThat(baseline.eventSequence()).isZero();
-    assertThatThrownBy(
-            () ->
-                new PairAuthority(
-                    ACCOUNT_UUID, TENANT_UUID, fresh, true, 1L, 1L, 0L, null, null, false))
+    assertThatThrownBy(() ->
+            new PairAuthority(
+                ACCOUNT_UUID, TENANT_UUID, fresh, true, 1L, 1L, 0L, null, null, false))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("cannot claim membership or event evidence");
   }
@@ -241,11 +239,9 @@ class AccountMembershipPairAuthorityRepositoryTest {
         .fetchOne(anyString(), any(Object[].class));
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    assertThatThrownBy(
-            () ->
-                repository.commitTransition(
-                    staleExpected,
-                    new PairTransition(true, 1L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
+    assertThatThrownBy(() ->
+            repository.commitTransition(
+                staleExpected, new PairTransition(true, 1L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Stale or contradictory");
     verify(dsl, org.mockito.Mockito.never()).execute(anyString(), any(Object[].class));
@@ -261,10 +257,9 @@ class AccountMembershipPairAuthorityRepositoryTest {
             ACCOUNT_UUID, TENANT_UUID, freshProvenance(), false, 1L, 1L, 0L, null, null, false);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    assertThatThrownBy(
-            () ->
-                repository.commitTransition(
-                    baseline, new PairTransition(true, 2L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
+    assertThatThrownBy(() ->
+            repository.commitTransition(
+                baseline, new PairTransition(true, 2L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("first positive JOIN transition");
     verifyNoInteractions(dsl);
@@ -279,10 +274,9 @@ class AccountMembershipPairAuthorityRepositoryTest {
     PairAuthority absence =
         new PairAuthority(
             ACCOUNT_UUID, TENANT_UUID, freshProvenance(), false, 1L, 1L, 0L, null, null, false);
-    assertThatThrownBy(
-            () ->
-                repository.commitRestore(
-                    absence, new PairTransition(true, 1L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
+    assertThatThrownBy(() ->
+            repository.commitRestore(
+                absence, new PairTransition(true, 1L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("exact current positive pair");
     PairAuthority positive =
@@ -297,16 +291,14 @@ class AccountMembershipPairAuthorityRepositoryTest {
             "inactive-event",
             EVENT_DIGEST,
             true);
-    assertThatThrownBy(
-            () ->
-                repository.commitRestore(
-                    positive, new PairTransition(true, 3L, EVENT_ID_TEXT, EVENT_DIGEST, true)))
+    assertThatThrownBy(() ->
+            repository.commitRestore(
+                positive, new PairTransition(true, 3L, EVENT_ID_TEXT, EVENT_DIGEST, true)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("exact current positive pair");
-    assertThatThrownBy(
-            () ->
-                repository.commitRestore(
-                    positive, new PairTransition(true, 4L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
+    assertThatThrownBy(() ->
+            repository.commitRestore(
+                positive, new PairTransition(true, 4L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("exact current positive pair");
     verifyNoInteractions(dsl);

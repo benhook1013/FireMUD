@@ -209,49 +209,42 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
     Optional<Current> initiallyAbsent =
         context
             .transaction()
-            .execute(
-                status ->
-                    context
-                        .repository()
-                        .readCurrent(
-                            NAMESPACE,
-                            context.scope().tenantId(),
-                            "source-world",
-                            "private-playtest"));
+            .execute(status ->
+                context
+                    .repository()
+                    .readCurrent(
+                        NAMESPACE, context.scope().tenantId(), "source-world", "private-playtest"));
     assertThat(initiallyAbsent).isEmpty();
-    assertThatThrownBy(
-            () ->
-                context.select(
-                    new Request(
-                        UUID.randomUUID(),
-                        context.scope(),
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        null,
-                        null)))
+    assertThatThrownBy(() ->
+            context.select(
+                new Request(
+                    UUID.randomUUID(),
+                    context.scope(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    null,
+                    null)))
         .isInstanceOf(SourceUnavailableException.class);
     Preparation first = context.prepare(context.now().plusSeconds(3600));
-    assertThatThrownBy(
-            () ->
-                context.select(
-                    new Request(
-                        UUID.randomUUID(),
-                        new Scope(NAMESPACE, UUID.randomUUID(), "source-world", "private-playtest"),
-                        first.request().requestId(),
-                        first.playtestLifecycleId(),
-                        null,
-                        null)))
+    assertThatThrownBy(() ->
+            context.select(
+                new Request(
+                    UUID.randomUUID(),
+                    new Scope(NAMESPACE, UUID.randomUUID(), "source-world", "private-playtest"),
+                    first.request().requestId(),
+                    first.playtestLifecycleId(),
+                    null,
+                    null)))
         .isInstanceOf(SourceUnavailableException.class);
-    assertThatThrownBy(
-            () ->
-                context.select(
-                    new Request(
-                        UUID.randomUUID(),
-                        context.scope(),
-                        UUID.randomUUID(),
-                        first.playtestLifecycleId(),
-                        null,
-                        null)))
+    assertThatThrownBy(() ->
+            context.select(
+                new Request(
+                    UUID.randomUUID(),
+                    context.scope(),
+                    UUID.randomUUID(),
+                    first.playtestLifecycleId(),
+                    null,
+                    null)))
         .isInstanceOf(SourceUnavailableException.class);
     assertThat(context.count(HISTORY)).isZero();
     assertThat(context.count(HEAD)).isZero();
@@ -259,16 +252,15 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
     assertThatThrownBy(() -> publicOnly.prepare(publicOnly.now().plusSeconds(3600)))
         .isInstanceOf(
             GameSessionInitialPlaytestLifecycleRepository.SourceUnavailableException.class);
-    assertThatThrownBy(
-            () ->
-                publicOnly.select(
-                    new Request(
-                        UUID.randomUUID(),
-                        publicOnly.scope(),
-                        UUID.randomUUID(),
-                        UUID.randomUUID(),
-                        null,
-                        null)))
+    assertThatThrownBy(() ->
+            publicOnly.select(
+                new Request(
+                    UUID.randomUUID(),
+                    publicOnly.scope(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    null,
+                    null)))
         .isInstanceOf(SourceUnavailableException.class);
     assertThat(publicOnly.count(HEAD)).isZero();
     assertThat(publicOnly.count(HISTORY)).isZero();
@@ -284,10 +276,9 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
     assertThat(context.current().selectedPrepSnapshot().state()).isEqualTo(ReadState.EXPIRED);
     assertThat(context.current().admissionAllowed()).isFalse();
     assertThat(context.select(initial)).isEqualTo(new SelectionResult(selected.receipt(), true));
-    assertThatThrownBy(
-            () ->
-                context.select(
-                    context.request(UUID.randomUUID(), first, 1L, first.playtestLifecycleId())))
+    assertThatThrownBy(() ->
+            context.select(
+                context.request(UUID.randomUUID(), first, 1L, first.playtestLifecycleId())))
         .isInstanceOf(SourceUnavailableException.class)
         .hasMessageContaining("expired");
     Preparation next = context.prepare(context.now().plusSeconds(3600));
@@ -303,32 +294,27 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
     Context context = context(true);
     Preparation first = context.prepare(context.now().plusSeconds(3600));
     Request original = context.request(UUID.randomUUID(), first, null, null);
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          context.repository().select(original);
-                          throw new IllegalStateException("Controlled protected workflow refusal");
-                        }))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status -> {
+                  context.repository().select(original);
+                  throw new IllegalStateException("Controlled protected workflow refusal");
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Controlled protected workflow refusal");
     assertThat(context.count(HISTORY)).isZero();
     assertThat(context.count(HEAD)).isZero();
     Preparation shortPreparation = context.prepare(context.now().plusSeconds(5));
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .executeWithoutResult(
-                        status -> {
-                          context
-                              .repository()
-                              .select(
-                                  context.request(UUID.randomUUID(), shortPreparation, null, null));
-                          awaitExpiry(context, shortPreparation.request().forkExpiresAt());
-                        }))
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .executeWithoutResult(status -> {
+                  context
+                      .repository()
+                      .select(context.request(UUID.randomUUID(), shortPreparation, null, null));
+                  awaitExpiry(context, shortPreparation.request().forkExpiresAt());
+                }))
         .isInstanceOf(RuntimeException.class)
         .hasStackTraceContaining("expired before final commit");
     assertThat(context.count(HISTORY)).isZero();
@@ -352,20 +338,18 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
             "UPDATE " + HEAD + " SET head_revision = 3",
             "UPDATE " + HEAD + " SET head_revision = 2",
             "UPDATE " + HEAD + " SET playtest_lifecycle_id = gen_random_uuid()")) {
-      assertThatThrownBy(
-              () ->
-                  context.transaction().executeWithoutResult(status -> context.dsl().execute(sql)))
+      assertThatThrownBy(() ->
+              context.transaction().executeWithoutResult(status -> context.dsl().execute(sql)))
           .as(sql)
           .isInstanceOf(RuntimeException.class);
     }
     assertThat(context.current().selection()).isEqualTo(selected.receipt());
     assertThat(context.count(HISTORY)).isEqualTo(1);
-    assertThatThrownBy(
-            () ->
-                context
-                    .repository()
-                    .readCurrent(
-                        NAMESPACE, context.scope().tenantId(), "source-world", "private-playtest"))
+    assertThatThrownBy(() ->
+            context
+                .repository()
+                .readCurrent(
+                    NAMESPACE, context.scope().tenantId(), "source-world", "private-playtest"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("owner transaction");
   }
@@ -456,18 +440,16 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
             evidenceDigest);
     var intake =
         Objects.requireNonNull(
-            transaction.execute(
-                status ->
-                    new GameSessionAuthoredWorldSourceRepository(dsl)
-                        .register(UUID.randomUUID(), evidence)));
-    transaction.executeWithoutResult(
-        status ->
-            new GameSessionFreshTenantAssociationRepository(dsl)
-                .associateFresh(
-                    UUID.randomUUID(),
-                    NAMESPACE,
-                    intake,
-                    CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(evidence)));
+            transaction.execute(status ->
+                new GameSessionAuthoredWorldSourceRepository(dsl)
+                    .register(UUID.randomUUID(), evidence)));
+    transaction.executeWithoutResult(status ->
+        new GameSessionFreshTenantAssociationRepository(dsl)
+            .associateFresh(
+                UUID.randomUUID(),
+                NAMESPACE,
+                intake,
+                CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(evidence)));
     var catalogRequest =
         new CreateCanonicalRealmCatalogRequest(
             UUID.randomUUID(),
@@ -575,12 +557,10 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
 
     Current current() {
       return Objects.requireNonNull(
-          transaction.execute(
-              status ->
-                  repository
-                      .readCurrent(
-                          NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
-                      .orElseThrow()));
+          transaction.execute(status ->
+              repository
+                  .readCurrent(NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
+                  .orElseThrow()));
     }
 
     int count(String table) {

@@ -115,13 +115,12 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
                     + "FROM gameplay_tenant_shared_playable_state_namespace "
                     + "WHERE canonical_tenant_id = ?",
                 tenant(1)))
-        .satisfies(
-            row -> {
-              assertThat(row.get("tenant_id", Long.class)).isNull();
-              assertThat(row.get("canonical_tenant_id", UUID.class)).isEqualTo(tenant(1));
-              assertThat(row.get("playable_state_namespace_id", UUID.class))
-                  .isEqualTo(created.playableStateNamespaceId());
-            });
+        .satisfies(row -> {
+          assertThat(row.get("tenant_id", Long.class)).isNull();
+          assertThat(row.get("canonical_tenant_id", UUID.class)).isEqualTo(tenant(1));
+          assertThat(row.get("playable_state_namespace_id", UUID.class))
+              .isEqualTo(created.playableStateNamespaceId());
+        });
     assertThat(
             requiredRecord(
                     fixture.dsl,
@@ -199,34 +198,31 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
                 .get("xmin", String.class))
         .isEqualTo(retainedNamespaceXmin);
 
-    assertThatThrownBy(
-            () ->
-                fixture.create(
-                    request(
-                        source,
-                        uuid(21),
-                        "another-realm",
-                        "Another Realm",
-                        "PRESEEDED_ONLY",
-                        "SHARED")))
+    assertThatThrownBy(() ->
+            fixture.create(
+                request(
+                    source,
+                    uuid(21),
+                    "another-realm",
+                    "Another Realm",
+                    "PRESEEDED_ONLY",
+                    "SHARED")))
         .isInstanceOf(CatalogConflictException.class)
         .hasMessageContaining("already has a public-production");
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_canonical_realm_catalog"))))
         .isEqualTo(1);
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE game_session_canonical_realm_catalog SET realm_slug = ? "
-                        + "WHERE creation_request_id = ?",
-                    "rewritten-realm",
-                    request.requestId()))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE game_session_canonical_realm_catalog SET realm_slug = ? "
+                    + "WHERE creation_request_id = ?",
+                "rewritten-realm",
+                request.requestId()))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("evidence is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "DELETE FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
-                    request.requestId()))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "DELETE FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
+                request.requestId()))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("evidence is immutable");
     assertThatThrownBy(() -> fixture.dsl.execute("TRUNCATE game_session_canonical_realm_catalog"))
@@ -238,21 +234,19 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
             () -> fixture.dsl.execute("TRUNCATE game_session_canonical_realm_catalog CASCADE"))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("evidence is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE gameplay_tenant_shared_playable_state_namespace "
-                        + "SET playable_state_namespace_id = ? WHERE canonical_tenant_id = ?",
-                    uuid(805),
-                    tenant(1)))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE gameplay_tenant_shared_playable_state_namespace "
+                    + "SET playable_state_namespace_id = ? WHERE canonical_tenant_id = ?",
+                uuid(805),
+                tenant(1)))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("fresh shared namespace identity is immutable");
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "DELETE FROM gameplay_tenant_shared_playable_state_namespace "
-                        + "WHERE canonical_tenant_id = ?",
-                    tenant(1)))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "DELETE FROM gameplay_tenant_shared_playable_state_namespace "
+                    + "WHERE canonical_tenant_id = ?",
+                tenant(1)))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("fresh shared namespace identity is immutable");
     assertThatThrownBy(
@@ -315,9 +309,8 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
             () -> fixture.catalogRepository.readByRequest(NAMESPACE, historicalRequest.requestId()))
         .isInstanceOf(InvalidCatalogEvidenceException.class)
         .hasMessageContaining("Exactly one complete catalog policy provenance required");
-    assertThatThrownBy(
-            () ->
-                fixture.catalogRepository.readUniqueVisiblePublicProduction(NAMESPACE, tenant(40)))
+    assertThatThrownBy(() ->
+            fixture.catalogRepository.readUniqueVisiblePublicProduction(NAMESPACE, tenant(40)))
         .isInstanceOf(InvalidCatalogEvidenceException.class);
 
     IntakeReceipt freshSource =
@@ -352,23 +345,22 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
               () -> insertCatalogRow(fixture, source, request, java.util.Map.of(column, value)))
           .isInstanceOf(DataAccessException.class);
     }
-    assertThatThrownBy(
-            () ->
-                insertCatalogRow(
-                    fixture,
-                    source,
-                    request,
-                    java.util.Map.of(
-                        "complete_policy_set_evidence",
-                        new byte[] {1},
-                        "fixture_policy_request_bytes",
-                        new byte[] {1},
-                        "fixture_policy_seal_operation_id",
-                        uuid(1043),
-                        "fixture_policy_seal_request_digest",
-                        "sha256:" + "a".repeat(64),
-                        "fixture_policy_seal_evidence_digest",
-                        "sha256:" + "b".repeat(64))))
+    assertThatThrownBy(() ->
+            insertCatalogRow(
+                fixture,
+                source,
+                request,
+                java.util.Map.of(
+                    "complete_policy_set_evidence",
+                    new byte[] {1},
+                    "fixture_policy_request_bytes",
+                    new byte[] {1},
+                    "fixture_policy_seal_operation_id",
+                    uuid(1043),
+                    "fixture_policy_seal_request_digest",
+                    "sha256:" + "a".repeat(64),
+                    "fixture_policy_seal_evidence_digest",
+                    "sha256:" + "b".repeat(64))))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(() -> insertCatalogRow(fixture, source, request, java.util.Map.of()))
         .isInstanceOf(DataAccessException.class);
@@ -394,10 +386,9 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         .hasMessageContaining("active owner transaction");
     TransactionTemplate readOnly = new TransactionTemplate(fixture.transactionManager);
     readOnly.setReadOnly(true);
-    assertThatThrownBy(
-            () ->
-                readOnly.execute(
-                    status -> fixture.catalogRepository.createInitialPublicProduction(prepared)))
+    assertThatThrownBy(() ->
+            readOnly.execute(
+                status -> fixture.catalogRepository.createInitialPublicProduction(prepared)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("read-write");
 
@@ -481,11 +472,9 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
                     + "WHERE operation_id = ?",
                 retained.operationId())
             .get("xmin", String.class);
-    assertThatThrownBy(
-            () ->
-                fixture.create(
-                    request(
-                        retained, uuid(31), "retained-realm", "Realm", "PRESEEDED_ONLY", "SHARED")))
+    assertThatThrownBy(() ->
+            fixture.create(
+                request(retained, uuid(31), "retained-realm", "Realm", "PRESEEDED_ONLY", "SHARED")))
         .isInstanceOf(InvalidCatalogEvidenceException.class)
         .hasMessageContaining("fresh Game Design");
     assertThat(
@@ -494,23 +483,21 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
                 "SELECT xmin::text AS xmin, provenance_kind FROM "
                     + "game_session_authored_world_tenant_source_binding WHERE canonical_tenant_id = ?",
                 retained.source().canonicalTenantId()))
-        .satisfies(
-            row -> {
-              assertThat(row.get("xmin", String.class)).isEqualTo(retainedBindingXmin);
-              assertThat(row.get("provenance_kind", String.class)).isEqualTo("RETAINED_GAME_V29");
-            });
+        .satisfies(row -> {
+          assertThat(row.get("xmin", String.class)).isEqualTo(retainedBindingXmin);
+          assertThat(row.get("provenance_kind", String.class)).isEqualTo("RETAINED_GAME_V29");
+        });
     assertThat(
             requiredRecord(
                 fixture.dsl,
                 "SELECT xmin::text AS xmin, source_provenance_kind FROM "
                     + "game_session_authored_world_source_intake WHERE operation_id = ?",
                 retained.operationId()))
-        .satisfies(
-            row -> {
-              assertThat(row.get("xmin", String.class)).isEqualTo(retainedIntakeXmin);
-              assertThat(row.get("source_provenance_kind", String.class))
-                  .isEqualTo("RETAINED_GAME_V29");
-            });
+        .satisfies(row -> {
+          assertThat(row.get("xmin", String.class)).isEqualTo(retainedIntakeXmin);
+          assertThat(row.get("source_provenance_kind", String.class))
+              .isEqualTo("RETAINED_GAME_V29");
+        });
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_canonical_realm_catalog"))))
         .isEqualTo(1);
   }
@@ -521,47 +508,45 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
 
     for (String provenance : new String[] {"RETAINED_GAME_V30", "UNKNOWN_KIND"}) {
       int suffix = provenance.equals("RETAINED_GAME_V30") ? 1 : 2;
-      assertThatThrownBy(
-              () ->
-                  fixture.dsl.execute(
-                      "INSERT INTO game_session_authored_world_tenant_source_binding "
-                          + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
-                          + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, ?)",
-                      NAMESPACE,
-                      uuid(900 + suffix),
-                      "raw-binding-" + suffix,
-                      990L + suffix,
-                      "legacy-key-" + suffix,
-                      provenance))
+      assertThatThrownBy(() ->
+              fixture.dsl.execute(
+                  "INSERT INTO game_session_authored_world_tenant_source_binding "
+                      + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+                      + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, ?)",
+                  NAMESPACE,
+                  uuid(900 + suffix),
+                  "raw-binding-" + suffix,
+                  990L + suffix,
+                  "legacy-key-" + suffix,
+                  provenance))
           .isInstanceOf(DataAccessException.class)
           .hasStackTraceContaining("chk_gs_authored_world_tenant_source_provenance_v29");
 
-      assertThatThrownBy(
-              () ->
-                  fixture.dsl.execute(
-                      "INSERT INTO game_session_authored_world_source_intake ("
-                          + "operation_id, schema_version, target_namespace, intake_request_id, "
-                          + "request_digest, source_schema_version, source_registration_request_id, "
-                          + "source_operation_id, source_request_digest, canonical_tenant_id, "
-                          + "tenant_slug, world_slug, world_display_name, source_game_row_id, "
-                          + "source_game_tenant_key, source_provenance_kind, source_evidence_digest, "
-                          + "receipt_digest) VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                      uuid(910 + suffix),
-                      NAMESPACE,
-                      uuid(920 + suffix),
-                      "sha256:" + "a".repeat(64),
-                      uuid(930 + suffix),
-                      uuid(940 + suffix),
-                      "sha256:" + "b".repeat(64),
-                      uuid(900 + suffix),
-                      "raw-binding-" + suffix,
-                      "raw-world-" + suffix,
-                      "Raw World",
-                      990L + suffix,
-                      "legacy-key-" + suffix,
-                      provenance,
-                      "sha256:" + "c".repeat(64),
-                      "sha256:" + "d".repeat(64)))
+      assertThatThrownBy(() ->
+              fixture.dsl.execute(
+                  "INSERT INTO game_session_authored_world_source_intake ("
+                      + "operation_id, schema_version, target_namespace, intake_request_id, "
+                      + "request_digest, source_schema_version, source_registration_request_id, "
+                      + "source_operation_id, source_request_digest, canonical_tenant_id, "
+                      + "tenant_slug, world_slug, world_display_name, source_game_row_id, "
+                      + "source_game_tenant_key, source_provenance_kind, source_evidence_digest, "
+                      + "receipt_digest) VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  uuid(910 + suffix),
+                  NAMESPACE,
+                  uuid(920 + suffix),
+                  "sha256:" + "a".repeat(64),
+                  uuid(930 + suffix),
+                  uuid(940 + suffix),
+                  "sha256:" + "b".repeat(64),
+                  uuid(900 + suffix),
+                  "raw-binding-" + suffix,
+                  "raw-world-" + suffix,
+                  "Raw World",
+                  990L + suffix,
+                  "legacy-key-" + suffix,
+                  provenance,
+                  "sha256:" + "c".repeat(64),
+                  "sha256:" + "d".repeat(64)))
           .isInstanceOf(DataAccessException.class)
           .hasStackTraceContaining("chk_gs_authored_world_source_intake_provenance_v29");
     }
@@ -581,42 +566,41 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     String sourceEvidenceDigest = "sha256:" + "3".repeat(64);
     String receiptDigest = "sha256:" + "4".repeat(64);
 
-    fixture.transactions.execute(
-        status -> {
-          fixture.dsl.execute(
-              "INSERT INTO game_session_authored_world_tenant_source_binding "
-                  + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
-                  + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, 'RETAINED_GAME_V30')",
-              NAMESPACE,
-              canonicalTenantId,
-              tenantSlug,
-              sourceGameRowId,
-              sourceGameTenantKey);
-          fixture.dsl.execute(
-              "INSERT INTO game_session_authored_world_source_intake ("
-                  + "operation_id, schema_version, target_namespace, intake_request_id, "
-                  + "request_digest, source_schema_version, source_registration_request_id, "
-                  + "source_operation_id, source_request_digest, canonical_tenant_id, tenant_slug, "
-                  + "world_slug, world_display_name, source_game_row_id, source_game_tenant_key, "
-                  + "source_provenance_kind, source_evidence_digest, receipt_digest) "
-                  + "VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RETAINED_GAME_V30', ?, ?)",
-              intakeOperationId,
-              NAMESPACE,
-              uuid(952),
-              requestDigest,
-              uuid(953),
-              uuid(954),
-              sourceRequestDigest,
-              canonicalTenantId,
-              tenantSlug,
-              worldSlug,
-              "Retained V30 World",
-              sourceGameRowId,
-              sourceGameTenantKey,
-              sourceEvidenceDigest,
-              receiptDigest);
-          return null;
-        });
+    fixture.transactions.execute(status -> {
+      fixture.dsl.execute(
+          "INSERT INTO game_session_authored_world_tenant_source_binding "
+              + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+              + "source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, 'RETAINED_GAME_V30')",
+          NAMESPACE,
+          canonicalTenantId,
+          tenantSlug,
+          sourceGameRowId,
+          sourceGameTenantKey);
+      fixture.dsl.execute(
+          "INSERT INTO game_session_authored_world_source_intake ("
+              + "operation_id, schema_version, target_namespace, intake_request_id, "
+              + "request_digest, source_schema_version, source_registration_request_id, "
+              + "source_operation_id, source_request_digest, canonical_tenant_id, tenant_slug, "
+              + "world_slug, world_display_name, source_game_row_id, source_game_tenant_key, "
+              + "source_provenance_kind, source_evidence_digest, receipt_digest) "
+              + "VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RETAINED_GAME_V30', ?, ?)",
+          intakeOperationId,
+          NAMESPACE,
+          uuid(952),
+          requestDigest,
+          uuid(953),
+          uuid(954),
+          sourceRequestDigest,
+          canonicalTenantId,
+          tenantSlug,
+          worldSlug,
+          "Retained V30 World",
+          sourceGameRowId,
+          sourceGameTenantKey,
+          sourceEvidenceDigest,
+          receiptDigest);
+      return null;
+    });
 
     Record retainedBindingBefore =
         requiredRecord(
@@ -656,46 +640,44 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         .isEqualTo(sourceEvidenceDigest);
     assertThat(retainedIntakeAfter.get("receipt_digest", String.class)).isEqualTo(receiptDigest);
 
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "INSERT INTO game_session_authored_world_tenant_source_binding "
-                        + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
-                        + "source_game_tenant_key, provenance_kind) "
-                        + "VALUES (?, ?, ?, ?, ?, 'RETAINED_GAME_V30')",
-                    NAMESPACE,
-                    uuid(960),
-                    "new-v30-tenant",
-                    9760L,
-                    "gds-new-v30"))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "INSERT INTO game_session_authored_world_tenant_source_binding "
+                    + "(target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id, "
+                    + "source_game_tenant_key, provenance_kind) "
+                    + "VALUES (?, ?, ?, ?, ?, 'RETAINED_GAME_V30')",
+                NAMESPACE,
+                uuid(960),
+                "new-v30-tenant",
+                9760L,
+                "gds-new-v30"))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("chk_gs_authored_world_tenant_source_provenance_v29");
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "INSERT INTO game_session_authored_world_source_intake ("
-                        + "operation_id, schema_version, target_namespace, intake_request_id, "
-                        + "request_digest, source_schema_version, source_registration_request_id, "
-                        + "source_operation_id, source_request_digest, canonical_tenant_id, tenant_slug, "
-                        + "world_slug, world_display_name, source_game_row_id, source_game_tenant_key, "
-                        + "source_provenance_kind, source_evidence_digest, receipt_digest) "
-                        + "VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                        + "'RETAINED_GAME_V30', ?, ?)",
-                    uuid(961),
-                    NAMESPACE,
-                    uuid(962),
-                    requestDigest,
-                    uuid(963),
-                    uuid(964),
-                    sourceRequestDigest,
-                    uuid(965),
-                    "new-v30-tenant",
-                    "new-v30-world",
-                    "New V30 World",
-                    9761L,
-                    "gds-new-v30-intake",
-                    sourceEvidenceDigest,
-                    receiptDigest))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "INSERT INTO game_session_authored_world_source_intake ("
+                    + "operation_id, schema_version, target_namespace, intake_request_id, "
+                    + "request_digest, source_schema_version, source_registration_request_id, "
+                    + "source_operation_id, source_request_digest, canonical_tenant_id, tenant_slug, "
+                    + "world_slug, world_display_name, source_game_row_id, source_game_tenant_key, "
+                    + "source_provenance_kind, source_evidence_digest, receipt_digest) "
+                    + "VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    + "'RETAINED_GAME_V30', ?, ?)",
+                uuid(961),
+                NAMESPACE,
+                uuid(962),
+                requestDigest,
+                uuid(963),
+                uuid(964),
+                sourceRequestDigest,
+                uuid(965),
+                "new-v30-tenant",
+                "new-v30-world",
+                "New V30 World",
+                9761L,
+                "gds-new-v30-intake",
+                sourceEvidenceDigest,
+                receiptDigest))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("chk_gs_authored_world_source_intake_provenance_v29");
   }
@@ -727,13 +709,12 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         .isEmpty();
     assertThat(fixture.catalogRepository.readByRequest(NAMESPACE, uuid(40))).contains(first);
     assertThat(fixture.catalogRepository.readByRequest(NAMESPACE, uuid(50))).contains(second);
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE gameplay_tenant_shared_playable_state_namespace "
-                        + "SET playable_state_namespace_id = ? WHERE tenant_id = ?",
-                    first.playableStateNamespaceId(),
-                    RETAINED_TENANT_ID))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE gameplay_tenant_shared_playable_state_namespace "
+                    + "SET playable_state_namespace_id = ? WHERE tenant_id = ?",
+                first.playableStateNamespaceId(),
+                RETAINED_TENANT_ID))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining(
             "Legacy tenant SHARED namespace conflicts with a canonical ISOLATED realm namespace");
@@ -1024,40 +1005,39 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     AuthoredWorldSourceEvidence source = receipt.source();
     UUID operationId = uuid(1044);
     long privateTenantId = 1044L;
-    fixture.transactions.execute(
-        status -> {
-          fixture.dsl.execute(
-              "INSERT INTO game_session_tenant_scope_reservation "
-                  + "(game_session_tenant_id, reservation_kind) VALUES (?, 'FRESH_SOURCE_BOUND')",
-              privateTenantId);
-          fixture.dsl.execute(
-              "INSERT INTO game_session_tenant_canonical_claim "
-                  + "(target_namespace, canonical_tenant_id, legacy_game_session_tenant_id, association_kind, "
-                  + "reservation_kind, association_operation_id, association_request_id) "
-                  + "VALUES (?, ?, ?, 'FRESH_SOURCE_BOUND', 'FRESH_SOURCE_BOUND', ?, ?)",
-              NAMESPACE,
-              source.canonicalTenantId(),
-              privateTenantId,
-              operationId,
-              source.registrationRequestId());
-          fixture.dsl.execute(
-              "INSERT INTO game_session_fresh_tenant_association "
-                  + "(association_operation_id, target_namespace, association_request_id, source_schema_version, "
-                  + "source_target_namespace, source_request_id, source_canonical_tenant_id, canonical_tenant_id, "
-                  + "legacy_game_session_tenant_id, source_game_row_id, source_game_tenant_key, provenance_kind) "
-                  + "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW')",
-              operationId,
-              NAMESPACE,
-              source.registrationRequestId(),
-              NAMESPACE,
-              source.registrationRequestId(),
-              source.canonicalTenantId(),
-              source.canonicalTenantId(),
-              privateTenantId,
-              source.sourceGameRowId(),
-              source.sourceGameTenantKey());
-          return null;
-        });
+    fixture.transactions.execute(status -> {
+      fixture.dsl.execute(
+          "INSERT INTO game_session_tenant_scope_reservation "
+              + "(game_session_tenant_id, reservation_kind) VALUES (?, 'FRESH_SOURCE_BOUND')",
+          privateTenantId);
+      fixture.dsl.execute(
+          "INSERT INTO game_session_tenant_canonical_claim "
+              + "(target_namespace, canonical_tenant_id, legacy_game_session_tenant_id, association_kind, "
+              + "reservation_kind, association_operation_id, association_request_id) "
+              + "VALUES (?, ?, ?, 'FRESH_SOURCE_BOUND', 'FRESH_SOURCE_BOUND', ?, ?)",
+          NAMESPACE,
+          source.canonicalTenantId(),
+          privateTenantId,
+          operationId,
+          source.registrationRequestId());
+      fixture.dsl.execute(
+          "INSERT INTO game_session_fresh_tenant_association "
+              + "(association_operation_id, target_namespace, association_request_id, source_schema_version, "
+              + "source_target_namespace, source_request_id, source_canonical_tenant_id, canonical_tenant_id, "
+              + "legacy_game_session_tenant_id, source_game_row_id, source_game_tenant_key, provenance_kind) "
+              + "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW')",
+          operationId,
+          NAMESPACE,
+          source.registrationRequestId(),
+          NAMESPACE,
+          source.registrationRequestId(),
+          source.canonicalTenantId(),
+          source.canonicalTenantId(),
+          privateTenantId,
+          source.sourceGameRowId(),
+          source.sourceGameTenantKey());
+      return null;
+    });
   }
 
   private static void insertCatalogRow(
@@ -1265,17 +1245,15 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
       if (retained || !"NEW_GAME_ROW".equals(source.source().provenanceKind())) {
         return catalogRepository.prepareInitialPublicProduction(request, null);
       }
-      transactions.execute(
-          status ->
-              new GameSessionFreshTenantAssociationRepository(dsl)
-                  .associateFresh(
-                      UUID.nameUUIDFromBytes(
-                          ("gs-association/" + source.source().canonicalTenantId())
-                              .getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                      source.source().targetNamespace(),
-                      source,
-                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
-                          source.source())));
+      transactions.execute(status ->
+          new GameSessionFreshTenantAssociationRepository(dsl)
+              .associateFresh(
+                  UUID.nameUUIDFromBytes(
+                      ("gs-association/" + source.source().canonicalTenantId())
+                          .getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                  source.source().targetNamespace(),
+                  source,
+                  CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source.source())));
       UUID versionId =
           UUID.nameUUIDFromBytes(
               ("controlled-version/" + source.source().canonicalTenantId())

@@ -119,11 +119,10 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
     Objects.requireNonNull(selected, "selected");
     var scope =
         findScope(originalCompactJwt, intakeRequestId, owner, selected)
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Original source-read reservation is unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Original source-read reservation is unavailable")
+                    .asRuntimeException());
     return recover(scope);
   }
 
@@ -146,11 +145,10 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
     Objects.requireNonNull(selected, "selected");
     var scope =
         findScope(originalCompactJwt, intakeRequestId, owner, selected)
-            .orElseThrow(
-                () ->
-                    Status.FAILED_PRECONDITION
-                        .withDescription("Original source-read reservation is unavailable")
-                        .asRuntimeException());
+            .orElseThrow(() ->
+                Status.FAILED_PRECONDITION
+                    .withDescription("Original source-read reservation is unavailable")
+                    .asRuntimeException());
     return abortSourceRead(scope);
   }
 
@@ -177,10 +175,9 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
 
     var page =
         Objects.requireNonNull(
-            ownerTransaction.execute(
-                ignored ->
-                    repository.findExpiredPreliminarySourceReadScopes(
-                        boundedCandidates, namespace, after)),
+            ownerTransaction.execute(ignored ->
+                repository.findExpiredPreliminarySourceReadScopes(
+                    boundedCandidates, namespace, after)),
             "Expired source-read candidate lookup returned no result");
     int aborted = 0;
     int candidateNumber = 0;
@@ -221,10 +218,9 @@ public final class AccountSelectedOwnerIntakeSourceReservationService {
         AccountControlUiIssuanceRepository.hash(
             originalCompactJwt.getBytes(StandardCharsets.US_ASCII));
     return Objects.requireNonNull(
-        ownerTransaction.execute(
-            ignored ->
-                repository.findSourceReadScope(
-                    intakeRequestId, owner, selected, namespace, tokenHash)));
+        ownerTransaction.execute(ignored ->
+            repository.findSourceReadScope(
+                intakeRequestId, owner, selected, namespace, tokenHash)));
   }
 
   private void requireScope(SelectedOwnerIntakeSourceReadScope scope) {

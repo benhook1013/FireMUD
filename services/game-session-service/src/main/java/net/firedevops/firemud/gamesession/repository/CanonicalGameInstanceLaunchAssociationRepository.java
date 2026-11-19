@@ -169,10 +169,9 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
     CanonicalGameInstanceLaunchAssociation inserted =
         findByRequest(binding.descriptor().controlPlaneRequestId(), true)
             .map(this::toAssociation)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Canonical launch association insert readback is missing"));
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "Canonical launch association insert readback is missing"));
     requireExactRetry(
         inserted, tenantAssociation, gameInstanceId, runtime, binding.evidence(), mapping, realm);
     return inserted;
@@ -217,12 +216,11 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
     requireOutsideTransaction();
     requireRequestId(controlPlaneRequestId);
     return findByRequest(controlPlaneRequestId, false)
-        .map(
-            row ->
-                new HumanLaunchAssociation(
-                    toAssociation(row),
-                    requiredUuid(row, "canonical_realm_id"),
-                    requiredLong(row, "catalog_revision")));
+        .map(row ->
+            new HumanLaunchAssociation(
+                toAssociation(row),
+                requiredUuid(row, "canonical_realm_id"),
+                requiredLong(row, "catalog_revision")));
   }
 
   public record HumanLaunchAssociation(

@@ -89,24 +89,19 @@ public final class AccountSelectedDraftPublicationSettlementService {
     requireNoAmbientTransaction();
     byte[] receipt =
         Objects.requireNonNull(
-            ownerTransaction.execute(
-                ignored ->
-                    repository.settle(
-                        operation,
-                        terminal,
-                        world.worldOutcome().name(),
-                        world.worldTerminalEvidence())));
-    // A second transaction establishes post-commit historical readback; no new issuer or
-    // credential capture is involved. Neither SQL phase can contain an owner RPC.
-    requireNoAmbientTransaction();
-    byte[] committed =
-        ownerTransaction.execute(
-            ignored ->
+            ownerTransaction.execute(ignored ->
                 repository.settle(
                     operation,
                     terminal,
                     world.worldOutcome().name(),
-                    world.worldTerminalEvidence()));
+                    world.worldTerminalEvidence())));
+    // A second transaction establishes post-commit historical readback; no new issuer or
+    // credential capture is involved. Neither SQL phase can contain an owner RPC.
+    requireNoAmbientTransaction();
+    byte[] committed =
+        ownerTransaction.execute(ignored ->
+            repository.settle(
+                operation, terminal, world.worldOutcome().name(), world.worldTerminalEvidence()));
     if (!Arrays.equals(receipt, committed)) {
       throw new IllegalStateException("Committed Account settlement readback differs from receipt");
     }

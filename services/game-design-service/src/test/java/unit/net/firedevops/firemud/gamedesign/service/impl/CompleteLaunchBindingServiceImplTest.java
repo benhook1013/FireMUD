@@ -1096,24 +1096,23 @@ class CompleteLaunchBindingServiceImplTest {
   private List<PublishParticipantDigestDto> selectorParticipants(
       WorldPublishedStartLocationEvidence selector) {
     return PublishedWorldSelectorFixtures.participants(VERSION_ID, selector).stream()
-        .map(
-            participant ->
-                PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE
-                        .name()
-                        .equals(participant.participantKey())
-                    ? new PublishParticipantDigestDto(
+        .map(participant ->
+            PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE
+                    .name()
+                    .equals(participant.participantKey())
+                ? new PublishParticipantDigestDto(
+                    participant.participantKey(),
+                    participant.scopeValue(),
+                    participant.baseVersionId(),
+                    participant.appliedCommitId(),
+                    participant.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
                         participant.participantKey(),
-                        participant.scopeValue(),
-                        participant.baseVersionId(),
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            participant.participantKey(),
-                            AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        participant.abilitySchemaDigest(),
-                        participant.errorCode(),
-                        participant.errorMessage())
-                    : participant)
+                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    participant.abilitySchemaDigest(),
+                    participant.errorCode(),
+                    participant.errorMessage())
+                : participant)
         .toList();
   }
 

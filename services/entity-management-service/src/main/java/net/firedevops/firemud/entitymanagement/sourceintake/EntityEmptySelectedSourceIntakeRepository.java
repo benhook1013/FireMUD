@@ -111,55 +111,51 @@ public final class EntityEmptySelectedSourceIntakeRepository {
     requireNoAmbientOwnerSql("Entity publication receipt read");
     requirePublicationScopeKey(targetNamespace, canonicalTenantId, gameDesignVersionRowId);
 
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-          var associations =
-              tx.fetch(
-                  "SELECT canonical_version_id, intake_request_id FROM "
-                      + ASSOCIATION
-                      + " WHERE target_namespace = ? AND canonical_tenant_id = ? "
-                      + "ORDER BY canonical_version_id",
-                  targetNamespace,
-                  canonicalTenantId);
-          if (associations.isEmpty()) {
-            throw new IllegalStateException(
-                "Entity selected-empty publication receipt is unavailable");
-          }
+    return dsl.transactionResult(configuration -> {
+      DSLContext tx = DSL.using(configuration);
+      tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      var associations =
+          tx.fetch(
+              "SELECT canonical_version_id, intake_request_id FROM "
+                  + ASSOCIATION
+                  + " WHERE target_namespace = ? AND canonical_tenant_id = ? "
+                  + "ORDER BY canonical_version_id",
+              targetNamespace,
+              canonicalTenantId);
+      if (associations.isEmpty()) {
+        throw new IllegalStateException("Entity selected-empty publication receipt is unavailable");
+      }
 
-          var matches = new ArrayList<EntityEmptySelectedSourceIntakeReceipt>();
-          for (Record association : associations) {
-            UUID associatedCanonicalVersionId = association.get(0, UUID.class);
-            UUID intakeRequestId = association.get(1, UUID.class);
-            if (associatedCanonicalVersionId == null || intakeRequestId == null) {
-              throw new CorruptReceiptException(
-                  "Entity publication association identity is corrupt");
-            }
-            EntityEmptySelectedSourceIntakeReceipt receipt =
-                readValidated(tx, targetNamespace, intakeRequestId)
-                    .orElseThrow(
-                        () ->
-                            new CorruptReceiptException(
-                                "Entity publication association has no committed receipt"));
-            var target = receipt.authorizationBinding().selected().target();
-            if (!canonicalTenantId.equals(receipt.canonicalTenantId())
-                || !associatedCanonicalVersionId.equals(receipt.canonicalVersionId())
-                || !canonicalTenantId.equals(target.canonicalTenantId())
-                || !associatedCanonicalVersionId.equals(target.canonicalVersionId())) {
-              throw new CorruptReceiptException(
-                  "Entity publication association differs from the retained selected target");
-            }
-            if (target.gameDesignVersionRowId() == gameDesignVersionRowId) {
-              matches.add(receipt);
-            }
-          }
-          if (matches.size() != 1) {
-            throw new IllegalStateException(
-                "Entity selected-empty publication scope is missing or ambiguous");
-          }
-          return matches.get(0);
-        });
+      var matches = new ArrayList<EntityEmptySelectedSourceIntakeReceipt>();
+      for (Record association : associations) {
+        UUID associatedCanonicalVersionId = association.get(0, UUID.class);
+        UUID intakeRequestId = association.get(1, UUID.class);
+        if (associatedCanonicalVersionId == null || intakeRequestId == null) {
+          throw new CorruptReceiptException("Entity publication association identity is corrupt");
+        }
+        EntityEmptySelectedSourceIntakeReceipt receipt =
+            readValidated(tx, targetNamespace, intakeRequestId)
+                .orElseThrow(() ->
+                    new CorruptReceiptException(
+                        "Entity publication association has no committed receipt"));
+        var target = receipt.authorizationBinding().selected().target();
+        if (!canonicalTenantId.equals(receipt.canonicalTenantId())
+            || !associatedCanonicalVersionId.equals(receipt.canonicalVersionId())
+            || !canonicalTenantId.equals(target.canonicalTenantId())
+            || !associatedCanonicalVersionId.equals(target.canonicalVersionId())) {
+          throw new CorruptReceiptException(
+              "Entity publication association differs from the retained selected target");
+        }
+        if (target.gameDesignVersionRowId() == gameDesignVersionRowId) {
+          matches.add(receipt);
+        }
+      }
+      if (matches.size() != 1) {
+        throw new IllegalStateException(
+            "Entity selected-empty publication scope is missing or ambiguous");
+      }
+      return matches.get(0);
+    });
   }
 
   /**
@@ -184,55 +180,53 @@ public final class EntityEmptySelectedSourceIntakeRepository {
 
     UUID genesisId = UUID.randomUUID();
     EntityEmptySelectedSourceIntakeReceipt committed =
-        dsl.transactionResult(
-            configuration -> {
-              DSLContext tx = DSL.using(configuration);
-              tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-              lockOwnerRecords(tx);
-              lockSourceAndInboundTables(tx);
+        dsl.transactionResult(configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+          lockOwnerRecords(tx);
+          lockSourceAndInboundTables(tx);
 
-              Optional<EntityEmptySelectedSourceIntakeReceipt> previous =
-                  readValidated(tx, binding.targetNamespace(), binding.intakeRequestId());
-              if (previous.isPresent()) {
-                EntityEmptySelectedSourceIntakeReceipt receipt = previous.orElseThrow();
-                receipt.requireSameInputs(inputs);
-                return receipt;
-              }
-              requireNoPriorScopeOrOperation(tx, binding);
+          Optional<EntityEmptySelectedSourceIntakeReceipt> previous =
+              readValidated(tx, binding.targetNamespace(), binding.intakeRequestId());
+          if (previous.isPresent()) {
+            EntityEmptySelectedSourceIntakeReceipt receipt = previous.orElseThrow();
+            receipt.requireSameInputs(inputs);
+            return receipt;
+          }
+          requireNoPriorScopeOrOperation(tx, binding);
 
-              long maximumOccupiedKey = maximumOccupiedSourceKey(tx);
-              long localTenantKey = Math.addExact(maximumOccupiedKey, 1L);
-              long localVersionKey = Math.addExact(maximumOccupiedKey, 2L);
-              List<EntityEmptySelectedSourceIntakeReceipt.FamilyCensus> familyStates =
-                  censusEveryDeclaredFamily(tx, inputs, localTenantKey, localVersionKey);
+          long maximumOccupiedKey = maximumOccupiedSourceKey(tx);
+          long localTenantKey = Math.addExact(maximumOccupiedKey, 1L);
+          long localVersionKey = Math.addExact(maximumOccupiedKey, 2L);
+          List<EntityEmptySelectedSourceIntakeReceipt.FamilyCensus> familyStates =
+              censusEveryDeclaredFamily(tx, inputs, localTenantKey, localVersionKey);
 
-              reserveCanonicalKey(tx, "TENANT", localTenantKey);
-              reserveCanonicalKey(tx, "VERSION", localVersionKey);
-              OffsetDateTime retainedAt =
-                  requiredScalar(tx, "SELECT CURRENT_TIMESTAMP", OffsetDateTime.class)
-                      .withOffsetSameInstant(ZoneOffset.UTC);
-              EntityEmptySelectedSourceIntakeReceipt receipt =
-                  EntityEmptySelectedSourceIntakeReceipt.create(
-                      inputs,
-                      genesisId,
-                      localTenantKey,
-                      localVersionKey,
-                      requestDigest,
-                      familyStates,
-                      retainedAt);
-              insertAssociation(tx, receipt);
-              insertEmptyOnlyProviderStates(tx, receipt);
-              insertFamilyStates(tx, receipt);
-              insertReceipt(tx, receipt);
-              return receipt;
-            });
+          reserveCanonicalKey(tx, "TENANT", localTenantKey);
+          reserveCanonicalKey(tx, "VERSION", localVersionKey);
+          OffsetDateTime retainedAt =
+              requiredScalar(tx, "SELECT CURRENT_TIMESTAMP", OffsetDateTime.class)
+                  .withOffsetSameInstant(ZoneOffset.UTC);
+          EntityEmptySelectedSourceIntakeReceipt receipt =
+              EntityEmptySelectedSourceIntakeReceipt.create(
+                  inputs,
+                  genesisId,
+                  localTenantKey,
+                  localVersionKey,
+                  requestDigest,
+                  familyStates,
+                  retainedAt);
+          insertAssociation(tx, receipt);
+          insertEmptyOnlyProviderStates(tx, receipt);
+          insertFamilyStates(tx, receipt);
+          insertReceipt(tx, receipt);
+          return receipt;
+        });
 
     EntityEmptySelectedSourceIntakeReceipt readBack =
         read(committed.targetNamespace(), committed.intakeRequestId())
-            .orElseThrow(
-                () ->
-                    new CorruptReceiptException(
-                        "Committed Entity source catalogue receipt is unavailable"));
+            .orElseThrow(() ->
+                new CorruptReceiptException(
+                    "Committed Entity source catalogue receipt is unavailable"));
     if (!Arrays.equals(committed.canonicalBytes(), readBack.canonicalBytes())
         || !committed.receiptDigest().equals(readBack.receiptDigest())
         || !committed.requestDigest().equals(readBack.requestDigest())

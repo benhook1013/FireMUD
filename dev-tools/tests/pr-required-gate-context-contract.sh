@@ -853,6 +853,7 @@ async function scenario(kind, event = "pull_request") {
       reads += 1;
       return {data: {state: "open", head: {sha: head}, base: {ref: kind === "stale-final" && reads > 3 ? "other" : "develop", sha: base}, merge_commit_sha: merge}};
     }},
+    git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: base}}})},
     repos: {
       getCommit: async ({ref}) => ({data: {sha: ref, parents: [{sha: kind === "bad-parents" ? defaultSha : base}, {sha: head}]}}),
       getContent: async ({ref, path}) => {
@@ -3763,6 +3764,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     if (options.originalError) throw options.originalError;
     const job = structuredClone(candidate);
     if (options.ordinaryAfterDrift) job.steps.find(s => s.name.startsWith("Known canonical")).conclusion = "skipped";
+    if (options.omitGeneralMarker) job.steps = job.steps.filter(s => !s.name.startsWith("Known canonical"));
     return [job];
   }}, "benhook1013", "FireMUD", canonicalSmokeJobName, (_label, call) => call(), async run => {
     if (options.directSnapshots && run.event === "repository_dispatch") {
@@ -3844,7 +3846,9 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
   if (options.ordinaryAfterDrift) {
     assert.deepEqual(failures, []); assert.deepEqual(outputs, []); assert.equal(writes, 0);
   } else if (options.directInvalid) {
-    assert.deepEqual(failures, [options.successfulSnapshots
+    assert.deepEqual(failures, [options.omitGeneralMarker
+      ? "Runtime smoke proof is missing its unambiguous transition-exception disposition."
+      : options.successfulSnapshots
       ? "Canonical PLAY transition exception could not be verified; runtime qualification remains blocked."
       : "Runtime images run 99 did not complete successfully: run=failure"]);
     assert.deepEqual(outputs, []); assert.equal(writes, 0);
@@ -3892,7 +3896,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
 // Exercise the exact production loop through cancellation of an old tuple and
 // a successful refresh of the new tuple. Only independently verified ordinary
 // proof is accepted; a title match and green job are insufficient.
-async function movedCancellation(ordinaryProof) {
+async function movedCancellation(ordinaryProof, listedOldReplacement = false) {
   let now = 0, typedReads = 0, proofReads = 0, finalReads = 0;
   const eventIdentity = {...identity, sourceEvent: "pull_request"};
   const moved = {...identity, baseSha: "d".repeat(40), mergeSha: "e".repeat(40), sourceEvent: "repository_dispatch"};
@@ -3918,7 +3922,8 @@ async function movedCancellation(ordinaryProof) {
     {now: () => now}, 0, 100, 1, async (event, _title, selected) => {
       if (event === "pull_request") return old;
       typedReads++;
-      return selected.mergeSha === moved.mergeSha ? refresh : null;
+      return selected.mergeSha === moved.mergeSha ? refresh
+        : listedOldReplacement ? {...refresh, id: refresh.id - 1} : null;
     }, "3390", "test identity", 20,
     {payload: {pull_request: {head: {ref: "feature", repo: {full_name: repositoryName}}}}},
     60, 30, value => Number.isSafeInteger(value) && value > 0, async run => {
@@ -4003,6 +4008,8 @@ function markerAccepted(overrides = {}) {
   await pendingRefreshCaller(["completed", "completed"], false, {transientFinal: true});
   await movedCancellation(true);
   await movedCancellation(false);
+  await movedCancellation(true, true);
+  await movedCancellation(false, true);
   assert.equal((await recoveredFailure({original: {conclusion: "timed_out"}})).accepted, true);
   await pendingRefreshCaller(["queued", "completed"], false, {originalConclusion: "timed_out"});
   for (const siblingStatus of ["in_progress", "queued"]) {
@@ -4026,6 +4033,13 @@ function markerAccepted(overrides = {}) {
       recoverDrift: true, finalIdentity: {baseSha: "d".repeat(40), mergeSha: "e".repeat(40)}, directSnapshots,
       successfulSnapshots: true,
       snapshotExpires: directSnapshots.length === 4, directInvalid: directSnapshots[0] === "invalid",
+    });
+  }
+  for (const state of ["complete", "invalid"]) {
+    await pendingRefreshCaller(["completed", "completed"], false, {
+      recoverDrift: true, finalIdentity: {baseSha: "d".repeat(40), mergeSha: "e".repeat(40)},
+      directSnapshots: [state], successfulSnapshots: true, omitGeneralMarker: true,
+      directInvalid: state === "invalid",
     });
   }
   await pendingRefreshCaller(["missing-step", "completed"]);
@@ -4313,10 +4327,50 @@ assert queue_paths(runtime) == [("jobs", "dispatch-pr-base-refreshes", "concurre
 
 assert all("checkout" not in step.get("uses", "") for step in job["steps"])
 assert "github.event.workflow_run.event == 'pull_request'" in job["if"]
+assert publisher["on"]["workflow_run"] == {
+    "workflows": ["Build Runtime Images", "CI — Validation"], "types": ["completed"],
+}
+# Exercise the admission expressions themselves, not just the downstream JS proof.
+import json
+Path(sys.argv[2] + ".admission").write_text(json.dumps(
+    {name: publisher["jobs"][name]["if"] for name in ("source", "reconcile-failed-pr-runtime")}
+))
 Path(sys.argv[2]).write_text(next(step["with"]["script"] for step in job["steps"] if "github-script" in step.get("uses", "")))
 PY
 node - "$smoke_clock_fixture.reconcile" <<'NODE'
 const assert = require("node:assert/strict"), fs = require("node:fs");
+const admission = JSON.parse(fs.readFileSync(process.argv[2] + ".admission", "utf8"));
+const runtimePath = ".github/workflows/runtime-images.yml", validationPath = ".github/workflows/ci.yml";
+const topologyBase = "b".repeat(40), topologyHead = "a".repeat(40), topologyMerge = "c".repeat(40);
+const runtimeName = `Build Runtime Images secure-pr-artifact pr-42 base-${topologyBase} head-${topologyHead} merge-${topologyMerge} mode-required`;
+const validationName = `CI — Validation pr-42 base-${topologyBase} head-${topologyHead}`;
+function admits(job, overrides = {}) {
+  const {eventName = "workflow_run", event = "pull_request", name = runtimeName, path = runtimePath,
+    conclusion = "success", foreign = false, action = "", branch = "main"} = overrides;
+  const expression = admission[job];
+  assert.match(expression, /^\$\{\{ .* \}\}$/);
+  const evaluate = new Function("github", "contains", "fromJSON", "format", "return " + expression.slice(3, -2));
+  return Boolean(evaluate({event_name: eventName, repository: "example/firemud", ref: "refs/heads/" + branch,
+    event: {action, repository: {default_branch: "main"},
+      workflow_run: {name, display_title: name, path, event, conclusion,
+        head_repository: {full_name: foreign ? "fork/foreign" : "example/firemud"}}}},
+    (values, value) => values.includes(value), JSON.parse, (template, arg) => template.replace("{0}", arg)));
+}
+const reconciler = "reconcile-failed-pr-runtime";
+const validation = {name: validationName, path: validationPath};
+for (const conclusion of ["success", "failure", "timed_out", "cancelled"]) {
+  assert.equal(admits("source", {...validation, conclusion}), false, conclusion);
+  assert.equal(admits(reconciler, {...validation, conclusion}), conclusion === "cancelled", conclusion);
+  assert.equal(admits("source", {conclusion}), conclusion === "success", conclusion);
+  assert.equal(admits(reconciler, {conclusion}), conclusion !== "success", conclusion);
+}
+assert.equal(admits("source", {path: ".github/workflows/untrusted.yml"}), false);
+assert.equal(admits(reconciler, {...validation, path: ".github/workflows/untrusted.yml", conclusion: "cancelled"}), false);
+assert.equal(admits(reconciler, {...validation, conclusion: "cancelled", event: "push"}), false);
+assert.equal(admits(reconciler, {...validation, conclusion: "cancelled", foreign: true}), false);
+assert.equal(admits("source", {event: "repository_dispatch"}), true);
+assert.equal(admits("source", {eventName: "repository_dispatch", action: "pr-runtime-image-publication"}), true);
+assert.equal(admits("source", {eventName: "repository_dispatch", action: "pr-runtime-image-publication", branch: "other"}), false);
 const execute = new Function("github", "context", "core", "Date", "setTimeout",
   `return (async () => {${fs.readFileSync(process.argv[2], "utf8")}\n})()`);
 async function run(kind, shared = {visible: false, posts: 0}) {
@@ -4327,11 +4381,18 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     repository: {full_name: repository}, head_repository: {full_name: repository}, created_at: "2026-11-18T00:00:00Z"};
   const ci = {...source, id: 90, workflow_id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation",
     display_title: `CI — Validation pr-42 base-${base} head-${head}`};
+  const wake = kind.startsWith("wake-");
+  if (wake) kind = kind.slice("wake-".length);
   const cancelledCase = kind.startsWith("cancel-");
   const olderCi = cancelledCase && kind !== "cancel-older-failed" ? {...ci, conclusion: "success"} : ci;
   const newerCancelled = {...ci, id: 91, conclusion: "cancelled"};
   const refresh = {...source, id: 110, event: "repository_dispatch", head_branch: "develop", head_sha: "d".repeat(40)};
-  const event = structuredClone(source);
+  const event = structuredClone(wake ? newerCancelled : source);
+  event.name = event.display_title;
+  if (kind === "cancel-wake-wrong-id") event.workflow_id = source.workflow_id;
+  if (kind === "cancel-wake-stale-head") event.head_sha = base;
+  if (kind === "cancel-wake-fork") event.head_repository.full_name = "fork/repo";
+  if (kind === "cancel-wake-nonterminal") event.status = "in_progress";
   if (kind === "typed-callback") event.event = "repository_dispatch";
   if (kind === "nested-callback") event.event = "workflow_run";
   if (kind === "fork") event.head_repository.full_name = "fork/repo";
@@ -4361,15 +4422,22 @@ async function run(kind, shared = {visible: false, posts: 0}) {
           runs = [{...ci, id: 91, ...(kind === "pending-newer" ? {status: "in_progress"} : {})}, ci];
           if (kind === "new-meta-only") runs = runs.slice(0, 1);
         }
-        if (workflow_id === "ci.yml" && cancelledCase) runs = [newerCancelled, olderCi];
+        if (workflow_id === "ci.yml" && cancelledCase) runs = kind === "cancel-wake-not-inventory"
+          ? [olderCi] : kind === "cancel-wake-newer-ci" ? [{...ci, id: 92, status: "in_progress"}, newerCancelled, olderCi] : [newerCancelled, olderCi];
         if (workflow_id === "ci.yml" && ciInventoryReads > 1 && kind.startsWith("late-ci-")) {
           runs = kind === "late-ci-absent" ? [] : [{...ci, id: 91, ...(kind === "late-ci-pending" ? {status: "in_progress"} : {})}, ci];
         }
         if (workflow_id === "runtime-images.yml" && runEvent === "pull_request") {
-          runs = kind === "newer-original" ? [{...source, id: 105, status: "in_progress"}] : [source];
+          runs = ["newer-original", "cancel-wake-newer-original"].includes(kind)
+            ? [{...source, id: 105, status: "in_progress"}, source] : kind === "cancel-wake-no-original" ? [] : [source];
         }
         if (workflow_id === "runtime-images.yml" && runEvent === "repository_dispatch" && shared.posts) {
           shared.observations = (shared.observations || 0) + 1;
+          if ((kind === "post-read-transient" && shared.observations === 1) || kind === "post-read-timeout") {
+            throw Object.assign(new Error("temporary post visibility error"), {status: 502});
+          }
+          if (kind === "post-read-forbidden") throw Object.assign(new Error("visibility forbidden"), {status: 403});
+          if (kind === "post-read-incomplete") return {data: {total_count: 1, workflow_runs: []}};
           if (kind === "ambiguous-visible" && clock >= 5000) {
             shared.visible = true;
             runs = [refresh];
@@ -4462,7 +4530,8 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   }};
   await execute(github, {repo: {owner: "example", repo: "firemud"}, eventName: "workflow_run",
     payload: {workflow_run: event, repository: {default_branch: "develop"}}},
-    {info: () => {}, setFailed: message => { shared.failure = message; }},
+    {info: () => {}, warning: message => { (shared.warnings ??= []).push(message); },
+      setFailed: message => { shared.failure = message; }},
     class extends Date { static now() { return clock; } }, callback => {clock += 5000; callback();});
   if (kind === "merge-unknown") assert.equal(tupleReads, 6, "unresolved mergeability retries are bounded");
   if (kind === "merge-pending") assert.equal(tupleReads, 3, "one convergence retry plus final current tuple fence");
@@ -4471,6 +4540,15 @@ async function run(kind, shared = {visible: false, posts: 0}) {
 (async () => {
   assert.equal(await run("valid"), 1);
   assert.equal(await run("cancel-before-enforcement"), 1);
+  const delayedWake = {visible: false, posts: 0};
+  assert.equal(await run("pending-newer", delayedWake), 0, "original completion cannot ignore pending CI");
+  assert.equal(await run("wake-cancel-before-enforcement", delayedWake), 1, "exact cancelled CI wake restores liveness");
+  assert.equal(await run("wake-cancel-before-enforcement", delayedWake), 1, "replayed wake does not redispatch");
+  for (const scenario of ["cancel-wake-wrong-id", "cancel-wake-stale-head", "cancel-wake-fork",
+    "cancel-wake-nonterminal", "cancel-rerun", "cancel-upstream-step-failed", "cancel-older-failed",
+    "cancel-wake-not-inventory", "cancel-wake-newer-ci", "cancel-wake-newer-original", "cancel-wake-no-original"]) {
+    assert.equal(await run("wake-" + scenario), 0, scenario);
+  }
   for (const scenario of ["cancel-older-failed", "cancel-native-failure", "cancel-enforced",
       "cancel-missing-time", "cancel-started", "cancel-rerun", "cancel-gate-failed", "cancel-missing-step",
       "cancel-upstream-failure", "cancel-upstream-timeout", "cancel-upstream-action", "cancel-upstream-startup",
@@ -4505,6 +4583,20 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     const state = {visible: false, posts: 0};
     await assert.rejects(run(scenario, state));
     assert.equal(state.posts, ["incomplete", "at-cap"].includes(scenario) ? 0 : 1, "never retry unknown POST");
+  }
+  const readTransient = {visible: false, posts: 0};
+  assert.equal(await run("post-read-transient", readTransient), 1);
+  assert.equal(readTransient.observations, 2);
+  assert.equal(readTransient.warnings.length, 1);
+  for (const [scenario, reason, observations] of [
+    ["post-read-timeout", /accepted but visibility is unknown/, 25],
+    ["post-read-forbidden", /visibility forbidden/, 1],
+    ["post-read-incomplete", /inventory is incomplete/, 1],
+  ]) {
+    const state = {visible: false, posts: 0};
+    await assert.rejects(run(scenario, state), reason);
+    assert.equal(state.posts, 1, "only the inventory read may retry");
+    assert.equal(state.observations, observations, scenario);
   }
   const rejectedPost = {visible: false, posts: 0};
   await assert.rejects(run("rejected-post", rejectedPost), /validation rejected/);

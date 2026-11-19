@@ -168,8 +168,8 @@ class StripeHostingWebhookVerifierTest {
 
   private static String eventPayload() {
     return """
-        {"id":"evt_local_signature_test","object":"event","api_version":"2025-02-24.acacia","created":__CREATED_TIMESTAMP__,"data":{"object":{"id":"sub_local_signature_test","object":"subscription","status":"active","metadata":{"description":"hébergement 🏠"}}},"livemode":false,"pending_webhooks":1,"request":null,"type":"customer.subscription.updated"}
-        """
+    {"id":"evt_local_signature_test","object":"event","api_version":"2025-02-24.acacia","created":__CREATED_TIMESTAMP__,"data":{"object":{"id":"sub_local_signature_test","object":"subscription","status":"active","metadata":{"description":"hébergement 🏠"}}},"livemode":false,"pending_webhooks":1,"request":null,"type":"customer.subscription.updated"}
+    """
         .replace("__CREATED_TIMESTAMP__", Long.toString(NOW.getEpochSecond()));
   }
 }

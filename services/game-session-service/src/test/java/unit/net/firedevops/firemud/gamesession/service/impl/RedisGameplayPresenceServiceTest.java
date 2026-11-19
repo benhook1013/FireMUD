@@ -57,12 +57,11 @@ class RedisGameplayPresenceServiceTest {
     verify(valueOperations)
         .set(
             org.mockito.Mockito.eq("gameplaypresence:session:1"),
-            argThat(
-                value ->
-                    value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                            .characterName()
-                            .equals("Ben")),
+            argThat(value ->
+                value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                        .characterName()
+                        .equals("Ben")),
             org.mockito.Mockito.eq(TTL));
     verify(setOperations).add("gameplaypresence:22:7:sessions", "1");
     verify(setOperations)
@@ -102,12 +101,10 @@ class RedisGameplayPresenceServiceTest {
     verify(valueOperations)
         .set(
             org.mockito.Mockito.eq("gameplaypresence:session:1"),
-            argThat(
-                value ->
-                    value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                                .role()
-                            == GameplayPresenceRole.PLAYER),
+            argThat(value ->
+                value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value).role()
+                        == GameplayPresenceRole.PLAYER),
             org.mockito.Mockito.eq(TTL));
   }
 
@@ -128,12 +125,11 @@ class RedisGameplayPresenceServiceTest {
     verify(valueOperations)
         .set(
             org.mockito.Mockito.eq("gameplaypresence:session:1"),
-            argThat(
-                value ->
-                    value
-                            instanceof
-                            net.firedevops.firemud.gamesession.service.GameplayPresence presence
-                        && presence.role() == GameplayPresenceRole.PLAYER),
+            argThat(value ->
+                value
+                        instanceof
+                        net.firedevops.firemud.gamesession.service.GameplayPresence presence
+                    && presence.role() == GameplayPresenceRole.PLAYER),
             org.mockito.Mockito.eq(TTL));
   }
 
@@ -154,12 +150,10 @@ class RedisGameplayPresenceServiceTest {
     verify(valueOperations)
         .set(
             org.mockito.Mockito.eq("gameplaypresence:session:1"),
-            argThat(
-                value ->
-                    value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                                .role()
-                            == GameplayPresenceRole.PLAYER),
+            argThat(value ->
+                value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value).role()
+                        == GameplayPresenceRole.PLAYER),
             org.mockito.Mockito.eq(TTL));
   }
 
@@ -333,29 +327,26 @@ class RedisGameplayPresenceServiceTest {
     verify(valueOperations)
         .set(
             org.mockito.Mockito.eq("gameplaypresence:session:3"),
-            argThat(
-                value ->
-                    value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                            .accountId()
-                            .equals(PLAYER_ACCOUNT_ID)
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                            .playableStateScope()
-                            .equals("ISOLATED")
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                                .pointerVersion()
-                            == 17L
-                        && Long.valueOf(125L)
-                            .equals(
-                                ((net.firedevops.firemud.gamesession.service.GameplayPresence)
-                                        value)
-                                    .lastAcceptedCommandAtEpochMs())
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                                .lastMeaningfulActivityAtEpochMs()
-                            == 90L
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                                .role()
-                            == GameplayPresenceRole.PLAYER),
+            argThat(value ->
+                value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                        .accountId()
+                        .equals(PLAYER_ACCOUNT_ID)
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                        .playableStateScope()
+                        .equals("ISOLATED")
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                            .pointerVersion()
+                        == 17L
+                    && Long.valueOf(125L)
+                        .equals(
+                            ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .lastAcceptedCommandAtEpochMs())
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                            .lastMeaningfulActivityAtEpochMs()
+                        == 90L
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value).role()
+                        == GameplayPresenceRole.PLAYER),
             org.mockito.Mockito.eq(TTL));
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
     verify(redisTemplate)
@@ -391,32 +382,29 @@ class RedisGameplayPresenceServiceTest {
     verify(valueOperations)
         .set(
             org.mockito.Mockito.eq("gameplaypresence:session:3"),
-            argThat(
-                value ->
-                    value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                            .accountId()
-                            .equals(PLAYER_ACCOUNT_ID)
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                            .playableStateScope()
-                            .equals("ISOLATED")
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                                .pointerVersion()
-                            == 17L
-                        && Long.valueOf(145L)
-                            .equals(
-                                ((net.firedevops.firemud.gamesession.service.GameplayPresence)
-                                        value)
-                                    .explicitAfkSinceEpochMs())
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                                .lastAcceptedCommandAtEpochMs()
-                            == 90L
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                                .lastMeaningfulActivityAtEpochMs()
-                            == 95L
-                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
-                                .role()
-                            == GameplayPresenceRole.PLAYER),
+            argThat(value ->
+                value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                        .accountId()
+                        .equals(PLAYER_ACCOUNT_ID)
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                        .playableStateScope()
+                        .equals("ISOLATED")
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                            .pointerVersion()
+                        == 17L
+                    && Long.valueOf(145L)
+                        .equals(
+                            ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .explicitAfkSinceEpochMs())
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                            .lastAcceptedCommandAtEpochMs()
+                        == 90L
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                            .lastMeaningfulActivityAtEpochMs()
+                        == 95L
+                    && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value).role()
+                        == GameplayPresenceRole.PLAYER),
             org.mockito.Mockito.eq(TTL));
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
     verify(redisTemplate)

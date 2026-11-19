@@ -64,12 +64,11 @@ class AccountTenantCreationAdmissionBindingTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> deadlines(binding, NOW, NOW + 86_400_000L))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                deadlines(
-                    binding,
-                    binding.operationDeadlineEpochMillis(),
-                    binding.receiptCleanupDeadlineEpochMillis() + 1L))
+    assertThatThrownBy(() ->
+            deadlines(
+                binding,
+                binding.operationDeadlineEpochMillis(),
+                binding.receiptCleanupDeadlineEpochMillis() + 1L))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> deadlines(binding, Long.MAX_VALUE, Long.MAX_VALUE))
         .isInstanceOf(IllegalArgumentException.class);

@@ -25,25 +25,23 @@ class AccountStartSessionWorldParticipationHistoricalReadClientTest {
   void requiresFileBackedMtlsAndConfiguredNamespace(@TempDir Path directory) throws Exception {
     var plaintext = fileBacked(directory);
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionWorldParticipationHistoricalReadClient(
-                    new ServiceEndpointsProperties(),
-                    plaintext,
-                    new GrpcChannelFactory(),
-                    "world-runtime"))
+    assertThatThrownBy(() ->
+            new AccountStartSessionWorldParticipationHistoricalReadClient(
+                new ServiceEndpointsProperties(),
+                plaintext,
+                new GrpcChannelFactory(),
+                "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
 
     var classpath = fileBacked(directory);
     classpath.setPrivateKey("classpath:private.key");
-    assertThatThrownBy(
-            () ->
-                new AccountStartSessionWorldParticipationHistoricalReadClient(
-                    new ServiceEndpointsProperties(),
-                    classpath,
-                    new GrpcChannelFactory(),
-                    "world-runtime"))
+    assertThatThrownBy(() ->
+            new AccountStartSessionWorldParticipationHistoricalReadClient(
+                new ServiceEndpointsProperties(),
+                classpath,
+                new GrpcChannelFactory(),
+                "world-runtime"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("file-backed");
 
@@ -54,13 +52,12 @@ class AccountStartSessionWorldParticipationHistoricalReadClientTest {
             new GrpcChannelFactory(),
             "world-runtime");
     try {
-      assertThatThrownBy(
-              () ->
-                  new AccountStartSessionWorldParticipationHistoricalReadClient(
-                      new ServiceEndpointsProperties(),
-                      fileBacked(directory),
-                      new GrpcChannelFactory(),
-                      "not a namespace"))
+      assertThatThrownBy(() ->
+              new AccountStartSessionWorldParticipationHistoricalReadClient(
+                  new ServiceEndpointsProperties(),
+                  fileBacked(directory),
+                  new GrpcChannelFactory(),
+                  "not a namespace"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("namespace");
       assertThatThrownBy(() -> client.read(request("other-runtime")))

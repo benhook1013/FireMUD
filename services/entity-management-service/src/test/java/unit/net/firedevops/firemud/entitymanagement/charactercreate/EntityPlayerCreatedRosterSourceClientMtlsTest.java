@@ -113,19 +113,18 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
       client.init();
       var repository = mock(EntityCharacterCreateRepository.class);
       when(repository.readPlayerCreatedRoster(any(), any()))
-          .thenAnswer(
-              invocation -> {
-                assertThat(owner.receivedRequests()).containsExactly(fixture.request());
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                var published =
-                    invocation.getArgument(
-                        1, EntityPlayerCreatedRosterReadService.PublishedIdentity.class);
-                assertThat(published.tenantId())
-                    .isEqualTo(fixture.world().request().canonicalTenantId());
-                assertThat(published.projection().canonicalBytes())
-                    .containsExactly(fixture.authored().projections().getFirst().canonicalBytes());
-                return List.of();
-              });
+          .thenAnswer(invocation -> {
+            assertThat(owner.receivedRequests()).containsExactly(fixture.request());
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            var published =
+                invocation.getArgument(
+                    1, EntityPlayerCreatedRosterReadService.PublishedIdentity.class);
+            assertThat(published.tenantId())
+                .isEqualTo(fixture.world().request().canonicalTenantId());
+            assertThat(published.projection().canonicalBytes())
+                .containsExactly(fixture.authored().projections().getFirst().canonicalBytes());
+            return List.of();
+          });
       var service = new EntityPlayerCreatedRosterReadService(repository, client);
 
       assertThat(
@@ -141,22 +140,18 @@ class EntityPlayerCreatedRosterSourceClientMtlsTest {
   void constructionRequiresFileBackedMtlsAndCanonicalNamespace() throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     var channels = new GrpcChannelFactory();
-    assertThatThrownBy(
-            () ->
-                new EntityPlayerCreatedRosterSourceClient(
-                    endpoints, new CommonGrpcClientProperties(), channels, NAMESPACE))
+    assertThatThrownBy(() ->
+            new EntityPlayerCreatedRosterSourceClient(
+                endpoints, new CommonGrpcClientProperties(), channels, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
     var plaintext = controlled.clientProperties("entity");
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new EntityPlayerCreatedRosterSourceClient(
-                    endpoints, plaintext, channels, NAMESPACE))
+    assertThatThrownBy(() ->
+            new EntityPlayerCreatedRosterSourceClient(endpoints, plaintext, channels, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new EntityPlayerCreatedRosterSourceClient(
-                    endpoints, controlled.clientProperties("entity"), channels, "Other"))
+    assertThatThrownBy(() ->
+            new EntityPlayerCreatedRosterSourceClient(
+                endpoints, controlled.clientProperties("entity"), channels, "Other"))
         .isInstanceOfSatisfying(
             StatusRuntimeException.class,
             failure ->

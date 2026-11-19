@@ -90,15 +90,14 @@ public final class GameDesignWorldSourceCommitService {
     sources.validateInput(binding);
     retained =
         Objects.requireNonNull(
-            write.execute(
-                ignored -> {
-                  coordinator.lockVersionTarget(binding.target());
-                  var existing = terminal(operation);
-                  if (existing.isPresent()) return existing;
-                  coordinator.claim(binding, original);
-                  coordinator.claimApplicationSlot(binding);
-                  return Optional.empty();
-                }));
+            write.execute(ignored -> {
+              coordinator.lockVersionTarget(binding.target());
+              var existing = terminal(operation);
+              if (existing.isPresent()) return existing;
+              coordinator.claim(binding, original);
+              coordinator.claimApplicationSlot(binding);
+              return Optional.empty();
+            }));
     if (retained.isPresent()) return retained.orElseThrow();
     outsideSql();
     var orderRequest =
@@ -110,111 +109,103 @@ public final class GameDesignWorldSourceCommitService {
     outsideSql();
     var staged =
         Objects.requireNonNull(
-            write.execute(
-                ignored -> {
-                  coordinator.lockVersionTarget(binding.target());
-                  var existing = terminal(operation);
-                  if (existing.isPresent()) return new Staged(existing, Optional.empty());
-                  var claimed = coordinator.claim(binding, original);
-                  coordinator.claimApplicationSlot(binding);
-                  var local = claimed.ownerStates().get(Owner.GAME_DESIGN_CONTROL_PLANE);
-                  if (local == null)
-                    throw new IllegalStateException("Complete GD owner state required");
-                  if (local.status() == OwnerStatus.NOT_ATTEMPTED) {
-                    coordinator.markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
-                    requireApplied(
-                        binding,
-                        sources.apply(binding).ownerOutcome(),
-                        Owner.GAME_DESIGN_CONTROL_PLANE);
-                  } else if (local.status() == OwnerStatus.APPLIED) {
-                    requireApplied(
-                        binding, local.outcome().orElseThrow(), Owner.GAME_DESIGN_CONTROL_PLANE);
-                  } else {
-                    throw new IllegalStateException("Unresolved GD source requires exact recovery");
-                  }
-                  var remote = claimed.ownerStates().get(Owner.WORLD_MANAGEMENT);
-                  if (remote == null)
-                    throw new IllegalStateException("Complete World owner state required");
-                  if (remote.status() == OwnerStatus.APPLIED) {
-                    var outcome = remote.outcome().orElseThrow();
-                    requireApplied(binding, outcome, Owner.WORLD_MANAGEMENT);
-                    return new Staged(Optional.empty(), Optional.of(outcome));
-                  }
-                  if (remote.status() == OwnerStatus.NOT_ATTEMPTED)
-                    coordinator.markOwnerInProgress(binding, Owner.WORLD_MANAGEMENT);
-                  else if (remote.status() != OwnerStatus.IN_PROGRESS
-                      && remote.status() != OwnerStatus.UNKNOWN)
-                    throw new IllegalStateException(
-                        "World owner has no successful recoverable result");
-                  return new Staged(Optional.empty(), Optional.empty());
-                }));
+            write.execute(ignored -> {
+              coordinator.lockVersionTarget(binding.target());
+              var existing = terminal(operation);
+              if (existing.isPresent()) return new Staged(existing, Optional.empty());
+              var claimed = coordinator.claim(binding, original);
+              coordinator.claimApplicationSlot(binding);
+              var local = claimed.ownerStates().get(Owner.GAME_DESIGN_CONTROL_PLANE);
+              if (local == null)
+                throw new IllegalStateException("Complete GD owner state required");
+              if (local.status() == OwnerStatus.NOT_ATTEMPTED) {
+                coordinator.markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+                requireApplied(
+                    binding,
+                    sources.apply(binding).ownerOutcome(),
+                    Owner.GAME_DESIGN_CONTROL_PLANE);
+              } else if (local.status() == OwnerStatus.APPLIED) {
+                requireApplied(
+                    binding, local.outcome().orElseThrow(), Owner.GAME_DESIGN_CONTROL_PLANE);
+              } else {
+                throw new IllegalStateException("Unresolved GD source requires exact recovery");
+              }
+              var remote = claimed.ownerStates().get(Owner.WORLD_MANAGEMENT);
+              if (remote == null)
+                throw new IllegalStateException("Complete World owner state required");
+              if (remote.status() == OwnerStatus.APPLIED) {
+                var outcome = remote.outcome().orElseThrow();
+                requireApplied(binding, outcome, Owner.WORLD_MANAGEMENT);
+                return new Staged(Optional.empty(), Optional.of(outcome));
+              }
+              if (remote.status() == OwnerStatus.NOT_ATTEMPTED)
+                coordinator.markOwnerInProgress(binding, Owner.WORLD_MANAGEMENT);
+              else if (remote.status() != OwnerStatus.IN_PROGRESS
+                  && remote.status() != OwnerStatus.UNKNOWN)
+                throw new IllegalStateException("World owner has no successful recoverable result");
+              return new Staged(Optional.empty(), Optional.empty());
+            }));
     if (staged.terminal().isPresent()) return staged.terminal().orElseThrow();
     outsideSql();
     OwnerOutcome worldOutcome =
         staged
             .worldOutcome()
-            .orElseGet(
-                () -> {
-                  var response =
-                      Objects.requireNonNull(
-                          world.apply(request), "Authenticated World result required");
-                  if (!request.equals(response.request()))
-                    throw new IllegalArgumentException(
-                        "World result changed the complete original request");
-                  // Revalidate even an injected client's returned value; the strict carrier checks
-                  // the complete
-                  // original binding, APPLIED bytes and every World expected/resulting epoch.
-                  var verified =
-                      new WorldOriginalDraftGraphApplyEvidence.Result(
-                          request, response.ownerReadback());
-                  return new OwnerOutcome(
-                      Owner.WORLD_MANAGEMENT,
-                      OwnerStatus.APPLIED,
-                      binding.commitId(),
-                      binding.digest(),
-                      verified.resultIdentity(),
-                      verified.ownerReadback().result(),
-                      verified.appliedEpochs().stream()
-                          .map(
-                              epoch ->
-                                  new AppliedEpoch(
-                                      epoch.aggregateType(),
-                                      epoch.aggregateId(),
-                                      epoch.scopeType(),
-                                      epoch.scopeId(),
-                                      epoch.expectedEpoch(),
-                                      epoch.resultingEpoch()))
-                          .toList());
-                });
+            .orElseGet(() -> {
+              var response =
+                  Objects.requireNonNull(
+                      world.apply(request), "Authenticated World result required");
+              if (!request.equals(response.request()))
+                throw new IllegalArgumentException(
+                    "World result changed the complete original request");
+              // Revalidate even an injected client's returned value; the strict carrier checks
+              // the complete
+              // original binding, APPLIED bytes and every World expected/resulting epoch.
+              var verified =
+                  new WorldOriginalDraftGraphApplyEvidence.Result(
+                      request, response.ownerReadback());
+              return new OwnerOutcome(
+                  Owner.WORLD_MANAGEMENT,
+                  OwnerStatus.APPLIED,
+                  binding.commitId(),
+                  binding.digest(),
+                  verified.resultIdentity(),
+                  verified.ownerReadback().result(),
+                  verified.appliedEpochs().stream()
+                      .map(epoch ->
+                          new AppliedEpoch(
+                              epoch.aggregateType(),
+                              epoch.aggregateId(),
+                              epoch.scopeType(),
+                              epoch.scopeId(),
+                              epoch.expectedEpoch(),
+                              epoch.resultingEpoch()))
+                      .toList());
+            });
     outsideSql();
-    write.executeWithoutResult(
-        ignored -> {
-          coordinator.lockVersionTarget(binding.target());
-          if (terminal(operation).isPresent()) return;
-          requireApplied(binding, worldOutcome, Owner.WORLD_MANAGEMENT);
-          coordinator.recordOwnerOutcome(binding, worldOutcome);
-          var actual = coordinator.read(binding.target(), binding.requestId()).orElseThrow();
-          if (!binding.equals(actual.binding()))
-            throw new IllegalStateException("Complete retained coordinator binding required");
-          var outcomes =
-              binding.requiredOwners().stream()
-                  .map(
-                      owner -> {
-                        var state = actual.ownerStates().get(owner);
-                        if (state == null || state.status() != OwnerStatus.APPLIED)
-                          throw new IllegalStateException(
-                              "Every exact owner must be durably APPLIED");
-                        var outcome = state.outcome().orElseThrow();
-                        requireApplied(binding, outcome, owner);
-                        return outcome;
-                      })
-                  .toList();
-          coordinator.advanceSourceVisibilityFence(
-              binding, new CoordinatorProof(binding, outcomes));
-          coordinator.releaseApplicationSlot(binding);
-          terminal(operation)
-              .orElseThrow(() -> new IllegalStateException("Terminal source readback unavailable"));
-        });
+    write.executeWithoutResult(ignored -> {
+      coordinator.lockVersionTarget(binding.target());
+      if (terminal(operation).isPresent()) return;
+      requireApplied(binding, worldOutcome, Owner.WORLD_MANAGEMENT);
+      coordinator.recordOwnerOutcome(binding, worldOutcome);
+      var actual = coordinator.read(binding.target(), binding.requestId()).orElseThrow();
+      if (!binding.equals(actual.binding()))
+        throw new IllegalStateException("Complete retained coordinator binding required");
+      var outcomes =
+          binding.requiredOwners().stream()
+              .map(owner -> {
+                var state = actual.ownerStates().get(owner);
+                if (state == null || state.status() != OwnerStatus.APPLIED)
+                  throw new IllegalStateException("Every exact owner must be durably APPLIED");
+                var outcome = state.outcome().orElseThrow();
+                requireApplied(binding, outcome, owner);
+                return outcome;
+              })
+              .toList();
+      coordinator.advanceSourceVisibilityFence(binding, new CoordinatorProof(binding, outcomes));
+      coordinator.releaseApplicationSlot(binding);
+      terminal(operation)
+          .orElseThrow(() -> new IllegalStateException("Terminal source readback unavailable"));
+    });
     outsideSql();
     return Objects.requireNonNull(read.execute(ignored -> terminal(operation).orElseThrow()));
   }

@@ -113,11 +113,10 @@ class AccountAuthEvidenceBundleRepositoryTest {
     order
         .verify(dsl)
         .fetchOne(
-            argThat(
-                sql ->
-                    sql.contains("SELECT operation_id, request_id, account_uuid")
-                        && sql.contains("FROM account_gameplay_delegation_issuance_operations")
-                        && !sql.contains("FOR UPDATE")),
+            argThat(sql ->
+                sql.contains("SELECT operation_id, request_id, account_uuid")
+                    && sql.contains("FROM account_gameplay_delegation_issuance_operations")
+                    && !sql.contains("FOR UPDATE")),
             any(Object[].class));
     order
         .verify(dsl)
@@ -134,10 +133,9 @@ class AccountAuthEvidenceBundleRepositoryTest {
     order
         .verify(dsl)
         .fetchOne(
-            argThat(
-                sql ->
-                    sql.contains("FROM account_gameplay_delegation_issuance_operations")
-                        && sql.contains("FOR UPDATE")),
+            argThat(sql ->
+                sql.contains("FROM account_gameplay_delegation_issuance_operations")
+                    && sql.contains("FOR UPDATE")),
             any(Object[].class));
     verifyNoInteractions(outbox);
   }

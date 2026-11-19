@@ -54,25 +54,24 @@ class InternalGrpcClientAuthConfigTest {
 
   @Test
   void serviceOverridesSharedStubCustomizerWithInternalOnlyBehavior() {
-    contextRunner.run(
-        ctx -> {
-          BlockingGrpcStubCustomizer customizer = ctx.getBean(BlockingGrpcStubCustomizer.class);
-          JwtUtil jwtUtil = ctx.getBean(JwtUtil.class);
-          CapturingChannel channel = new CapturingChannel();
-          CapturingStub stub = new CapturingStub(channel, CallOptions.DEFAULT);
+    contextRunner.run(ctx -> {
+      BlockingGrpcStubCustomizer customizer = ctx.getBean(BlockingGrpcStubCustomizer.class);
+      JwtUtil jwtUtil = ctx.getBean(JwtUtil.class);
+      CapturingChannel channel = new CapturingChannel();
+      CapturingStub stub = new CapturingStub(channel, CallOptions.DEFAULT);
 
-          CapturingStub customized = customizer.customize(stub);
+      CapturingStub customized = customizer.customize(stub);
 
-          assertThat(customized).isNotSameAs(stub);
-          customized.invoke();
-          String authorization = channel.lastAuthorization();
-          assertThat(authorization).startsWith("Bearer ");
-          String token = authorization.substring(7);
-          assertThat(jwtUtil.parseToken(token).getPayload().getSubject())
-              .isEqualTo("service:game-session-service");
-          assertThat(jwtUtil.parseToken(token).getPayload().get("internalService", Boolean.class))
-              .isTrue();
-        });
+      assertThat(customized).isNotSameAs(stub);
+      customized.invoke();
+      String authorization = channel.lastAuthorization();
+      assertThat(authorization).startsWith("Bearer ");
+      String token = authorization.substring(7);
+      assertThat(jwtUtil.parseToken(token).getPayload().getSubject())
+          .isEqualTo("service:game-session-service");
+      assertThat(jwtUtil.parseToken(token).getPayload().get("internalService", Boolean.class))
+          .isTrue();
+    });
   }
 
   private static final class CapturingChannel extends Channel {

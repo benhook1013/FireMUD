@@ -42,22 +42,20 @@ public class StatusCommandHandler {
               PlayerOutput.view(
                   new ActorStateViewOutput(
                       response.getResourcesList().stream()
-                          .map(
-                              resource ->
-                                  new ActorStateViewOutput.Resource(
-                                      resource.getStatKey(),
-                                      resource.getCurrentValue(),
-                                      resource.hasMaxValue() ? resource.getMaxValue() : null,
-                                      resource.hasBaseValue() ? resource.getBaseValue() : null))
+                          .map(resource ->
+                              new ActorStateViewOutput.Resource(
+                                  resource.getStatKey(),
+                                  resource.getCurrentValue(),
+                                  resource.hasMaxValue() ? resource.getMaxValue() : null,
+                                  resource.hasBaseValue() ? resource.getBaseValue() : null))
                           .sorted(Comparator.comparing(ActorStateViewOutput.Resource::key))
                           .toList(),
                       response.getActiveConditionsList().stream()
-                          .map(
-                              condition ->
-                                  new ActorStateViewOutput.Condition(
-                                      condition.getConditionKey(),
-                                      condition.getStackCount(),
-                                      condition.getExpiresAt()))
+                          .map(condition ->
+                              new ActorStateViewOutput.Condition(
+                                  condition.getConditionKey(),
+                                  condition.getStackCount(),
+                                  condition.getExpiresAt()))
                           .sorted(Comparator.comparing(ActorStateViewOutput.Condition::key))
                           .toList()))));
     } catch (RuntimeException ex) {

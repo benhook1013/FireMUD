@@ -221,23 +221,21 @@ class AccountTenantCreationAdmissionRedisIntegrationTest {
         var start = new CountDownLatch(1);
         try (var pool = Executors.newFixedThreadPool(2)) {
           var creation =
-              pool.submit(
-                  () -> {
-                    ready.countDown();
-                    await(start);
-                    try {
-                      return client.withInitialReceipt(f.binding, f.active, receipt -> true);
-                    } catch (IllegalStateException refused) {
-                      return false;
-                    }
-                  });
+              pool.submit(() -> {
+                ready.countDown();
+                await(start);
+                try {
+                  return client.withInitialReceipt(f.binding, f.active, receipt -> true);
+                } catch (IllegalStateException refused) {
+                  return false;
+                }
+              });
           var revocation =
-              pool.submit(
-                  () -> {
-                    ready.countDown();
-                    await(start);
-                    return revoke(f);
-                  });
+              pool.submit(() -> {
+                ready.countDown();
+                await(start);
+                return revoke(f);
+              });
           assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
           start.countDown();
           assertThat(revocation.get(10, TimeUnit.SECONDS)).isEqualTo(1L);
@@ -329,10 +327,8 @@ class AccountTenantCreationAdmissionRedisIntegrationTest {
                 bytes(wrongExpiry.tokenKey()),
                 wrongExpiry.binding.tokenCleanupDeadlineEpochMillis() + 1L);
       }
-      assertThatThrownBy(
-              () ->
-                  client.withInitialReceipt(
-                      wrongExpiry.binding, wrongExpiry.active, receipt -> true))
+      assertThatThrownBy(() ->
+              client.withInitialReceipt(wrongExpiry.binding, wrongExpiry.active, receipt -> true))
           .isInstanceOf(IllegalStateException.class);
       assertThat(get(wrongExpiry.receiptKey())).isNull();
     }
@@ -427,11 +423,10 @@ class AccountTenantCreationAdmissionRedisIntegrationTest {
     seed(f, f.active);
     var called = new AtomicBoolean();
     try (var provider = provider(USER, PASSWORD)) {
-      assertThatThrownBy(
-              () ->
-                  client(provider, 2, Clock.systemUTC())
-                      .withInitialReceipt(
-                          f.binding, f.active, receipt -> called.compareAndSet(false, true)))
+      assertThatThrownBy(() ->
+              client(provider, 2, Clock.systemUTC())
+                  .withInitialReceipt(
+                      f.binding, f.active, receipt -> called.compareAndSet(false, true)))
           .isInstanceOf(IllegalStateException.class);
       assertThat(called).isFalse();
       assertReceipt(f);
@@ -439,10 +434,9 @@ class AccountTenantCreationAdmissionRedisIntegrationTest {
       var dropped = new AtomicBoolean();
       AccountCoordinationPinnedConnectionProvider dropping =
           () -> dropAofReply(provider.openPinnedConnection(), dropped);
-      assertThatThrownBy(
-              () ->
-                  client(dropping, 1, Clock.systemUTC())
-                      .withExistingReceipt(f.binding, receipt -> called.compareAndSet(false, true)))
+      assertThatThrownBy(() ->
+              client(dropping, 1, Clock.systemUTC())
+                  .withExistingReceipt(f.binding, receipt -> called.compareAndSet(false, true)))
           .isInstanceOf(IllegalStateException.class);
       assertThat(dropped).isTrue();
       assertThat(called).isFalse();
@@ -459,10 +453,9 @@ class AccountTenantCreationAdmissionRedisIntegrationTest {
     seed(f, f.active);
     try (var provider = provider(USER, PASSWORD);
         var wrong = provider(WRONG_USER, WRONG_PASSWORD)) {
-      assertThatThrownBy(
-              () ->
-                  client(wrong, 1, Clock.systemUTC())
-                      .withInitialReceipt(f.binding, f.active, receipt -> true))
+      assertThatThrownBy(() ->
+              client(wrong, 1, Clock.systemUTC())
+                  .withInitialReceipt(f.binding, f.active, receipt -> true))
           .isInstanceOf(IllegalStateException.class);
       assertThat(get(f.receiptKey())).isNull();
       var opened = new AtomicInteger();
@@ -473,11 +466,10 @@ class AccountTenantCreationAdmissionRedisIntegrationTest {
             return provider.openPinnedConnection();
           };
       var called = new AtomicBoolean();
-      assertThatThrownBy(
-              () ->
-                  client(interrupted, 1, Clock.systemUTC())
-                      .withInitialReceipt(
-                          f.binding, f.active, receipt -> called.compareAndSet(false, true)))
+      assertThatThrownBy(() ->
+              client(interrupted, 1, Clock.systemUTC())
+                  .withInitialReceipt(
+                      f.binding, f.active, receipt -> called.compareAndSet(false, true)))
           .isInstanceOf(IllegalStateException.class);
       assertThat(opened).hasValue(2);
       assertThat(called).isFalse();

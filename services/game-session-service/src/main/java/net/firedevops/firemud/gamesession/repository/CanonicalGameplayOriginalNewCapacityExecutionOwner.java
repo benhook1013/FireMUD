@@ -188,13 +188,12 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     var candidate = source.candidate();
     var assignment = scopedTags().assignmentForTransition(candidate.bindingDecisionId());
     return sql()
-        .transactionResult(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              requireSelectedOwner(tx, candidate, selected);
-              return CanonicalGameplayCapacityEvidenceBudget.precharge(
-                  tx, request, source.candidateDigest(), selected, assignment.tenantGameplayTag());
-            });
+        .transactionResult(configuration -> {
+          var tx = DSL.using(configuration);
+          requireSelectedOwner(tx, candidate, selected);
+          return CanonicalGameplayCapacityEvidenceBudget.precharge(
+              tx, request, source.candidateDigest(), selected, assignment.tenantGameplayTag());
+        });
   }
 
   void settleDeniedCharge(
@@ -210,15 +209,14 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
               owner.scopedTags().assignmentForTransition(request.identity().admissionId());
           owner
               .sql()
-              .transaction(
-                  configuration ->
-                      CanonicalGameplayCapacityEvidenceBudget.settleDenied(
-                          DSL.using(configuration),
-                          request,
-                          source.candidateDigest(),
-                          selected,
-                          assignment.tenantGameplayTag(),
-                          accountDenialId));
+              .transaction(configuration ->
+                  CanonicalGameplayCapacityEvidenceBudget.settleDenied(
+                      DSL.using(configuration),
+                      request,
+                      source.candidateDigest(),
+                      selected,
+                      assignment.tenantGameplayTag(),
+                      accountDenialId));
           return null;
         });
   }
@@ -262,62 +260,60 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     }
     boolean dispatch =
         sql()
-            .transactionResult(
-                configuration -> {
-                  var tx = DSL.using(configuration);
-                  // Serialize original effect custody with every durable region-owner replacement.
-                  // This lock is released before any Redis command is submitted.
-                  requireSelectedOwner(
-                      tx,
-                      source.candidate(),
-                      new CurrentOwner(
-                          execution.selectedOwnerId(), execution.selectedOwnerFence()));
-                  Record row = find(tx, execution);
-                  if (row != null) {
-                    exact(row, execution);
-                    if (!"COMMITTED".equals(row.get("status", String.class))) {
-                      CanonicalGameplayCapacityEvidenceBudget.requireCharge(
-                          tx, execution, assignment.tenantGameplayTag());
-                    }
-                    return false;
-                  }
-                  if (execution.reservation().state() != State.RESERVED
-                      || !clock.instant().isBefore(execution.reservation().expiresAt()))
-                    throw unavailable();
-                  // Lock the original transition to exclude preparing an unrelated successor
-                  // binding.
-                  Record transition =
-                      tx.fetchOne(
-                          "SELECT * FROM game_session_canonical_binding_transition WHERE transition_id = ? FOR UPDATE",
-                          execution.transitionId());
-                  if (transition == null
-                      || !"PROVISIONAL".equals(transition.get("status", String.class))
-                      || !Arrays.equals(
-                          source.candidate().canonicalBytes(),
-                          transition.get("original_new_candidate_bytes", byte[].class)))
-                    throw unavailable();
-                  int inserted =
-                      tx.execute(
-                          "INSERT INTO "
-                              + TABLE
-                              + " (tenant_id, request_id, admission_id, admission_attempt_id, transition_id, capacity_rearm_fence, reservation_id, reservation_fence, mutation_digest, execution_digest, canonical_execution, selected_owner_id, selected_owner_fence, tenant_gameplay_tag, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INSTALL_DISPATCHED')",
-                          execution.request().identity().tenantId(),
-                          execution.request().identity().requestId(),
-                          execution.request().identity().admissionId(),
-                          execution.request().admissionAttemptId(),
-                          execution.transitionId(),
-                          execution.request().capacityRearmFence(),
-                          execution.reservation().reservationId(),
-                          execution.reservation().reservationFence(),
-                          execution.request().mutationDigest(),
-                          execution.digest(),
-                          execution.canonicalBytes(),
-                          execution.selectedOwnerId(),
-                          execution.selectedOwnerFence(),
-                          assignment.tenantGameplayTag());
-                  if (inserted != 1) throw unavailable();
-                  return true;
-                });
+            .transactionResult(configuration -> {
+              var tx = DSL.using(configuration);
+              // Serialize original effect custody with every durable region-owner replacement.
+              // This lock is released before any Redis command is submitted.
+              requireSelectedOwner(
+                  tx,
+                  source.candidate(),
+                  new CurrentOwner(execution.selectedOwnerId(), execution.selectedOwnerFence()));
+              Record row = find(tx, execution);
+              if (row != null) {
+                exact(row, execution);
+                if (!"COMMITTED".equals(row.get("status", String.class))) {
+                  CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+                      tx, execution, assignment.tenantGameplayTag());
+                }
+                return false;
+              }
+              if (execution.reservation().state() != State.RESERVED
+                  || !clock.instant().isBefore(execution.reservation().expiresAt()))
+                throw unavailable();
+              // Lock the original transition to exclude preparing an unrelated successor
+              // binding.
+              Record transition =
+                  tx.fetchOne(
+                      "SELECT * FROM game_session_canonical_binding_transition WHERE transition_id = ? FOR UPDATE",
+                      execution.transitionId());
+              if (transition == null
+                  || !"PROVISIONAL".equals(transition.get("status", String.class))
+                  || !Arrays.equals(
+                      source.candidate().canonicalBytes(),
+                      transition.get("original_new_candidate_bytes", byte[].class)))
+                throw unavailable();
+              int inserted =
+                  tx.execute(
+                      "INSERT INTO "
+                          + TABLE
+                          + " (tenant_id, request_id, admission_id, admission_attempt_id, transition_id, capacity_rearm_fence, reservation_id, reservation_fence, mutation_digest, execution_digest, canonical_execution, selected_owner_id, selected_owner_fence, tenant_gameplay_tag, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INSTALL_DISPATCHED')",
+                      execution.request().identity().tenantId(),
+                      execution.request().identity().requestId(),
+                      execution.request().identity().admissionId(),
+                      execution.request().admissionAttemptId(),
+                      execution.transitionId(),
+                      execution.request().capacityRearmFence(),
+                      execution.reservation().reservationId(),
+                      execution.reservation().reservationFence(),
+                      execution.request().mutationDigest(),
+                      execution.digest(),
+                      execution.canonicalBytes(),
+                      execution.selectedOwnerId(),
+                      execution.selectedOwnerFence(),
+                      assignment.tenantGameplayTag());
+              if (inserted != 1) throw unavailable();
+              return true;
+            });
     // A lost SQL commit reply intentionally loses dispatch permission; retries only inspect.
     if (dispatch) {
       long result =
@@ -892,10 +888,9 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (!persistent(commands, key, "hash")) throw unavailable();
     Map<byte[], byte[]> raw = await(commands.hgetall(key));
     Map<String, byte[]> result = new LinkedHashMap<>();
-    raw.forEach(
-        (name, value) -> {
-          if (result.put(text(name), value) != null) throw unavailable();
-        });
+    raw.forEach((name, value) -> {
+      if (result.put(text(name), value) != null) throw unavailable();
+    });
     return result;
   }
 
@@ -968,18 +963,17 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         java.util.concurrent.CompletableFuture<StatefulRedisConnection<byte[], byte[]>> opened) {
       this.opened = opened;
       task =
-          new FutureTask<>(
-              () -> {
-                try {
-                  opened.complete(redis.connect(ByteArrayCodec.INSTANCE));
-                } catch (RuntimeException failure) {
-                  opened.completeExceptionally(failure);
-                } catch (Error failure) {
-                  opened.completeExceptionally(failure);
-                  throw failure;
-                }
-                return null;
-              });
+          new FutureTask<>(() -> {
+            try {
+              opened.complete(redis.connect(ByteArrayCodec.INSTANCE));
+            } catch (RuntimeException failure) {
+              opened.completeExceptionally(failure);
+            } catch (Error failure) {
+              opened.completeExceptionally(failure);
+              throw failure;
+            }
+            return null;
+          });
     }
 
     @Override

@@ -54,11 +54,10 @@ class AccountStartSessionAdmissionProtectionWorkloadGuardTest {
     Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     assertThatThrownBy(() -> context.run(invocation))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            failure ->
-                org.assertj.core.api.Assertions.assertThat(
-                        ((StatusRuntimeException) failure).getStatus().getCode())
-                    .isEqualTo(expected));
+        .satisfies(failure ->
+            org.assertj.core.api.Assertions.assertThat(
+                    ((StatusRuntimeException) failure).getStatus().getCode())
+                .isEqualTo(expected));
   }
 
   private static GrpcPeerIdentity peer(String namespace, String service) {

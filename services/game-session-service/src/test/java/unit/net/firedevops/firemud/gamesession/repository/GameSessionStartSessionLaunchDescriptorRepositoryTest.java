@@ -54,10 +54,9 @@ class GameSessionStartSessionLaunchDescriptorRepositoryTest {
         Mockito.mockingDetails(dsl).getInvocations().stream()
             .filter(invocation -> invocation.getMethod().getName().equals("fetchOne"))
             .filter(invocation -> invocation.getRawArguments()[0] instanceof String sql)
-            .filter(
-                invocation ->
-                    ((String) invocation.getRawArguments()[0])
-                        .contains("INSERT INTO game_session_start_session_launch_descriptor_pin"))
+            .filter(invocation ->
+                ((String) invocation.getRawArguments()[0])
+                    .contains("INSERT INTO game_session_start_session_launch_descriptor_pin"))
             .findFirst()
             .orElseThrow(() -> new AssertionError("Missing descriptor claim INSERT"));
     Object[] rawArguments = insertCall.getRawArguments();
@@ -126,12 +125,10 @@ class GameSessionStartSessionLaunchDescriptorRepositoryTest {
         Mockito.mockingDetails(dsl).getInvocations().stream()
             .filter(invocation -> invocation.getMethod().getName().equals("fetchOne"))
             .filter(invocation -> invocation.getRawArguments()[0] instanceof String sql)
-            .filter(
-                invocation ->
-                    ((String) invocation.getRawArguments()[0])
-                            .contains("SELECT descriptor_pin.* FROM ")
-                        && ((String) invocation.getRawArguments()[0])
-                            .contains("game_session_start_session_launch_descriptor_pin"))
+            .filter(invocation ->
+                ((String) invocation.getRawArguments()[0]).contains("SELECT descriptor_pin.* FROM ")
+                    && ((String) invocation.getRawArguments()[0])
+                        .contains("game_session_start_session_launch_descriptor_pin"))
             .findFirst()
             .orElseThrow(() -> new AssertionError("Missing continuation descriptor SELECT"));
     Object[] rawArguments = selectCall.getRawArguments();
@@ -177,10 +174,9 @@ class GameSessionStartSessionLaunchDescriptorRepositoryTest {
         Mockito.mockingDetails(dsl).getInvocations().stream()
             .filter(invocation -> invocation.getMethod().getName().equals("fetchOne"))
             .filter(invocation -> invocation.getRawArguments()[0] instanceof String sql)
-            .filter(
-                invocation ->
-                    ((String) invocation.getRawArguments()[0])
-                        .equals("SELECT ?::timestamptz > clock_timestamp() AS unexpired"))
+            .filter(invocation ->
+                ((String) invocation.getRawArguments()[0])
+                    .equals("SELECT ?::timestamptz > clock_timestamp() AS unexpired"))
             .findFirst()
             .orElseThrow(() -> new AssertionError("Missing post-read authorization expiry check"));
     Object[] rawArguments = checkCall.getRawArguments();
@@ -196,10 +192,9 @@ class GameSessionStartSessionLaunchDescriptorRepositoryTest {
         mock(GameSessionStartSessionTemplateAssociationRepository.class);
     var repository = new GameSessionStartSessionLaunchDescriptorRepository(dsl, associations);
 
-    assertThatThrownBy(
-            () ->
-                repository.findPinned(
-                    (GameSessionStartSessionOperatorAttemptRepository.AttemptClaim) null))
+    assertThatThrownBy(() ->
+            repository.findPinned(
+                (GameSessionStartSessionOperatorAttemptRepository.AttemptClaim) null))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("claim");
 
@@ -222,10 +217,9 @@ class GameSessionStartSessionLaunchDescriptorRepositoryTest {
             java.util.UUID.fromString("04444444-4444-4444-8444-444444444444"),
             7L);
 
-    assertThatThrownBy(
-            () ->
-                repository.pin(
-                    (GameSessionStartSessionOperatorAttemptRepository.AttemptClaim) null, null))
+    assertThatThrownBy(() ->
+            repository.pin(
+                (GameSessionStartSessionOperatorAttemptRepository.AttemptClaim) null, null))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("claim");
     assertThatThrownBy(() -> repository.pin(claim, null))

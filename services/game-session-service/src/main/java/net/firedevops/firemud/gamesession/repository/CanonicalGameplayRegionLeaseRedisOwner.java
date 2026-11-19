@@ -649,11 +649,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       if (boundedClose == null) {
         boundedClose =
             CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection);
-        boundedClose.whenComplete(
-            (ignored, failure) -> {
-              if (failure == null) disposal.complete(null);
-              else disposal.completeExceptionally(failure);
-            });
+        boundedClose.whenComplete((ignored, failure) -> {
+          if (failure == null) disposal.complete(null);
+          else disposal.completeExceptionally(failure);
+        });
       }
       return boundedClose;
     }

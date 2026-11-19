@@ -63,10 +63,8 @@ class PreseededActorAssignmentOwnerReadEvidenceTest {
             request.expectedCatalogRevision(),
             "9".repeat(64),
             request.expectedPublishedReleaseBundleRef());
-    assertThatThrownBy(
-            () ->
-                new PreseededActorAssignmentOwnerReadEvidence(
-                    changedDigest, evidence.sourceEvidence()))
+    assertThatThrownBy(() ->
+            new PreseededActorAssignmentOwnerReadEvidence(changedDigest, evidence.sourceEvidence()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var changedRelease =
@@ -85,10 +83,9 @@ class PreseededActorAssignmentOwnerReadEvidenceTest {
             request.expectedCatalogRevision(),
             request.expectedPolicyDigest(),
             "substituted-release");
-    assertThatThrownBy(
-            () ->
-                new PreseededActorAssignmentOwnerReadEvidence(
-                    changedRelease, evidence.sourceEvidence()))
+    assertThatThrownBy(() ->
+            new PreseededActorAssignmentOwnerReadEvidence(
+                changedRelease, evidence.sourceEvidence()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var unknownRequest =
@@ -100,18 +97,16 @@ class PreseededActorAssignmentOwnerReadEvidenceTest {
             .build();
     assertThatThrownBy(() -> PreseededActorAssignmentOwnerReadGrpcCodec.fromRequest(unknownRequest))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentOwnerReadGrpcCodec.fromResponse(
-                    request, GetPreseededActorAssignmentOwnerReadResponse.getDefaultInstance()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentOwnerReadGrpcCodec.fromResponse(
+                request, GetPreseededActorAssignmentOwnerReadResponse.getDefaultInstance()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentOwnerReadGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setRequest(wireRequest.toBuilder().setRealmSlug("other").build())
-                        .build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentOwnerReadGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setRequest(wireRequest.toBuilder().setRealmSlug("other").build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -133,10 +128,8 @@ class PreseededActorAssignmentOwnerReadEvidenceTest {
             null,
             false,
             null);
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentOwnerReadEvidence.sourceRequest(
-                    evidence.request(), pending))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentOwnerReadEvidence.sourceRequest(evidence.request(), pending))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Committed Game Session owner proof");
 
@@ -149,10 +142,8 @@ class PreseededActorAssignmentOwnerReadEvidenceTest {
             "sha256:" + "c".repeat(64),
             true,
             TERMINAL_AT);
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentOwnerReadEvidence.sourceRequest(
-                    evidence.request(), aborted))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentOwnerReadEvidence.sourceRequest(evidence.request(), aborted))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Committed Game Session owner proof");
   }

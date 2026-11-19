@@ -38,10 +38,9 @@ class CanonicalGameplayIssuerPhysicalFieldSetCodecTest {
     assertThatThrownBy(
             () -> CanonicalGameplayIssuerBootstrapCoverageRepository.encodeFieldSet(overLimit))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
-                    fieldCountHeader(MAX_LOCAL_PHYSICAL_FIELD_COUNT + 1)))
+    assertThatThrownBy(() ->
+            CanonicalGameplayIssuerBootstrapCoverageRepository.decodeFieldSet(
+                fieldCountHeader(MAX_LOCAL_PHYSICAL_FIELD_COUNT + 1)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Persisted issuer physical field count is outside its bound");
   }

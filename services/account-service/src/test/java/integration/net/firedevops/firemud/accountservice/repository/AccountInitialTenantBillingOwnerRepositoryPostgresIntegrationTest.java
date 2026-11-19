@@ -99,12 +99,8 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
     CurrentOwnerBinding current =
         context
             .transaction()
-            .execute(
-                status ->
-                    context
-                        .repository()
-                        .findCurrentOwnerForUpdate(seed.tenantUuid())
-                        .orElseThrow());
+            .execute(status ->
+                context.repository().findCurrentOwnerForUpdate(seed.tenantUuid()).orElseThrow());
     assertThat(current.ownerAccountUuid()).isEqualTo(first.ownerAccountUuid());
     assertThat(current.ownerVersion()).isEqualTo(first.ownerVersion());
     assertThat(current.ownerGeneration()).isEqualTo(first.ownerGeneration());
@@ -148,18 +144,16 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
             UUID.randomUUID(),
             UUID.randomUUID(),
             3);
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(status -> context.repository().establishInitial(sourceMismatch)))
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-              assertThat(sqlFailure.getMessage())
-                  .contains("Initial billing-owner operation differs from its fresh tenant source");
-            });
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status -> context.repository().establishInitial(sourceMismatch)))
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+          assertThat(sqlFailure.getMessage())
+              .contains("Initial billing-owner operation differs from its fresh tenant source");
+        });
     assertThat(
             count(
                 context.dsl(),
@@ -206,11 +200,10 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
 
     context
         .transaction()
-        .executeWithoutResult(
-            status -> {
-              context.repository().establishInitial(request);
-              status.setRollbackOnly();
-            });
+        .executeWithoutResult(status -> {
+          context.repository().establishInitial(request);
+          status.setRollbackOnly();
+        });
     assertThat(
             count(
                 context.dsl(),
@@ -251,38 +244,33 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
                 + "EXECUTE FUNCTION account_test_skip_initial_billing_owner_insert()");
 
     boolean[] repositoryFailureCaught = {false};
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status -> {
-                          try {
-                            context.repository().establishInitial(request);
-                          } catch (OperationConflictException expected) {
-                            repositoryFailureCaught[0] = true;
-                            assertThat(
-                                    count(
-                                        context.dsl(),
-                                        "account_initial_tenant_billing_owner_operations",
-                                        seed.tenantUuid()))
-                                .isEqualTo(1L);
-                            assertThat(
-                                    count(
-                                        context.dsl(),
-                                        "account_tenant_billing_owners",
-                                        seed.tenantUuid()))
-                                .isZero();
-                          }
-                          return null;
-                        }))
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23503");
-              assertThat(sqlFailure.getMessage())
-                  .contains("account_initial_billing_owner_current_owner_fk");
-            });
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status -> {
+                  try {
+                    context.repository().establishInitial(request);
+                  } catch (OperationConflictException expected) {
+                    repositoryFailureCaught[0] = true;
+                    assertThat(
+                            count(
+                                context.dsl(),
+                                "account_initial_tenant_billing_owner_operations",
+                                seed.tenantUuid()))
+                        .isEqualTo(1L);
+                    assertThat(
+                            count(
+                                context.dsl(), "account_tenant_billing_owners", seed.tenantUuid()))
+                        .isZero();
+                  }
+                  return null;
+                }))
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23503");
+          assertThat(sqlFailure.getMessage())
+              .contains("account_initial_billing_owner_current_owner_fk");
+        });
     assertThat(repositoryFailureCaught[0]).isTrue();
     assertThat(
             count(
@@ -320,31 +308,28 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
             .intoMaps();
     UUID candidateOwner = UUID.randomUUID();
     UUID candidateGeneration = UUID.randomUUID();
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(
-                        status ->
-                            context
-                                .dsl()
-                                .execute(
-                                    "UPDATE account_tenant_billing_owners "
-                                        + "SET owner_account_uuid = ?, owner_version = 2, "
-                                        + "owner_generation = ?, updated_at = clock_timestamp() "
-                                        + "WHERE tenant_uuid = ? AND initial_request_id = ?",
-                                    candidateOwner,
-                                    candidateGeneration,
-                                    seed.tenantUuid(),
-                                    original.requestId())))
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-              assertThat(sqlFailure.getMessage())
-                  .contains(
-                      "Current tenant billing-owner tuple cannot be updated without an audited transfer owner");
-            });
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    context
+                        .dsl()
+                        .execute(
+                            "UPDATE account_tenant_billing_owners "
+                                + "SET owner_account_uuid = ?, owner_version = 2, "
+                                + "owner_generation = ?, updated_at = clock_timestamp() "
+                                + "WHERE tenant_uuid = ? AND initial_request_id = ?",
+                            candidateOwner,
+                            candidateGeneration,
+                            seed.tenantUuid(),
+                            original.requestId())))
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+          assertThat(sqlFailure.getMessage())
+              .contains(
+                  "Current tenant billing-owner tuple cannot be updated without an audited transfer owner");
+        });
     assertThat(
             context
                 .setupDsl()
@@ -371,12 +356,8 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
     CurrentOwnerBinding current =
         context
             .transaction()
-            .execute(
-                status ->
-                    context
-                        .repository()
-                        .findCurrentOwnerForUpdate(seed.tenantUuid())
-                        .orElseThrow());
+            .execute(status ->
+                context.repository().findCurrentOwnerForUpdate(seed.tenantUuid()).orElseThrow());
     assertThat(current.ownerAccountUuid()).isEqualTo(original.ownerAccountUuid());
     assertThat(current.ownerVersion()).isEqualTo(original.ownerVersion());
     assertThat(current.ownerGeneration()).isEqualTo(original.ownerGeneration());
@@ -475,26 +456,23 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
     InitialBindingResult committed =
         context.transaction().execute(status -> context.repository().establishInitial(request));
 
-    assertAppendOnlyRejected(
-        () ->
-            context
-                .setupDsl()
-                .execute(
-                    "UPDATE account_initial_tenant_billing_owner_operations "
-                        + "SET result_digest = result_digest WHERE request_id = ?",
-                    committed.requestId()));
-    assertAppendOnlyRejected(
-        () ->
-            context
-                .setupDsl()
-                .execute(
-                    "DELETE FROM account_initial_tenant_billing_owner_operations WHERE request_id = ?",
-                    committed.requestId()));
-    assertAppendOnlyRejected(
-        () ->
-            context
-                .setupDsl()
-                .execute("TRUNCATE account_initial_tenant_billing_owner_operations CASCADE"));
+    assertAppendOnlyRejected(() ->
+        context
+            .setupDsl()
+            .execute(
+                "UPDATE account_initial_tenant_billing_owner_operations "
+                    + "SET result_digest = result_digest WHERE request_id = ?",
+                committed.requestId()));
+    assertAppendOnlyRejected(() ->
+        context
+            .setupDsl()
+            .execute(
+                "DELETE FROM account_initial_tenant_billing_owner_operations WHERE request_id = ?",
+                committed.requestId()));
+    assertAppendOnlyRejected(() ->
+        context
+            .setupDsl()
+            .execute("TRUNCATE account_initial_tenant_billing_owner_operations CASCADE"));
 
     InitialBindingResult retry =
         context.transaction().execute(status -> context.repository().establishInitial(request));
@@ -605,11 +583,8 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
 
   private static void assertConflictWithoutMutation(
       Context context, InitialRequest request, UUID originalTenantUuid) {
-    assertThatThrownBy(
-            () ->
-                context
-                    .transaction()
-                    .execute(status -> context.repository().establishInitial(request)))
+    assertThatThrownBy(() ->
+            context.transaction().execute(status -> context.repository().establishInitial(request)))
         .isInstanceOf(OperationConflictException.class);
     assertThat(
             count(
@@ -700,13 +675,12 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
   private static void assertAppendOnlyRejected(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-              assertThat(sqlFailure.getMessage())
-                  .contains("Initial billing-owner operation evidence is append-only");
-            });
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+          assertThat(sqlFailure.getMessage())
+              .contains("Initial billing-owner operation evidence is append-only");
+        });
   }
 
   private static SQLException findSqlException(Throwable failure) {

@@ -111,18 +111,17 @@ class VersionCanonicalIdentityIntegrationTest {
                     game.getCanonicalTenantId(), UUID.randomUUID()))
         .isEmpty();
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .update(VERSION)
-                    .set(CANONICAL_VERSION_ID, UUID.randomUUID())
-                    .set(CANONICAL_TENANT_ID, game.getCanonicalTenantId())
-                    .set(IDENTITY_SOURCE_GAME_ROW_ID, game.getId())
-                    .set(IDENTITY_SOURCE_GAME_TENANT_KEY, game.getTenantId())
-                    .set(IDENTITY_SOURCE_PROVENANCE_KIND, "NEW_GAME_ROW")
-                    .where(ID.eq(retainedVersionId))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .update(VERSION)
+                .set(CANONICAL_VERSION_ID, UUID.randomUUID())
+                .set(CANONICAL_TENANT_ID, game.getCanonicalTenantId())
+                .set(IDENTITY_SOURCE_GAME_ROW_ID, game.getId())
+                .set(IDENTITY_SOURCE_GAME_TENANT_KEY, game.getTenantId())
+                .set(IDENTITY_SOURCE_PROVENANCE_KIND, "NEW_GAME_ROW")
+                .where(ID.eq(retainedVersionId))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("retained Version rows cannot be assigned a canonical identity");
   }
@@ -269,14 +268,13 @@ class VersionCanonicalIdentityIntegrationTest {
             .execute(status -> fixture.versionRepository().save(version(owner)));
     assertThat(saved).isNotNull();
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .update(VERSION)
-                    .set(CANONICAL_VERSION_ID, UUID.randomUUID())
-                    .where(ID.eq(saved.getId()))
-                    .execute())
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .update(VERSION)
+                .set(CANONICAL_VERSION_ID, UUID.randomUUID())
+                .where(ID.eq(saved.getId()))
+                .execute())
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("canonical Version identity and its tenant source are immutable");
     assertThatThrownBy(
@@ -284,52 +282,49 @@ class VersionCanonicalIdentityIntegrationTest {
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("canonical Version identity is immutable");
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "INSERT INTO version (tenant_id, version_number, version_state, "
-                            + "version_state_epoch, canonical_version_id, canonical_tenant_id, "
-                            + "identity_source_game_row_id, identity_source_game_tenant_key, "
-                            + "identity_source_provenance_kind) "
-                            + "VALUES (?, 2, 'DRAFT', 1, ?, ?, ?, ?, ?)",
-                        owner.getTenantId(),
-                        NIL_UUID,
-                        owner.getCanonicalTenantId(),
-                        owner.getId(),
-                        owner.getTenantId(),
-                        "NEW_GAME_ROW"))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "INSERT INTO version (tenant_id, version_number, version_state, "
+                        + "version_state_epoch, canonical_version_id, canonical_tenant_id, "
+                        + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                        + "identity_source_provenance_kind) "
+                        + "VALUES (?, 2, 'DRAFT', 1, ?, ?, ?, ?, ?)",
+                    owner.getTenantId(),
+                    NIL_UUID,
+                    owner.getCanonicalTenantId(),
+                    owner.getId(),
+                    owner.getTenantId(),
+                    "NEW_GAME_ROW"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("chk_version_canonical_identity_shape");
 
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "INSERT INTO version (tenant_id, version_number, version_state, "
-                            + "version_state_epoch, canonical_version_id, canonical_tenant_id, "
-                            + "identity_source_game_row_id, identity_source_game_tenant_key, "
-                            + "identity_source_provenance_kind) "
-                            + "VALUES (?, 3, 'DRAFT', 1, ?, ?, ?, ?, ?)",
-                        owner.getTenantId(),
-                        UUID.randomUUID(),
-                        owner.getCanonicalTenantId(),
-                        other.getId(),
-                        other.getTenantId(),
-                        "NEW_GAME_ROW"))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "INSERT INTO version (tenant_id, version_number, version_state, "
+                        + "version_state_epoch, canonical_version_id, canonical_tenant_id, "
+                        + "identity_source_game_row_id, identity_source_game_tenant_key, "
+                        + "identity_source_provenance_kind) "
+                        + "VALUES (?, 3, 'DRAFT', 1, ?, ?, ?, ?, ?)",
+                    owner.getTenantId(),
+                    UUID.randomUUID(),
+                    owner.getCanonicalTenantId(),
+                    other.getId(),
+                    other.getTenantId(),
+                    "NEW_GAME_ROW"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining(
             "canonical Version identity source does not match its exact game row");
 
     Version wrongTenantAlias = version(owner);
     wrongTenantAlias.setTenantId(owner.getCanonicalTenantId().toString());
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transactionTemplate()
-                    .execute(status -> fixture.versionRepository().save(wrongTenantAlias)))
+    assertThatThrownBy(() ->
+            fixture
+                .transactionTemplate()
+                .execute(status -> fixture.versionRepository().save(wrongTenantAlias)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no exact Game Design source row");
   }

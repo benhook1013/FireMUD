@@ -17,25 +17,24 @@ public record WorldDraftGraphApplication(
     }
     plan.graph()
         .freshGraphDeclaration()
-        .ifPresent(
-            declaration -> {
-              Map<String, Long> actualCounts =
-                  plan.graph().nodes().stream()
-                      .collect(
-                          Collectors.groupingBy(
-                              node ->
-                                  node.mutation()
-                                      .getAggregateType()
-                                      .name()
-                                      .replace("WORLD_DESIGN_AGGREGATE_TYPE_", ""),
-                              Collectors.counting()));
-              for (var family : declaration.familyCounts()) {
-                String name = family.family().name().replace("WORLD_DESIGN_AGGREGATE_TYPE_", "");
-                if (actualCounts.getOrDefault(name, 0L) != family.count()) {
-                  throw new IllegalArgumentException(
-                      "Account-bound application differs from its complete family declaration");
-                }
-              }
-            });
+        .ifPresent(declaration -> {
+          Map<String, Long> actualCounts =
+              plan.graph().nodes().stream()
+                  .collect(
+                      Collectors.groupingBy(
+                          node ->
+                              node.mutation()
+                                  .getAggregateType()
+                                  .name()
+                                  .replace("WORLD_DESIGN_AGGREGATE_TYPE_", ""),
+                          Collectors.counting()));
+          for (var family : declaration.familyCounts()) {
+            String name = family.family().name().replace("WORLD_DESIGN_AGGREGATE_TYPE_", "");
+            if (actualCounts.getOrDefault(name, 0L) != family.count()) {
+              throw new IllegalArgumentException(
+                  "Account-bound application differs from its complete family declaration");
+            }
+          }
+        });
   }
 }

@@ -21,19 +21,17 @@ class SagaRunnerTest {
     instanceRepository = Mockito.mock(SagaInstanceRepository.class);
     stepRepository = Mockito.mock(SagaStepRepository.class);
     Mockito.when(instanceRepository.save(any()))
-        .thenAnswer(
-            inv -> {
-              net.firedevops.firemud.common.saga.persistence.SagaInstance inst = inv.getArgument(0);
-              inst.setId(1L);
-              return inst;
-            });
+        .thenAnswer(inv -> {
+          net.firedevops.firemud.common.saga.persistence.SagaInstance inst = inv.getArgument(0);
+          inst.setId(1L);
+          return inst;
+        });
     Mockito.when(stepRepository.save(any()))
-        .thenAnswer(
-            inv -> {
-              net.firedevops.firemud.common.saga.persistence.SagaStep step = inv.getArgument(0);
-              step.setId(1L);
-              return step;
-            });
+        .thenAnswer(inv -> {
+          net.firedevops.firemud.common.saga.persistence.SagaStep step = inv.getArgument(0);
+          step.setId(1L);
+          return step;
+        });
     runner =
         new SagaRunner(
             new SagaMetrics(new SimpleMeterRegistry()), instanceRepository, stepRepository);

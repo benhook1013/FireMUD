@@ -54,59 +54,54 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                   itemRepository
                       .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
                       .stream()
-                      .map(
-                          item ->
-                              Map.<String, Object>of(
-                                  "id", item.getId(),
-                                  "name", item.getName(),
-                                  "description", value(item.getDescription()),
-                                  "equipmentSlot", value(item.getEquipmentSlot()),
-                                  "container", item.isContainer(),
-                                  "stackable", item.isStackable(),
-                                  "stackCompatibilityMode", item.getStackCompatibilityMode().name(),
-                                  "stackVariantKey", value(item.getStackVariantKey()),
-                                  "effectPayloadJson", value(item.getEffectPayloadJson())))
+                      .map(item ->
+                          Map.<String, Object>of(
+                              "id", item.getId(),
+                              "name", item.getName(),
+                              "description", value(item.getDescription()),
+                              "equipmentSlot", value(item.getEquipmentSlot()),
+                              "container", item.isContainer(),
+                              "stackable", item.isStackable(),
+                              "stackCompatibilityMode", item.getStackCompatibilityMode().name(),
+                              "stackVariantKey", value(item.getStackVariantKey()),
+                              "effectPayloadJson", value(item.getEffectPayloadJson())))
                       .toList(),
                   "npcs",
                   npcRepository
                       .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
                       .stream()
-                      .map(
-                          npc ->
-                              Map.<String, Object>of(
-                                  "id", npc.getId(),
-                                  "name", npc.getName(),
-                                  "behavior", value(npc.getBehavior()),
-                                  "respawnDelaySeconds", npc.getRespawnDelaySeconds()))
+                      .map(npc ->
+                          Map.<String, Object>of(
+                              "id", npc.getId(),
+                              "name", npc.getName(),
+                              "behavior", value(npc.getBehavior()),
+                              "respawnDelaySeconds", npc.getRespawnDelaySeconds()))
                       .toList(),
                   "craftingRecipes",
                   craftingRecipeRepository
                       .findByTenantIdAndVersionIdOrderByIdAsc(tenantKey, versionKey)
                       .stream()
-                      .map(
-                          recipe ->
-                              Map.<String, Object>of(
-                                  "id",
-                                  recipe.getId(),
-                                  "name",
-                                  recipe.getName(),
-                                  "resultItemId",
-                                  recipe.getResultItem().getId(),
-                                  "resultQuantity",
-                                  recipe.getResultQuantity(),
-                                  "ingredients",
-                                  recipe.getIngredients().stream()
-                                      .sorted(
-                                          Comparator.comparing(
-                                                  (CraftingIngredient ingredient) ->
-                                                      ingredient.getItem().getId())
-                                              .thenComparingInt(CraftingIngredient::getQuantity))
-                                      .map(
-                                          ingredient ->
-                                              Map.<String, Object>of(
-                                                  "itemId", ingredient.getItem().getId(),
-                                                  "quantity", ingredient.getQuantity()))
-                                      .toList()))
+                      .map(recipe ->
+                          Map.<String, Object>of(
+                              "id",
+                              recipe.getId(),
+                              "name",
+                              recipe.getName(),
+                              "resultItemId",
+                              recipe.getResultItem().getId(),
+                              "resultQuantity",
+                              recipe.getResultQuantity(),
+                              "ingredients",
+                              recipe.getIngredients().stream()
+                                  .sorted(
+                                      Comparator.comparing((CraftingIngredient ingredient) ->
+                                              ingredient.getItem().getId())
+                                          .thenComparingInt(CraftingIngredient::getQuantity))
+                                  .map(ingredient ->
+                                      Map.<String, Object>of(
+                                          "itemId", ingredient.getItem().getId(),
+                                          "quantity", ingredient.getQuantity()))
+                                  .toList()))
                       .toList()));
       return new EntityDraftDesignDigest(
           tenantId,

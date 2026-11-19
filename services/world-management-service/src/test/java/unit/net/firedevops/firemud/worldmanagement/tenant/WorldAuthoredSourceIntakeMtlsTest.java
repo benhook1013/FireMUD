@@ -218,10 +218,9 @@ class WorldAuthoredSourceIntakeMtlsTest {
           WorldAuthoredSourceIntakeServiceGrpc.newBlockingStub(malformedCallerChannel)
               .withDeadlineAfter(3, TimeUnit.SECONDS);
       Throwable failure =
-          catchFailure(
-              () ->
-                  stub.intakeAuthoredWorldSource(
-                      IntakeAuthoredWorldSourceRequest.getDefaultInstance()));
+          catchFailure(() ->
+              stub.intakeAuthoredWorldSource(
+                  IntakeAuthoredWorldSourceRequest.getDefaultInstance()));
       assertThat(failure).isInstanceOf(StatusRuntimeException.class);
       assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
     } finally {
@@ -248,13 +247,12 @@ class WorldAuthoredSourceIntakeMtlsTest {
     jwtOnlyHeaders.put(AUTHORIZATION, "Bearer header.payload.signature");
     ManagedChannel noCertificateChannel = rawMtlsChannel(null);
     try {
-      assertTransportFailure(
-          () ->
-              WorldAuthoredSourceIntakeServiceGrpc.newBlockingStub(noCertificateChannel)
-                  .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(jwtOnlyHeaders))
-                  .withDeadlineAfter(3, TimeUnit.SECONDS)
-                  .intakeAuthoredWorldSource(
-                      WorldAuthoredSourceIntakeGrpcCodec.toIntakeRequest(INTAKE_REQUEST)));
+      assertTransportFailure(() ->
+          WorldAuthoredSourceIntakeServiceGrpc.newBlockingStub(noCertificateChannel)
+              .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(jwtOnlyHeaders))
+              .withDeadlineAfter(3, TimeUnit.SECONDS)
+              .intakeAuthoredWorldSource(
+                  WorldAuthoredSourceIntakeGrpcCodec.toIntakeRequest(INTAKE_REQUEST)));
     } finally {
       stopChannel(noCertificateChannel);
     }
@@ -264,25 +262,23 @@ class WorldAuthoredSourceIntakeMtlsTest {
             .usePlaintext()
             .build();
     try {
-      assertTransportFailure(
-          () ->
-              WorldAuthoredSourceIntakeServiceGrpc.newBlockingStub(plaintextChannel)
-                  .withDeadlineAfter(3, TimeUnit.SECONDS)
-                  .intakeAuthoredWorldSource(
-                      WorldAuthoredSourceIntakeGrpcCodec.toIntakeRequest(INTAKE_REQUEST)));
+      assertTransportFailure(() ->
+          WorldAuthoredSourceIntakeServiceGrpc.newBlockingStub(plaintextChannel)
+              .withDeadlineAfter(3, TimeUnit.SECONDS)
+              .intakeAuthoredWorldSource(
+                  WorldAuthoredSourceIntakeGrpcCodec.toIntakeRequest(INTAKE_REQUEST)));
     } finally {
       stopChannel(plaintextChannel);
     }
 
     CommonGrpcClientProperties plaintext = tlsProperties(pki.gameDesignClient(), "constructor");
     plaintext.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldAuthoredSourceIntakeClient(
-                    endpoints(),
-                    plaintext,
-                    new net.firedevops.firemud.common.grpc.GrpcChannelFactory(),
-                    NAMESPACE))
+    assertThatThrownBy(() ->
+            new WorldAuthoredSourceIntakeClient(
+                endpoints(),
+                plaintext,
+                new net.firedevops.firemud.common.grpc.GrpcChannelFactory(),
+                NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("mTLS");
     verifyNoInteractions(intakeService);

@@ -129,10 +129,8 @@ class GameLogicGameplayRuleIntakeServiceTest {
 
     assertThatThrownBy(() -> asGameDesign(() -> fixture.service.abort(authorization)))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.UNAVAILABLE));
     assertThat(fixture.stored.get()).isNull();
     verify(fixture.repository, never())
         .insertTerminal(any(GameLogicGameplayRuleIntakeTerminal.class));
@@ -153,23 +151,21 @@ class GameLogicGameplayRuleIntakeServiceTest {
             authorization.source(),
             authorization.sources());
     when(fixture.accountReader.read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class)))
-        .thenAnswer(
-            invocation ->
-                new GameLogicIntakeAuthorizationReadEvidence(
-                    new GameLogicIntakeAuthorizationReadEvidence.Request(
-                        1,
-                        NAMESPACE,
-                        invocation
-                            .<GameLogicIntakeAuthorizationReadEvidence.Request>getArgument(0)
-                            .readRequestId(),
-                        changed)));
+        .thenAnswer(invocation ->
+            new GameLogicIntakeAuthorizationReadEvidence(
+                new GameLogicIntakeAuthorizationReadEvidence.Request(
+                    1,
+                    NAMESPACE,
+                    invocation
+                        .<GameLogicIntakeAuthorizationReadEvidence.Request>getArgument(0)
+                        .readRequestId(),
+                    changed)));
 
     assertThatThrownBy(() -> asGameDesign(() -> fixture.service.abort(authorization)))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
     assertThat(fixture.stored.get()).isNull();
     verify(fixture.repository, never())
         .insertTerminal(any(GameLogicGameplayRuleIntakeTerminal.class));
@@ -186,10 +182,9 @@ class GameLogicGameplayRuleIntakeServiceTest {
 
     assertThatThrownBy(() -> asGameDesign(() -> fixture.service.retain(authorization)))
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.FAILED_PRECONDITION));
     assertThat(fixture.stored.get()).isNull();
     assertThat(asAccount(() -> fixture.service.readTerminal(authorization))).isEmpty();
     verify(fixture.repository, never())
@@ -205,10 +200,8 @@ class GameLogicGameplayRuleIntakeServiceTest {
 
     assertThatThrownBy(() -> asGameDesign(() -> fixture.service.retain(authorization)))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.UNAVAILABLE));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode()).isEqualTo(Status.Code.UNAVAILABLE));
     assertThat(fixture.stored.get()).isNull();
     assertThat(asAccount(() -> fixture.service.readTerminal(authorization))).isEmpty();
     verify(fixture.gameDesignReader, never())
@@ -233,24 +226,20 @@ class GameLogicGameplayRuleIntakeServiceTest {
           .thenThrow(failure);
     }
 
-    assertThatThrownBy(
-            () ->
-                asGameDesign(
-                    () -> {
-                      if (call == DependencyCall.ABORT_ACCOUNT)
-                        fixture.service.abort(authorization);
-                      else fixture.service.retain(authorization);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            asGameDesign(() -> {
+              if (call == DependencyCall.ABORT_ACCOUNT) fixture.service.abort(authorization);
+              else fixture.service.retain(authorization);
+              return null;
+            }))
         .isInstanceOf(StatusRuntimeException.class)
-        .satisfies(
-            error -> {
-              var status = Status.fromThrowable(error);
-              assertThat(status.getCode()).isEqualTo(expectedCode);
-              assertThat(status.getDescription()).isNull();
-              assertThat(error.getCause()).isNull();
-              assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
-            });
+        .satisfies(error -> {
+          var status = Status.fromThrowable(error);
+          assertThat(status.getCode()).isEqualTo(expectedCode);
+          assertThat(status.getDescription()).isNull();
+          assertThat(error.getCause()).isNull();
+          assertThat(((StatusRuntimeException) error).getTrailers()).isNull();
+        });
     verify(fixture.repository, never())
         .insertTerminal(any(GameLogicGameplayRuleIntakeTerminal.class));
   }
@@ -279,9 +268,8 @@ class GameLogicGameplayRuleIntakeServiceTest {
             Arguments.of(Status.Code.DATA_LOSS, Status.Code.UNAVAILABLE),
             Arguments.of(Status.Code.UNKNOWN, Status.Code.UNKNOWN));
     return calls.stream()
-        .flatMap(
-            call ->
-                cases.stream().map(values -> Arguments.of(call, values.get()[0], values.get()[1])));
+        .flatMap(call ->
+            cases.stream().map(values -> Arguments.of(call, values.get()[0], values.get()[1])));
   }
 
   private static StatusRuntimeException foreignFailure(Status.Code code) {
@@ -318,10 +306,9 @@ class GameLogicGameplayRuleIntakeServiceTest {
 
     assertThatThrownBy(() -> asGameDesign(() -> fixture.service.retain(changedAuthorization)))
         .isInstanceOf(RuntimeException.class)
-        .satisfies(
-            error ->
-                assertThat(Status.fromThrowable(error).getCode())
-                    .isEqualTo(Status.Code.ALREADY_EXISTS));
+        .satisfies(error ->
+            assertThat(Status.fromThrowable(error).getCode())
+                .isEqualTo(Status.Code.ALREADY_EXISTS));
     verify(fixture.accountReader, never())
         .read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class));
     verify(fixture.gameDesignReader, never())
@@ -340,10 +327,9 @@ class GameLogicGameplayRuleIntakeServiceTest {
     try {
       assertThatThrownBy(() -> fixture.service.retain(authorization))
           .isInstanceOf(RuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     } finally {
       Context.current().detach(previous);
     }
@@ -372,10 +358,9 @@ class GameLogicGameplayRuleIntakeServiceTest {
     try {
       assertThatThrownBy(() -> fixture.service.retain(authorization))
           .isInstanceOf(RuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     } finally {
       Context.current().detach(previous);
     }
@@ -403,10 +388,9 @@ class GameLogicGameplayRuleIntakeServiceTest {
     try {
       assertThatThrownBy(() -> fixture.service.retain(authorization))
           .isInstanceOf(RuntimeException.class)
-          .satisfies(
-              error ->
-                  assertThat(Status.fromThrowable(error).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(error ->
+              assertThat(Status.fromThrowable(error).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     } finally {
       Context.current().detach(previous);
     }
@@ -535,25 +519,23 @@ class GameLogicGameplayRuleIntakeServiceTest {
         GameLogicIntakeAuthorizationBinding authorization, GameplayRuleSelectedSource selected) {
       respondAuthorizationOnly(authorization);
       when(gameDesignReader.read(any(GameplayRuleSourceReadEvidence.Request.class)))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                var request = invocation.<GameplayRuleSourceReadEvidence.Request>getArgument(0);
-                return new GameplayRuleSourceReadEvidence(request, selected);
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            var request = invocation.<GameplayRuleSourceReadEvidence.Request>getArgument(0);
+            return new GameplayRuleSourceReadEvidence(request, selected);
+          });
     }
 
     private void respondAuthorizationOnly(GameLogicIntakeAuthorizationBinding authorization) {
       when(accountReader.read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class)))
-          .thenAnswer(
-              invocation -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                var request =
-                    invocation.<GameLogicIntakeAuthorizationReadEvidence.Request>getArgument(0);
-                assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
-                assertThat(request.binding()).isEqualTo(authorization);
-                return new GameLogicIntakeAuthorizationReadEvidence(request);
-              });
+          .thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            var request =
+                invocation.<GameLogicIntakeAuthorizationReadEvidence.Request>getArgument(0);
+            assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+            assertThat(request.binding()).isEqualTo(authorization);
+            return new GameLogicIntakeAuthorizationReadEvidence(request);
+          });
     }
   }
 

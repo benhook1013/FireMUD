@@ -66,18 +66,16 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     assertThat(created.issuance().issuedAt()).isEqualTo(candidate.issuedAt());
     assertThat(redeemed).isNotNull();
     assertThat(store.queries)
-        .anySatisfy(
-            sql ->
-                assertThat(sql)
-                    .contains(
-                        "cast(? as timestamptz), cast(? as timestamptz), "
-                            + "cast(? as timestamptz), 'issued'"))
-        .anySatisfy(
-            sql ->
-                assertThat(sql)
-                    .contains(
-                        "redeemed_at = cast(? as timestamptz)",
-                        "reference_expires_at > cast(? as timestamptz)"));
+        .anySatisfy(sql ->
+            assertThat(sql)
+                .contains(
+                    "cast(? as timestamptz), cast(? as timestamptz), "
+                        + "cast(? as timestamptz), 'issued'"))
+        .anySatisfy(sql ->
+            assertThat(sql)
+                .contains(
+                    "redeemed_at = cast(? as timestamptz)",
+                    "reference_expires_at > cast(? as timestamptz)"));
   }
 
   @Test
@@ -181,12 +179,9 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     IssuanceCandidate future = candidate(tuple());
     inTransaction(() -> earlyRepository.createOrReadExact(future));
 
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    () ->
-                        earlyRepository.eraseExpiredResponseEnvelope(
-                            future.controlPlaneRequestId())))
+    assertThatThrownBy(() ->
+            inTransaction(
+                () -> earlyRepository.eraseExpiredResponseEnvelope(future.controlPlaneRequestId())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("evidence unavailable");
     assertThat(earlyStore.row.envelope).containsExactly(future.encryptedResponseEnvelope());
@@ -198,12 +193,9 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     IssuanceCandidate expired = expiredCandidate(tuple());
     inTransaction(() -> unprovedRepository.createOrReadExact(expired));
     unprovedStore.row.envelope = null;
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    () ->
-                        unprovedRepository.findByControlPlaneRequestId(
-                            expired.controlPlaneRequestId())))
+    assertThatThrownBy(() ->
+            inTransaction(() ->
+                unprovedRepository.findByControlPlaneRequestId(expired.controlPlaneRequestId())))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("evidence unavailable");
   }

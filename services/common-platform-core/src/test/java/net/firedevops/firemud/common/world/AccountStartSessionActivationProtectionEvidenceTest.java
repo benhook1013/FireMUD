@@ -152,10 +152,9 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             first.gameSessionOwnerFence(),
             first.worldActivationRequest());
     for (var changed : List.of(differentActivation, differentAttempt)) {
-      assertThatThrownBy(
-              () ->
-                  AccountStartSessionActivationProtectionAcquisitionGrpcCodec.toResponse(
-                      changed, namespace, firstEvidence))
+      assertThatThrownBy(() ->
+              AccountStartSessionActivationProtectionAcquisitionGrpcCodec.toResponse(
+                  changed, namespace, firstEvidence))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("exact original activation acquisition binding");
     }
@@ -384,96 +383,90 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             CurrentGameInstanceStatus.STARTING);
     byte[] substitutedProjection = projection.clone();
     substitutedProjection[substitutedProjection.length - 2] ^= 1;
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionRequest.create(
-                    ACCOUNT_PARTICIPATION,
-                    Long.MAX_VALUE,
-                    valid.launchAssociation(),
-                    currentAttempt(
-                        valid,
-                        substitutedProjection,
-                        ORIGINAL_LEASE_EXPIRY,
-                        GAME_SESSION_MUTATION,
-                        GAME_SESSION_ATTEMPT,
-                        Long.MAX_VALUE),
-                    valid.worldActivationRequest()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionRequest.create(
+                ACCOUNT_PARTICIPATION,
+                Long.MAX_VALUE,
+                valid.launchAssociation(),
+                currentAttempt(
+                    valid,
+                    substitutedProjection,
+                    ORIGINAL_LEASE_EXPIRY,
+                    GAME_SESSION_MUTATION,
+                    GAME_SESSION_ATTEMPT,
+                    Long.MAX_VALUE),
+                valid.worldActivationRequest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("projection differs");
 
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionRequest.create(
-                    ACCOUNT_PARTICIPATION,
-                    Long.MAX_VALUE,
-                    valid.launchAssociation(),
-                    currentAttempt(
-                        valid,
-                        projection,
-                        ORIGINAL_LEASE_EXPIRY.plusNanos(1),
-                        GAME_SESSION_MUTATION,
-                        GAME_SESSION_ATTEMPT,
-                        Long.MAX_VALUE),
-                    valid.worldActivationRequest()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionRequest.create(
+                ACCOUNT_PARTICIPATION,
+                Long.MAX_VALUE,
+                valid.launchAssociation(),
+                currentAttempt(
+                    valid,
+                    projection,
+                    ORIGINAL_LEASE_EXPIRY.plusNanos(1),
+                    GAME_SESSION_MUTATION,
+                    GAME_SESSION_ATTEMPT,
+                    Long.MAX_VALUE),
+                valid.worldActivationRequest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("microsecond");
 
-    assertThatThrownBy(
-            () ->
-                request(
-                    fixture,
-                    tuple,
-                    GS_READ_ID,
-                    WORLD_READ_ID,
-                    ACTIVATION_ID,
-                    7L,
-                    CurrentGameInstanceStatus.RUNNING))
+    assertThatThrownBy(() ->
+            request(
+                fixture,
+                tuple,
+                GS_READ_ID,
+                WORLD_READ_ID,
+                ACTIVATION_ID,
+                7L,
+                CurrentGameInstanceStatus.RUNNING))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining(
             "Original Account operation differs from its current owner or launch target");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionRequest.create(
-                    new UUID(0L, 0L),
-                    Long.MAX_VALUE,
-                    valid.launchAssociation(),
-                    valid.originalCurrentAttempt(),
-                    valid.worldActivationRequest()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionRequest.create(
+                new UUID(0L, 0L),
+                Long.MAX_VALUE,
+                valid.launchAssociation(),
+                valid.originalCurrentAttempt(),
+                valid.worldActivationRequest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("non-nil UUID");
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
-                    valid.launchAssociation().request(),
-                    valid.launchAssociation().playableStateNamespaceId(),
-                    valid.launchAssociation().playableStateScope(),
-                    valid.launchAssociation().publicProduction(),
-                    valid.launchAssociation().currentGameInstanceStatus(),
-                    valid.launchAssociation().currentRowVersion(),
-                    uuid("e5e5e5e5-e5e5-45e5-85e5-e5e5e5e5e5e5"),
-                    valid.launchAssociation().ownerFence(),
-                    valid.launchAssociation().canonicalRealmId(),
-                    valid.launchAssociation().catalogRevision(),
-                    valid.launchAssociation().launchBindingEvidence()))
+    assertThatThrownBy(() ->
+            new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+                valid.launchAssociation().request(),
+                valid.launchAssociation().playableStateNamespaceId(),
+                valid.launchAssociation().playableStateScope(),
+                valid.launchAssociation().publicProduction(),
+                valid.launchAssociation().currentGameInstanceStatus(),
+                valid.launchAssociation().currentRowVersion(),
+                uuid("e5e5e5e5-e5e5-45e5-85e5-e5e5e5e5e5e5"),
+                valid.launchAssociation().ownerFence(),
+                valid.launchAssociation().canonicalRealmId(),
+                valid.launchAssociation().catalogRevision(),
+                valid.launchAssociation().launchBindingEvidence()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining(
             "Original Account operation differs from its current owner or launch target");
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
-                    valid.launchAssociation().request(),
-                    valid.launchAssociation().playableStateNamespaceId(),
-                    valid.launchAssociation().playableStateScope(),
-                    valid.launchAssociation().publicProduction(),
-                    valid.launchAssociation().currentGameInstanceStatus(),
-                    valid.launchAssociation().currentRowVersion(),
-                    valid.launchAssociation().ownerAttemptId(),
-                    valid.launchAssociation().ownerFence() - 1L,
-                    valid.launchAssociation().canonicalRealmId(),
-                    valid.launchAssociation().catalogRevision(),
-                    valid.launchAssociation().launchBindingEvidence()))
+    assertThatThrownBy(() ->
+            new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+                valid.launchAssociation().request(),
+                valid.launchAssociation().playableStateNamespaceId(),
+                valid.launchAssociation().playableStateScope(),
+                valid.launchAssociation().publicProduction(),
+                valid.launchAssociation().currentGameInstanceStatus(),
+                valid.launchAssociation().currentRowVersion(),
+                valid.launchAssociation().ownerAttemptId(),
+                valid.launchAssociation().ownerFence() - 1L,
+                valid.launchAssociation().canonicalRealmId(),
+                valid.launchAssociation().catalogRevision(),
+                valid.launchAssociation().launchBindingEvidence()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining(
             "Original Account operation differs from its current owner or launch target");
@@ -496,22 +489,19 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             List.of(source(fixture.selector.canonicalTenantId(), "source")));
     Map<String, Object> extraEvidenceField = readObject(malformedEvidence.canonicalBytes());
     extraEvidenceField.put("unsupported", "field");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionEvidence.decode(
-                    canonical(extraEvidenceField)))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionEvidence.decode(canonical(extraEvidenceField)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
-    assertThatThrownBy(
-            () ->
-                request(
-                    fixture,
-                    originalTuple(fixture, "another-world-runtime", "namespace substitution"),
-                    GS_READ_ID,
-                    WORLD_READ_ID,
-                    ACTIVATION_ID,
-                    7L,
-                    CurrentGameInstanceStatus.STARTING))
+    assertThatThrownBy(() ->
+            request(
+                fixture,
+                originalTuple(fixture, "another-world-runtime", "namespace substitution"),
+                GS_READ_ID,
+                WORLD_READ_ID,
+                ACTIVATION_ID,
+                7L,
+                CurrentGameInstanceStatus.STARTING))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -552,31 +542,29 @@ class AccountStartSessionActivationProtectionEvidenceTest {
     assertThatThrownBy(() -> evidence(request, capture, List.of(source), ORIGINAL_LEASE_EXPIRY))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("before the original lease expires");
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionEvidence.create(
-                    request,
-                    ACCOUNT_PROTECTION,
-                    1L,
-                    ACQUIRED_AT,
-                    capture,
-                    "0".repeat(64),
-                    List.of(source)))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionEvidence.create(
+                request,
+                ACCOUNT_PROTECTION,
+                1L,
+                ACQUIRED_AT,
+                capture,
+                "0".repeat(64),
+                List.of(source)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest differs");
     Map<String, Object> malformed = readObject(capture);
     malformed.put("controlPlaneRequestId", "another-original-request");
     byte[] wrongCapture = canonical(malformed);
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionEvidence.create(
-                    request,
-                    ACCOUNT_PROTECTION,
-                    1L,
-                    ACQUIRED_AT,
-                    wrongCapture,
-                    sha256(wrongCapture),
-                    List.of(source)))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionEvidence.create(
+                request,
+                ACCOUNT_PROTECTION,
+                1L,
+                ACQUIRED_AT,
+                wrongCapture,
+                sha256(wrongCapture),
+                List.of(source)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("another original request");
   }
@@ -660,14 +648,13 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             old.canonicalRealmId(),
             old.catalogRevision(),
             old.launchBindingEvidence());
-    assertThatThrownBy(
-            () ->
-                AccountStartSessionActivationProtectionRequest.create(
-                    ACCOUNT_PARTICIPATION,
-                    Long.MAX_VALUE,
-                    omittedOperation,
-                    first.originalCurrentAttempt(),
-                    first.worldActivationRequest()))
+    assertThatThrownBy(() ->
+            AccountStartSessionActivationProtectionRequest.create(
+                ACCOUNT_PARTICIPATION,
+                Long.MAX_VALUE,
+                omittedOperation,
+                first.originalCurrentAttempt(),
+                first.worldActivationRequest()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete original operation");
     var wire =
@@ -879,19 +866,18 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             null);
     List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        selectedRequest.appliedCommitId(),
-                        selectedRequest.contentDigest(),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "2".repeat(64) : null))
+            .map(owner ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    owner,
+                    Long.toString(descriptor.versionId()),
+                    false,
+                    null,
+                    selectedRequest.appliedCommitId(),
+                    selectedRequest.contentDigest(),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                    "GAME_LOGIC".equals(owner),
+                    "GAME_LOGIC".equals(owner) ? "sha256:" + "2".repeat(64) : null))
             .toList();
     AuthoredWorldReleaseAttestationEvidence release =
         AuthoredWorldReleaseAttestationEvidence.create(

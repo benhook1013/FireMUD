@@ -103,29 +103,28 @@ class AccountPaymentInstrumentAttachmentServiceTest {
     when(instruments.findAttachmentByRequestId(request.requestId()))
         .thenAnswer(call -> Optional.ofNullable(retained));
     when(instruments.retainAttachment(any()))
-        .thenAnswer(
-            call -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(transactions.commits).isEqualTo(1);
-              Attachment a = call.getArgument(0);
-              retained =
-                  new AccountPaymentInstrumentRecord(
-                      a.instrumentUuid(),
-                      a.accountUuid(),
-                      a.customerProvisioningRequestId(),
-                      a.providerCustomerId(),
-                      a.providerPaymentMethodId(),
-                      a.requestId(),
-                      1,
-                      a.state(),
-                      a.display(),
-                      a.requestId(),
-                      a.evidenceDigest(),
-                      NOW,
-                      NOW);
-              current = retained;
-              return retained;
-            });
+        .thenAnswer(call -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(transactions.commits).isEqualTo(1);
+          Attachment a = call.getArgument(0);
+          retained =
+              new AccountPaymentInstrumentRecord(
+                  a.instrumentUuid(),
+                  a.accountUuid(),
+                  a.customerProvisioningRequestId(),
+                  a.providerCustomerId(),
+                  a.providerPaymentMethodId(),
+                  a.requestId(),
+                  1,
+                  a.state(),
+                  a.display(),
+                  a.requestId(),
+                  a.evidenceDigest(),
+                  NOW,
+                  NOW);
+          current = retained;
+          return retained;
+        });
   }
 
   private AccountPaymentInstrumentRecord occupiedInstrument() {
@@ -251,17 +250,16 @@ class AccountPaymentInstrumentAttachmentServiceTest {
     transport.paths.clear();
     transport.lastFour = "4444";
     when(customers.findByAccountForUpdate(ACCOUNT))
-        .thenAnswer(
-            call -> {
-              if (transport.paths.size() == 2) {
-                // Another invocation committed its original receipt and a later availability
-                // version
-                // after this invocation's preparation but before final owner-lock acquisition.
-                retained = original;
-                current = later;
-              }
-              return Optional.of(customer);
-            });
+        .thenAnswer(call -> {
+          if (transport.paths.size() == 2) {
+            // Another invocation committed its original receipt and a later availability
+            // version
+            // after this invocation's preparation but before final owner-lock acquisition.
+            retained = original;
+            current = later;
+          }
+          return Optional.of(customer);
+        });
     var replay = (HistoricalAttachment) service().retainSavedMethod(request);
     assertThat(replay.receipt()).isEqualTo(original);
     assertThat(replay.receipt().display().lastFour()).isEqualTo("4242");
@@ -312,13 +310,12 @@ class AccountPaymentInstrumentAttachmentServiceTest {
   void lockWaitAfterSdkObservationAlsoCountsAgainstFreshness() {
     source();
     when(customers.findByAccountForUpdate(ACCOUNT))
-        .thenAnswer(
-            call -> {
-              if (!transport.paths.isEmpty()) {
-                clock.now = NOW.plusSeconds(11);
-              }
-              return Optional.of(customer);
-            });
+        .thenAnswer(call -> {
+          if (!transport.paths.isEmpty()) {
+            clock.now = NOW.plusSeconds(11);
+          }
+          return Optional.of(customer);
+        });
     assertThatThrownBy(() -> service().retainSavedMethod(request)).hasMessageContaining("stale");
     verify(instruments, never()).retainAttachment(any());
   }

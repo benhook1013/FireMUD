@@ -53,13 +53,12 @@ class TcpProxyServiceImplTest {
   void notifyDisconnectRetainsGameplayLoggingContext() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     Mockito.when(repository.findById(12L))
-        .thenAnswer(
-            ignored -> {
-              assertEquals("7", MDC.get("tenantId"));
-              assertEquals("12", MDC.get("gameInstanceId"));
-              assertEquals(null, MDC.get("characterId"));
-              return Optional.of(buildEntity(12L, 7L));
-            });
+        .thenAnswer(ignored -> {
+          assertEquals("7", MDC.get("tenantId"));
+          assertEquals("12", MDC.get("gameInstanceId"));
+          assertEquals(null, MDC.get("characterId"));
+          return Optional.of(buildEntity(12L, 7L));
+        });
     TcpProxyServiceImpl service =
         service(repository, new SimpleMeterRegistry(), acceptingDeduplication());
 

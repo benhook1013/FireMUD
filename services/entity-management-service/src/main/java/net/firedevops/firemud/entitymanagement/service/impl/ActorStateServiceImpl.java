@@ -157,12 +157,11 @@ public class ActorStateServiceImpl implements ActorStateService {
   private List<EffectModifier> conditionModifiers(
       long characterId, List<ActorConditionStateDto> activeConditions) {
     return activeConditions.stream()
-        .flatMap(
-            condition ->
-                effectPayloadParser
-                    .parseModifiers(
-                        condition.effectPayloadJson(), toEffectSource(characterId, condition))
-                    .stream())
+        .flatMap(condition ->
+            effectPayloadParser
+                .parseModifiers(
+                    condition.effectPayloadJson(), toEffectSource(characterId, condition))
+                .stream())
         .toList();
   }
 
@@ -174,13 +173,12 @@ public class ActorStateServiceImpl implements ActorStateService {
         .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNotNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByEquipmentSlotAscIdAsc(
             tenantId, characterId)
         .stream()
-        .flatMap(
-            itemInstance ->
-                effectPayloadParser
-                    .parseModifiers(
-                        itemInstance.getItem().getEffectPayloadJson(),
-                        toEffectSource(characterId, itemInstance))
-                    .stream())
+        .flatMap(itemInstance ->
+            effectPayloadParser
+                .parseModifiers(
+                    itemInstance.getItem().getEffectPayloadJson(),
+                    toEffectSource(characterId, itemInstance))
+                .stream())
         .toList();
   }
 

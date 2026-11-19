@@ -94,13 +94,12 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
                 Status.Code.UNAVAILABLE)) {
           assertThatThrownBy(() -> stub.readInitialPlayerLocationRegion(request()))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure -> {
-                    assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(code);
-                    assertThat(Status.fromThrowable(failure).getDescription())
-                        .doesNotContain("private");
-                    assertThat(Status.fromThrowable(failure).getCause()).isNull();
-                  });
+              .satisfies(failure -> {
+                assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(code);
+                assertThat(Status.fromThrowable(failure).getDescription())
+                    .doesNotContain("private");
+                assertThat(Status.fromThrowable(failure).getCause()).isNull();
+              });
         }
       } finally {
         stopChannel(channel);
@@ -269,42 +268,38 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
         assertThat(read).isEqualTo(placed);
         assertThatThrownBy(() -> stub.readInitialPlayerLocation(request))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.NOT_FOUND));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.NOT_FOUND));
         assertThatThrownBy(() -> stub.readInitialPlayerLocationRegion(request))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.NOT_FOUND));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.NOT_FOUND));
         assertThatThrownBy(() -> stub.placeInitialPlayer(request))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure -> {
-                  var status = Status.fromThrowable(failure);
-                  assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-                  assertThat(status.getDescription())
-                      .isEqualTo("World initial-player placement is unavailable");
-                  assertThat(status.getCause()).isNull();
-                  Metadata responseTrailers = ((StatusRuntimeException) failure).getTrailers();
-                  assertThat(responseTrailers == null || !responseTrailers.containsKey(secretKey))
-                      .isTrue();
-                });
+            .satisfies(failure -> {
+              var status = Status.fromThrowable(failure);
+              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(status.getDescription())
+                  .isEqualTo("World initial-player placement is unavailable");
+              assertThat(status.getCause()).isNull();
+              Metadata responseTrailers = ((StatusRuntimeException) failure).getTrailers();
+              assertThat(responseTrailers == null || !responseTrailers.containsKey(secretKey))
+                  .isTrue();
+            });
         assertThatThrownBy(() -> stub.placeInitialPlayer(request))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure -> {
-                  var status = Status.fromThrowable(failure);
-                  assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-                  assertThat(status.getDescription())
-                      .isEqualTo("Exact World initial-placement owner evidence is unavailable");
-                  assertThat(status.getCause()).isNull();
-                  Metadata responseTrailers = ((StatusRuntimeException) failure).getTrailers();
-                  assertThat(responseTrailers == null || !responseTrailers.containsKey(secretKey))
-                      .isTrue();
-                });
+            .satisfies(failure -> {
+              var status = Status.fromThrowable(failure);
+              assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(status.getDescription())
+                  .isEqualTo("Exact World initial-placement owner evidence is unavailable");
+              assertThat(status.getCause()).isNull();
+              Metadata responseTrailers = ((StatusRuntimeException) failure).getTrailers();
+              assertThat(responseTrailers == null || !responseTrailers.containsKey(secretKey))
+                  .isTrue();
+            });
         verify(service, times(3))
             .place(CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request));
         verify(service, times(2))
@@ -312,15 +307,12 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
         verify(service)
             .readRegion(CanonicalInitialPlayerLocationGrpcCodec.fromRegionRequest(request));
 
-        assertThatThrownBy(
-                () ->
-                    stub.placeInitialPlayer(
-                        CanonicalInitialPlayerLocationRequest.getDefaultInstance()))
+        assertThatThrownBy(() ->
+                stub.placeInitialPlayer(CanonicalInitialPlayerLocationRequest.getDefaultInstance()))
             .isInstanceOf(StatusRuntimeException.class)
-            .satisfies(
-                failure ->
-                    assertThat(Status.fromThrowable(failure).getCode())
-                        .isEqualTo(Status.Code.INVALID_ARGUMENT));
+            .satisfies(failure ->
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.INVALID_ARGUMENT));
       } finally {
         stopChannel(channel);
       }
@@ -341,10 +333,9 @@ class CanonicalInitialPlayerLocationGrpcServiceMtlsTest {
                       }
                     })
                 .isInstanceOf(StatusRuntimeException.class)
-                .satisfies(
-                    failure ->
-                        assertThat(Status.fromThrowable(failure).getCode())
-                            .isEqualTo(Status.Code.PERMISSION_DENIED));
+                .satisfies(failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.PERMISSION_DENIED));
           }
         } finally {
           stopChannel(rejectedPeerChannel);

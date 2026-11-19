@@ -114,15 +114,14 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
             GameSessionStartSessionLaunchDescriptorRepository
                 .StartSessionLaunchDescriptorConflictException.class)
         .hasMessageContaining("original immutable StartSession pin");
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE game_session_start_session_launch_descriptor_pin "
-                        + "SET descriptor_response_digest = ? WHERE target_namespace = ? "
-                        + "AND control_plane_request_id = ?",
-                    "sha256:" + "c".repeat(64),
-                    retained.claim().targetNamespace(),
-                    retained.claim().controlPlaneRequestId()))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE game_session_start_session_launch_descriptor_pin "
+                    + "SET descriptor_response_digest = ? WHERE target_namespace = ? "
+                    + "AND control_plane_request_id = ?",
+                "sha256:" + "c".repeat(64),
+                retained.claim().targetNamespace(),
+                retained.claim().controlPlaneRequestId()))
         .isInstanceOf(RuntimeException.class);
     assertThat(fixture.pinCount()).isEqualTo(1);
   }
@@ -246,12 +245,11 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
             originalAssociation.worldPublishedStartLocationEvidence(),
             originalAssociation.phaseEpoch());
 
-    assertThatThrownBy(
-            () ->
-                fixture.pin(
-                    continuation,
-                    new StartSessionLaunchDescriptorGrpcCodec.Resolved(
-                        substitutedAssociation, original.outcome())))
+    assertThatThrownBy(() ->
+            fixture.pin(
+                continuation,
+                new StartSessionLaunchDescriptorGrpcCodec.Resolved(
+                    substitutedAssociation, original.outcome())))
         .isInstanceOf(
             GameSessionStartSessionLaunchDescriptorRepository
                 .StartSessionLaunchDescriptorConflictException.class)
@@ -289,46 +287,40 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
       java.util.concurrent.CompletableFuture<Integer> blockerPid =
           new java.util.concurrent.CompletableFuture<>();
       Future<?> blocker =
-          executor.submit(
-              () ->
-                  fixture.transactions.executeWithoutResult(
-                      status -> {
-                        int backendPid =
-                            Objects.requireNonNull(
-                                Objects.requireNonNull(
-                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class));
-                        fixture.dsl.fetchOne(
-                            "SELECT 1 FROM game_session_start_session_launch_descriptor_pin "
-                                + "WHERE target_namespace = ? AND control_plane_request_id = ? "
-                                + "FOR UPDATE",
-                            retained.claim().targetNamespace(),
-                            retained.claim().controlPlaneRequestId());
-                        blockerPid.complete(backendPid);
-                        blockerReady.countDown();
-                        awaitLatch(releaseBlocker, "descriptor read lock release");
-                      }));
+          executor.submit(() ->
+              fixture.transactions.executeWithoutResult(status -> {
+                int backendPid =
+                    Objects.requireNonNull(
+                        Objects.requireNonNull(fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
+                fixture.dsl.fetchOne(
+                    "SELECT 1 FROM game_session_start_session_launch_descriptor_pin "
+                        + "WHERE target_namespace = ? AND control_plane_request_id = ? "
+                        + "FOR UPDATE",
+                    retained.claim().targetNamespace(),
+                    retained.claim().controlPlaneRequestId());
+                blockerPid.complete(backendPid);
+                blockerReady.countDown();
+                awaitLatch(releaseBlocker, "descriptor read lock release");
+              }));
       assertThat(blockerReady.await(15, TimeUnit.SECONDS)).isTrue();
 
       java.util.concurrent.CompletableFuture<Integer> waiterPid =
           new java.util.concurrent.CompletableFuture<>();
       Future<RuntimeException> waiter =
-          executor.submit(
-              () ->
-                  fixture.transactions.execute(
-                      status -> {
-                        waiterPid.complete(
-                            Objects.requireNonNull(
-                                Objects.requireNonNull(
-                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class)));
-                        try {
-                          fixture.descriptors.findPinned(continuation);
-                          return null;
-                        } catch (RuntimeException failure) {
-                          return failure;
-                        }
-                      }));
+          executor.submit(() ->
+              fixture.transactions.execute(status -> {
+                waiterPid.complete(
+                    Objects.requireNonNull(
+                        Objects.requireNonNull(fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class)));
+                try {
+                  fixture.descriptors.findPinned(continuation);
+                  return null;
+                } catch (RuntimeException failure) {
+                  return failure;
+                }
+              }));
       int readBackendPid = waiterPid.get(15, TimeUnit.SECONDS);
       int blockerBackendPid = blockerPid.get(15, TimeUnit.SECONDS);
       awaitPostgresLockWait(fixture.dsl, readBackendPid, blockerBackendPid);
@@ -369,10 +361,8 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
     assertThat(fixture.originalAuthorizationReferenceLive(originalAuthorizationExpiresAt)).isTrue();
     awaitOriginalAuthorizationExpiry(fixture, originalAuthorizationExpiresAt);
     assertThat(fixture.ownerClaimLeaseLive(retained.claim().controlPlaneRequestId())).isTrue();
-    assertThatThrownBy(
-            () ->
-                fixture.pin(
-                    retained.claim(), descriptor(retained, "expired-original-auth-descriptor")))
+    assertThatThrownBy(() ->
+            fixture.pin(retained.claim(), descriptor(retained, "expired-original-auth-descriptor")))
         .isInstanceOf(
             GameSessionStartSessionOperatorAttemptRepository
                 .StaleStartSessionOperatorAttemptClaimException.class)
@@ -406,46 +396,40 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
       java.util.concurrent.CompletableFuture<Integer> blockerPid =
           new java.util.concurrent.CompletableFuture<>();
       Future<?> blocker =
-          executor.submit(
-              () ->
-                  fixture.transactions.executeWithoutResult(
-                      status -> {
-                        int backendPid =
-                            Objects.requireNonNull(
-                                Objects.requireNonNull(
-                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class));
-                        fixture.dsl.fetchOne(
-                            "SELECT 1 FROM game_session_start_session_launch_descriptor_pin "
-                                + "WHERE target_namespace = ? AND control_plane_request_id = ? "
-                                + "FOR UPDATE",
-                            retained.claim().targetNamespace(),
-                            retained.claim().controlPlaneRequestId());
-                        blockerPid.complete(backendPid);
-                        blockerReady.countDown();
-                        awaitLatch(releaseBlocker, "descriptor read lock release");
-                      }));
+          executor.submit(() ->
+              fixture.transactions.executeWithoutResult(status -> {
+                int backendPid =
+                    Objects.requireNonNull(
+                        Objects.requireNonNull(fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
+                fixture.dsl.fetchOne(
+                    "SELECT 1 FROM game_session_start_session_launch_descriptor_pin "
+                        + "WHERE target_namespace = ? AND control_plane_request_id = ? "
+                        + "FOR UPDATE",
+                    retained.claim().targetNamespace(),
+                    retained.claim().controlPlaneRequestId());
+                blockerPid.complete(backendPid);
+                blockerReady.countDown();
+                awaitLatch(releaseBlocker, "descriptor read lock release");
+              }));
       assertThat(blockerReady.await(15, TimeUnit.SECONDS)).isTrue();
 
       java.util.concurrent.CompletableFuture<Integer> waiterPid =
           new java.util.concurrent.CompletableFuture<>();
       Future<RuntimeException> waiter =
-          executor.submit(
-              () ->
-                  fixture.transactions.execute(
-                      status -> {
-                        waiterPid.complete(
-                            Objects.requireNonNull(
-                                Objects.requireNonNull(
-                                        fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
-                                    .get(0, Integer.class)));
-                        try {
-                          fixture.descriptors.findPinned(continuation);
-                          return null;
-                        } catch (RuntimeException failure) {
-                          return failure;
-                        }
-                      }));
+          executor.submit(() ->
+              fixture.transactions.execute(status -> {
+                waiterPid.complete(
+                    Objects.requireNonNull(
+                        Objects.requireNonNull(fixture.dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class)));
+                try {
+                  fixture.descriptors.findPinned(continuation);
+                  return null;
+                } catch (RuntimeException failure) {
+                  return failure;
+                }
+              }));
       int readBackendPid = waiterPid.get(15, TimeUnit.SECONDS);
       int blockerBackendPid = blockerPid.get(15, TimeUnit.SECONDS);
       awaitPostgresLockWait(fixture.dsl, readBackendPid, blockerBackendPid);
@@ -545,12 +529,11 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
     StartSessionLaunchDescriptorReadClient client =
         mock(StartSessionLaunchDescriptorReadClient.class);
     when(client.resolve(any(Request.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return candidate;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return candidate;
+        });
     var service = fixture.continuationService(accountClient, client);
 
     PinnedLaunchDescriptorSnapshot pinned = service.continueOriginalEvidence(retained.tuple());
@@ -575,12 +558,11 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
     ReadRedeemedOperationProjectionResponse response =
         redeemedProjection(retained.tuple(), request.ownerAttemptId(), request.ownerFence());
     when(client.read(retained.tuple(), request.ownerAttemptId(), request.ownerFence()))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return response;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+          return response;
+        });
     return client;
   }
 
@@ -674,30 +656,29 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
       UUID canonicalTenantId,
       UUID ownerAttemptId,
       long ownerFence) {
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "INSERT INTO game_session_start_session_launch_descriptor_pin "
-                        + "(target_namespace, control_plane_request_id, canonical_tenant_id, "
-                        + "owner_attempt_id, owner_fence, association_request_digest, "
-                        + "association_response_digest, descriptor_request_wire, "
-                        + "descriptor_response_wire, descriptor_request_digest, "
-                        + "descriptor_response_digest) "
-                        + "SELECT association.target_namespace, association.control_plane_request_id, "
-                        + "?, ?, ?, association.association_request_digest, "
-                        + "association.association_response_digest, ?, ?, ?, ? "
-                        + "FROM game_session_start_session_template_association_pin association "
-                        + "WHERE association.target_namespace = ? "
-                        + "AND association.control_plane_request_id = ?",
-                    canonicalTenantId,
-                    ownerAttemptId,
-                    ownerFence,
-                    new byte[] {1},
-                    new byte[] {1},
-                    "sha256:" + "a".repeat(64),
-                    "sha256:" + "b".repeat(64),
-                    retained.claim().targetNamespace(),
-                    retained.claim().controlPlaneRequestId()))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "INSERT INTO game_session_start_session_launch_descriptor_pin "
+                    + "(target_namespace, control_plane_request_id, canonical_tenant_id, "
+                    + "owner_attempt_id, owner_fence, association_request_digest, "
+                    + "association_response_digest, descriptor_request_wire, "
+                    + "descriptor_response_wire, descriptor_request_digest, "
+                    + "descriptor_response_digest) "
+                    + "SELECT association.target_namespace, association.control_plane_request_id, "
+                    + "?, ?, ?, association.association_request_digest, "
+                    + "association.association_response_digest, ?, ?, ?, ? "
+                    + "FROM game_session_start_session_template_association_pin association "
+                    + "WHERE association.target_namespace = ? "
+                    + "AND association.control_plane_request_id = ?",
+                canonicalTenantId,
+                ownerAttemptId,
+                ownerFence,
+                new byte[] {1},
+                new byte[] {1},
+                "sha256:" + "a".repeat(64),
+                "sha256:" + "b".repeat(64),
+                retained.claim().targetNamespace(),
+                retained.claim().controlPlaneRequestId()))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("fk_gs_start_session_launch_descriptor_association");
   }

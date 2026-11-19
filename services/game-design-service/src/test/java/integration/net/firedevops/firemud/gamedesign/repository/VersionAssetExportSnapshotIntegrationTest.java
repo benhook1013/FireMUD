@@ -98,17 +98,15 @@ class VersionAssetExportSnapshotIntegrationTest {
   void freezesOnlyTheSynchronizedAssetProjectionAndDeniesDirectAssociation() {
     Fixture fixture = fixture();
     var repository = new VersionAssetPublicationRepository(fixture.dsl);
-    assertThatThrownBy(
-            () ->
-                repository.associateDraftAsset(
-                    fixture.tenantId, fixture.versionId, fixture.assetId, "RESOURCE"))
+    assertThatThrownBy(() ->
+            repository.associateDraftAsset(
+                fixture.tenantId, fixture.versionId, fixture.assetId, "RESOURCE"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("synchronized ASSET_REFERENCE");
     var snapshot =
-        fixture.dsl.transactionResult(
-            configuration ->
-                new VersionAssetPublicationRepository(DSL.using(configuration))
-                    .freezeOrReadSnapshot(fixture.tenantId, 1));
+        fixture.dsl.transactionResult(configuration ->
+            new VersionAssetPublicationRepository(DSL.using(configuration))
+                .freezeOrReadSnapshot(fixture.tenantId, 1));
     assertThat(snapshot.items()).hasSize(1);
     assertThat(snapshot.items().getFirst().usageKey()).isEqualTo(USAGE_KEY);
     assertThat(snapshot.items().getFirst().contentDigest()).isEqualTo(sha256(SOURCE_BYTES));
@@ -167,10 +165,9 @@ class VersionAssetExportSnapshotIntegrationTest {
     assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
 
     var snapshot =
-        fixture.dsl.transactionResult(
-            configuration ->
-                new VersionAssetPublicationRepository(DSL.using(configuration))
-                    .freezeOrReadSnapshot(fixture.tenantId, 1));
+        fixture.dsl.transactionResult(configuration ->
+            new VersionAssetPublicationRepository(DSL.using(configuration))
+                .freezeOrReadSnapshot(fixture.tenantId, 1));
 
     assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
     assertThat(snapshot.items()).isEmpty();
@@ -206,14 +203,13 @@ class VersionAssetExportSnapshotIntegrationTest {
             }
           };
       var listener =
-          ExecuteListener.onExecuteStart(
-              context -> {
-                queryConnections.add(context.connection());
-                assertThat(context.configuration().dialect()).isEqualTo(SQLDialect.POSTGRES);
-                assertThat(context.configuration().settings().isRenderFormatted()).isTrue();
-                assertThat(context.configuration().data("asset-freeze-proof"))
-                    .isEqualTo("caller-configuration");
-              });
+          ExecuteListener.onExecuteStart(context -> {
+            queryConnections.add(context.connection());
+            assertThat(context.configuration().dialect()).isEqualTo(SQLDialect.POSTGRES);
+            assertThat(context.configuration().settings().isRenderFormatted()).isTrue();
+            assertThat(context.configuration().data("asset-freeze-proof"))
+                .isEqualTo("caller-configuration");
+          });
       var configuration =
           fixture
               .dsl
@@ -253,10 +249,9 @@ class VersionAssetExportSnapshotIntegrationTest {
   void readsExistingSnapshotInCallerReadOnlyTransaction() throws Exception {
     Fixture fixture = fixture();
     var frozen =
-        fixture.dsl.transactionResult(
-            configuration ->
-                new VersionAssetPublicationRepository(DSL.using(configuration))
-                    .freezeOrReadSnapshot(fixture.tenantId, 1));
+        fixture.dsl.transactionResult(configuration ->
+            new VersionAssetPublicationRepository(DSL.using(configuration))
+                .freezeOrReadSnapshot(fixture.tenantId, 1));
 
     try (var connection = fixture.dataSource.getConnection()) {
       connection.setReadOnly(true);
@@ -291,10 +286,9 @@ class VersionAssetExportSnapshotIntegrationTest {
                 .derive(ExecuteListener.onExecuteStart(context -> queries.incrementAndGet())));
 
     Throwable failure =
-        catchThrowable(
-            () ->
-                new VersionAssetPublicationRepository(observed)
-                    .freezeOrReadSnapshot(fixture.tenantId, 1));
+        catchThrowable(() ->
+            new VersionAssetPublicationRepository(observed)
+                .freezeOrReadSnapshot(fixture.tenantId, 1));
 
     assertAll(
         "An unwrapped first freeze must fail without committing snapshot rows",
@@ -324,46 +318,45 @@ class VersionAssetExportSnapshotIntegrationTest {
     Fixture fixture = fixture();
     var write = new TransactionTemplate(new DataSourceTransactionManager(fixture.dataSource));
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    write.executeWithoutResult(
-        status -> {
-          var selection =
-              new AssetSourceRepository(fixture.dsl)
-                  .requireExportSelection(fixture.tenantId, fixture.versionId);
-          var target = selection.binding().target();
-          var deletion =
-              DraftCommitBinding.create(
-                  target,
-                  UUID.randomUUID(),
-                  UUID.randomUUID(),
-                  selection.binding().commitId().toString(),
-                  List.of(
-                      new DraftCommitBinding.RevisionPayload(
-                          "0",
-                          UUID.randomUUID(),
-                          Owner.GAME_DESIGN_CONTROL_PLANE,
-                          AssetSource.deletePayload(USAGE_KEY))),
-                  List.of(
-                      new DraftCommitBinding.AffectedUnit(
-                          Owner.GAME_DESIGN_CONTROL_PLANE,
-                          AssetSource.SCOPE,
-                          target.canonicalVersionId().toString(),
-                          AssetSource.SCOPE,
-                          AssetSource.SCOPE_ID,
-                          selection.sourceEpoch())));
-          var sources = new GameDesignSourceRepository(fixture.dsl);
-          sources.claimReviewed(
-              deletion,
-              new GameDesignReviewedBaseRepository(fixture.dsl)
-                  .resolve(target, DraftBaseReference.parse(deletion.baseCommitId())));
-          var coordinator = new DraftCommitCoordinatorRepository(fixture.dsl);
-          coordinator.claimApplicationSlot(deletion);
-          coordinator.markOwnerInProgress(deletion, Owner.GAME_DESIGN_CONTROL_PLANE);
-          var result = sources.apply(deletion);
-          IsolatedPublicationOwnerSetup.advanceIsolatedSourceVisibility(
-              fixture.dsl, deletion, List.of(result.ownerOutcome()));
-          sources.captureSynchronized(deletion);
-          coordinator.releaseApplicationSlot(deletion);
-        });
+    write.executeWithoutResult(status -> {
+      var selection =
+          new AssetSourceRepository(fixture.dsl)
+              .requireExportSelection(fixture.tenantId, fixture.versionId);
+      var target = selection.binding().target();
+      var deletion =
+          DraftCommitBinding.create(
+              target,
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              selection.binding().commitId().toString(),
+              List.of(
+                  new DraftCommitBinding.RevisionPayload(
+                      "0",
+                      UUID.randomUUID(),
+                      Owner.GAME_DESIGN_CONTROL_PLANE,
+                      AssetSource.deletePayload(USAGE_KEY))),
+              List.of(
+                  new DraftCommitBinding.AffectedUnit(
+                      Owner.GAME_DESIGN_CONTROL_PLANE,
+                      AssetSource.SCOPE,
+                      target.canonicalVersionId().toString(),
+                      AssetSource.SCOPE,
+                      AssetSource.SCOPE_ID,
+                      selection.sourceEpoch())));
+      var sources = new GameDesignSourceRepository(fixture.dsl);
+      sources.claimReviewed(
+          deletion,
+          new GameDesignReviewedBaseRepository(fixture.dsl)
+              .resolve(target, DraftBaseReference.parse(deletion.baseCommitId())));
+      var coordinator = new DraftCommitCoordinatorRepository(fixture.dsl);
+      coordinator.claimApplicationSlot(deletion);
+      coordinator.markOwnerInProgress(deletion, Owner.GAME_DESIGN_CONTROL_PLANE);
+      var result = sources.apply(deletion);
+      IsolatedPublicationOwnerSetup.advanceIsolatedSourceVisibility(
+          fixture.dsl, deletion, List.of(result.ownerOutcome()));
+      sources.captureSynchronized(deletion);
+      coordinator.releaseApplicationSlot(deletion);
+    });
     // This is a real reviewed source deletion and synchronized projection, not missing history.
     assertThat(
             new AssetSourceRepository(fixture.dsl)
@@ -377,13 +370,12 @@ class VersionAssetExportSnapshotIntegrationTest {
   @Test
   void rejectsRenamingSynchronizedSourceBeforePersistingSnapshot() {
     Fixture fixture = fixture();
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE game_assets SET file_name = ? WHERE tenant_id = ? AND id = ?",
-                    "renamed-logo.bin",
-                    fixture.tenantId,
-                    fixture.assetId))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE game_assets SET file_name = ? WHERE tenant_id = ? AND id = ?",
+                "renamed-logo.bin",
+                fixture.tenantId,
+                fixture.assetId))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("ordinary asset source bytes are immutable from source history");
     assertThat(
@@ -413,13 +405,11 @@ class VersionAssetExportSnapshotIntegrationTest {
         fixture.tenantId,
         fixture.assetId);
 
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.transaction(
-                    configuration -> {
-                      new VersionAssetPublicationRepository(DSL.using(configuration))
-                          .freezeOrReadSnapshot(fixture.tenantId, 1);
-                    }))
+    assertThatThrownBy(() ->
+            fixture.dsl.transaction(configuration -> {
+              new VersionAssetPublicationRepository(DSL.using(configuration))
+                  .freezeOrReadSnapshot(fixture.tenantId, 1);
+            }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("ASSET_SOURCE_EXACT_BYTES_UNAVAILABLE");
     assertThat(
@@ -445,26 +435,24 @@ class VersionAssetExportSnapshotIntegrationTest {
         .hasStackTraceContaining("export item differs from synchronized ordinary source");
 
     Fixture wrongSize = fixture();
-    assertThatThrownBy(
-            () ->
-                insertItem(wrongSize, sha256(SOURCE_BYTES), CONTENT_TYPE, SOURCE_BYTES.length + 1L))
+    assertThatThrownBy(() ->
+            insertItem(wrongSize, sha256(SOURCE_BYTES), CONTENT_TYPE, SOURCE_BYTES.length + 1L))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("export item differs from synchronized ordinary source");
 
     Fixture wrongMapping = fixture();
-    assertThatThrownBy(
-            () ->
-                wrongMapping.dsl.execute(
-                    "INSERT INTO version_asset_export_item "
-                        + "(tenant_id, version_id, usage_key, asset_id, content_type, content_hash, byte_size) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    wrongMapping.tenantId,
-                    wrongMapping.versionId,
-                    "other.bin",
-                    wrongMapping.assetId,
-                    CONTENT_TYPE,
-                    sha256(SOURCE_BYTES),
-                    SOURCE_BYTES.length))
+    assertThatThrownBy(() ->
+            wrongMapping.dsl.execute(
+                "INSERT INTO version_asset_export_item "
+                    + "(tenant_id, version_id, usage_key, asset_id, content_type, content_hash, byte_size) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                wrongMapping.tenantId,
+                wrongMapping.versionId,
+                "other.bin",
+                wrongMapping.assetId,
+                CONTENT_TYPE,
+                sha256(SOURCE_BYTES),
+                SOURCE_BYTES.length))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("export item differs from synchronized ordinary source");
   }
@@ -483,13 +471,12 @@ class VersionAssetExportSnapshotIntegrationTest {
 
     Fixture frozen = fixture();
     insertItemAndSnapshot(frozen);
-    assertThatThrownBy(
-            () ->
-                frozen.dsl.execute(
-                    "UPDATE version_asset_export_item SET byte_size = byte_size "
-                        + "WHERE tenant_id = ? AND version_id = ?",
-                    frozen.tenantId,
-                    frozen.versionId))
+    assertThatThrownBy(() ->
+            frozen.dsl.execute(
+                "UPDATE version_asset_export_item SET byte_size = byte_size "
+                    + "WHERE tenant_id = ? AND version_id = ?",
+                frozen.tenantId,
+                frozen.versionId))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("snapshot items are immutable");
   }
@@ -518,13 +505,12 @@ class VersionAssetExportSnapshotIntegrationTest {
         new VersionAssetPublicationRepository(fixture.dsl);
     VersionAssetPublicationRepository.AssetSelection selection =
         repository.readFrozenSnapshot(fixture.tenantId, 1).items().get(0);
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE game_assets SET data = ? WHERE tenant_id = ? AND id = ?",
-                    new byte[] {9, 8, 7, 6},
-                    fixture.tenantId,
-                    fixture.assetId))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE game_assets SET data = ? WHERE tenant_id = ? AND id = ?",
+                new byte[] {9, 8, 7, 6},
+                fixture.tenantId,
+                fixture.assetId))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("ordinary asset source bytes are immutable from source history");
     assertThat(repository.readFrozenSnapshot(fixture.tenantId, 1).items())
@@ -538,12 +524,10 @@ class VersionAssetExportSnapshotIntegrationTest {
     byte[] oversized = new byte[(int) VersionAssetPublicationRepository.MAX_SOURCE_ASSET_BYTES + 1];
     Fixture fixture = fixture(oversized);
 
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.transaction(
-                    configuration ->
-                        new VersionAssetPublicationRepository(DSL.using(configuration))
-                            .freezeOrReadSnapshot(fixture.tenantId, 1)))
+    assertThatThrownBy(() ->
+            fixture.dsl.transaction(configuration ->
+                new VersionAssetPublicationRepository(DSL.using(configuration))
+                    .freezeOrReadSnapshot(fixture.tenantId, 1)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("ASSET_TOO_LARGE");
     assertThat(
@@ -564,30 +548,28 @@ class VersionAssetExportSnapshotIntegrationTest {
   void rejectsOversizedRetainedFrozenSourceFromMetadataBeforePayloadRead() {
     Fixture fixture = fixture(MigrationVersion.fromVersion("49.1"));
     byte[] oversized = new byte[(int) VersionAssetPublicationRepository.MAX_SOURCE_ASSET_BYTES + 1];
-    fixture.dsl.transaction(
-        configuration -> {
-          DSLContext transactionDsl = DSL.using(configuration);
-          transactionDsl.execute(
-              "UPDATE game_assets SET data = ? WHERE tenant_id = ? AND id = ?",
-              oversized,
-              fixture.tenantId,
-              fixture.assetId);
-          insertItem(transactionDsl, fixture, sha256(oversized), CONTENT_TYPE, oversized.length);
-          transactionDsl.execute(
-              "INSERT INTO version_asset_export_snapshot "
-                  + "(tenant_id, version_id, canonical_tenant_id, canonical_version_id, version_number, "
-                  + "captured_version_state_epoch, item_count) "
-                  + "SELECT tenant_id, id, canonical_tenant_id, canonical_version_id, version_number, "
-                  + "version_state_epoch, 1 FROM version WHERE tenant_id = ? AND id = ?",
-              fixture.tenantId,
-              fixture.versionId);
-        });
+    fixture.dsl.transaction(configuration -> {
+      DSLContext transactionDsl = DSL.using(configuration);
+      transactionDsl.execute(
+          "UPDATE game_assets SET data = ? WHERE tenant_id = ? AND id = ?",
+          oversized,
+          fixture.tenantId,
+          fixture.assetId);
+      insertItem(transactionDsl, fixture, sha256(oversized), CONTENT_TYPE, oversized.length);
+      transactionDsl.execute(
+          "INSERT INTO version_asset_export_snapshot "
+              + "(tenant_id, version_id, canonical_tenant_id, canonical_version_id, version_number, "
+              + "captured_version_state_epoch, item_count) "
+              + "SELECT tenant_id, id, canonical_tenant_id, canonical_version_id, version_number, "
+              + "version_state_epoch, 1 FROM version WHERE tenant_id = ? AND id = ?",
+          fixture.tenantId,
+          fixture.versionId);
+    });
     migrateToLatest(fixture);
 
-    assertThatThrownBy(
-            () ->
-                new VersionAssetPublicationRepository(fixture.dsl)
-                    .readFrozenSnapshot(fixture.tenantId, 1))
+    assertThatThrownBy(() ->
+            new VersionAssetPublicationRepository(fixture.dsl)
+                .readFrozenSnapshot(fixture.tenantId, 1))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("ASSET_TOO_LARGE");
   }
@@ -638,23 +620,21 @@ class VersionAssetExportSnapshotIntegrationTest {
                 .get("candidate_public_base_url", String.class))
         .isEqualTo(origin);
 
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE version_asset_artifact SET candidate_public_base_url = ? "
-                        + "WHERE tenant_id = ? AND version_id = ?",
-                    "https://replacement.example.invalid/assets",
-                    fixture.tenantId,
-                    fixture.versionId))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE version_asset_artifact SET candidate_public_base_url = ? "
+                    + "WHERE tenant_id = ? AND version_id = ?",
+                "https://replacement.example.invalid/assets",
+                fixture.tenantId,
+                fixture.versionId))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("ASSET_EXPORT_CANDIDATE_IMMUTABLE");
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE version_asset_artifact SET candidate_public_base_url = NULL "
-                        + "WHERE tenant_id = ? AND version_id = ?",
-                    fixture.tenantId,
-                    fixture.versionId))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE version_asset_artifact SET candidate_public_base_url = NULL "
+                    + "WHERE tenant_id = ? AND version_id = ?",
+                fixture.tenantId,
+                fixture.versionId))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("ASSET_EXPORT_CANDIDATE_IMMUTABLE");
   }
@@ -673,14 +653,13 @@ class VersionAssetExportSnapshotIntegrationTest {
                 fixture.tenantId,
                 fixture.versionId))
         .isEqualTo(1);
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE version_asset_artifact SET candidate_public_base_url = ? "
-                        + "WHERE tenant_id = ? AND version_id = ?",
-                    "https://assets.example.invalid/assets",
-                    fixture.tenantId,
-                    fixture.versionId))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE version_asset_artifact SET candidate_public_base_url = ? "
+                    + "WHERE tenant_id = ? AND version_id = ?",
+                "https://assets.example.invalid/assets",
+                fixture.tenantId,
+                fixture.versionId))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("ASSET_EXPORT_CANDIDATE_IMMUTABLE");
   }
@@ -759,23 +738,21 @@ class VersionAssetExportSnapshotIntegrationTest {
           "manifest_hash = 'sha256:" + "0".repeat(64) + "'",
           "published_object_proofs_json = '[]'"
         }) {
-      assertThatThrownBy(
-              () ->
-                  fixture.dsl.execute(
-                      "UPDATE version_asset_artifact SET "
-                          + assignment
-                          + " WHERE tenant_id = ? AND version_id = ?",
-                      fixture.tenantId,
-                      fixture.versionId))
+      assertThatThrownBy(() ->
+              fixture.dsl.execute(
+                  "UPDATE version_asset_artifact SET "
+                      + assignment
+                      + " WHERE tenant_id = ? AND version_id = ?",
+                  fixture.tenantId,
+                  fixture.versionId))
           .isInstanceOf(DataAccessException.class)
           .hasStackTraceContaining("ASSET_EXPORT_CANDIDATE_IMMUTABLE");
     }
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "DELETE FROM version_asset_artifact WHERE tenant_id = ? AND version_id = ?",
-                    fixture.tenantId,
-                    fixture.versionId))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "DELETE FROM version_asset_artifact WHERE tenant_id = ? AND version_id = ?",
+                fixture.tenantId,
+                fixture.versionId))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("ASSET_EXPORT_CANDIDATE_RETENTION_REQUIRED");
   }
@@ -788,22 +765,21 @@ class VersionAssetExportSnapshotIntegrationTest {
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("ASSET_EXPORT_SELECTED_CANDIDATE_CONFLICT");
     insertArtifactWithoutCandidate(fixture);
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "UPDATE version_asset_artifact SET manifest_hash = ?, "
-                        + "manifest_schema_version = 1, artifact_digests_json = '[]', "
-                        + "published_object_proofs_json = ?, selected_candidate_version_id = ?, "
-                        + "selected_candidate_request_digest = ?, "
-                        + "exported_manifest_asset_keys_json = '[]', last_workflow_id = ? "
-                        + "WHERE tenant_id = ? AND version_id = ?",
-                    sha256(SOURCE_BYTES),
-                    selectedManifestProof(),
-                    fixture.versionId,
-                    sha256(SOURCE_BYTES).substring(7),
-                    "unrelated-workflow",
-                    fixture.tenantId,
-                    fixture.versionId))
+    assertThatThrownBy(() ->
+            fixture.dsl.execute(
+                "UPDATE version_asset_artifact SET manifest_hash = ?, "
+                    + "manifest_schema_version = 1, artifact_digests_json = '[]', "
+                    + "published_object_proofs_json = ?, selected_candidate_version_id = ?, "
+                    + "selected_candidate_request_digest = ?, "
+                    + "exported_manifest_asset_keys_json = '[]', last_workflow_id = ? "
+                    + "WHERE tenant_id = ? AND version_id = ?",
+                sha256(SOURCE_BYTES),
+                selectedManifestProof(),
+                fixture.versionId,
+                sha256(SOURCE_BYTES).substring(7),
+                "unrelated-workflow",
+                fixture.tenantId,
+                fixture.versionId))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("ASSET_EXPORT_SELECTED_CANDIDATE_CONFLICT");
   }
@@ -896,41 +872,40 @@ class VersionAssetExportSnapshotIntegrationTest {
     if (target == null) {
       var write = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
       write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-      return write.execute(
-          status -> {
-            var game = new Game();
-            game.setTenantId(tenantId);
-            game.setName("Export snapshot test");
-            game = new GameRepository(dsl).save(game);
-            var version = new Version();
-            version.setTenantId(tenantId);
-            version.setVersionNumber(1);
-            version = new VersionRepository(dsl).save(version);
-            Long assetId =
-                Objects.requireNonNull(
-                        dsl.fetchOne(
-                            "INSERT INTO game_assets (tenant_id, file_name, content_type, data) "
-                                + "VALUES (?, ?, ?, ?) RETURNING id",
-                            tenantId,
-                            USAGE_KEY,
-                            CONTENT_TYPE,
-                            sourceBytes),
-                        "asset insert returned no row")
-                    .get(0, Long.class);
-            IsolatedAssetSourceOwnerSetup.upsert(
-                dsl,
-                new TargetProof(
-                    version.getCanonicalTenantId(),
-                    version.getCanonicalVersionId(),
-                    version.getId(),
-                    version.getTenantId(),
-                    version.getIdentitySourceGameRowId(),
-                    version.getIdentitySourceGameTenantKey(),
-                    version.getIdentitySourceProvenanceKind()),
-                assetId,
-                USAGE_KEY);
-            return new Fixture(dsl, tenantId, version.getId(), assetId, dataSource, schema);
-          });
+      return write.execute(status -> {
+        var game = new Game();
+        game.setTenantId(tenantId);
+        game.setName("Export snapshot test");
+        game = new GameRepository(dsl).save(game);
+        var version = new Version();
+        version.setTenantId(tenantId);
+        version.setVersionNumber(1);
+        version = new VersionRepository(dsl).save(version);
+        Long assetId =
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "INSERT INTO game_assets (tenant_id, file_name, content_type, data) "
+                            + "VALUES (?, ?, ?, ?) RETURNING id",
+                        tenantId,
+                        USAGE_KEY,
+                        CONTENT_TYPE,
+                        sourceBytes),
+                    "asset insert returned no row")
+                .get(0, Long.class);
+        IsolatedAssetSourceOwnerSetup.upsert(
+            dsl,
+            new TargetProof(
+                version.getCanonicalTenantId(),
+                version.getCanonicalVersionId(),
+                version.getId(),
+                version.getTenantId(),
+                version.getIdentitySourceGameRowId(),
+                version.getIdentitySourceGameTenantKey(),
+                version.getIdentitySourceProvenanceKind()),
+            assetId,
+            USAGE_KEY);
+        return new Fixture(dsl, tenantId, version.getId(), assetId, dataSource, schema);
+      });
     }
     Long gameId =
         Objects.requireNonNull(
@@ -1002,20 +977,18 @@ class VersionAssetExportSnapshotIntegrationTest {
   }
 
   private static void insertItemAndSnapshot(Fixture fixture) {
-    fixture.dsl.transaction(
-        configuration -> {
-          DSLContext transactionDsl = DSL.using(configuration);
-          insertItem(
-              transactionDsl, fixture, sha256(SOURCE_BYTES), CONTENT_TYPE, SOURCE_BYTES.length);
-          transactionDsl.execute(
-              "INSERT INTO version_asset_export_snapshot "
-                  + "(tenant_id, version_id, canonical_tenant_id, canonical_version_id, version_number, "
-                  + "captured_version_state_epoch, item_count) "
-                  + "SELECT tenant_id, id, canonical_tenant_id, canonical_version_id, version_number, "
-                  + "version_state_epoch, 1 FROM version WHERE tenant_id = ? AND id = ?",
-              fixture.tenantId,
-              fixture.versionId);
-        });
+    fixture.dsl.transaction(configuration -> {
+      DSLContext transactionDsl = DSL.using(configuration);
+      insertItem(transactionDsl, fixture, sha256(SOURCE_BYTES), CONTENT_TYPE, SOURCE_BYTES.length);
+      transactionDsl.execute(
+          "INSERT INTO version_asset_export_snapshot "
+              + "(tenant_id, version_id, canonical_tenant_id, canonical_version_id, version_number, "
+              + "captured_version_state_epoch, item_count) "
+              + "SELECT tenant_id, id, canonical_tenant_id, canonical_version_id, version_number, "
+              + "version_state_epoch, 1 FROM version WHERE tenant_id = ? AND id = ?",
+          fixture.tenantId,
+          fixture.versionId);
+    });
   }
 
   private static void insertArtifactWithoutCandidate(Fixture fixture) {

@@ -175,10 +175,9 @@ class WorldAuthoredGraphTest {
             emptyGraph.replace(",\"zones\":[]", ",\"regions\":[],\"zones\":[]"));
 
     for (String invalidSnapshot : invalidSnapshots) {
-      assertThatThrownBy(
-              () ->
-                  WorldAuthoredGraph.decode(
-                      invalidSnapshot.getBytes(StandardCharsets.UTF_8), objectMapper))
+      assertThatThrownBy(() ->
+              WorldAuthoredGraph.decode(
+                  invalidSnapshot.getBytes(StandardCharsets.UTF_8), objectMapper))
           .isInstanceOf(SnapshotConflictException.class);
     }
     assertThatThrownBy(
@@ -208,10 +207,9 @@ class WorldAuthoredGraphTest {
             graph.replace("\"shardId\":4,\"name\":\"edge\"", "\"name\":\"edge\",\"shardId\":4"));
 
     for (String invalidSnapshot : invalidSnapshots) {
-      assertThatThrownBy(
-              () ->
-                  WorldAuthoredGraph.decode(
-                      invalidSnapshot.getBytes(StandardCharsets.UTF_8), objectMapper))
+      assertThatThrownBy(() ->
+              WorldAuthoredGraph.decode(
+                  invalidSnapshot.getBytes(StandardCharsets.UTF_8), objectMapper))
           .isInstanceOf(SnapshotConflictException.class);
     }
   }

@@ -124,30 +124,28 @@ class PlayCommandHandlerTest {
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenAnswer(
-            invocation ->
-                GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                    .setTenantId("22")
-                    .setGameplayAvailable(true)
-                    .setAllowPublicJoin(true)
-                    .setEntitlementVersion(1L)
-                    .setTenantBillingSequence(1L)
-                    .setEvaluatedAt(Instant.now().toString())
-                    .build());
+        .thenAnswer(invocation ->
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId("22")
+                .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(Instant.now().toString())
+                .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenAnswer(
-            invocation ->
-                realmGrantResponse(
-                    invocation.getArgument(0),
-                    invocation.getArgument(1),
-                    invocation.getArgument(2),
-                    invocation.getArgument(3),
-                    true));
+        .thenAnswer(invocation ->
+            realmGrantResponse(
+                invocation.getArgument(0),
+                invocation.getArgument(1),
+                invocation.getArgument(2),
+                invocation.getArgument(3),
+                true));
     when(sessionRoutingNormalizationService.normalizeProjectedContext(
             Mockito.any(SessionContext.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -157,23 +155,22 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.any(PlayableStateScope.class)))
-        .thenAnswer(
-            invocation -> {
-              String tenantId = invocation.getArgument(0);
-              String accountId = invocation.getArgument(1);
-              String gameInstanceId = invocation.getArgument(2);
-              PlayableStateScope scope = invocation.getArgument(3);
-              String characterName = "demo";
-              String characterId = "7001";
-              if ("2".equals(gameInstanceId)) {
-                characterName = "Emberline";
-                characterId = "9007";
-              } else if ("41".equals(gameInstanceId)) {
-                characterName = "Emberline";
-                characterId = "7002";
-              }
-              return characterRoster(characterId, characterName, tenantId, accountId, scope);
-            });
+        .thenAnswer(invocation -> {
+          String tenantId = invocation.getArgument(0);
+          String accountId = invocation.getArgument(1);
+          String gameInstanceId = invocation.getArgument(2);
+          PlayableStateScope scope = invocation.getArgument(3);
+          String characterName = "demo";
+          String characterId = "7001";
+          if ("2".equals(gameInstanceId)) {
+            characterName = "Emberline";
+            characterId = "9007";
+          } else if ("41".equals(gameInstanceId)) {
+            characterName = "Emberline";
+            characterId = "7002";
+          }
+          return characterRoster(characterId, characterName, tenantId, accountId, scope);
+        });
   }
 
   @Test
@@ -189,12 +186,11 @@ class PlayCommandHandlerTest {
         .isEqualTo("Entered world: 1 (preview) as Emberline");
     Mockito.verify(sessionContextService)
         .save(
-            Mockito.argThat(
-                saved ->
-                    saved.worldSlug().equals("1")
-                        && saved.realmSlug().equals("preview")
-                        && saved.gameInstanceId() == 41L
-                        && saved.characterName().equals("Emberline")));
+            Mockito.argThat(saved ->
+                saved.worldSlug().equals("1")
+                    && saved.realmSlug().equals("preview")
+                    && saved.gameInstanceId() == 41L
+                    && saved.characterName().equals("Emberline")));
   }
 
   @ParameterizedTest
@@ -232,12 +228,11 @@ class PlayCommandHandlerTest {
         .isEqualTo("Entered world: sandbox (1) as Emberline");
     Mockito.verify(sessionContextService)
         .save(
-            Mockito.argThat(
-                saved ->
-                    saved.worldSlug().equals("sandbox")
-                        && saved.realmSlug().equals("1")
-                        && saved.gameInstanceId() == 41L
-                        && saved.characterName().equals("Emberline")));
+            Mockito.argThat(saved ->
+                saved.worldSlug().equals("sandbox")
+                    && saved.realmSlug().equals("1")
+                    && saved.gameInstanceId() == 41L
+                    && saved.characterName().equals("Emberline")));
   }
 
   @Test
@@ -280,12 +275,11 @@ class PlayCommandHandlerTest {
     assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as 1");
     Mockito.verify(sessionContextService)
         .save(
-            Mockito.argThat(
-                saved ->
-                    saved.gameInstanceId() == 1L
-                        && saved.realmSlug().equals("production")
-                        && saved.characterId() == 7001L
-                        && saved.characterName().equals("1")));
+            Mockito.argThat(saved ->
+                saved.gameInstanceId() == 1L
+                    && saved.realmSlug().equals("production")
+                    && saved.characterId() == 7001L
+                    && saved.characterName().equals("1")));
     Mockito.verify(accountClient, never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -322,11 +316,10 @@ class PlayCommandHandlerTest {
         .isEqualTo("Entered world: demo (1) as Realm Actor");
     Mockito.verify(sessionContextService)
         .save(
-            Mockito.argThat(
-                saved ->
-                    saved.gameInstanceId() == 41L
-                        && saved.realmSlug().equals("1")
-                        && saved.characterName().equals("Realm Actor")));
+            Mockito.argThat(saved ->
+                saved.gameInstanceId() == 41L
+                    && saved.realmSlug().equals("1")
+                    && saved.characterName().equals("Realm Actor")));
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq(ACCOUNT_ID),
@@ -358,12 +351,11 @@ class PlayCommandHandlerTest {
     assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as 1");
     Mockito.verify(sessionContextService)
         .save(
-            Mockito.argThat(
-                saved ->
-                    saved.gameInstanceId() == 1L
-                        && saved.realmSlug().equals("production")
-                        && saved.characterId() == 7001L
-                        && saved.characterName().equals("1")));
+            Mockito.argThat(saved ->
+                saved.gameInstanceId() == 1L
+                    && saved.realmSlug().equals("production")
+                    && saved.characterId() == 7001L
+                    && saved.characterName().equals("1")));
   }
 
   @ParameterizedTest

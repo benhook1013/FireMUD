@@ -103,14 +103,13 @@ public final class EntitySelectedEmptyPublicationDigestService {
   private static void requireEmptyReceipt(EntityEmptySelectedSourceIntakeReceipt receipt) {
     if (receipt.familyStates().size() != 23
         || receipt.familyStates().stream()
-            .anyMatch(
-                state ->
-                    state.state() != EntityEmptySelectedSourceIntakeReceipt.FamilyState.EMPTY
-                        || state.rowCount() != 0L
-                        || state.unqualifiedRowCount() != 0L
-                        || state.retainedRowCount() != 0L
-                        || state.selectedScopeRowCount() != 0L
-                        || state.referenceCount() != 0L)) {
+            .anyMatch(state ->
+                state.state() != EntityEmptySelectedSourceIntakeReceipt.FamilyState.EMPTY
+                    || state.rowCount() != 0L
+                    || state.unqualifiedRowCount() != 0L
+                    || state.retainedRowCount() != 0L
+                    || state.selectedScopeRowCount() != 0L
+                    || state.referenceCount() != 0L)) {
       throw new IllegalStateException("Entity selected-empty receipt is incomplete or nonempty");
     }
   }

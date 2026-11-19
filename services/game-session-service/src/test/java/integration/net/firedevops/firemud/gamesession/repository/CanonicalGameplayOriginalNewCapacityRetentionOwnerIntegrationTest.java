@@ -53,10 +53,9 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
           .hasMessage("Controlled positive execution retention failure");
       assertThat(retentionAttempted).isTrue();
       assertThat(sqlImage()).isEqualTo(before);
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
           .isInstanceOf(IllegalStateException.class);
       var recovered =
           capacityOwner()
@@ -102,19 +101,18 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
 
     fixture
         .dsl()
-        .transaction(
-            configuration -> {
-              var historical = org.jooq.impl.DSL.using(configuration);
-              // Reproduce the retained pre-V1063 receipt shape without granting a normal writer
-              // this mutation.
-              historical.execute("SET LOCAL session_replication_role = replica");
-              assertThat(
-                      historical.execute(
-                          "UPDATE game_session_canonical_binding_transition"
-                              + " SET original_new_capacity_execution_digest = NULL WHERE transition_id = ?",
-                          fixture.transitionId()))
-                  .isEqualTo(1);
-            });
+        .transaction(configuration -> {
+          var historical = org.jooq.impl.DSL.using(configuration);
+          // Reproduce the retained pre-V1063 receipt shape without granting a normal writer
+          // this mutation.
+          historical.execute("SET LOCAL session_replication_role = replica");
+          assertThat(
+                  historical.execute(
+                      "UPDATE game_session_canonical_binding_transition"
+                          + " SET original_new_capacity_execution_digest = NULL WHERE transition_id = ?",
+                      fixture.transitionId()))
+              .isEqualTo(1);
+        });
 
     String retained = sqlImage();
     var physical = physicalImage();
@@ -144,15 +142,14 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     var request = controlledCapacity.request();
     var reservation = controlledCapacity.reservation();
     var owner = capacityOwner();
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "UPDATE game_session_original_new_capacity_execution"
-                            + " SET status = 'CLOSED', terminal_readback = ? WHERE execution_digest = ?",
-                        new byte[] {1},
-                        controlledCapacity.digest()))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE game_session_original_new_capacity_execution"
+                        + " SET status = 'CLOSED', terminal_readback = ? WHERE execution_digest = ?",
+                    new byte[] {1},
+                    controlledCapacity.digest()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasMessageContaining("retained final receipt");
     assertThatThrownBy(() -> owner.readExact(request, reservation))
@@ -313,19 +310,17 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     }
     fixture
         .dsl()
-        .transaction(
-            configuration -> {
-              var damaged = org.jooq.impl.DSL.using(configuration);
-              // Simulate lost durable topology, not an authorized mapping retirement.
-              damaged.execute("SET LOCAL session_replication_role = replica");
-              damaged.execute("DELETE FROM game_session_canonical_tenant_gameplay_tag");
-            });
+        .transaction(configuration -> {
+          var damaged = org.jooq.impl.DSL.using(configuration);
+          // Simulate lost durable topology, not an authorized mapping retirement.
+          damaged.execute("SET LOCAL session_replication_role = replica");
+          damaged.execute("DELETE FROM game_session_canonical_tenant_gameplay_tag");
+        });
     var physical = physicalImage();
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .retainCommittedBeforeCleanup(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .retainCommittedBeforeCleanup(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessage("Retained capacity execution mapping is unavailable");
     assertThat(
@@ -415,10 +410,9 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
                 ascii(capacityKey(tags.assignmentForTransition(fixture.transitionId()))),
                 ascii("state")))
         .containsExactly(ascii("COMMITTED"));
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -448,11 +442,10 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template()) {
-      assertThatThrownBy(
-              () ->
-                  finalOwner()
-                      .finalizeOriginalNewOnce(
-                          source, template, account, issuer, controlledCapacity, deadline()))
+      assertThatThrownBy(() ->
+              finalOwner()
+                  .finalizeOriginalNewOnce(
+                      source, template, account, issuer, controlledCapacity, deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThat(admin.hget(ascii(capacityKey(assignment)), ascii("state")))
@@ -475,21 +468,19 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     var callers = java.util.concurrent.Executors.newFixedThreadPool(2);
     try {
       var first =
-          callers.submit(
-              () -> {
-                start.await();
-                firstOwner.closeOriginalAttempt(
-                    controlledCapacity.request(), controlledCapacity.reservation());
-                return true;
-              });
+          callers.submit(() -> {
+            start.await();
+            firstOwner.closeOriginalAttempt(
+                controlledCapacity.request(), controlledCapacity.reservation());
+            return true;
+          });
       var second =
-          callers.submit(
-              () -> {
-                start.await();
-                secondOwner.closeOriginalAttempt(
-                    controlledCapacity.request(), controlledCapacity.reservation());
-                return true;
-              });
+          callers.submit(() -> {
+            start.await();
+            secondOwner.closeOriginalAttempt(
+                controlledCapacity.request(), controlledCapacity.reservation());
+            return true;
+          });
       start.countDown();
       assertThat(first.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
       assertThat(second.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
@@ -565,16 +556,15 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
         var bound = raw.bindCapacityExecution(controlledCapacity)) {
-      assertThatThrownBy(
-              () ->
-                  capacityOwner()
-                      .authorize(
-                          source,
-                          bound,
-                          controlledAccountOpen(),
-                          issuerOpen(),
-                          controlledCapacity,
-                          deadline()))
+      assertThatThrownBy(() ->
+              capacityOwner()
+                  .authorize(
+                      source,
+                      bound,
+                      controlledAccountOpen(),
+                      issuerOpen(),
+                      controlledCapacity,
+                      deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThat(admin.type(ascii(capacityKey(assignment)))).isEqualTo("none");
@@ -591,18 +581,17 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     var retained =
         capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
     String rows = sqlImage();
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute(
-                        "UPDATE game_session_canonical_binding_transition SET original_new_final_session_sha256 = ?, original_new_capacity_execution_digest = ?, original_new_admission_at_ms = ?, original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ? WHERE transition_id = ?",
-                        "a".repeat(64),
-                        controlledCapacity.digest(),
-                        CLOCK.millis(),
-                        CLOCK.millis() + 1000,
-                        1000L,
-                        fixture.transitionId()))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE game_session_canonical_binding_transition SET original_new_final_session_sha256 = ?, original_new_capacity_execution_digest = ?, original_new_admission_at_ms = ?, original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ? WHERE transition_id = ?",
+                    "a".repeat(64),
+                    controlledCapacity.digest(),
+                    CLOCK.millis(),
+                    CLOCK.millis() + 1000,
+                    1000L,
+                    fixture.transitionId()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasMessageContaining(
             "Original NEW final receipt requires its exact authorized capacity execution");
@@ -626,22 +615,19 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
                     ownerClient, catalog, CLOCK, tags)
                 .closeCapacityExecutionOnce(controlledCapacity, source.candidate(), assignment))
         .isEqualTo(4);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     controlledRemoveServingKeys(source, assignment);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .closeOriginalAttempt(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
             fixture
@@ -681,11 +667,10 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
         capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
     assertThat(retained.disposition()).isEqualTo("COMMITTED");
     assertThat(retained.physicalDigest()).isEqualTo("sha256:" + finalDigest);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .closeOriginalAttempt(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);
@@ -753,10 +738,9 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
               source.candidate().bindingIdentity().accountId(), UUID.randomUUID());
       assertThat(intent.state().name()).isEqualTo("ACQUISITION_INTENT");
       assertThat(intent.cohortRows())
-          .filteredOn(
-              row ->
-                  row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.TRANSITION
-                      && row.sourceKey().equals(fixture.transitionId().toString()))
+          .filteredOn(row ->
+              row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.TRANSITION
+                  && row.sourceKey().equals(fixture.transitionId().toString()))
           .hasSize(1);
       assertThat(physicalImage()).isEqualTo(physicalBeforeFence);
       String rows = sqlImage();
@@ -764,34 +748,29 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
       for (int attempt = 0; attempt < 2; attempt++) {
         // Current authority deliberately cannot promote this historical positive through a
         // newer frozen Account cohort. A future receipt-only recovery owner needs its own proof.
-        assertThatThrownBy(
-                () ->
-                    new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
-                        .commitOriginalNewFinalAdmission(actual))
+        assertThatThrownBy(() ->
+                new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
+                    .commitOriginalNewFinalAdmission(actual))
             .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
             .hasMessage("Account-fence acquisition intent blocks a new binding transition");
-        assertThatThrownBy(
-                () ->
-                    new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
-                        .readOriginalNewFinalAdmissionSource(decision))
+        assertThatThrownBy(() ->
+                new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
+                    .readOriginalNewFinalAdmissionSource(decision))
             .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
             .hasMessage("Account-fence acquisition intent blocks a new binding transition");
-        assertThatThrownBy(
-                () ->
-                    capacityOwner()
-                        .retainCommittedBeforeCleanup(
-                            controlledCapacity.request(), controlledCapacity.reservation()))
+        assertThatThrownBy(() ->
+                capacityOwner()
+                    .retainCommittedBeforeCleanup(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
             .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
-        assertThatThrownBy(
-                () ->
-                    capacityOwner()
-                        .closeOriginalAttempt(
-                            controlledCapacity.request(), controlledCapacity.reservation()))
+        assertThatThrownBy(() ->
+                capacityOwner()
+                    .closeOriginalAttempt(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
             .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
-        assertThatThrownBy(
-                () ->
-                    capacityOwner()
-                        .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        assertThatThrownBy(() ->
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
             .isInstanceOf(IllegalStateException.class);
         // This remains the SQL-commit guard; the source/commit assertions above independently
         // prove that the newer Account fence prevents reconciliation of the physical positive.
@@ -849,24 +828,21 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     assertThat(admin.del(ascii(installation.sessionKey()))).isEqualTo(1L);
     String rows = sqlImage();
     var physical = physicalImage();
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .closeOriginalAttempt(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .retainCommittedBeforeCleanup(
-                        controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .retainCommittedBeforeCleanup(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> replaceRegionOwner("successor-with-missing-committed-evidence"))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);

@@ -37,160 +37,139 @@ class GameSessionStartSessionOperatorAuthorizationConfigurationTest {
   void ownerAuthorizationCompositionIsDisabledByDefault() {
     new ApplicationContextRunner()
         .withUserConfiguration(GameSessionStartSessionOperatorAuthorizationConfiguration.class)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context)
-                  .doesNotHaveBean(GameSessionStartSessionOperatorAttemptRepository.class);
-              assertThat(context).doesNotHaveBean(StartSessionOperatorRedemptionClient.class);
-              assertThat(context)
-                  .doesNotHaveBean(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context)
+              .doesNotHaveBean(GameSessionStartSessionOperatorAttemptRepository.class);
+          assertThat(context).doesNotHaveBean(StartSessionOperatorRedemptionClient.class);
+          assertThat(context)
+              .doesNotHaveBean(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+        });
   }
 
   @Test
   void enabledCompositionRequiresExplicitOwnerLeaseAndWorkloadNamespace() {
-    withTlsReloadDisabled(
-        () ->
-            new ApplicationContextRunner()
-                .withUserConfiguration(
-                    GameSessionStartSessionOperatorAuthorizationConfiguration.class,
-                    Dependencies.class)
-                .withPropertyValues(
-                    OWNER_OPT_IN + "=true",
-                    WORKLOAD_NAMESPACE + "=gameplay",
-                    "firemud.grpc.cert-chain=test-cert",
-                    "firemud.grpc.private-key=test-key",
-                    "firemud.grpc.ca-cert=test-ca")
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        new ApplicationContextRunner()
+            .withUserConfiguration(
+                GameSessionStartSessionOperatorAuthorizationConfiguration.class, Dependencies.class)
+            .withPropertyValues(
+                OWNER_OPT_IN + "=true",
+                WORKLOAD_NAMESPACE + "=gameplay",
+                "firemud.grpc.cert-chain=test-cert",
+                "firemud.grpc.private-key=test-key",
+                "firemud.grpc.ca-cert=test-ca")
+            .run(context -> assertThat(context).hasFailed()));
 
-    withTlsReloadDisabled(
-        () ->
-            new ApplicationContextRunner()
-                .withUserConfiguration(
-                    GameSessionStartSessionOperatorAuthorizationConfiguration.class,
-                    Dependencies.class)
-                .withPropertyValues(
-                    OWNER_OPT_IN + "=true",
-                    OWNER_CLAIM_LEASE + "=30s",
-                    "firemud.grpc.cert-chain=test-cert",
-                    "firemud.grpc.private-key=test-key",
-                    "firemud.grpc.ca-cert=test-ca")
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        new ApplicationContextRunner()
+            .withUserConfiguration(
+                GameSessionStartSessionOperatorAuthorizationConfiguration.class, Dependencies.class)
+            .withPropertyValues(
+                OWNER_OPT_IN + "=true",
+                OWNER_CLAIM_LEASE + "=30s",
+                "firemud.grpc.cert-chain=test-cert",
+                "firemud.grpc.private-key=test-key",
+                "firemud.grpc.ca-cert=test-ca")
+            .run(context -> assertThat(context).hasFailed()));
   }
 
   @Test
   void enabledCompositionRequiresMutualTlsPropertiesAndOwnerCollaborators() {
-    withTlsReloadDisabled(
-        () ->
-            new ApplicationContextRunner()
-                .withUserConfiguration(
-                    GameSessionStartSessionOperatorAuthorizationConfiguration.class,
-                    Dependencies.class)
-                .withPropertyValues(
-                    OWNER_OPT_IN + "=true",
-                    OWNER_CLAIM_LEASE + "=30s",
-                    WORKLOAD_NAMESPACE + "=gameplay")
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        new ApplicationContextRunner()
+            .withUserConfiguration(
+                GameSessionStartSessionOperatorAuthorizationConfiguration.class, Dependencies.class)
+            .withPropertyValues(
+                OWNER_OPT_IN + "=true",
+                OWNER_CLAIM_LEASE + "=30s",
+                WORKLOAD_NAMESPACE + "=gameplay")
+            .run(context -> assertThat(context).hasFailed()));
 
-    withTlsReloadDisabled(
-        () ->
-            new ApplicationContextRunner()
-                .withUserConfiguration(
-                    GameSessionStartSessionOperatorAuthorizationConfiguration.class)
-                .withPropertyValues(completeOwnerProperties())
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        new ApplicationContextRunner()
+            .withUserConfiguration(GameSessionStartSessionOperatorAuthorizationConfiguration.class)
+            .withPropertyValues(completeOwnerProperties())
+            .run(context -> assertThat(context).hasFailed()));
   }
 
   @Test
   void enabledCompositionRequiresItsTransactionManager() {
-    withTlsReloadDisabled(
-        () ->
-            new ApplicationContextRunner()
-                .withUserConfiguration(
-                    GameSessionStartSessionOperatorAuthorizationConfiguration.class,
-                    Dependencies.class)
-                .withPropertyValues(completeOwnerProperties())
-                .withPropertyValues("test.start-session.transaction-manager-enabled=false")
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        new ApplicationContextRunner()
+            .withUserConfiguration(
+                GameSessionStartSessionOperatorAuthorizationConfiguration.class, Dependencies.class)
+            .withPropertyValues(completeOwnerProperties())
+            .withPropertyValues("test.start-session.transaction-manager-enabled=false")
+            .run(context -> assertThat(context).hasFailed()));
   }
 
   @Test
   void ownerClaimLeaseUsesRepositoryFiveMinuteBound() {
-    withTlsReloadDisabled(
-        () ->
-            new ApplicationContextRunner()
-                .withUserConfiguration(
-                    GameSessionStartSessionOperatorAuthorizationConfiguration.class,
-                    Dependencies.class)
-                .withPropertyValues(
-                    OWNER_OPT_IN + "=true",
-                    OWNER_CLAIM_LEASE + "=6m",
-                    WORKLOAD_NAMESPACE + "=gameplay",
-                    "firemud.grpc.cert-chain=test-cert",
-                    "firemud.grpc.private-key=test-key",
-                    "firemud.grpc.ca-cert=test-ca")
-                .run(context -> assertThat(context).hasFailed()));
+    withTlsReloadDisabled(() ->
+        new ApplicationContextRunner()
+            .withUserConfiguration(
+                GameSessionStartSessionOperatorAuthorizationConfiguration.class, Dependencies.class)
+            .withPropertyValues(
+                OWNER_OPT_IN + "=true",
+                OWNER_CLAIM_LEASE + "=6m",
+                WORKLOAD_NAMESPACE + "=gameplay",
+                "firemud.grpc.cert-chain=test-cert",
+                "firemud.grpc.private-key=test-key",
+                "firemud.grpc.ca-cert=test-ca")
+            .run(context -> assertThat(context).hasFailed()));
   }
 
   @Test
   void explicitCompositionUsesOwnerDependenciesAndManagedClientLifecycle() {
-    withTlsReloadDisabled(
-        () ->
-            new ApplicationContextRunner()
-                .withUserConfiguration(
-                    GameSessionStartSessionOperatorAuthorizationConfiguration.class,
-                    Dependencies.class)
-                .withPropertyValues(completeOwnerProperties())
-                .run(
-                    context -> {
-                      assertThat(context).hasNotFailed();
-                      assertThat(context)
-                          .hasSingleBean(GameSessionStartSessionOperatorAttemptRepository.class);
-                      assertThat(context).hasSingleBean(StartSessionOperatorRedemptionClient.class);
-                      assertThat(context)
-                          .hasSingleBean(
-                              GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+    withTlsReloadDisabled(() ->
+        new ApplicationContextRunner()
+            .withUserConfiguration(
+                GameSessionStartSessionOperatorAuthorizationConfiguration.class, Dependencies.class)
+            .withPropertyValues(completeOwnerProperties())
+            .run(context -> {
+              assertThat(context).hasNotFailed();
+              assertThat(context)
+                  .hasSingleBean(GameSessionStartSessionOperatorAttemptRepository.class);
+              assertThat(context).hasSingleBean(StartSessionOperatorRedemptionClient.class);
+              assertThat(context)
+                  .hasSingleBean(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
 
-                      var channelFactory = context.getBean(ControlledGrpcChannelFactory.class);
-                      assertThat(channelFactory.buildCount()).isEqualTo(1);
-                      assertThat(channelFactory.lastTarget()).isEqualTo("account-service:6565");
-                      assertThat(channelFactory.lastDefaultPort()).isEqualTo(6565);
-                      assertThat(channelFactory.lastKeepAlive()).isTrue();
-                      context.close();
-                      verify(channelFactory.channel()).shutdown();
-                    }));
+              var channelFactory = context.getBean(ControlledGrpcChannelFactory.class);
+              assertThat(channelFactory.buildCount()).isEqualTo(1);
+              assertThat(channelFactory.lastTarget()).isEqualTo("account-service:6565");
+              assertThat(channelFactory.lastDefaultPort()).isEqualTo(6565);
+              assertThat(channelFactory.lastKeepAlive()).isTrue();
+              context.close();
+              verify(channelFactory.channel()).shutdown();
+            }));
   }
 
   @Test
   void enabledCompositionUsesCanonicalTransactionManagerWhenMultipleArePresent() {
-    withTlsReloadDisabled(
-        () ->
-            new ApplicationContextRunner()
-                .withUserConfiguration(
-                    GameSessionStartSessionOperatorAuthorizationConfiguration.class,
-                    Dependencies.class,
-                    AdditionalTransactionManager.class)
-                .withPropertyValues(completeOwnerProperties())
-                .run(
-                    context -> {
-                      assertThat(context).hasNotFailed();
-                      var coordinator =
-                          context.getBean(
-                              GameSessionStartSessionOperatorAuthorizationCoordinator.class);
-                      var ownerTransaction =
-                          (TransactionTemplate)
-                              ReflectionTestUtils.getField(coordinator, "ownerTransaction");
-                      var canonicalTransactionManager =
-                          context.getBean("transactionManager", PlatformTransactionManager.class);
-                      var otherTransactionManager =
-                          context.getBean(
-                              "otherTransactionManager", PlatformTransactionManager.class);
+    withTlsReloadDisabled(() ->
+        new ApplicationContextRunner()
+            .withUserConfiguration(
+                GameSessionStartSessionOperatorAuthorizationConfiguration.class,
+                Dependencies.class,
+                AdditionalTransactionManager.class)
+            .withPropertyValues(completeOwnerProperties())
+            .run(context -> {
+              assertThat(context).hasNotFailed();
+              var coordinator =
+                  context.getBean(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+              var ownerTransaction =
+                  (TransactionTemplate)
+                      ReflectionTestUtils.getField(coordinator, "ownerTransaction");
+              var canonicalTransactionManager =
+                  context.getBean("transactionManager", PlatformTransactionManager.class);
+              var otherTransactionManager =
+                  context.getBean("otherTransactionManager", PlatformTransactionManager.class);
 
-                      assertThat(ownerTransaction.getTransactionManager())
-                          .isSameAs(canonicalTransactionManager)
-                          .isNotSameAs(otherTransactionManager);
-                    }));
+              assertThat(ownerTransaction.getTransactionManager())
+                  .isSameAs(canonicalTransactionManager)
+                  .isNotSameAs(otherTransactionManager);
+            }));
   }
 
   private static String[] completeOwnerProperties() {

@@ -96,13 +96,12 @@ class GameTenantIdentityRepositoryIntegrationTest {
                   .from(GAME)
                   .where(ID.eq(quarantinedGameId))
                   .fetchOne())
-          .satisfies(
-              row -> {
-                assertThat(row.get(CANONICAL_TENANT_ID)).isNull();
-                assertThat(row.get(PROVENANCE_KIND)).isNull();
-                assertThat(row.get(SOURCE_GAME_ID)).isNull();
-                assertThat(row.get(SOURCE_LEGACY_TENANT_ID)).isNull();
-              });
+          .satisfies(row -> {
+            assertThat(row.get(CANONICAL_TENANT_ID)).isNull();
+            assertThat(row.get(PROVENANCE_KIND)).isNull();
+            assertThat(row.get(SOURCE_GAME_ID)).isNull();
+            assertThat(row.get(SOURCE_LEGACY_TENANT_ID)).isNull();
+          });
       Game newGame = new Game();
       newGame.setTenantId("new-owner-key");
       newGame.setName("New");
@@ -124,19 +123,17 @@ class GameTenantIdentityRepositoryIntegrationTest {
       assertThatThrownBy(() -> repository.save(forgedGame))
           .isInstanceOf(IllegalArgumentException.class);
 
-      assertThatThrownBy(
-              () ->
-                  dsl.update(GAME)
-                      .set(TENANT_ID, "renamed-owner-key")
-                      .where(ID.eq(retainedGameId))
-                      .execute())
+      assertThatThrownBy(() ->
+              dsl.update(GAME)
+                  .set(TENANT_ID, "renamed-owner-key")
+                  .where(ID.eq(retainedGameId))
+                  .execute())
           .isInstanceOf(DataAccessException.class);
-      assertThatThrownBy(
-              () ->
-                  dsl.update(GAME)
-                      .set(SOURCE_GAME_ID, SOURCE_GAME_ID.plus(1L))
-                      .where(ID.eq(retainedGameId))
-                      .execute())
+      assertThatThrownBy(() ->
+              dsl.update(GAME)
+                  .set(SOURCE_GAME_ID, SOURCE_GAME_ID.plus(1L))
+                  .where(ID.eq(retainedGameId))
+                  .execute())
           .isInstanceOf(DataAccessException.class);
       assertThat(dsl.fetchCount(GAME)).isEqualTo(3);
     }

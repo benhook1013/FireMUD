@@ -243,9 +243,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               world,
               "unavailable-incarnation",
               CanonicalGameplayRegionIncarnationSource.unavailable());
-      assertThatThrownBy(
-              () ->
-                  unavailableIncarnationOwner.installForTransition(TRANSITION_ID, world.request()))
+      assertThatThrownBy(() ->
+              unavailableIncarnationOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       assertThat(redis.admin().type(redisKey)).isEqualTo("none");
       assertThat(statusRepository.find(qualifiedSource)).isEmpty();
@@ -335,10 +334,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var preparation = statusRepository.findTimelinePreparation(qualifiedSource).orElseThrow();
       byte[] initialLeaseValue = redis.admin().get(redisKey);
       assertThat(redis.admin().hdel(ascii(initialMetaKey), ascii("current_tick_id"))).isEqualTo(1L);
-      assertThatThrownBy(
-              () ->
-                  initializeTimelineWithoutCreationPermission(
-                      redisOwner, preparation, "instance-a"))
+      assertThatThrownBy(() ->
+              initializeTimelineWithoutCreationPermission(redisOwner, preparation, "instance-a"))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Canonical Game Session region lease is unavailable")
           .satisfies(failure -> assertThat(failure.getCause()).isNull());
@@ -727,19 +724,18 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               Clock.systemUTC(), System.currentTimeMillis() + 10_000L);
       redis.setOwnerTimeAllowed(false);
       try {
-        assertThatThrownBy(
-                () ->
-                    deadlineBoundRedisOwner.prepareTimelineInitialization(
-                        preparation,
-                        Duration.ofSeconds(30),
-                        new RuntimeIdentity(
-                            "game-session-service",
-                            "time-denied-during-probe",
-                            "localhost",
-                            NOW,
-                            "controlled-test",
-                            "controlled-sha",
-                            "controlled-image")))
+        assertThatThrownBy(() ->
+                deadlineBoundRedisOwner.prepareTimelineInitialization(
+                    preparation,
+                    Duration.ofSeconds(30),
+                    new RuntimeIdentity(
+                        "game-session-service",
+                        "time-denied-during-probe",
+                        "localhost",
+                        NOW,
+                        "controlled-test",
+                        "controlled-sha",
+                        "controlled-image")))
             .isInstanceOf(IllegalStateException.class)
             .hasStackTraceContaining("ACL failure in script")
             .hasStackTraceContaining("the 'time' command");
@@ -847,10 +843,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               world,
               "preclaim-dependency-drift",
               incarnationSource);
-      assertThatThrownBy(
-              () ->
-                  preClaimDependencyFailureOwner.installForTransition(
-                      TRANSITION_ID, world.request()))
+      assertThatThrownBy(() ->
+              preClaimDependencyFailureOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
       assertPreparedTimelineUnchanged(
           testSchema.dsl(), statusRepository, redis, source, preparation);
@@ -998,21 +992,20 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           new AtomicReference<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof>();
       Runnable call =
           () ->
-              assertThatThrownBy(
-                      () ->
-                          CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
-                              Clock.systemUTC(),
-                              Long.MAX_VALUE,
-                              budget ->
-                                  faultRepository
-                                      .forBudget(budget)
-                                      .beginInitialTimeline(
-                                          preparation,
-                                          NOW,
-                                          retained -> {
-                                            proof.set(retained);
-                                            proofReady.countDown();
-                                          })))
+              assertThatThrownBy(() ->
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                          Clock.systemUTC(),
+                          Long.MAX_VALUE,
+                          budget ->
+                              faultRepository
+                                  .forBudget(budget)
+                                  .beginInitialTimeline(
+                                      preparation,
+                                      NOW,
+                                      retained -> {
+                                        proof.set(retained);
+                                        proofReady.countDown();
+                                      })))
                   .isInstanceOf(RuntimeException.class);
       if (lateWorker) {
         try (var caller = io.grpc.Context.current().withCancellation()) {
@@ -1168,136 +1161,120 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       try (var session =
           bounded.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
         Thread.sleep(mode == 1 ? 5_500 : 2_500);
-        assertThatThrownBy(
-                () ->
-                    session.initialize(
-                        permit,
-                        retained -> {
-                          proof.set(retained);
-                          if (mode == 4) {
-                            recoverySlot.proof = retained;
-                            try {
-                              recoveryOwner.recoverNoWrite(preparation, recoverySlot);
-                            } finally {
-                              recoveryOwner.releaseNoWriteRecovery(
-                                  preparation.operationId(), recoverySlot);
-                            }
-                            return;
-                          }
-                          if (mode == 2) {
-                            var concurrentRelease = new AtomicReference<CompletableFuture<Void>>();
-                            var lockAttempted = new CompletableFuture<Void>();
-                            var concurrentConfiguration =
-                                testSchema
-                                    .dsl()
-                                    .configuration()
-                                    .derive(
-                                        new org.jooq.impl.DefaultExecuteListenerProvider(
-                                            new org.jooq.impl.DefaultExecuteListener() {
-                                              @Override
-                                              public void executeStart(
-                                                  org.jooq.ExecuteContext context) {
-                                                String sql = context.sql();
-                                                if (sql != null
-                                                    && sql.contains("pg_advisory_xact_lock")) {
-                                                  lockAttempted.complete(null);
-                                                }
-                                              }
-                                            }));
-                            var concurrentRepository =
-                                new CanonicalGameplayRegionRuntimeStatusRepository(
-                                    DSL.using(concurrentConfiguration));
-                            var rollbackConfiguration =
-                                testSchema
-                                    .dsl()
-                                    .configuration()
-                                    .derive(
-                                        new org.jooq.impl.DefaultExecuteListenerProvider(
-                                            new org.jooq.impl.DefaultExecuteListener() {
-                                              @Override
-                                              public void executeStart(
-                                                  org.jooq.ExecuteContext context) {
-                                                String sql = context.sql();
-                                                if (sql != null
-                                                    && sql.contains("SET phase = 'PREPARED'")) {
-                                                  concurrentRelease.set(
-                                                      CompletableFuture.runAsync(
-                                                          () ->
-                                                              assertThatThrownBy(
-                                                                      () ->
-                                                                          concurrentRepository
-                                                                              .releaseInitialTimelineNoWrite(
-                                                                                  preparation,
-                                                                                  retained,
-                                                                                  NOW))
-                                                                  .isInstanceOf(
-                                                                      IllegalStateException
-                                                                          .class)));
-                                                  // Consumed-proof reconciliation takes this same
-                                                  // transaction lock. Roll back before awaiting it.
-                                                  lockAttempted
-                                                      .orTimeout(10, TimeUnit.SECONDS)
-                                                      .join();
-                                                  assertThat(concurrentRelease.get().isDone())
-                                                      .isFalse();
-                                                  throw new IllegalStateException(
-                                                      "forced SQL rollback");
-                                                }
-                                              }
-                                            }));
-                            var failing =
-                                new CanonicalGameplayRegionRuntimeStatusRepository(
-                                    DSL.using(rollbackConfiguration));
-                            assertThatThrownBy(
-                                    () ->
-                                        failing.releaseInitialTimelineNoWrite(
-                                            preparation, retained, NOW))
-                                .isInstanceOf(RuntimeException.class);
-                            assertThat(concurrentRelease.get()).isNotNull();
-                            concurrentRelease.get().orTimeout(10, TimeUnit.SECONDS).join();
-                            assertThat(
-                                    repository
-                                        .findTimelinePreparation(source)
-                                        .orElseThrow()
-                                        .phase())
-                                .isEqualTo(
-                                    CanonicalGameplayRegionRuntimeStatusRepository
-                                        .TimelinePreparationPhase.INITIALIZING);
-                          }
-                          if (mode == 3) {
-                            recoverySlot.proof = retained;
-                            var delegate = testSchema.dsl().configuration().transactionProvider();
-                            var ambiguous =
-                                new org.jooq.TransactionProvider() {
-                                  @Override
-                                  public void begin(org.jooq.TransactionContext context) {
-                                    delegate.begin(context);
-                                  }
+        assertThatThrownBy(() ->
+                session.initialize(
+                    permit,
+                    retained -> {
+                      proof.set(retained);
+                      if (mode == 4) {
+                        recoverySlot.proof = retained;
+                        try {
+                          recoveryOwner.recoverNoWrite(preparation, recoverySlot);
+                        } finally {
+                          recoveryOwner.releaseNoWriteRecovery(
+                              preparation.operationId(), recoverySlot);
+                        }
+                        return;
+                      }
+                      if (mode == 2) {
+                        var concurrentRelease = new AtomicReference<CompletableFuture<Void>>();
+                        var lockAttempted = new CompletableFuture<Void>();
+                        var concurrentConfiguration =
+                            testSchema
+                                .dsl()
+                                .configuration()
+                                .derive(
+                                    new org.jooq.impl.DefaultExecuteListenerProvider(
+                                        new org.jooq.impl.DefaultExecuteListener() {
+                                          @Override
+                                          public void executeStart(
+                                              org.jooq.ExecuteContext context) {
+                                            String sql = context.sql();
+                                            if (sql != null
+                                                && sql.contains("pg_advisory_xact_lock")) {
+                                              lockAttempted.complete(null);
+                                            }
+                                          }
+                                        }));
+                        var concurrentRepository =
+                            new CanonicalGameplayRegionRuntimeStatusRepository(
+                                DSL.using(concurrentConfiguration));
+                        var rollbackConfiguration =
+                            testSchema
+                                .dsl()
+                                .configuration()
+                                .derive(
+                                    new org.jooq.impl.DefaultExecuteListenerProvider(
+                                        new org.jooq.impl.DefaultExecuteListener() {
+                                          @Override
+                                          public void executeStart(
+                                              org.jooq.ExecuteContext context) {
+                                            String sql = context.sql();
+                                            if (sql != null
+                                                && sql.contains("SET phase = 'PREPARED'")) {
+                                              concurrentRelease.set(
+                                                  CompletableFuture.runAsync(() ->
+                                                      assertThatThrownBy(() ->
+                                                              concurrentRepository
+                                                                  .releaseInitialTimelineNoWrite(
+                                                                      preparation, retained, NOW))
+                                                          .isInstanceOf(
+                                                              IllegalStateException.class)));
+                                              // Consumed-proof reconciliation takes this same
+                                              // transaction lock. Roll back before awaiting it.
+                                              lockAttempted.orTimeout(10, TimeUnit.SECONDS).join();
+                                              assertThat(concurrentRelease.get().isDone())
+                                                  .isFalse();
+                                              throw new IllegalStateException(
+                                                  "forced SQL rollback");
+                                            }
+                                          }
+                                        }));
+                        var failing =
+                            new CanonicalGameplayRegionRuntimeStatusRepository(
+                                DSL.using(rollbackConfiguration));
+                        assertThatThrownBy(() ->
+                                failing.releaseInitialTimelineNoWrite(preparation, retained, NOW))
+                            .isInstanceOf(RuntimeException.class);
+                        assertThat(concurrentRelease.get()).isNotNull();
+                        concurrentRelease.get().orTimeout(10, TimeUnit.SECONDS).join();
+                        assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
+                            .isEqualTo(
+                                CanonicalGameplayRegionRuntimeStatusRepository
+                                    .TimelinePreparationPhase.INITIALIZING);
+                      }
+                      if (mode == 3) {
+                        recoverySlot.proof = retained;
+                        var delegate = testSchema.dsl().configuration().transactionProvider();
+                        var ambiguous =
+                            new org.jooq.TransactionProvider() {
+                              @Override
+                              public void begin(org.jooq.TransactionContext context) {
+                                delegate.begin(context);
+                              }
 
-                                  @Override
-                                  public void commit(org.jooq.TransactionContext context) {
-                                    delegate.commit(context);
-                                    throw new IllegalStateException("lost commit reply");
-                                  }
+                              @Override
+                              public void commit(org.jooq.TransactionContext context) {
+                                delegate.commit(context);
+                                throw new IllegalStateException("lost commit reply");
+                              }
 
-                                  @Override
-                                  public void rollback(org.jooq.TransactionContext context) {
-                                    // Models a successful no-op rollback after a committed
-                                    // transaction.
-                                  }
-                                };
-                            var uncertain =
-                                new CanonicalGameplayRegionRuntimeStatusRepository(
-                                    DSL.using(testSchema.dsl().configuration().derive(ambiguous)));
-                            assertThatThrownBy(
-                                    () ->
-                                        uncertain.releaseInitialTimelineNoWrite(
-                                            preparation, retained, NOW))
-                                .isInstanceOf(RuntimeException.class);
-                          } else {
-                            repository.releaseInitialTimelineNoWrite(preparation, retained, NOW);
-                          }
-                        }))
+                              @Override
+                              public void rollback(org.jooq.TransactionContext context) {
+                                // Models a successful no-op rollback after a committed
+                                // transaction.
+                              }
+                            };
+                        var uncertain =
+                            new CanonicalGameplayRegionRuntimeStatusRepository(
+                                DSL.using(testSchema.dsl().configuration().derive(ambiguous)));
+                        assertThatThrownBy(() ->
+                                uncertain.releaseInitialTimelineNoWrite(preparation, retained, NOW))
+                            .isInstanceOf(RuntimeException.class);
+                      } else {
+                        repository.releaseInitialTimelineNoWrite(preparation, retained, NOW);
+                      }
+                    }))
             .isInstanceOf(IllegalStateException.class);
       }
       assertThat(proof.get()).isNotNull();
@@ -1880,28 +1857,26 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                           .setPlayerCreatedOrigin(
                               origin.toBuilder().setMutationDigest("4".repeat(64)))
                           .build();
-                  assertThatThrownBy(
-                          () ->
-                              binding
-                                  .owner()
-                                  .installForTransition(
-                                      binding.installation(),
-                                      binding.acknowledgement().obligation().transitionId(),
-                                      changed))
+                  assertThatThrownBy(() ->
+                          binding
+                              .owner()
+                              .installForTransition(
+                                  binding.installation(),
+                                  binding.acknowledgement().obligation().transitionId(),
+                                  changed))
                       .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
                   var substituted =
                       request.toBuilder()
                           .setAssignmentUuid(origin.getCreationOperationUuid())
                           .setAssignmentIntentDigest(origin.getMutationDigest())
                           .build();
-                  assertThatThrownBy(
-                          () ->
-                              binding
-                                  .owner()
-                                  .installForTransition(
-                                      binding.installation(),
-                                      binding.acknowledgement().obligation().transitionId(),
-                                      substituted))
+                  assertThatThrownBy(() ->
+                          binding
+                              .owner()
+                              .installForTransition(
+                                  binding.installation(),
+                                  binding.acknowledgement().obligation().transitionId(),
+                                  substituted))
                       .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
                   var unknownOrigin =
                       origin.toBuilder()
@@ -1915,14 +1890,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                   .build())
                           .build();
                   var extended = request.toBuilder().setPlayerCreatedOrigin(unknownOrigin).build();
-                  assertThatThrownBy(
-                          () ->
-                              binding
-                                  .owner()
-                                  .installForTransition(
-                                      binding.installation(),
-                                      binding.acknowledgement().obligation().transitionId(),
-                                      extended))
+                  assertThatThrownBy(() ->
+                          binding
+                              .owner()
+                              .installForTransition(
+                                  binding.installation(),
+                                  binding.acknowledgement().obligation().transitionId(),
+                                  extended))
                       .isInstanceOfAny(IllegalArgumentException.class, IllegalStateException.class);
                   // Still structurally valid authenticated response, but no longer the original
                   // projection.
@@ -2561,34 +2535,31 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       this.initialClient = mock(CanonicalInitialPlayerLocationClient.class);
       this.lifecycleClient = mock(WorldCanonicalInstanceLifecycleClient.class);
       when(initialClient.readInitialPlayerLocationRegion(request))
-          .thenAnswer(
-              invocation -> {
-                int read = reads.incrementAndGet();
-                if (read == replaceOnRead) current.set(replacement);
-                CanonicalInitialPlayerLocationRegionResponse response =
-                    regionResponse(request, current.get());
-                if (read == callbackOnRead) afterRead.run();
-                return response;
-              });
+          .thenAnswer(invocation -> {
+            int read = reads.incrementAndGet();
+            if (read == replaceOnRead) current.set(replacement);
+            CanonicalInitialPlayerLocationRegionResponse response =
+                regionResponse(request, current.get());
+            if (read == callbackOnRead) afterRead.run();
+            return response;
+          });
       when(initialClient.readInitialPlayerLocationRegion(
               org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                io.grpc.Deadline deadline = invocation.getArgument(1);
-                assertThat(deadline).isNotNull();
-                observedDeadlines.add(deadline);
-                return initialClient.readInitialPlayerLocationRegion(invocation.getArgument(0));
-              });
+          .thenAnswer(invocation -> {
+            io.grpc.Deadline deadline = invocation.getArgument(1);
+            assertThat(deadline).isNotNull();
+            observedDeadlines.add(deadline);
+            return initialClient.readInitialPlayerLocationRegion(invocation.getArgument(0));
+          });
       when(lifecycleClient.read(original.request())).thenAnswer(invocation -> current.get());
       when(lifecycleClient.read(
               org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-          .thenAnswer(
-              invocation -> {
-                io.grpc.Deadline deadline = invocation.getArgument(1);
-                assertThat(deadline).isNotNull();
-                observedDeadlines.add(deadline);
-                return lifecycleClient.read(invocation.getArgument(0));
-              });
+          .thenAnswer(invocation -> {
+            io.grpc.Deadline deadline = invocation.getArgument(1);
+            assertThat(deadline).isNotNull();
+            observedDeadlines.add(deadline);
+            return lifecycleClient.read(invocation.getArgument(0));
+          });
       this.resolver =
           new CanonicalInitialPlayerLocationRegionResolver(
               initialClient, new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));

@@ -24,22 +24,20 @@ public class GameTemplateController {
   @PostMapping
   public ResponseEntity<ApiResponse<GameTemplateDto>> create(
       @Valid @RequestBody GameTemplateDto dto) {
-    return GameDesignRequestReaders.withBadRequest(
-        () -> {
-          GameDesignRequestReaders.requireTenantAccess(dto.tenantId());
-          GameTemplateDto created = templateService.createTemplate(dto);
-          return ResponseEntity.ok(ApiResponse.success(created));
-        });
+    return GameDesignRequestReaders.withBadRequest(() -> {
+      GameDesignRequestReaders.requireTenantAccess(dto.tenantId());
+      GameTemplateDto created = templateService.createTemplate(dto);
+      return ResponseEntity.ok(ApiResponse.success(created));
+    });
   }
 
   @GetMapping
   public ResponseEntity<ApiResponse<Page<GameTemplateDto>>> list(
       @RequestParam String tenantId, Pageable pageable) {
-    return GameDesignRequestReaders.withBadRequest(
-        () -> {
-          GameDesignRequestReaders.requireTenantAccess(tenantId);
-          Page<GameTemplateDto> templates = templateService.listTemplates(tenantId, pageable);
-          return ResponseEntity.ok(ApiResponse.success(templates));
-        });
+    return GameDesignRequestReaders.withBadRequest(() -> {
+      GameDesignRequestReaders.requireTenantAccess(tenantId);
+      Page<GameTemplateDto> templates = templateService.listTemplates(tenantId, pageable);
+      return ResponseEntity.ok(ApiResponse.success(templates));
+    });
   }
 }

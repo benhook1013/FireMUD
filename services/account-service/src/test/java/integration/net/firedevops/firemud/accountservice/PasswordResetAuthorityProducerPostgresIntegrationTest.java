@@ -164,22 +164,20 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
     assertThat(countReceipts(fixture, seed.accountId())).isEqualTo(1L);
     assertThat(countEvents(fixture, streamKey)).isEqualTo(1L);
     byte[] tokenHashBytes = HexFormat.of().parseHex(tokenHash(seed.rawToken()));
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .setupDsl()
-                    .execute(
-                        "UPDATE account_password_reset_operation_receipts "
-                            + "SET request_digest = request_digest WHERE token_hash = ?",
-                        tokenHashBytes))
+    assertThatThrownBy(() ->
+            fixture
+                .setupDsl()
+                .execute(
+                    "UPDATE account_password_reset_operation_receipts "
+                        + "SET request_digest = request_digest WHERE token_hash = ?",
+                    tokenHashBytes))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .setupDsl()
-                    .execute(
-                        "DELETE FROM account_password_reset_operation_receipts WHERE token_hash = ?",
-                        tokenHashBytes))
+    assertThatThrownBy(() ->
+            fixture
+                .setupDsl()
+                .execute(
+                    "DELETE FROM account_password_reset_operation_receipts WHERE token_hash = ?",
+                    tokenHashBytes))
         .isInstanceOf(DataAccessException.class);
     assertThat(countReceipts(fixture, seed.accountId())).isEqualTo(1L);
   }
@@ -293,14 +291,13 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
     assertThat(waitingVerifier).isNotBlank();
     assertThat(verifierDigest).hasSize(32);
     assertThat(sha256Hex(waitingVerifier)).isEqualTo(HexFormat.of().formatHex(verifierDigest));
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .setupDsl()
-                    .execute(
-                        "UPDATE account_password_reset_draft_source_changes "
-                            + "SET password_verifier = NULL WHERE token_hash = ?",
-                        HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
+    assertThatThrownBy(() ->
+            fixture
+                .setupDsl()
+                .execute(
+                    "UPDATE account_password_reset_draft_source_changes "
+                        + "SET password_verifier = NULL WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
         .isInstanceOf(DataAccessException.class);
     var persistedTokenBinding =
         Objects.requireNonNull(
@@ -360,15 +357,14 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
     assertThat(committedResetIntent.get("request_payload", byte[].class)).isEqualTo(requestBytes);
     assertThat(committedResetIntent.get("source_change_binding", byte[].class))
         .isEqualTo(changeBinding);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .setupDsl()
-                    .execute(
-                        "UPDATE account_password_reset_draft_source_changes "
-                            + "SET password_verifier_digest = password_verifier_digest "
-                            + "WHERE token_hash = ?",
-                        HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
+    assertThatThrownBy(() ->
+            fixture
+                .setupDsl()
+                .execute(
+                    "UPDATE account_password_reset_draft_source_changes "
+                        + "SET password_verifier_digest = password_verifier_digest "
+                        + "WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
         .isInstanceOf(DataAccessException.class);
     var committedV76Change =
         Objects.requireNonNull(
@@ -560,23 +556,21 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         .isEqualTo(waitingIntent.get("request_payload", byte[].class));
     assertThat(abortedIntent.get("source_change_binding", byte[].class))
         .isEqualTo(waitingIntent.get("source_change_binding", byte[].class));
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .setupDsl()
-                    .execute(
-                        "UPDATE account_password_reset_draft_source_changes "
-                            + "SET status = 'WAITING' WHERE token_hash = ?",
-                        HexFormat.of().parseHex(tokenHash)))
+    assertThatThrownBy(() ->
+            fixture
+                .setupDsl()
+                .execute(
+                    "UPDATE account_password_reset_draft_source_changes "
+                        + "SET status = 'WAITING' WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash)))
         .isInstanceOf(DataAccessException.class);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .setupDsl()
-                    .execute(
-                        "DELETE FROM account_password_reset_draft_source_changes "
-                            + "WHERE token_hash = ?",
-                        HexFormat.of().parseHex(tokenHash)))
+    assertThatThrownBy(() ->
+            fixture
+                .setupDsl()
+                .execute(
+                    "DELETE FROM account_password_reset_draft_source_changes "
+                        + "WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash)))
         .isInstanceOf(DataAccessException.class);
 
     assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "expired-password"))
@@ -654,16 +648,15 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         };
     AccountServiceImpl service = newService(readbackFailure, hideInsertedReceipt);
 
-    assertThatThrownBy(
-            () ->
-                transaction(
-                    readbackFailure.transaction(),
-                    () -> {
-                      service.completePasswordReset(
-                          new CompletePasswordResetRequest(
-                              readbackSeed.rawToken(), "readback-failure-password"));
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            transaction(
+                readbackFailure.transaction(),
+                () -> {
+                  service.completePasswordReset(
+                      new CompletePasswordResetRequest(
+                          readbackSeed.rawToken(), "readback-failure-password"));
+                  return null;
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("receipt readback is missing");
     assertUnchangedAfterRollback(readbackFailure, readbackSeed, 1L, 1L);
@@ -673,16 +666,15 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
   void issuanceFenceRejectsAnUnbackedOverflowAdvance() {
     Fixture fixture = newFixture();
     Seed seed = seedAccountAndToken(fixture, "initial-password");
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .setupDsl()
-                    .execute(
-                        "UPDATE account_authority_issuance_fences "
-                            + "SET issuance_fence = ?, source_version = ? WHERE account_uuid = ?",
-                        Long.MAX_VALUE,
-                        11L,
-                        seed.accountUuid()))
+    assertThatThrownBy(() ->
+            fixture
+                .setupDsl()
+                .execute(
+                    "UPDATE account_authority_issuance_fences "
+                        + "SET issuance_fence = ?, source_version = ? WHERE account_uuid = ?",
+                    Long.MAX_VALUE,
+                    11L,
+                    seed.accountUuid()))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining(
             "Account authority issuance fence and source version must advance by one");

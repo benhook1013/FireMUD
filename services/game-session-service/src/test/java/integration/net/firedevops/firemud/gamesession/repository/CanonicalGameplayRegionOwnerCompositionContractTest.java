@@ -14,10 +14,9 @@ class CanonicalGameplayRegionOwnerCompositionContractTest {
     var second = mock(CanonicalInitialPlayerLocationRegionResolver.class);
     var secondBinding =
         new CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding(null, null, second, null);
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeTwoCandidates(
-                    null, null, 0, null, null, first, null, secondBinding))
+    assertThatThrownBy(() ->
+            CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeTwoCandidates(
+                null, null, 0, null, null, first, null, secondBinding))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Both bindings require the same resolver routing their exact World requests");
     verifyNoInteractions(first, second);

@@ -140,11 +140,8 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
       } finally {
         fixture.dsl().execute("ALTER TABLE account_authority_source_records ENABLE TRIGGER USER");
       }
-      assertThatThrownBy(
-              () ->
-                  tx(
-                      fixture,
-                      () -> fixture.operations().claim(pending.request(), pending.capture())))
+      assertThatThrownBy(() ->
+              tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture())))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("Security-state pristine baseline is not proved");
       assertThat(fixture.dsl().fetchCount(DSL.table("account_security_state_operations"))).isZero();
@@ -257,14 +254,13 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
     assertThat(roleSourceAfter).isEqualTo(roleSourceBefore);
     assertThat(roleSourceAfter.get("global_roles", String[].class)).isEmpty();
     assertThat(roleSourceAfter.get("global_role_source_version", Long.class)).isEqualTo(1L);
-    assertThatThrownBy(
-            () ->
-                tx(
-                    fixture,
-                    () -> {
-                      sourceReadback(fixture).requireCurrentLatest(saved, current);
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            tx(
+                fixture,
+                () -> {
+                  sourceReadback(fixture).requireCurrentLatest(saved, current);
+                  return null;
+                }))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> sourceReader(fixture).readCurrent(saved.getAccountUuid()))
         .isInstanceOf(IllegalStateException.class);
@@ -315,27 +311,24 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
     try (var executor = Executors.newFixedThreadPool(2)) {
       var tasks =
           List.of(1, 2).stream()
-              .map(
-                  ignored ->
-                      executor.submit(
-                          () ->
-                              tx(
-                                  fixture,
-                                  () -> {
-                                    ready.countDown();
-                                    try {
-                                      if (!ready.await(10, TimeUnit.SECONDS))
-                                        throw new IllegalStateException(
-                                            "Concurrent claims did not start");
-                                    } catch (InterruptedException interrupted) {
-                                      Thread.currentThread().interrupt();
-                                      throw new IllegalStateException(interrupted);
-                                    }
-                                    return fixture
-                                        .operations()
-                                        .claim(pending.request(), pending.capture())
-                                        .claimed();
-                                  })))
+              .map(ignored ->
+                  executor.submit(() ->
+                      tx(
+                          fixture,
+                          () -> {
+                            ready.countDown();
+                            try {
+                              if (!ready.await(10, TimeUnit.SECONDS))
+                                throw new IllegalStateException("Concurrent claims did not start");
+                            } catch (InterruptedException interrupted) {
+                              Thread.currentThread().interrupt();
+                              throw new IllegalStateException(interrupted);
+                            }
+                            return fixture
+                                .operations()
+                                .claim(pending.request(), pending.capture())
+                                .claimed();
+                          })))
               .toList();
       assertThat(
               List.of(
@@ -439,23 +432,22 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
             .fetchOne(
                 "SELECT * FROM account_security_state_operations WHERE request_id = ?",
                 pending.request().requestId());
-    assertThatThrownBy(
-            () ->
-                tx(
-                    fixture,
-                    () -> {
-                      var source = fixture.generations().read(seed.source().scope());
-                      fixture
-                          .dsl()
-                          .execute(
-                              "UPDATE account_authority_issuance_fences "
-                                  + "SET issuance_fence = issuance_fence + 1, source_version = source_version + 1, updated_at = CURRENT_TIMESTAMP "
-                                  + "WHERE account_uuid = ? AND issuance_fence = ? AND source_version = ?",
-                              seed.account().getAccountUuid(),
-                              source.issuanceFence().value(),
-                              source.issuanceFence().sourceVersion());
-                      return null;
-                    }))
+    assertThatThrownBy(() ->
+            tx(
+                fixture,
+                () -> {
+                  var source = fixture.generations().read(seed.source().scope());
+                  fixture
+                      .dsl()
+                      .execute(
+                          "UPDATE account_authority_issuance_fences "
+                              + "SET issuance_fence = issuance_fence + 1, source_version = source_version + 1, updated_at = CURRENT_TIMESTAMP "
+                              + "WHERE account_uuid = ? AND issuance_fence = ? AND source_version = ?",
+                          seed.account().getAccountUuid(),
+                          source.issuanceFence().value(),
+                          source.issuanceFence().sourceVersion());
+                  return null;
+                }))
         .rootCause()
         .isInstanceOf(org.postgresql.util.PSQLException.class)
         .hasMessageContaining("Account issuance fence advance lacks exact owner source evidence");
@@ -543,11 +535,10 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
           .isInstanceOf(org.jooq.exception.DataAccessException.class);
     }
     producerFixture(fixture, pending, false);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .dsl()
-                    .execute("UPDATE account_security_state_operations SET event_id = 'changed'"))
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute("UPDATE account_security_state_operations SET event_id = 'changed'"))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThat(fixture.dsl().fetchCount(DSL.table("account_security_state_operations")))
         .isEqualTo(1);
@@ -559,46 +550,45 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
     Seed seed = seed(fixture);
     Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
     tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
-    assertThatThrownBy(
-            () ->
-                tx(
-                    fixture,
-                    () -> {
-                      var wrong =
-                          AccountSecurityStateAuthorityEventV1Codec.seal(
-                              AccountSecurityStateMutationRequest.eventPreimage(
-                                  pending.request().requestId(),
-                                  pending.request().accountUuid(),
-                                  "2",
-                                  "2",
-                                  "1",
-                                  pending.request().mutationKinds(),
-                                  state(false)));
-                      var event =
-                          fixture
-                              .outbox()
-                              .append(
-                                  stream(seed),
-                                  pending.request().requestId().toString(),
-                                  sequence ->
-                                      new EventEvidence(
-                                          wrong.eventId(),
-                                          wrong.eventDigest(),
-                                          wrong.canonicalJsonUtf8()));
+    assertThatThrownBy(() ->
+            tx(
+                fixture,
+                () -> {
+                  var wrong =
+                      AccountSecurityStateAuthorityEventV1Codec.seal(
+                          AccountSecurityStateMutationRequest.eventPreimage(
+                              pending.request().requestId(),
+                              pending.request().accountUuid(),
+                              "2",
+                              "2",
+                              "1",
+                              pending.request().mutationKinds(),
+                              state(false)));
+                  var event =
                       fixture
-                          .operations()
-                          .complete(
-                              pending.request(),
-                              event,
-                              new ScopeState(
-                                  seed.source().scope(),
-                                  2L,
-                                  2L,
-                                  new AccountAuthorityGenerationRepository.IssuanceFence(
-                                      seed.account().getAccountUuid(), 2L, 2L)),
-                              1L);
-                      return null;
-                    }))
+                          .outbox()
+                          .append(
+                              stream(seed),
+                              pending.request().requestId().toString(),
+                              sequence ->
+                                  new EventEvidence(
+                                      wrong.eventId(),
+                                      wrong.eventDigest(),
+                                      wrong.canonicalJsonUtf8()));
+                  fixture
+                      .operations()
+                      .complete(
+                          pending.request(),
+                          event,
+                          new ScopeState(
+                              seed.source().scope(),
+                              2L,
+                              2L,
+                              new AccountAuthorityGenerationRepository.IssuanceFence(
+                                  seed.account().getAccountUuid(), 2L, 2L)),
+                          1L);
+                  return null;
+                }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("receipt differs");
     assertThat(fixture.dsl().fetchCount(DSL.table("account_authority_outbox_events"))).isZero();
@@ -651,9 +641,8 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
           corruption.startsWith("payload = ")
               ? "Original checkpoint capture differs"
               : "Account source event readback is inconsistent";
-      assertThatThrownBy(
-              () ->
-                  tx(fixture, () -> fixture.operations().claim(second.request(), second.capture())))
+      assertThatThrownBy(() ->
+              tx(fixture, () -> fixture.operations().claim(second.request(), second.capture())))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage(expectedMessage);
       assertThat(fixture.dsl().fetchCount(DSL.table("account_security_state_operations")))
@@ -709,11 +698,10 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
           table.equals("account_authority_generations")
               ? IllegalArgumentException.class
               : IllegalStateException.class;
-      assertThatThrownBy(
-              () ->
-                  tx(
-                      fixture,
-                      () -> fixture.operations().findByRequestId(pending.request().requestId())))
+      assertThatThrownBy(() ->
+              tx(
+                  fixture,
+                  () -> fixture.operations().findByRequestId(pending.request().requestId())))
           .isExactlyInstanceOf(expectedException)
           .hasMessage(expectedMessage);
     }

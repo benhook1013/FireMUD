@@ -369,12 +369,11 @@ class AccountControlUiAuthorityTest {
               current
                   .account()
                   .accountSecurityCutoff()
-                  .map(
-                      cutoff ->
-                          new MembershipAuthorityEventV1Codec.AccountSecurityCutoff(
-                              cutoff.accountAuthorityGeneration(),
-                              cutoff.outboxStreamKey(),
-                              cutoff.outboxSequence())),
+                  .map(cutoff ->
+                      new MembershipAuthorityEventV1Codec.AccountSecurityCutoff(
+                          cutoff.accountAuthorityGeneration(),
+                          cutoff.outboxStreamKey(),
+                          cutoff.outboxSequence())),
               Optional.empty());
       var fence = current.issuanceFence();
       var member =
@@ -565,10 +564,9 @@ class AccountControlUiAuthorityTest {
   @Test
   void canonicalizationRejectsArithmeticChangeInsteadOfIssuingRoundedAuthority() {
     for (long counter : new long[] {9007199254740993L, Long.MAX_VALUE}) {
-      assertThatThrownBy(
-              () ->
-                  AccountControlUiAuthority.canonical(
-                      Map.of("tuple", List.of(Map.of("counter", counter)))))
+      assertThatThrownBy(() ->
+              AccountControlUiAuthority.canonical(
+                  Map.of("tuple", List.of(Map.of("counter", counter)))))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }

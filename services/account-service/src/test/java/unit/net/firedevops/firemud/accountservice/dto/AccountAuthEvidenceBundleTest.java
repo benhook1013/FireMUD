@@ -50,72 +50,68 @@ class AccountAuthEvidenceBundleTest {
 
   @Test
   void canonicalEvidenceCarrierHonorsItsProfileLimitWithinTheLargerEnvelopeBound() {
-    assertThatCode(
-            () ->
-                new Binding(
-                    "game-session-account-delegation",
-                    "request-1",
-                    new byte[32],
-                    WORKLOAD,
-                    "operation-1",
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    1L,
-                    new byte[] {'{', '}'},
-                    new byte[] {'{', '}'},
-                    new byte[AccountAuthEvidenceBundle.MAX_CANONICAL_BYTES]))
+    assertThatCode(() ->
+            new Binding(
+                "game-session-account-delegation",
+                "request-1",
+                new byte[32],
+                WORKLOAD,
+                "operation-1",
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                1L,
+                new byte[] {'{', '}'},
+                new byte[] {'{', '}'},
+                new byte[AccountAuthEvidenceBundle.MAX_CANONICAL_BYTES]))
         .doesNotThrowAnyException();
     assertThatThrownBy(() -> AccountAuthEvidenceBundle.parseCanonical(new byte[8 * 1024 + 1]))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class)
         .hasMessageContaining("byte bound");
-    assertThatCode(
-            () ->
-                new Binding(
-                    "game-session-account-delegation",
-                    "request-1",
-                    new byte[32],
-                    WORKLOAD,
-                    "operation-1",
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    1L,
-                    new byte[] {'{', '}'},
-                    new byte[] {'{', '}'},
-                    new byte[8 * 1024 + 1]))
+    assertThatCode(() ->
+            new Binding(
+                "game-session-account-delegation",
+                "request-1",
+                new byte[32],
+                WORKLOAD,
+                "operation-1",
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                1L,
+                new byte[] {'{', '}'},
+                new byte[] {'{', '}'},
+                new byte[8 * 1024 + 1]))
         .doesNotThrowAnyException();
-    assertThatCode(
-            () ->
-                new Binding(
-                    "game-session-account-delegation",
-                    "request-1",
-                    new byte[32],
-                    WORKLOAD,
-                    "operation-1",
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    1L,
-                    new byte[] {'{', '}'},
-                    new byte[] {'{', '}'},
-                    new byte[128 * 1024]))
+    assertThatCode(() ->
+            new Binding(
+                "game-session-account-delegation",
+                "request-1",
+                new byte[32],
+                WORKLOAD,
+                "operation-1",
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                1L,
+                new byte[] {'{', '}'},
+                new byte[] {'{', '}'},
+                new byte[128 * 1024]))
         .doesNotThrowAnyException();
-    assertThatThrownBy(
-            () ->
-                new Binding(
-                    "game-session-account-delegation",
-                    "request-1",
-                    new byte[32],
-                    WORKLOAD,
-                    "operation-1",
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    1L,
-                    new byte[] {'{', '}'},
-                    new byte[] {'{', '}'},
-                    new byte[128 * 1024 + 1]))
+    assertThatThrownBy(() ->
+            new Binding(
+                "game-session-account-delegation",
+                "request-1",
+                new byte[32],
+                WORKLOAD,
+                "operation-1",
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                1L,
+                new byte[] {'{', '}'},
+                new byte[] {'{', '}'},
+                new byte[128 * 1024 + 1]))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("authority evidence bundle bytes");
   }
@@ -125,40 +121,32 @@ class AccountAuthEvidenceBundleTest {
     byte[] valid = AccountAuthEvidenceBundle.fromOwnerEvaluation(evaluation()).canonicalBytes();
     String text = new String(valid, StandardCharsets.UTF_8);
 
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    "{\"schema\":\"first\",\"schema\":\"second\"}"
-                        .getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                "{\"schema\":\"first\",\"schema\":\"second\"}".getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    (text + "{}\n").getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                (text + "{}\n").getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    text.replace("\"schema\":", "\"unknown\":null,\"schema\":")
-                        .getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                text.replace("\"schema\":", "\"unknown\":null,\"schema\":")
+                    .getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    text.replace(
-                            "\"audience\":\"account-service\"",
-                            "\"audience\":\"account-service\",\"privateKey\":\"fixture\"")
-                        .getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                text.replace(
+                        "\"audience\":\"account-service\"",
+                        "\"audience\":\"account-service\",\"privateKey\":\"fixture\"")
+                    .getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    (" " + text).getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical((" " + text).getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    text.replace(",\"sourceFence\":\"7\"", "").getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                text.replace(",\"sourceFence\":\"7\"", "").getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
   }
 
@@ -177,38 +165,31 @@ class AccountAuthEvidenceBundleTest {
     String numericIssuerGeneration =
         text.replace("\"issuerAuthGeneration\":\"1\"", "\"issuerAuthGeneration\":1");
 
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    withTenantScope.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                withTenantScope.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    numericSourceFence.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                numericSourceFence.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    numericFence.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(numericFence.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    numericTokenGeneration.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                numericTokenGeneration.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    numericIssuerGeneration.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                numericIssuerGeneration.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
   }
 
   @Test
   void bundleReferenceUsesCanonicalCaptureTransactionAndFenceRanges() {
-    assertThatCode(
-            () ->
-                new BundleReference("1", "18446744073709551615", "9223372036854775807", "12345678"))
+    assertThatCode(() ->
+            new BundleReference("1", "18446744073709551615", "9223372036854775807", "12345678"))
         .doesNotThrowAnyException();
     assertThatThrownBy(() -> new BundleReference("1", "18446744073709551616", "1", "12345678"))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
@@ -237,13 +218,12 @@ class AccountAuthEvidenceBundleTest {
 
     assertThatThrownBy(() -> AccountAuthEvidenceBundle.fromOwnerEvaluation(reversed))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
-    assertThatThrownBy(
-            () ->
-                new OutboxCheckpoint(
-                    "account:auth-authority:v1:account/" + value.accountId(),
-                    0L,
-                    "event",
-                    "sha256:" + "a".repeat(64)))
+    assertThatThrownBy(() ->
+            new OutboxCheckpoint(
+                "account:auth-authority:v1:account/" + value.accountId(),
+                0L,
+                "event",
+                "sha256:" + "a".repeat(64)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
   }
 
@@ -287,10 +267,9 @@ class AccountAuthEvidenceBundleTest {
                     + "\"sourceEventDigest\":\"sha256:"
                     + "a".repeat(64)
                     + "\"");
-    assertThatThrownBy(
-            () ->
-                AccountAuthEvidenceBundle.parseCanonical(
-                    claimedEventAtZero.getBytes(StandardCharsets.UTF_8)))
+    assertThatThrownBy(() ->
+            AccountAuthEvidenceBundle.parseCanonical(
+                claimedEventAtZero.getBytes(StandardCharsets.UTF_8)))
         .isInstanceOf(AccountAuthEvidenceBundle.InvalidBundleException.class);
   }
 

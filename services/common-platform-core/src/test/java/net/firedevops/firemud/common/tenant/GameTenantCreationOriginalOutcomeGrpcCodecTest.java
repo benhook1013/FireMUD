@@ -62,9 +62,8 @@ class GameTenantCreationOriginalOutcomeGrpcCodecTest {
           valid.toBuilder().setAccountAuthorizationDigest("sha256:" + "A".repeat(64)).build(),
           valid.toBuilder().setUnknownFields(unknownField()).build()
         }) {
-      assertThatThrownBy(
-              () ->
-                  GameTenantCreationOriginalOutcomeGrpcCodec.fromReadRequest(NAMESPACE, malformed))
+      assertThatThrownBy(() ->
+              GameTenantCreationOriginalOutcomeGrpcCodec.fromReadRequest(NAMESPACE, malformed))
           .isInstanceOf(IllegalArgumentException.class);
     }
     assertThatThrownBy(
@@ -140,10 +139,8 @@ class GameTenantCreationOriginalOutcomeGrpcCodecTest {
               .setCreatedReceipt(createdResponse.getCreatedReceipt())
               .build()
         }) {
-      assertThatThrownBy(
-              () ->
-                  GameTenantCreationOriginalOutcomeGrpcCodec.fromReadResponse(
-                      READ_REQUEST, malformed))
+      assertThatThrownBy(() ->
+              GameTenantCreationOriginalOutcomeGrpcCodec.fromReadResponse(READ_REQUEST, malformed))
           .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -159,10 +156,9 @@ class GameTenantCreationOriginalOutcomeGrpcCodecTest {
                 ACCOUNT_DIGEST),
             Outcome.NOT_CREATED,
             Optional.empty());
-    assertThatThrownBy(
-            () ->
-                GameTenantCreationOriginalOutcomeGrpcCodec.toReadResponse(
-                    READ_REQUEST, substitutedEvidence))
+    assertThatThrownBy(() ->
+            GameTenantCreationOriginalOutcomeGrpcCodec.toReadResponse(
+                READ_REQUEST, substitutedEvidence))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact binding");
   }

@@ -193,11 +193,10 @@ public final class EntityPlayerCreatedRosterSourceClient
     var json = tools.jackson.databind.json.JsonMapper.builder().build();
     var selected =
         authored.projections().stream()
-            .filter(
-                projection ->
-                    RealmEntryPolicy.parseCanonical(projection.policy().canonicalJson(), json)
-                        .realmSlug()
-                        .equals(request.getRealmSlug()))
+            .filter(projection ->
+                RealmEntryPolicy.parseCanonical(projection.policy().canonicalJson(), json)
+                    .realmSlug()
+                    .equals(request.getRealmSlug()))
             .toList();
     if (selected.size() != 1) throw invalid();
     var policy =
@@ -251,18 +250,17 @@ public final class EntityPlayerCreatedRosterSourceClient
         || !expectedRelease.commandDefinitions().equals(release.commandDefinitions())
         || !expectedRelease.generationConfigRevision().equals(release.generationConfigRevision())
         || !expectedRelease.participantDigests().stream()
-            .map(
-                value ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        value.participantKey(),
-                        value.scopeValue(),
-                        value.baseVersionId() != null,
-                        value.baseVersionId(),
-                        value.appliedCommitId(),
-                        value.contentDigest(),
-                        value.digestSchemaVersion(),
-                        value.abilitySchemaDigest() != null,
-                        value.abilitySchemaDigest()))
+            .map(value ->
+                new AuthoredWorldReleaseAttestationEvidence.Participant(
+                    value.participantKey(),
+                    value.scopeValue(),
+                    value.baseVersionId() != null,
+                    value.baseVersionId(),
+                    value.appliedCommitId(),
+                    value.contentDigest(),
+                    value.digestSchemaVersion(),
+                    value.abilitySchemaDigest() != null,
+                    value.abilitySchemaDigest()))
             .toList()
             .equals(release.participantDigests())
         || !expectedRelease.contentDigest().equals(set.publishedReleaseBundleDigest())
@@ -273,10 +271,9 @@ public final class EntityPlayerCreatedRosterSourceClient
             operation.world().canonicalBytes())) throw invalid();
     var policies =
         set.policies().stream()
-            .filter(
-                candidate ->
-                    candidate.policy().worldSlug().equals(request.getWorldSlug())
-                        && candidate.policy().realmSlug().equals(request.getRealmSlug()))
+            .filter(candidate ->
+                candidate.policy().worldSlug().equals(request.getWorldSlug())
+                    && candidate.policy().realmSlug().equals(request.getRealmSlug()))
             .toList();
     if (policies.size() != 1) throw invalid();
     var sealed = policies.getFirst().requireValidDigest(set);

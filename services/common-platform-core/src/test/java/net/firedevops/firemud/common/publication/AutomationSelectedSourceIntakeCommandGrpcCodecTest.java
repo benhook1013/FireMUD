@@ -82,58 +82,52 @@ class AutomationSelectedSourceIntakeCommandGrpcCodecTest {
             .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
             .build();
 
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    wire.toBuilder().setUnknownFields(unknown).build()))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                wire.toBuilder().setUnknownFields(unknown).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unknown");
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    wire.toBuilder().setIntakeAuthorizationDigest("0".repeat(64)).build()))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                wire.toBuilder().setIntakeAuthorizationDigest("0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("digest");
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    wire.toBuilder()
-                        .setFreezeRequest(
-                            wire.getFreezeRequest().toBuilder().setUnknownFields(unknown).build())
-                        .build()))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                wire.toBuilder()
+                    .setFreezeRequest(
+                        wire.getFreezeRequest().toBuilder().setUnknownFields(unknown).build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeCommandGrpcCodec.fromRequest(
-                    wire.toBuilder()
-                        .setOriginalIntakeAuthorizationBinding(
-                            ByteString.copyFrom(
-                                new byte
-                                    [AutomationSelectedSourceIntakeCommandGrpcCodec
-                                            .MAX_REQUEST_WIRE_BYTES
-                                        + 1]))
-                        .build()))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeCommandGrpcCodec.fromRequest(
+                wire.toBuilder()
+                    .setOriginalIntakeAuthorizationBinding(
+                        ByteString.copyFrom(
+                            new byte
+                                [AutomationSelectedSourceIntakeCommandGrpcCodec
+                                        .MAX_REQUEST_WIRE_BYTES
+                                    + 1]))
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("wire budget");
 
     var otherNamespaceFreeze = freeze("other");
-    assertThatThrownBy(
-            () ->
-                new AutomationSelectedSourceIntakeCommandEvidence.Request(
-                    AutomationSelectedSourceIntakeCommandEvidence.Request.SCHEMA_VERSION,
-                    "test",
-                    id("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
-                    binding,
-                    otherNamespaceFreeze))
+    assertThatThrownBy(() ->
+            new AutomationSelectedSourceIntakeCommandEvidence.Request(
+                AutomationSelectedSourceIntakeCommandEvidence.Request.SCHEMA_VERSION,
+                "test",
+                id("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                binding,
+                otherNamespaceFreeze))
         .isInstanceOf(IllegalArgumentException.class);
     var wrongOwner =
         authorization(
             freeze.request().accountBinding().input().selection().selectedCommit(),
             Owner.ENTITY_MANAGEMENT);
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeCommandEvidence.Request.create(
-                    "test", wrongOwner, freeze))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeCommandEvidence.Request.create(
+                "test", wrongOwner, freeze))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -167,22 +161,19 @@ class AutomationSelectedSourceIntakeCommandGrpcCodecTest {
                             .setContentDigest("b".repeat(64)))
                     .build())
             .build();
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeCommandGrpcCodec.fromResponse(request, changedFreeze))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeCommandGrpcCodec.fromResponse(request, changedFreeze))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("changed");
-    assertThatThrownBy(
-            () ->
-                AutomationSelectedSourceIntakeCommandGrpcCodec.fromResponse(
-                    request,
-                    response.toBuilder()
-                        .setUnknownFields(
-                            UnknownFieldSet.newBuilder()
-                                .addField(
-                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            AutomationSelectedSourceIntakeCommandGrpcCodec.fromResponse(
+                request,
+                response.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Unknown");
   }

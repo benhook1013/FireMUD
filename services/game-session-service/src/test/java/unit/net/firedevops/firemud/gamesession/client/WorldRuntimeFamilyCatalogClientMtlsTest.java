@@ -208,10 +208,9 @@ class WorldRuntimeFamilyCatalogClientMtlsTest {
     }
     var tls = new CommonGrpcClientProperties();
     tls.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new WorldRuntimeFamilyCatalogClient(
-                    new ServiceEndpointsProperties(), tls, new GrpcChannelFactory(), NAMESPACE))
+    assertThatThrownBy(() ->
+            new WorldRuntimeFamilyCatalogClient(
+                new ServiceEndpointsProperties(), tls, new GrpcChannelFactory(), NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

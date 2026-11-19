@@ -79,10 +79,9 @@ class StartSessionTemplateAssociationReadGrpcCodecTest {
   void rejectsMissingSelectionUnknownFieldsNoncanonicalIdsAndChangedNamespace() {
     var valid =
         StartSessionTemplateAssociationReadGrpcCodec.toRequest(request(new InitialConfigured()));
-    assertThatThrownBy(
-            () ->
-                StartSessionTemplateAssociationReadGrpcCodec.fromRequest(
-                    valid.toBuilder().clearSelection().build()))
+    assertThatThrownBy(() ->
+            StartSessionTemplateAssociationReadGrpcCodec.fromRequest(
+                valid.toBuilder().clearSelection().build()))
         .isInstanceOf(IllegalArgumentException.class);
 
     var unknown =
@@ -104,17 +103,16 @@ class StartSessionTemplateAssociationReadGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class);
 
     var tuple = postTuple("codec-namespace");
-    assertThatThrownBy(
-            () ->
-                StartSessionTemplateAssociationReadGrpcCodec.toRequest(
-                    new StartSessionTemplateAssociationReadEvidence.Request(
-                        1,
-                        "another-runtime",
-                        READ_ID,
-                        tuple.canonicalBytes(),
-                        ATTEMPT,
-                        8L,
-                        new InitialConfigured())))
+    assertThatThrownBy(() ->
+            StartSessionTemplateAssociationReadGrpcCodec.toRequest(
+                new StartSessionTemplateAssociationReadEvidence.Request(
+                    1,
+                    "another-runtime",
+                    READ_ID,
+                    tuple.canonicalBytes(),
+                    ATTEMPT,
+                    8L,
+                    new InitialConfigured())))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -143,10 +141,9 @@ class StartSessionTemplateAssociationReadGrpcCodecTest {
             [net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple
                     .MAX_CANONICAL_TUPLE_BYTES
                 + 1];
-    assertThatThrownBy(
-            () ->
-                new StartSessionTemplateAssociationReadEvidence.Request(
-                    1, "world-runtime", READ_ID, oversized, ATTEMPT, 8L, new InitialConfigured()))
+    assertThatThrownBy(() ->
+            new StartSessionTemplateAssociationReadEvidence.Request(
+                1, "world-runtime", READ_ID, oversized, ATTEMPT, 8L, new InitialConfigured()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("bounded");
 

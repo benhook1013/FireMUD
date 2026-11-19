@@ -59,10 +59,9 @@ class CanonicalGameplayLegacyRedisSourceTest {
     when(connection.serverCommands()).thenReturn(serverCommands);
     invokeThroughRedisCallback(redis, connection);
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayLegacyRedisSource(redis, limits())
-                    .captureEveryKnownFamily(cohort()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayLegacyRedisSource(redis, limits())
+                .captureEveryKnownFamily(cohort()))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("cluster scan cannot prove complete cluster-wide inventory");
 
@@ -81,10 +80,9 @@ class CanonicalGameplayLegacyRedisSourceTest {
       when(connection.serverCommands()).thenReturn(serverCommands);
       invokeThroughRedisCallback(redis, connection);
 
-      assertThatThrownBy(
-              () ->
-                  new CanonicalGameplayLegacyRedisSource(redis, limits())
-                      .captureEveryKnownFamily(cohort()))
+      assertThatThrownBy(() ->
+              new CanonicalGameplayLegacyRedisSource(redis, limits())
+                  .captureEveryKnownFamily(cohort()))
           .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
           .hasMessageContaining("standalone topology could not be proven");
 
@@ -101,10 +99,9 @@ class CanonicalGameplayLegacyRedisSourceTest {
     when(connection.serverCommands()).thenReturn(serverCommands);
     invokeThroughRedisCallback(redis, connection);
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayLegacyRedisSource(redis, limits())
-                    .captureEveryKnownFamily(cohort()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayLegacyRedisSource(redis, limits())
+                .captureEveryKnownFamily(cohort()))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("standalone topology could not be proven");
 
@@ -122,13 +119,12 @@ class CanonicalGameplayLegacyRedisSourceTest {
     assertThat(snapshot.everyEntryIsReconciled()).isFalse();
     assertThat(snapshot.entries())
         .singleElement()
-        .satisfies(
-            entry -> {
-              assertThat(entry.family())
-                  .isEqualTo(CanonicalGameplayLegacyMigrationSourceSnapshot.Family.UNCLASSIFIED);
-              assertThat(entry.disposition())
-                  .isEqualTo(CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.UNKNOWN);
-            });
+        .satisfies(entry -> {
+          assertThat(entry.family())
+              .isEqualTo(CanonicalGameplayLegacyMigrationSourceSnapshot.Family.UNCLASSIFIED);
+          assertThat(entry.disposition())
+              .isEqualTo(CanonicalGameplayLegacyMigrationSourceSnapshot.Disposition.UNKNOWN);
+        });
     assertThat(snapshot.toString()).doesNotContain(FIRST_PARTY_CONTEXT);
   }
 
@@ -164,10 +160,9 @@ class CanonicalGameplayLegacyRedisSourceTest {
     when(brokenConnection.serverCommands()).thenReturn(brokenServerCommands);
     invokeThroughRedisCallback(brokenCursorRedis, brokenConnection);
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayLegacyRedisSource(brokenCursorRedis, limits())
-                    .captureEveryKnownFamily(cohort()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayLegacyRedisSource(brokenCursorRedis, limits())
+                .captureEveryKnownFamily(cohort()))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("cursor failed before complete exhaustion");
 
@@ -180,10 +175,9 @@ class CanonicalGameplayLegacyRedisSourceTest {
     RedisServerCommands incompleteServerCommands = standaloneServerCommands();
     when(incompleteConnection.serverCommands()).thenReturn(incompleteServerCommands);
     invokeThroughRedisCallback(incompleteCursorRedis, incompleteConnection);
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayLegacyRedisSource(incompleteCursorRedis, limits())
-                    .captureEveryKnownFamily(cohort()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayLegacyRedisSource(incompleteCursorRedis, limits())
+                .captureEveryKnownFamily(cohort()))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("terminal cursor identity");
 
@@ -193,10 +187,9 @@ class CanonicalGameplayLegacyRedisSourceTest {
                 List.of(TENANT_CONTEXT, SESSION_ALIAS), List.of(TENANT_CONTEXT, SESSION_ALIAS)));
     var tightLimits =
         new CanonicalGameplayLegacyRedisSource.ScanLimits(2, 1, 4, 256, Duration.ofSeconds(5));
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayLegacyRedisSource(overLimitRedis, tightLimits)
-                    .captureEveryKnownFamily(cohort()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayLegacyRedisSource(overLimitRedis, tightLimits)
+                .captureEveryKnownFamily(cohort()))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("unique-key bound");
     verify(overLimitRedis, times(1)).execute(any(RedisCallback.class));
@@ -207,10 +200,9 @@ class CanonicalGameplayLegacyRedisSourceTest {
     StringRedisTemplate redis =
         redisWithScans(List.of(List.of(TENANT_CONTEXT), List.of(SESSION_ALIAS)));
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayLegacyRedisSource(redis, limits())
-                    .captureEveryKnownFamily(cohort()))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayLegacyRedisSource(redis, limits())
+                .captureEveryKnownFamily(cohort()))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessageContaining("changed between complete fenced scans");
   }
@@ -223,10 +215,9 @@ class CanonicalGameplayLegacyRedisSourceTest {
     var oneKeyPerFenceCheck =
         new CanonicalGameplayLegacyRedisSource.ScanLimits(1, 10, 10, 256, Duration.ofSeconds(5));
 
-    assertThatThrownBy(
-            () ->
-                new CanonicalGameplayLegacyRedisSource(redis, oneKeyPerFenceCheck)
-                    .captureEveryKnownFamily(driftingCohort))
+    assertThatThrownBy(() ->
+            new CanonicalGameplayLegacyRedisSource(redis, oneKeyPerFenceCheck)
+                .captureEveryKnownFamily(driftingCohort))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
     verify(redis, times(1)).execute(any(RedisCallback.class));
   }
@@ -252,14 +243,13 @@ class CanonicalGameplayLegacyRedisSourceTest {
     RedisConnection connection = mock(RedisConnection.class);
     AtomicInteger scanIndex = new AtomicInteger();
     when(connection.scan(any(ScanOptions.class)))
-        .thenAnswer(
-            ignored -> {
-              int index = scanIndex.getAndIncrement();
-              if (index >= scans.size()) {
-                throw new AssertionError("unexpected third Redis scan");
-              }
-              return cursor(scans.get(index));
-            });
+        .thenAnswer(ignored -> {
+          int index = scanIndex.getAndIncrement();
+          if (index >= scans.size()) {
+            throw new AssertionError("unexpected third Redis scan");
+          }
+          return cursor(scans.get(index));
+        });
     RedisServerCommands serverCommands = mock(RedisServerCommands.class);
     Properties clusterInformation = new Properties();
     clusterInformation.setProperty("cluster_enabled", "0");

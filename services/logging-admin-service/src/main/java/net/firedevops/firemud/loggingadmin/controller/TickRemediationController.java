@@ -40,39 +40,36 @@ public class TickRemediationController {
       @PathVariable String tenantId,
       @RequestParam(required = false) String gameInstanceId,
       @RequestParam(required = false) String regionId) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
-          String normalizedGameInstanceId =
-              LoggingAdminRequestReaders.requireOptionalPositiveLongText(
-                  gameInstanceId, "gameInstanceId");
-          return ResponseEntity.ok(
-              ApiResponse.success(
-                  tickRemediationService.getRuntimeOwnershipStatus(
-                      parsedTenantId, normalizedGameInstanceId, regionId)));
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      long parsedTenantId = LoggingAdminRequestReaders.requireTenantAccess(tenantId);
+      String normalizedGameInstanceId =
+          LoggingAdminRequestReaders.requireOptionalPositiveLongText(
+              gameInstanceId, "gameInstanceId");
+      return ResponseEntity.ok(
+          ApiResponse.success(
+              tickRemediationService.getRuntimeOwnershipStatus(
+                  parsedTenantId, normalizedGameInstanceId, regionId)));
+    });
   }
 
   @PostMapping("/pause")
   @Timed(value = "tickRemediationPause", description = "Pause ticks for a scoped runtime target")
   public ResponseEntity<ApiResponse<TickRemediationActionDto>> pause(
       @Valid @RequestBody TickRemediationRequest request) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          validateAuthorizedTenantRequest(request, request.tenantId());
-          return unavailableResponse();
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      validateAuthorizedTenantRequest(request, request.tenantId());
+      return unavailableResponse();
+    });
   }
 
   @PostMapping("/resume")
   @Timed(value = "tickRemediationResume", description = "Resume ticks for a scoped runtime target")
   public ResponseEntity<ApiResponse<TickRemediationActionDto>> resume(
       @Valid @RequestBody TickRemediationRequest request) {
-    return LoggingAdminRequestReaders.withBadRequest(
-        () -> {
-          validateAuthorizedTenantRequest(request, request.tenantId());
-          return unavailableResponse();
-        });
+    return LoggingAdminRequestReaders.withBadRequest(() -> {
+      validateAuthorizedTenantRequest(request, request.tenantId());
+      return unavailableResponse();
+    });
   }
 
   private ResponseEntity<ApiResponse<TickRemediationActionDto>> unavailableResponse() {

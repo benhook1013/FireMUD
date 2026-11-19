@@ -132,10 +132,9 @@ class AccountPublicJwksReadCodecTest {
         new Object[][] {
           {new byte[] {1}, true, false}, {new byte[0], true, true}, {new byte[0], false, false}
         }) {
-      assertThatThrownBy(
-              () ->
-                  new AccountPublicJwksReadCodec.ReadResult(
-                      PIN, (byte[]) invalid[0], (boolean) invalid[1], (boolean) invalid[2]))
+      assertThatThrownBy(() ->
+              new AccountPublicJwksReadCodec.ReadResult(
+                  PIN, (byte[]) invalid[0], (boolean) invalid[1], (boolean) invalid[2]))
           .isInstanceOf(AccountPublicJwksReadCodec.InvalidFrameException.class);
     }
     byte[] bytes = {1};

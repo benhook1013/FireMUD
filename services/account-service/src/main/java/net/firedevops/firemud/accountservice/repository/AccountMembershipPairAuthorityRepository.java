@@ -117,10 +117,8 @@ public class AccountMembershipPairAuthorityRepository {
 
     PairAuthority readback =
         readForUpdate(accountUuid, tenantUuid)
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Account membership pair baseline readback is absent"));
+            .orElseThrow(() ->
+                new IllegalStateException("Account membership pair baseline readback is absent"));
     if (!baseline.equals(readback)) {
       throw new IllegalStateException(
           "Account membership pair baseline readback differs from the exact absence state");
@@ -196,10 +194,8 @@ public class AccountMembershipPairAuthorityRepository {
 
     PairAuthority advanced =
         readForUpdate(expected.accountUuid(), expected.tenantUuid())
-            .orElseThrow(
-                () ->
-                    new IllegalStateException(
-                        "Advanced Account membership pair readback is absent"));
+            .orElseThrow(() ->
+                new IllegalStateException("Advanced Account membership pair readback is absent"));
     PairAuthority required =
         new PairAuthority(
             expected.accountUuid(),

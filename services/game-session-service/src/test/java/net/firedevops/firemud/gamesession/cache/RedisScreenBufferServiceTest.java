@@ -47,11 +47,10 @@ class RedisScreenBufferServiceTest {
   void setUp() {
     when(redisTemplate.opsForValue()).thenReturn((ValueOperations) valueOperations);
     when(redisTemplate.execute(any(SessionCallback.class)))
-        .thenAnswer(
-            invocation -> {
-              SessionCallback<?> callback = invocation.getArgument(0);
-              return callback.execute(redisOperations);
-            });
+        .thenAnswer(invocation -> {
+          SessionCallback<?> callback = invocation.getArgument(0);
+          return callback.execute(redisOperations);
+        });
     when(redisOperations.opsForValue()).thenReturn((ValueOperations) valueOperations);
     doAnswer(
             invocation -> {
@@ -178,12 +177,10 @@ class RedisScreenBufferServiceTest {
     cacheService.append(22L, 1L, 123L, List.of(oversized));
 
     assertThat(cacheService.get(22L, 1L, 123L))
-        .hasValueSatisfying(
-            screen -> {
-              assertThat(screen.messageCount()).isEqualTo(1);
-              assertThat(screen.entries().getFirst().payloadJson())
-                  .isEqualTo(oversized.payloadJson());
-            });
+        .hasValueSatisfying(screen -> {
+          assertThat(screen.messageCount()).isEqualTo(1);
+          assertThat(screen.entries().getFirst().payloadJson()).isEqualTo(oversized.payloadJson());
+        });
   }
 
   @Test
@@ -202,13 +199,12 @@ class RedisScreenBufferServiceTest {
         22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\n")));
 
     assertThat(cacheService.get(22L, 1L, 123L))
-        .hasValueSatisfying(
-            screen -> {
-              assertThat(screen.messageCount()).isEqualTo(1);
-              assertThat(screen.protocolText()).isEqualTo("CURRENT\n");
-              assertThat(screen.entries().getFirst().payloadJson())
-                  .isNotEqualTo(oversized.payloadJson());
-            });
+        .hasValueSatisfying(screen -> {
+          assertThat(screen.messageCount()).isEqualTo(1);
+          assertThat(screen.protocolText()).isEqualTo("CURRENT\n");
+          assertThat(screen.entries().getFirst().payloadJson())
+              .isNotEqualTo(oversized.payloadJson());
+        });
   }
 
   @Test
@@ -229,11 +225,10 @@ class RedisScreenBufferServiceTest {
 
     assertThat(limitedCache.get(22L, 1L, 123L))
         .map(ScreenBufferService.BufferedScreen::protocolText)
-        .hasValueSatisfying(
-            transcript -> {
-              assertThat(transcript).contains("SECOND\n");
-              assertThat(transcript).doesNotContain("FIRST\n");
-            });
+        .hasValueSatisfying(transcript -> {
+          assertThat(transcript).contains("SECOND\n");
+          assertThat(transcript).doesNotContain("FIRST\n");
+        });
   }
 
   @Test
@@ -291,13 +286,9 @@ class RedisScreenBufferServiceTest {
         .when(valueOperations)
         .set(eq(REDIS_KEY), anyString(), any(Duration.class));
 
-    assertThatThrownBy(
-            () ->
-                cacheService.replace(
-                    22L,
-                    1L,
-                    123L,
-                    List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\\n"))))
+    assertThatThrownBy(() ->
+            cacheService.replace(
+                22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("CURRENT\\n"))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Redis unavailable");
 

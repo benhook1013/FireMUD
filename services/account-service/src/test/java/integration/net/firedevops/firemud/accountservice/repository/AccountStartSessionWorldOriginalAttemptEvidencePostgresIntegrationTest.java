@@ -113,11 +113,8 @@ class AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest {
     assertThat(exactRetry.result().request().readRequestId())
         .isEqualTo(first.result().request().readRequestId());
     StoredEvidence current =
-        transaction.execute(
-            status ->
-                repository
-                    .findCurrentExact(parent, request(fixture, UUID.randomUUID()))
-                    .orElseThrow());
+        transaction.execute(status ->
+            repository.findCurrentExact(parent, request(fixture, UUID.randomUUID())).orElseThrow());
     assertThat(current.originalResponseBytes()).containsExactly(first.originalResponseBytes());
     assertThat(current.originalResponseDigest()).isEqualTo(first.originalResponseDigest());
 
@@ -132,10 +129,8 @@ class AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest {
                 OWNER_FENCE),
             retryExpiry,
             fixture.accountProjection());
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> repository.retainCurrentExact(parent, changedMutation)))
+    assertThatThrownBy(() ->
+            transaction.execute(status -> repository.retainCurrentExact(parent, changedMutation)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts");
 
@@ -143,18 +138,16 @@ class AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest {
     assertLeaseExpiresWhileParentLocked(
         dsl, transaction, repository, parent, fixture, exactRetryObservation);
 
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status -> repository.findCurrentExact(parent, freshCorrelation).orElseThrow()))
+    assertThatThrownBy(() ->
+            transaction.execute(
+                status -> repository.findCurrentExact(parent, freshCorrelation).orElseThrow()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("unavailable");
     StoredEvidence historical =
-        transaction.execute(
-            status ->
-                repository
-                    .findHistoricalExact(parent, request(fixture, UUID.randomUUID()))
-                    .orElseThrow());
+        transaction.execute(status ->
+            repository
+                .findHistoricalExact(parent, request(fixture, UUID.randomUUID()))
+                .orElseThrow());
     assertThat(historical.originalLeaseExpiresAt()).isEqualTo(retryExpiry);
     assertThat(historical.originalResponseBytes()).containsExactly(first.originalResponseBytes());
   }
@@ -254,21 +247,16 @@ class AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest {
     Fixture fixture = fixture();
     UUID participationId = UUID.randomUUID();
     StoredParticipation parent =
-        transaction.execute(
-            status -> {
-              StoredParticipation inserted =
-                  insertSyntheticParent(dsl, fixture, participationId, true);
-              return inserted;
-            });
+        transaction.execute(status -> {
+          StoredParticipation inserted = insertSyntheticParent(dsl, fixture, participationId, true);
+          return inserted;
+        });
 
-    assertThatThrownBy(
-            () ->
-                transaction.execute(
-                    status ->
-                        repository.retainCurrentExact(
-                            parent,
-                            observation(
-                                fixture, UUID.randomUUID(), databaseNow(dsl).plusSeconds(30)))))
+    assertThatThrownBy(() ->
+            transaction.execute(status ->
+                repository.retainCurrentExact(
+                    parent,
+                    observation(fixture, UUID.randomUUID(), databaseNow(dsl).plusSeconds(30)))))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("unavailable");
   }
@@ -301,18 +289,17 @@ class AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest {
   private static void assertGuardRejected(
       org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedDiagnostic) {
     assertThatThrownBy(action)
-        .satisfies(
-            failure -> {
-              SQLException sqlFailure = findSqlException(failure);
-              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
-              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
-                throw new AssertionError(
-                    "Attempt evidence guard rejection must be a PostgreSQL exception", sqlFailure);
-              }
-              var serverError = postgresFailure.getServerErrorMessage();
-              assertThat(serverError).isNotNull();
-              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
-            });
+        .satisfies(failure -> {
+          SQLException sqlFailure = findSqlException(failure);
+          assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+          if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+            throw new AssertionError(
+                "Attempt evidence guard rejection must be a PostgreSQL exception", sqlFailure);
+          }
+          var serverError = postgresFailure.getServerErrorMessage();
+          assertThat(serverError).isNotNull();
+          assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+        });
   }
 
   private static SQLException findSqlException(Throwable failure) {
@@ -335,27 +322,24 @@ class AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest {
     CountDownLatch releaseParent = new CountDownLatch(1);
     try {
       Future<?> holder =
-          executor.submit(
-              () ->
-                  transaction.execute(
-                      status -> {
-                        dsl.fetchOne(
-                            "SELECT participation_id FROM account_start_session_world_participations "
-                                + "WHERE participation_id = ? FOR UPDATE",
-                            parent.participationId());
-                        parentLocked.countDown();
-                        await(releaseParent);
-                        return null;
-                      }));
+          executor.submit(() ->
+              transaction.execute(status -> {
+                dsl.fetchOne(
+                    "SELECT participation_id FROM account_start_session_world_participations "
+                        + "WHERE participation_id = ? FOR UPDATE",
+                    parent.participationId());
+                parentLocked.countDown();
+                await(releaseParent);
+                return null;
+              }));
       assertTrue(parentLocked.await(5, TimeUnit.SECONDS), "parent lock holder did not start");
       CountDownLatch writerStarted = new CountDownLatch(1);
       Future<StoredEvidence> writer =
-          executor.submit(
-              () -> {
-                writerStarted.countDown();
-                return transaction.execute(
-                    status -> repository.retainCurrentExact(parent, observation));
-              });
+          executor.submit(() -> {
+            writerStarted.countDown();
+            return transaction.execute(
+                status -> repository.retainCurrentExact(parent, observation));
+          });
       assertTrue(writerStarted.await(5, TimeUnit.SECONDS), "evidence writer did not start");
       awaitBlockedOnParentLock(dsl);
       while (observation.originalLeaseExpiresAt().isAfter(databaseNow(dsl))) {

@@ -55,10 +55,9 @@ class GameDesignPublicationTerminalReadGrpcCodecTest {
     var operation = WorldPublicationTerminalTestFixtures.operation();
     var request = ReadRequest.create("test", operation.canonicalBytes());
     var wire = GameDesignPublicationTerminalReadGrpcCodec.toRequest(request);
-    assertThatThrownBy(
-            () ->
-                GameDesignPublicationTerminalReadGrpcCodec.fromRequest(
-                    wire.toBuilder().setUnknownFields(unknown()).build()))
+    assertThatThrownBy(() ->
+            GameDesignPublicationTerminalReadGrpcCodec.fromRequest(
+                wire.toBuilder().setUnknownFields(unknown()).build()))
         .isInstanceOf(IllegalArgumentException.class);
     for (byte[] invalid :
         List.of(
@@ -74,12 +73,9 @@ class GameDesignPublicationTerminalReadGrpcCodecTest {
             replaceFrame(request.canonicalBytes(), 4, new byte[] {1}),
             java.util.Arrays.copyOf(
                 request.canonicalBytes(), request.canonicalBytes().length + 1))) {
-      assertThatThrownBy(
-              () ->
-                  GameDesignPublicationTerminalReadGrpcCodec.fromRequest(
-                      wire.toBuilder()
-                          .setCanonicalRequestBytes(ByteString.copyFrom(invalid))
-                          .build()))
+      assertThatThrownBy(() ->
+              GameDesignPublicationTerminalReadGrpcCodec.fromRequest(
+                  wire.toBuilder().setCanonicalRequestBytes(ByteString.copyFrom(invalid)).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -95,10 +91,9 @@ class GameDesignPublicationTerminalReadGrpcCodecTest {
     var changedTerminal =
         WorldPublicationTerminalTestFixtures.terminal(
             WorldPublicationTerminalTestFixtures.operation(), Outcome.NO_PUBLICATION);
-    assertThatThrownBy(
-            () ->
-                GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
-                    request, wire.toBuilder().setUnknownFields(unknown()).build()))
+    assertThatThrownBy(() ->
+            GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
+                request, wire.toBuilder().setUnknownFields(unknown()).build()))
         .isInstanceOf(IllegalArgumentException.class);
     for (byte[] invalid :
         List.of(
@@ -111,13 +106,10 @@ class GameDesignPublicationTerminalReadGrpcCodecTest {
             replaceFrame(result.canonicalBytes(), 3, new byte[] {1}),
             replaceFrame(result.canonicalBytes(), 3, changedTerminal.canonicalBytes()),
             java.util.Arrays.copyOf(result.canonicalBytes(), result.canonicalBytes().length + 1))) {
-      assertThatThrownBy(
-              () ->
-                  GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
-                      request,
-                      wire.toBuilder()
-                          .setCanonicalResponseBytes(ByteString.copyFrom(invalid))
-                          .build()))
+      assertThatThrownBy(() ->
+              GameDesignPublicationTerminalReadGrpcCodec.fromResponse(
+                  request,
+                  wire.toBuilder().setCanonicalResponseBytes(ByteString.copyFrom(invalid)).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var changedResult =
@@ -141,10 +133,9 @@ class GameDesignPublicationTerminalReadGrpcCodecTest {
     byte[] returned = request.operationBytes();
     java.util.Arrays.fill(returned, (byte) 0);
     assertThat(request.operationBytes()).containsExactly(operation.canonicalBytes());
-    assertThatThrownBy(
-            () ->
-                new ReadRequest(
-                    1, "test", operation.account().operationId(), operation.canonicalBytes()))
+    assertThatThrownBy(() ->
+            new ReadRequest(
+                1, "test", operation.account().operationId(), operation.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

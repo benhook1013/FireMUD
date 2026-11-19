@@ -45,11 +45,10 @@ public final class AccountBootstrapRosterReadService {
     requireCurrent(request, target);
     var actors =
         Objects.requireNonNull(
-            reads.execute(
-                ignored ->
-                    characters.readAccountBootstrapRoster(
-                        AccountBootstrapRosterReadContract.uuid(request.getCanonicalAccountUuid()),
-                        target)));
+            reads.execute(ignored ->
+                characters.readAccountBootstrapRoster(
+                    AccountBootstrapRosterReadContract.uuid(request.getCanonicalAccountUuid()),
+                    target)));
     // Source RPCs run outside SQL. This detects source movement over the local projection;
     // it does not claim a distributed hold or protect a later admission/selection.
     requireCurrent(request, target);

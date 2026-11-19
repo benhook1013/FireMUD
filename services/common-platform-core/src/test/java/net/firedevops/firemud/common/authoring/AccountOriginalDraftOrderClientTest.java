@@ -36,10 +36,9 @@ class AccountOriginalDraftOrderClientTest {
     var factory = mock(GrpcChannelFactory.class);
     var tls = tls(directory);
     tls.setPlaintext(true);
-    assertThatThrownBy(
-            () ->
-                new AccountOriginalDraftOrderClient(
-                    new ServiceEndpointsProperties(), tls, factory, "test"))
+    assertThatThrownBy(() ->
+            new AccountOriginalDraftOrderClient(
+                new ServiceEndpointsProperties(), tls, factory, "test"))
         .isInstanceOf(IllegalArgumentException.class);
     tls.setPlaintext(false);
     for (String bad :
@@ -51,17 +50,15 @@ class AccountOriginalDraftOrderClientTest {
           directory.resolve("missing.pem").toString()
         }) {
       tls.setCertChain(bad);
-      assertThatThrownBy(
-              () ->
-                  new AccountOriginalDraftOrderClient(
-                      new ServiceEndpointsProperties(), tls, factory, "test"))
+      assertThatThrownBy(() ->
+              new AccountOriginalDraftOrderClient(
+                  new ServiceEndpointsProperties(), tls, factory, "test"))
           .isInstanceOf(IllegalArgumentException.class);
     }
     var valid = tls(directory);
-    assertThatThrownBy(
-            () ->
-                new AccountOriginalDraftOrderClient(
-                    new ServiceEndpointsProperties(), valid, factory, "Test"))
+    assertThatThrownBy(() ->
+            new AccountOriginalDraftOrderClient(
+                new ServiceEndpointsProperties(), valid, factory, "Test"))
         .isInstanceOf(IllegalArgumentException.class);
     verifyNoInteractions(factory);
   }

@@ -112,10 +112,9 @@ class WorldOriginalStartSessionActivationTerminalReadGrpcMtlsTest {
 
           assertThatThrownBy(() -> client.read(input))
               .isInstanceOf(StatusRuntimeException.class)
-              .satisfies(
-                  failure ->
-                      assertThat(Status.fromThrowable(failure).getCode())
-                          .isEqualTo(Status.Code.PERMISSION_DENIED));
+              .satisfies(failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.PERMISSION_DENIED));
         }
       }
     }
@@ -146,20 +145,16 @@ class WorldOriginalStartSessionActivationTerminalReadGrpcMtlsTest {
       var request =
           WorldOriginalStartSessionActivationTerminalReadGrpcCodec.toRequest(input, "test");
 
-      assertThatThrownBy(
-              () ->
-                  WorldOriginalStartSessionActivationTerminalReadServiceGrpc.newBlockingStub(
-                          unauthenticatedClient.channel())
-                      .withDeadlineAfter(3, TimeUnit.SECONDS)
-                      .readOriginalStartSessionActivationTerminalEvidence(request))
+      assertThatThrownBy(() ->
+              WorldOriginalStartSessionActivationTerminalReadServiceGrpc.newBlockingStub(
+                      unauthenticatedClient.channel())
+                  .withDeadlineAfter(3, TimeUnit.SECONDS)
+                  .readOriginalStartSessionActivationTerminalEvidence(request))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
-                      .as(
-                          "missing client certificate must fail during TLS negotiation: %s",
-                          failure)
-                      .isTrue());
+          .satisfies(failure ->
+              assertThat(TlsTestSupport.isTlsHandshakeRejection(failure))
+                  .as("missing client certificate must fail during TLS negotiation: %s", failure)
+                  .isTrue());
     }
 
     assertThat(handlerCalls).hasValue(0);
@@ -189,10 +184,9 @@ class WorldOriginalStartSessionActivationTerminalReadGrpcMtlsTest {
 
       assertThatThrownBy(() -> client.read(input))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.PERMISSION_DENIED));
     }
 
     assertThat(handlerCalls).hasValue(1);

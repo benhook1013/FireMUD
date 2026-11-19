@@ -49,16 +49,15 @@ class AuthenticatedGameplayRuntimeConfigurationTest {
         new String[] {"", "firemud.game-session.authenticated-gameplay.enabled=false"}) {
       var runner = infrastructure().withUserConfiguration(ScannedComposition.class);
       if (!property.isEmpty()) runner = runner.withPropertyValues(property);
-      runner.run(
-          context -> {
-            assertThat(context).hasNotFailed();
-            assertThat(context).hasSingleBean(InitialGameplayLoginCoordinationQualification.class);
-            assertThat(context).hasSingleBean(AccountAsymmetricJwtVerifier.class);
-            assertThat(context).doesNotHaveBean(CanonicalGameplayLoginAccountClient.class);
-            assertThat(context).doesNotHaveBean(InitialGameplayLoginOwner.class);
-            assertThat(context).doesNotHaveBean(DirectTextWorldSelectionService.class);
-            assertThat(context).doesNotHaveBean(DirectTextAuthenticatedLobbyOwner.class);
-          });
+      runner.run(context -> {
+        assertThat(context).hasNotFailed();
+        assertThat(context).hasSingleBean(InitialGameplayLoginCoordinationQualification.class);
+        assertThat(context).hasSingleBean(AccountAsymmetricJwtVerifier.class);
+        assertThat(context).doesNotHaveBean(CanonicalGameplayLoginAccountClient.class);
+        assertThat(context).doesNotHaveBean(InitialGameplayLoginOwner.class);
+        assertThat(context).doesNotHaveBean(DirectTextWorldSelectionService.class);
+        assertThat(context).doesNotHaveBean(DirectTextAuthenticatedLobbyOwner.class);
+      });
     }
   }
 
@@ -67,25 +66,24 @@ class AuthenticatedGameplayRuntimeConfigurationTest {
     infrastructure()
         .withUserConfiguration(ScannedComposition.class)
         .withPropertyValues(ENABLED)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(CanonicalGameplayLoginAccountClient.class);
-              assertThat(context).hasSingleBean(InitialGameplayLoginOwner.class);
-              assertThat(context).hasSingleBean(DirectTextWorldSelectionService.class);
-              assertThat(context).hasSingleBean(DirectTextAuthenticatedLobbyOwner.class);
-              verifyNoInteractions(
-                  context.getBean(InitialGameplayLoginRedisBinding.class),
-                  context.getBean(InitialGameplayLoginCoordinationQualification.class),
-                  context.getBean(AccountAsymmetricJwtVerifier.class),
-                  context.getBean(CanonicalPlayerRouteReadService.class),
-                  context.getBean(DSLContext.class));
-              // Spring invokes this ordinary client's @PostConstruct callback, but composition
-              // must make no Account RPC or other client call.
-              assertThat(mockingDetails(context.getBean(AccountClient.class)).getInvocations())
-                  .extracting(invocation -> invocation.getMethod().getName())
-                  .containsExactly("init");
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).hasSingleBean(CanonicalGameplayLoginAccountClient.class);
+          assertThat(context).hasSingleBean(InitialGameplayLoginOwner.class);
+          assertThat(context).hasSingleBean(DirectTextWorldSelectionService.class);
+          assertThat(context).hasSingleBean(DirectTextAuthenticatedLobbyOwner.class);
+          verifyNoInteractions(
+              context.getBean(InitialGameplayLoginRedisBinding.class),
+              context.getBean(InitialGameplayLoginCoordinationQualification.class),
+              context.getBean(AccountAsymmetricJwtVerifier.class),
+              context.getBean(CanonicalPlayerRouteReadService.class),
+              context.getBean(DSLContext.class));
+          // Spring invokes this ordinary client's @PostConstruct callback, but composition
+          // must make no Account RPC or other client call.
+          assertThat(mockingDetails(context.getBean(AccountClient.class)).getInvocations())
+              .extracting(invocation -> invocation.getMethod().getName())
+              .containsExactly("init");
+        });
   }
 
   @ParameterizedTest
@@ -102,14 +100,13 @@ class AuthenticatedGameplayRuntimeConfigurationTest {
     infrastructure()
         .withUserConfiguration(configurations)
         .withPropertyValues(ENABLED)
-        .run(
-            context -> {
-              assertThat(context).hasNotFailed();
-              assertThat(context).hasSingleBean(CanonicalGameplayLoginAccountClient.class);
-              assertThat(context).hasSingleBean(InitialGameplayLoginOwner.class);
-              assertThat(context).hasSingleBean(DirectTextWorldSelectionService.class);
-              assertThat(context).hasSingleBean(DirectTextAuthenticatedLobbyOwner.class);
-            });
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          assertThat(context).hasSingleBean(CanonicalGameplayLoginAccountClient.class);
+          assertThat(context).hasSingleBean(InitialGameplayLoginOwner.class);
+          assertThat(context).hasSingleBean(DirectTextWorldSelectionService.class);
+          assertThat(context).hasSingleBean(DirectTextAuthenticatedLobbyOwner.class);
+        });
   }
 
   @ParameterizedTest
@@ -118,12 +115,11 @@ class AuthenticatedGameplayRuntimeConfigurationTest {
     infrastructure()
         .withUserConfiguration(ScannedComposition.class)
         .withPropertyValues(ENABLED, "fixture.authority." + missing + "=false")
-        .run(
-            context -> {
-              assertThat(context).hasFailed();
-              assertThat(context.getStartupFailure())
-                  .hasRootCauseInstanceOf(NoSuchBeanDefinitionException.class);
-            });
+        .run(context -> {
+          assertThat(context).hasFailed();
+          assertThat(context.getStartupFailure())
+              .hasRootCauseInstanceOf(NoSuchBeanDefinitionException.class);
+        });
   }
 
   private static ApplicationContextRunner infrastructure() {

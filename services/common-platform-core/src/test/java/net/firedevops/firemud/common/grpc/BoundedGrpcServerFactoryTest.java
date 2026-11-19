@@ -39,13 +39,12 @@ class BoundedGrpcServerFactoryTest {
     var factory =
         new BoundedGrpcServerFactory(
             "127.0.0.1:0",
-            List.of(
-                customizer ->
-                    customizer
-                        .keepAliveTime(45, TimeUnit.SECONDS)
-                        .keepAliveTimeout(7, TimeUnit.SECONDS)
-                        .permitKeepAliveWithoutCalls(false)
-                        .permitKeepAliveTime(60, TimeUnit.SECONDS)),
+            List.of(customizer ->
+                customizer
+                    .keepAliveTime(45, TimeUnit.SECONDS)
+                    .keepAliveTimeout(7, TimeUnit.SECONDS)
+                    .permitKeepAliveWithoutCalls(false)
+                    .permitKeepAliveTime(60, TimeUnit.SECONDS)),
             null,
             null,
             TlsServerCredentials.ClientAuth.NONE,
@@ -68,12 +67,11 @@ class BoundedGrpcServerFactoryTest {
   @Test
   void rejectsDuplicateUnknownAndNonidenticalDescriptorConfiguration() {
     var method = method("test.Owner/Read", new AtomicInteger());
-    assertThatThrownBy(
-            () ->
-                new GrpcRequestBytePolicy(
-                    List.of(
-                        new GrpcRequestBytePolicy.MethodBound(method, 1024),
-                        new GrpcRequestBytePolicy.MethodBound(method, 1024))))
+    assertThatThrownBy(() ->
+            new GrpcRequestBytePolicy(
+                List.of(
+                    new GrpcRequestBytePolicy.MethodBound(method, 1024),
+                    new GrpcRequestBytePolicy.MethodBound(method, 1024))))
         .isInstanceOf(IllegalArgumentException.class);
     var policy =
         new GrpcRequestBytePolicy(
@@ -90,9 +88,8 @@ class BoundedGrpcServerFactoryTest {
     var factory =
         new BoundedGrpcServerFactory(
             "127.0.0.1:0",
-            List.of(
-                builder ->
-                    builder.addService(service(method("test.Bypass/Read", new AtomicInteger())))),
+            List.of(builder ->
+                builder.addService(service(method("test.Bypass/Read", new AtomicInteger())))),
             null,
             null,
             TlsServerCredentials.ClientAuth.NONE,
@@ -160,18 +157,17 @@ class BoundedGrpcServerFactoryTest {
     var factory =
         new BoundedGrpcServerFactory(
             "127.0.0.1:0",
-            List.of(
-                builder -> {
-                  builder.fallbackHandlerRegistry(
-                      new HandlerRegistry() {
-                        @Override
-                        public ServerMethodDefinition<?, ?> lookupMethod(
-                            String method, String authority) {
-                          fallbackCalls.incrementAndGet();
-                          return service(unknown).getMethod(method);
-                        }
-                      });
-                }),
+            List.of(builder -> {
+              builder.fallbackHandlerRegistry(
+                  new HandlerRegistry() {
+                    @Override
+                    public ServerMethodDefinition<?, ?> lookupMethod(
+                        String method, String authority) {
+                      fallbackCalls.incrementAndGet();
+                      return service(unknown).getMethod(method);
+                    }
+                  });
+            }),
             pki.keyManagerFactory(serverIdentity),
             pki.trustManagerFactory(),
             TlsServerCredentials.ClientAuth.REQUIRE,
@@ -220,13 +216,12 @@ class BoundedGrpcServerFactoryTest {
           new byte[policy.transportMaximumBytes() + 1],
           Status.Code.RESOURCE_EXHAUSTED);
       assertThat(exceptionalParses).hasValue(1);
-      assertThatThrownBy(
-              () ->
-                  ClientCalls.blockingUnaryCall(
-                      noCertificate,
-                      ordinary,
-                      CallOptions.DEFAULT.withDeadlineAfter(3, TimeUnit.SECONDS),
-                      new byte[0]))
+      assertThatThrownBy(() ->
+              ClientCalls.blockingUnaryCall(
+                  noCertificate,
+                  ordinary,
+                  CallOptions.DEFAULT.withDeadlineAfter(3, TimeUnit.SECONDS),
+                  new byte[0]))
           .satisfies(failure -> assertThat(Status.fromThrowable(failure).isOk()).isFalse());
       assertThat(ordinaryParses).hasValue(1);
     } finally {
@@ -285,11 +280,10 @@ class BoundedGrpcServerFactoryTest {
   }
 
   private static io.grpc.ServerCallHandler<byte[], byte[]> handler() {
-    return ServerCalls.asyncUnaryCall(
-        (request, observer) -> {
-          observer.onNext(new byte[0]);
-          observer.onCompleted();
-        });
+    return ServerCalls.asyncUnaryCall((request, observer) -> {
+      observer.onNext(new byte[0]);
+      observer.onCompleted();
+    });
   }
 
   private static ServerServiceDefinition service(MethodDescriptor<byte[], byte[]> method) {

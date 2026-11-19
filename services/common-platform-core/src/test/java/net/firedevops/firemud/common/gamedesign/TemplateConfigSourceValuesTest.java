@@ -76,17 +76,14 @@ class TemplateConfigSourceValuesTest {
         TemplateConfigSourceValues.ownerInventoryPayload(Owner.AUTOMATION_SCRIPTING, automation());
     String entityPayload =
         TemplateConfigSourceValues.ownerInventoryPayload(Owner.ENTITY_MANAGEMENT, entity());
-    assertThatThrownBy(
-            () ->
-                TemplateConfigSourceValues.mutations(
-                    binding(
-                        automationPayload.replace("\"schemaVersion\":2", "\"schemaVersion\":3"))))
+    assertThatThrownBy(() ->
+            TemplateConfigSourceValues.mutations(
+                binding(automationPayload.replace("\"schemaVersion\":2", "\"schemaVersion\":3"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Automation");
-    assertThatThrownBy(
-            () ->
-                TemplateConfigSourceValues.mutations(
-                    binding(entityPayload.replace("\"schemaVersion\":3", "\"schemaVersion\":2"))))
+    assertThatThrownBy(() ->
+            TemplateConfigSourceValues.mutations(
+                binding(entityPayload.replace("\"schemaVersion\":3", "\"schemaVersion\":2"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Entity");
   }
@@ -108,15 +105,11 @@ class TemplateConfigSourceValuesTest {
     assertThatThrownBy(() -> TemplateConfigSourceValues.mutations(binding(unsupported)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("supported owner");
-    assertThatThrownBy(
-            () ->
-                TemplateConfigSourceValues.ownerInventoryPayload(
-                    Owner.ENTITY_MANAGEMENT, automation()))
+    assertThatThrownBy(() ->
+            TemplateConfigSourceValues.ownerInventoryPayload(Owner.ENTITY_MANAGEMENT, automation()))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                TemplateConfigSourceValues.ownerInventoryPayload(
-                    Owner.AUTOMATION_SCRIPTING, entity()))
+    assertThatThrownBy(() ->
+            TemplateConfigSourceValues.ownerInventoryPayload(Owner.AUTOMATION_SCRIPTING, entity()))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -126,28 +119,25 @@ class TemplateConfigSourceValuesTest {
         TemplateConfigSourceValues.ownerInventoryPayload(Owner.AUTOMATION_SCRIPTING, automation());
     var binding = binding(payload);
     UUID revisionId = binding.revisions().getFirst().revisionId();
-    assertThatThrownBy(
-            () ->
-                new TemplateConfigOwnerSourceInventoryDeclaration(
-                    Owner.AUTOMATION_SCRIPTING, automation(), binding, "1", revisionId))
+    assertThatThrownBy(() ->
+            new TemplateConfigOwnerSourceInventoryDeclaration(
+                Owner.AUTOMATION_SCRIPTING, automation(), binding, "1", revisionId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Exact original");
-    assertThatThrownBy(
-            () ->
-                new TemplateConfigOwnerSourceInventoryDeclaration(
-                    Owner.ENTITY_MANAGEMENT, entity(), binding, "0", UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            new TemplateConfigOwnerSourceInventoryDeclaration(
+                Owner.ENTITY_MANAGEMENT, entity(), binding, "0", UUID.randomUUID()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Exact original");
-    assertThatThrownBy(
-            () ->
-                new TemplateConfigSourceValues.Mutation(
-                    binding,
-                    "1",
-                    revisionId,
-                    TemplateConfigSourceValues.OperationKind.DELETE,
-                    "1",
-                    null,
-                    null))
+    assertThatThrownBy(() ->
+            new TemplateConfigSourceValues.Mutation(
+                binding,
+                "1",
+                revisionId,
+                TemplateConfigSourceValues.OperationKind.DELETE,
+                "1",
+                null,
+                null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Exact original");
     var wrongOwner =
@@ -159,10 +149,9 @@ class TemplateConfigSourceValuesTest {
             List.of(new RevisionPayload("0", revisionId, Owner.WORLD_MANAGEMENT, payload)),
             List.of(
                 new AffectedUnit(Owner.WORLD_MANAGEMENT, "inventory", "1", "inventory", "1", "0")));
-    assertThatThrownBy(
-            () ->
-                new TemplateConfigOwnerSourceInventoryDeclaration(
-                    Owner.AUTOMATION_SCRIPTING, automation(), wrongOwner, "0", revisionId))
+    assertThatThrownBy(() ->
+            new TemplateConfigOwnerSourceInventoryDeclaration(
+                Owner.AUTOMATION_SCRIPTING, automation(), wrongOwner, "0", revisionId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Exact original");
   }
@@ -185,16 +174,13 @@ class TemplateConfigSourceValuesTest {
     assertThat(new TemplateConfigSourceValues.Config(validWithEmptyTargetId).canonicalJson())
         .contains("\"targetScopeId\":\"\"");
 
-    assertThatThrownBy(
-            () ->
-                new TemplateConfigSourceValues.Config(
-                    validWithEmptyTargetId.replace(",\"targetScopeId\":\"\"", "")))
+    assertThatThrownBy(() ->
+            new TemplateConfigSourceValues.Config(
+                validWithEmptyTargetId.replace(",\"targetScopeId\":\"\"", "")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                new TemplateConfigSourceValues.Config(
-                    validWithEmptyTargetId.replace(
-                        "\"targetScopeId\":\"\"", "\"targetScopeId\":1")))
+    assertThatThrownBy(() ->
+            new TemplateConfigSourceValues.Config(
+                validWithEmptyTargetId.replace("\"targetScopeId\":\"\"", "\"targetScopeId\":1")))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -217,13 +203,12 @@ class TemplateConfigSourceValuesTest {
   private static DraftCommitBinding binding(String... payloads) {
     var revisions =
         IntStream.range(0, payloads.length)
-            .mapToObj(
-                i ->
-                    new RevisionPayload(
-                        Integer.toString(i),
-                        UUID.randomUUID(),
-                        Owner.GAME_DESIGN_CONTROL_PLANE,
-                        payloads[i]))
+            .mapToObj(i ->
+                new RevisionPayload(
+                    Integer.toString(i),
+                    UUID.randomUUID(),
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    payloads[i]))
             .toList();
     return DraftCommitBinding.create(
         new TargetProof(

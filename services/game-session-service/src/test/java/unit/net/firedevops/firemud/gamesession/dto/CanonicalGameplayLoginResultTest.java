@@ -127,21 +127,18 @@ class CanonicalGameplayLoginResultTest {
       throws Exception {
     var result = decode(response(claims()));
     assertThat(
-            result.<Integer>withLivePrivateResult(
-                borrowed -> {
-                  assertThat(borrowed).isSameAs(result);
-                  assertThatThrownBy(borrowed::close).isInstanceOf(IllegalStateException.class);
-                  assertThatThrownBy(() -> borrowed.withLivePrivateResult(nested -> true))
-                      .isInstanceOf(IllegalStateException.class);
-                  return borrowed.compactJwtBytes().length;
-                }))
+            result.<Integer>withLivePrivateResult(borrowed -> {
+              assertThat(borrowed).isSameAs(result);
+              assertThatThrownBy(borrowed::close).isInstanceOf(IllegalStateException.class);
+              assertThatThrownBy(() -> borrowed.withLivePrivateResult(nested -> true))
+                  .isInstanceOf(IllegalStateException.class);
+              return borrowed.compactJwtBytes().length;
+            }))
         .isPositive();
-    assertThatThrownBy(
-            () ->
-                result.withLivePrivateResult(
-                    borrowed -> {
-                      throw new IllegalStateException("controlled callback failure");
-                    }))
+    assertThatThrownBy(() ->
+            result.withLivePrivateResult(borrowed -> {
+              throw new IllegalStateException("controlled callback failure");
+            }))
         .hasMessage("controlled callback failure");
     result.close();
     assertThatThrownBy(() -> result.withLivePrivateResult(borrowed -> true))
@@ -166,11 +163,10 @@ class CanonicalGameplayLoginResultTest {
       try {
         assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
         var closing =
-            executor.submit(
-                () -> {
-                  closingThread.set(Thread.currentThread());
-                  result.close();
-                });
+            executor.submit(() -> {
+              closingThread.set(Thread.currentThread());
+              result.close();
+            });
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (closingThread.get() == null
             || closingThread.get().getState() != Thread.State.WAITING) {
@@ -203,21 +199,20 @@ class CanonicalGameplayLoginResultTest {
       CountDownLatch entered,
       CountDownLatch release,
       byte[] expected) {
-    return result.withLivePrivateResult(
-        borrowed -> {
-          assertThat(borrowed).isSameAs(result);
-          entered.countDown();
-          try {
-            if (!release.await(5, TimeUnit.SECONDS))
-              throw new IllegalStateException("Borrow timed out");
-          } catch (InterruptedException failure) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Borrow interrupted", failure);
-          }
-          // Reads must still progress while close waits for this callback's pin.
-          assertThat(borrowed.compactJwtBytes()).containsExactly(expected);
-          return true;
-        });
+    return result.withLivePrivateResult(borrowed -> {
+      assertThat(borrowed).isSameAs(result);
+      entered.countDown();
+      try {
+        if (!release.await(5, TimeUnit.SECONDS))
+          throw new IllegalStateException("Borrow timed out");
+      } catch (InterruptedException failure) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("Borrow interrupted", failure);
+      }
+      // Reads must still progress while close waits for this callback's pin.
+      assertThat(borrowed.compactJwtBytes()).containsExactly(expected);
+      return true;
+    });
   }
 
   @ParameterizedTest
@@ -454,10 +449,9 @@ class CanonicalGameplayLoginResultTest {
 
   private static void assertInvalid(AuthenticateResponse wire) throws Exception {
     var verifier = verifier();
-    assertThatThrownBy(
-            () ->
-                CanonicalGameplayLoginResult.fromAuthenticatedResponse(
-                    wire, request(), verifier, CLOCK))
+    assertThatThrownBy(() ->
+            CanonicalGameplayLoginResult.fromAuthenticatedResponse(
+                wire, request(), verifier, CLOCK))
         .isInstanceOf(CanonicalGameplayLoginResult.InvalidResultException.class)
         .hasMessage("Canonical LOGIN request or result is invalid");
   }

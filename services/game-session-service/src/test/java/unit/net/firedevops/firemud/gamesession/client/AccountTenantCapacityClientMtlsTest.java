@@ -177,12 +177,10 @@ class AccountTenantCapacityClientMtlsTest {
     assertThat(replay.code())
         .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED);
     assertThat(replay.durableDenialId()).isEqualTo(denialId);
-    assertThatThrownBy(
-            () ->
-                assertThat(
-                        AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(
-                            null))
-                    .isNotNull())
+    assertThatThrownBy(() ->
+            assertThat(
+                    AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(null))
+                .isNotNull())
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -198,10 +196,9 @@ class AccountTenantCapacityClientMtlsTest {
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getDescription())
-                      .isEqualTo("Account capacity commitment response was inexact"));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getDescription())
+                  .isEqualTo("Account capacity commitment response was inexact"));
       assertThat(calls).hasValue(1);
       assertThat(serverFailure.get()).isNull();
     } finally {
@@ -240,14 +237,11 @@ class AccountTenantCapacityClientMtlsTest {
       assertThatThrownBy(
               () -> client.commit(CapacityAdmissionTestFixture.playerRequest(), deadline()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.UNKNOWN))
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getDescription())
-                      .isEqualTo("Account capacity commitment response was inexact"));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNKNOWN))
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getDescription())
+                  .isEqualTo("Account capacity commitment response was inexact"));
       assertThat(calls).hasValue(1);
       assertThat(serverFailure.get()).isNull();
     } finally {
@@ -272,10 +266,9 @@ class AccountTenantCapacityClientMtlsTest {
       try (var context =
           Context.current().withDeadlineAfter(incomingMillis, TimeUnit.MILLISECONDS, scheduler)) {
         var result =
-            context.call(
-                () ->
-                    client.commit(
-                        request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + explicitMillis));
+            context.call(() ->
+                client.commit(
+                    request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + explicitMillis));
         assertThat(result.identity()).isEqualTo(request.identity());
       }
       assertThat(calls).hasValue(2);
@@ -393,14 +386,12 @@ class AccountTenantCapacityClientMtlsTest {
       var request = CapacityAdmissionTestFixture.playerRequest();
       client.commit(request, deadline());
       respond.set(false);
-      assertThatThrownBy(
-              () ->
-                  client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L))
+      assertThatThrownBy(() ->
+              client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
       assertThat(calls).hasValue(2); // The timed-out invocation reached the nonresponding handler.
       assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(1));
     } finally {
@@ -431,14 +422,13 @@ class AccountTenantCapacityClientMtlsTest {
           assertThat(factory.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
           long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L;
           var timedOut =
-              executor.submit(
-                  () ->
-                      assertThatThrownBy(() -> client.commit(request, explicitDeadline))
-                          .isInstanceOfSatisfying(
-                              StatusRuntimeException.class,
-                              failure ->
-                                  assertThat(failure.getStatus().getCode())
-                                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
+              executor.submit(() ->
+                  assertThatThrownBy(() -> client.commit(request, explicitDeadline))
+                      .isInstanceOfSatisfying(
+                          StatusRuntimeException.class,
+                          failure ->
+                              assertThat(failure.getStatus().getCode())
+                                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
           timedOut.get(3, TimeUnit.SECONDS);
           assertThat(calls).hasValue(2);
         } finally {
@@ -470,16 +460,14 @@ class AccountTenantCapacityClientMtlsTest {
       var request = CapacityAdmissionTestFixture.playerRequest();
       client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 60_000L);
       respond.set(false);
-      assertThatThrownBy(
-              () ->
-                  Context.current()
-                      .withDeadlineAfter(1_000, TimeUnit.MILLISECONDS, scheduler)
-                      .call(() -> client.commit(request, deadline())))
+      assertThatThrownBy(() ->
+              Context.current()
+                  .withDeadlineAfter(1_000, TimeUnit.MILLISECONDS, scheduler)
+                  .call(() -> client.commit(request, deadline())))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
       assertThat(calls).hasValue(2); // The incoming deadline bounded an actual in-flight call.
       assertThat(observedNanos.get()).isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(1));
     } finally {
@@ -494,16 +482,14 @@ class AccountTenantCapacityClientMtlsTest {
     Server server = server("account", calls, false);
     try (var client = client(server)) {
       client.init();
-      assertThatThrownBy(
-              () ->
-                  client.commit(
-                      CapacityAdmissionTestFixture.playerRequest(),
-                      CapacityAdmissionTestFixture.NOW.toEpochMilli() - 1L))
+      assertThatThrownBy(() ->
+              client.commit(
+                  CapacityAdmissionTestFixture.playerRequest(),
+                  CapacityAdmissionTestFixture.NOW.toEpochMilli() - 1L))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+          .satisfies(failure ->
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
       assertThat(calls).hasValue(0);
     } finally {
       stop(server);

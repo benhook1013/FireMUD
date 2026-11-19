@@ -37,10 +37,9 @@ class GameDesignDraftTerminalReadClientTest {
     CommonGrpcClientProperties tls = tls(directory);
     tls.setPlaintext(true);
 
-    assertThatThrownBy(
-            () ->
-                new GameDesignDraftTerminalReadClient(
-                    new ServiceEndpointsProperties(), tls, channelFactory, "test"))
+    assertThatThrownBy(() ->
+            new GameDesignDraftTerminalReadClient(
+                new ServiceEndpointsProperties(), tls, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("workload mTLS");
     verifyNoInteractions(channelFactory);

@@ -50,33 +50,29 @@ class PreseededActorAssignmentGrpcCodecTest {
 
   @Test
   void rejectsUnsupportedSchemaUnknownFieldsAndMissingNestedValues() {
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.fromRequest(
-                    request().toBuilder().setSchemaVersion(2).build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.fromRequest(
+                request().toBuilder().setSchemaVersion(2).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported schema_version");
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.fromRequest(
-                    request().toBuilder().setUnknownFields(unknownField()).build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.fromRequest(
+                request().toBuilder().setUnknownFields(unknownField()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unknown fields");
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.fromRequest(
-                    request().toBuilder()
-                        .setExpectedTarget(
-                            request().getExpectedTarget().toBuilder()
-                                .setUnknownFields(unknownField())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.fromRequest(
+                request().toBuilder()
+                    .setExpectedTarget(
+                        request().getExpectedTarget().toBuilder()
+                            .setUnknownFields(unknownField())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unknown fields");
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.fromRequest(
-                    request().toBuilder().clearCorePayload().build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.fromRequest(
+                request().toBuilder().clearCorePayload().build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete assignment intent");
   }
@@ -163,15 +159,14 @@ class PreseededActorAssignmentGrpcCodecTest {
   void refusesToExposeAResultForAnotherOperationOrDigest() {
     PreseededActorAssignmentRequest request =
         PreseededActorAssignmentGrpcCodec.fromRequest(request());
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.toResponse(
-                    request,
-                    new PreseededActorAssignmentResult(
-                        uuid("80000000-0000-4000-8000-000000000008"),
-                        PreseededActorAssignmentResult.Outcome.ASSIGNED,
-                        CHARACTER_UUID,
-                        request.mutationIntentDigest())))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.toResponse(
+                request,
+                new PreseededActorAssignmentResult(
+                    uuid("80000000-0000-4000-8000-000000000008"),
+                    PreseededActorAssignmentResult.Outcome.ASSIGNED,
+                    CHARACTER_UUID,
+                    request.mutationIntentDigest())))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -192,33 +187,29 @@ class PreseededActorAssignmentGrpcCodecTest {
 
   @Test
   void rejectsOpenMalformedReceiptSelectorsBeforeStorageRead() {
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(
-                    receiptReadRequest().toBuilder().setSchemaVersion(2).build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(
+                receiptReadRequest().toBuilder().setSchemaVersion(2).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported schema_version");
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(
-                    receiptReadRequest().toBuilder().setUnknownFields(unknownField()).build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(
+                receiptReadRequest().toBuilder().setUnknownFields(unknownField()).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unknown fields");
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(
-                    receiptReadRequest().toBuilder().clearExpectedTarget().build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(
+                receiptReadRequest().toBuilder().clearExpectedTarget().build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete receipt selector");
-    assertThatThrownBy(
-            () ->
-                PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(
-                    receiptReadRequest().toBuilder()
-                        .setExpectedTarget(
-                            receiptReadRequest().getExpectedTarget().toBuilder()
-                                .setUnknownFields(unknownField())
-                                .build())
-                        .build()))
+    assertThatThrownBy(() ->
+            PreseededActorAssignmentGrpcCodec.fromReceiptReadRequest(
+                receiptReadRequest().toBuilder()
+                    .setExpectedTarget(
+                        receiptReadRequest().getExpectedTarget().toBuilder()
+                            .setUnknownFields(unknownField())
+                            .build())
+                    .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unknown fields");
     assertReceiptReadInvalid(

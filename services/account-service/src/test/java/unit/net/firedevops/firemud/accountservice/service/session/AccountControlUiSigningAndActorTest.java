@@ -204,10 +204,9 @@ class AccountControlUiSigningAndActorTest {
     when(changed.evidence()).thenReturn(new byte[] {99});
     when(f.authority.capture(f.actor, f.tenant, f.environment)).thenReturn(changed);
 
-    assertThatThrownBy(
-            () ->
-                f.actors.withCurrentCommitted(
-                    f.actor, f.tenant, f.jti, f.environment, current -> current.source().actor()))
+    assertThatThrownBy(() ->
+            f.actors.withCurrentCommitted(
+                f.actor, f.tenant, f.jti, f.environment, current -> current.source().actor()))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -222,14 +221,13 @@ class AccountControlUiSigningAndActorTest {
     doThrow(new IllegalStateException("test-only revoked token"))
         .when(revoked.registry)
         .readActive(revokedHash);
-    assertThatThrownBy(
-            () ->
-                revoked.actors.withCurrentCommitted(
-                    revoked.actor,
-                    revoked.tenant,
-                    revoked.jti,
-                    revoked.environment,
-                    current -> current.source().actor()))
+    assertThatThrownBy(() ->
+            revoked.actors.withCurrentCommitted(
+                revoked.actor,
+                revoked.tenant,
+                revoked.jti,
+                revoked.environment,
+                current -> current.source().actor()))
         .isInstanceOf(IllegalStateException.class);
     verify(revoked.authority, never()).capture(revoked.actor, revoked.tenant, revoked.environment);
 
@@ -240,14 +238,13 @@ class AccountControlUiSigningAndActorTest {
         AccountControlUiIssuanceRepository.hash(
             mismatchedCompact.getBytes(StandardCharsets.US_ASCII));
     doReturn(new byte[] {99}).when(mismatched.registry).readActive(mismatchedHash);
-    assertThatThrownBy(
-            () ->
-                mismatched.actors.withCurrentCommitted(
-                    mismatched.actor,
-                    mismatched.tenant,
-                    mismatched.jti,
-                    mismatched.environment,
-                    current -> current.source().actor()))
+    assertThatThrownBy(() ->
+            mismatched.actors.withCurrentCommitted(
+                mismatched.actor,
+                mismatched.tenant,
+                mismatched.jti,
+                mismatched.environment,
+                current -> current.source().actor()))
         .isInstanceOf(IllegalStateException.class);
     verify(mismatched.authority, never())
         .capture(mismatched.actor, mismatched.tenant, mismatched.environment);
@@ -334,10 +331,9 @@ class AccountControlUiSigningAndActorTest {
     verify(f.authority, never()).capture(any(), any(), any());
     assertThatThrownBy(() -> f.actors.authenticate(compact, f.tenant, f.environment))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () ->
-                f.actors.withCurrentCommitted(
-                    f.actor, f.tenant, f.jti, f.environment, current -> current))
+    assertThatThrownBy(() ->
+            f.actors.withCurrentCommitted(
+                f.actor, f.tenant, f.jti, f.environment, current -> current))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -377,13 +373,12 @@ class AccountControlUiSigningAndActorTest {
     String compact = f.sign(f.claims);
     f.owner(compact);
     when(f.snapshot.evidence()).thenReturn(new byte[] {99});
-    assertThatThrownBy(
-            () ->
-                f.actors.withCurrentAccount(
-                    compact,
-                    current -> {
-                      throw new AssertionError("mutation must not run");
-                    }))
+    assertThatThrownBy(() ->
+            f.actors.withCurrentAccount(
+                compact,
+                current -> {
+                  throw new AssertionError("mutation must not run");
+                }))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> f.actors.authenticateAccount(compact))
         .isInstanceOf(IllegalStateException.class);
@@ -409,13 +404,12 @@ class AccountControlUiSigningAndActorTest {
     doThrow(new IllegalStateException("test-only concurrent source writer"))
         .when(account.fences)
         .lockProducerSourcesNowait(any());
-    assertThatThrownBy(
-            () ->
-                account.actors.withCurrentAccount(
-                    compact,
-                    current -> {
-                      throw new AssertionError("mutation must not run");
-                    }))
+    assertThatThrownBy(() ->
+            account.actors.withCurrentAccount(
+                compact,
+                current -> {
+                  throw new AssertionError("mutation must not run");
+                }))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -431,13 +425,12 @@ class AccountControlUiSigningAndActorTest {
     when(f.registry.readActive(anyString())).thenReturn(new byte[] {12});
     when(f.signers.requireOriginal(any(byte[].class)))
         .thenThrow(new IllegalStateException("test-only missing original signer"));
-    assertThatThrownBy(
-            () ->
-                f.actors.withCurrentAccount(
-                    compact,
-                    current -> {
-                      throw new AssertionError("mutation must not run");
-                    }))
+    assertThatThrownBy(() ->
+            f.actors.withCurrentAccount(
+                compact,
+                current -> {
+                  throw new AssertionError("mutation must not run");
+                }))
         .isInstanceOf(IllegalStateException.class);
     verify(f.authority, never()).captureAccount(any());
     verify(f.fences, never()).lockProducerSourcesNowait(any());
@@ -494,40 +487,37 @@ class AccountControlUiSigningAndActorTest {
   void accountOriginalRecoveryRejectsTenantChangedAccountAndExpiredOriginal() throws Exception {
     Fixture tenant = new Fixture();
     tenant.owner(tenant.sign(tenant.claims));
-    assertThatThrownBy(
-            () ->
-                tenant.actors.withCurrentAccountCommitted(
-                    tenant.actor,
-                    tenant.jti,
-                    current -> {
-                      throw new AssertionError("callback must not run");
-                    }))
+    assertThatThrownBy(() ->
+            tenant.actors.withCurrentAccountCommitted(
+                tenant.actor,
+                tenant.jti,
+                current -> {
+                  throw new AssertionError("callback must not run");
+                }))
         .isInstanceOf(IllegalStateException.class);
     verify(tenant.authority, never()).captureAccount(any());
 
     Fixture account = new Fixture(true);
     account.owner(account.sign(account.claims));
-    assertThatThrownBy(
-            () ->
-                account.actors.withCurrentAccountCommitted(
-                    UUID.randomUUID(),
-                    account.jti,
-                    current -> {
-                      throw new AssertionError("callback must not run");
-                    }))
+    assertThatThrownBy(() ->
+            account.actors.withCurrentAccountCommitted(
+                UUID.randomUUID(),
+                account.jti,
+                current -> {
+                  throw new AssertionError("callback must not run");
+                }))
         .isInstanceOf(IllegalStateException.class);
     verify(account.authority, never()).captureAccount(any());
 
     Fixture expired = new Fixture(true, NOW.plusSeconds(300));
     expired.owner(expired.sign(expired.claims));
-    assertThatThrownBy(
-            () ->
-                expired.actors.withCurrentAccountCommitted(
-                    expired.actor,
-                    expired.jti,
-                    current -> {
-                      throw new AssertionError("callback must not run");
-                    }))
+    assertThatThrownBy(() ->
+            expired.actors.withCurrentAccountCommitted(
+                expired.actor,
+                expired.jti,
+                current -> {
+                  throw new AssertionError("callback must not run");
+                }))
         .isInstanceOf(IllegalStateException.class);
     verify(expired.authority, never()).captureAccount(any());
   }
@@ -563,14 +553,13 @@ class AccountControlUiSigningAndActorTest {
       Fixture f = new Fixture(true);
       f.owner(f.sign(f.claims));
       change.accept(f);
-      assertThatThrownBy(
-              () ->
-                  f.actors.withCurrentAccountCommitted(
-                      f.actor,
-                      f.jti,
-                      current -> {
-                        throw new AssertionError("callback must not run");
-                      }))
+      assertThatThrownBy(() ->
+              f.actors.withCurrentAccountCommitted(
+                  f.actor,
+                  f.jti,
+                  current -> {
+                    throw new AssertionError("callback must not run");
+                  }))
           .isInstanceOf(IllegalStateException.class);
     }
   }
@@ -721,11 +710,10 @@ class AccountControlUiSigningAndActorTest {
       when(source.sourceIdentity()).thenReturn(pin);
       when(source.load()).thenReturn(new AccountPublicJwksCache.PublicJwksSnapshot(pin, jwks));
       when(transactions.getTransaction(any()))
-          .thenAnswer(
-              ignored -> {
-                TransactionSynchronizationManager.setActualTransactionActive(true);
-                return new SimpleTransactionStatus();
-              });
+          .thenAnswer(ignored -> {
+            TransactionSynchronizationManager.setActualTransactionActive(true);
+            return new SimpleTransactionStatus();
+          });
       doAnswer(
               ignored -> {
                 TransactionSynchronizationManager.clear();

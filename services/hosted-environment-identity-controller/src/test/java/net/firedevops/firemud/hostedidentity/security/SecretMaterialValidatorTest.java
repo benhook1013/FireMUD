@@ -120,10 +120,9 @@ class SecretMaterialValidatorTest {
     assertNotNull(subjectAlternativeNames);
     assertTrue(
         subjectAlternativeNames.stream()
-            .allMatch(
-                subjectAlternativeName ->
-                    subjectAlternativeName.size() == 2
-                        && Integer.valueOf(2).equals(subjectAlternativeName.get(0))));
+            .allMatch(subjectAlternativeName ->
+                subjectAlternativeName.size() == 2
+                    && Integer.valueOf(2).equals(subjectAlternativeName.get(0))));
     assertEquals(
         GrpcTransportBundleGenerator.grpcDnsNames(plan),
         subjectAlternativeNames.stream()
@@ -1252,11 +1251,10 @@ class SecretMaterialValidatorTest {
     ReplaceDeletable<Secret> lockedResource = mock(ReplaceDeletable.class);
     AtomicReference<Secret> holder = new AtomicReference<>();
     when(identityClient.identitySecrets().resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenAnswer(
-            invocation -> {
-              holder.set(invocation.getArgument(0, Secret.class));
-              return resource;
-            });
+        .thenAnswer(invocation -> {
+          holder.set(invocation.getArgument(0, Secret.class));
+          return resource;
+        });
     when(resource.lockResourceVersion(resourceVersion)).thenReturn(lockedResource);
     when(lockedResource.replace()).thenAnswer(invocation -> holder.get());
     return new Replacement(resource, lockedResource, holder);

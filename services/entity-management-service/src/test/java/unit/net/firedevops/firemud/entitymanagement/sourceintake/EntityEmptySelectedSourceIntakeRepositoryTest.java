@@ -72,17 +72,16 @@ class EntityEmptySelectedSourceIntakeRepositoryTest {
 
   @Test
   void rejectsEvidenceKindThatDoesNotMatchFamilyProvider() {
-    assertThatThrownBy(
-            () ->
-                new EntityEmptySelectedSourceIntakeReceipt.FamilyCensus(
-                    "ARCHETYPE_ROOTS",
-                    EntityEmptySelectedSourceIntakeReceipt.FamilyState.EMPTY,
-                    EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind.V1_SOURCE_CENSUS,
-                    0L,
-                    0L,
-                    0L,
-                    0L,
-                    0L))
+    assertThatThrownBy(() ->
+            new EntityEmptySelectedSourceIntakeReceipt.FamilyCensus(
+                "ARCHETYPE_ROOTS",
+                EntityEmptySelectedSourceIntakeReceipt.FamilyState.EMPTY,
+                EntityEmptySelectedSourceIntakeReceipt.FamilyEvidenceKind.V1_SOURCE_CENSUS,
+                0L,
+                0L,
+                0L,
+                0L,
+                0L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("evidence kind differs");
   }

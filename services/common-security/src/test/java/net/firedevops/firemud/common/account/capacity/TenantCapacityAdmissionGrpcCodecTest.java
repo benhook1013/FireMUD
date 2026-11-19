@@ -112,10 +112,8 @@ class TenantCapacityAdmissionGrpcCodecTest {
         TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED);
     assertThat(TenantCapacityAdmissionGrpcCodec.readRefusal(request, billing))
         .contains(Failure.TENANT_BILLING_BLOCKED);
-    assertThatThrownBy(
-            () ->
-                TenantCapacityAdmissionGrpcCodec.toRefusal(
-                    request, Failure.CAPACITY_QUOTA_EXCEEDED))
+    assertThatThrownBy(() ->
+            TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.CAPACITY_QUOTA_EXCEEDED))
         .isInstanceOf(IllegalArgumentException.class);
     var quota =
         billing.toBuilder()
@@ -150,10 +148,9 @@ class TenantCapacityAdmissionGrpcCodecTest {
             .withDigest();
     request.requireStructurallyValid();
     var id = UUID.randomUUID();
-    assertThatThrownBy(
-            () ->
-                TenantCapacityAdmissionGrpcCodec.toRefusal(
-                    request, Failure.CAPACITY_QUOTA_EXCEEDED, id))
+    assertThatThrownBy(() ->
+            TenantCapacityAdmissionGrpcCodec.toRefusal(
+                request, Failure.CAPACITY_QUOTA_EXCEEDED, id))
         .isInstanceOf(IllegalArgumentException.class);
     var billing =
         TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED);
@@ -190,19 +187,15 @@ class TenantCapacityAdmissionGrpcCodecTest {
                 null)
             .withDigest();
     var id = UUID.randomUUID();
-    assertThatThrownBy(
-            () ->
-                TenantCapacityAdmissionGrpcCodec.toRefusal(
-                    request, Failure.CAPACITY_QUOTA_EXCEEDED, id))
+    assertThatThrownBy(() ->
+            TenantCapacityAdmissionGrpcCodec.toRefusal(
+                request, Failure.CAPACITY_QUOTA_EXCEEDED, id))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                TenantCapacityAdmissionGrpcCodec.toRefusal(
-                    request, Failure.CAPACITY_QUOTA_EXCEEDED))
+    assertThatThrownBy(() ->
+            TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.CAPACITY_QUOTA_EXCEEDED))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED))
+    assertThatThrownBy(() ->
+            TenantCapacityAdmissionGrpcCodec.toRefusal(request, Failure.TENANT_BILLING_BLOCKED))
         .isInstanceOf(IllegalArgumentException.class);
     var originalBilling =
         TenantCapacityAdmissionGrpcCodec.toRefusal(original, Failure.TENANT_BILLING_BLOCKED);
@@ -264,21 +257,18 @@ class TenantCapacityAdmissionGrpcCodecTest {
                 .toBuilder()
                 .addDurableDenialId(decisionId.toString())
                 .build())) {
-      assertThatThrownBy(
-              () ->
-                  TenantCapacityAdmissionGrpcCodec.readRefusalDetails(
-                      request, response.toBuilder().setRefusal(0, malformed).build()))
+      assertThatThrownBy(() ->
+              TenantCapacityAdmissionGrpcCodec.readRefusalDetails(
+                  request, response.toBuilder().setRefusal(0, malformed).build()))
           .isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(
-            () ->
-                TenantCapacityAdmissionGrpcCodec.toRefusal(
-                    request, Failure.TENANT_BILLING_BLOCKED, decisionId))
+    assertThatThrownBy(() ->
+            TenantCapacityAdmissionGrpcCodec.toRefusal(
+                request, Failure.TENANT_BILLING_BLOCKED, decisionId))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                TenantCapacityAdmissionGrpcCodec.toRefusal(
-                    request, Failure.CAPACITY_QUOTA_EXCEEDED, new UUID(0, 0)))
+    assertThatThrownBy(() ->
+            TenantCapacityAdmissionGrpcCodec.toRefusal(
+                request, Failure.CAPACITY_QUOTA_EXCEEDED, new UUID(0, 0)))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

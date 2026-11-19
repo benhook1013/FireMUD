@@ -407,10 +407,9 @@ public class AccountJwtSignerDesiredStateRepository {
     UUID operationId =
         state
             .generationOperationId()
-            .orElseThrow(
-                () ->
-                    new MissingGenerationOperationException(
-                        "Account has no owner-selected JWT generation operation"));
+            .orElseThrow(() ->
+                new MissingGenerationOperationException(
+                    "Account has no owner-selected JWT generation operation"));
     StoredGenerationOperation operation = selectGenerationOperation(operationId, true);
     if (operation == null) {
       throw new QuarantinedStateException("Account JWT signer generation operation is missing");
@@ -441,10 +440,9 @@ public class AccountJwtSignerDesiredStateRepository {
     UUID operationId =
         state
             .generationOperationId()
-            .orElseThrow(
-                () ->
-                    new MissingGenerationOperationException(
-                        "Account has no owner-selected JWT generation operation"));
+            .orElseThrow(() ->
+                new MissingGenerationOperationException(
+                    "Account has no owner-selected JWT generation operation"));
     StoredGenerationOperation operation = selectGenerationOperation(operationId, true);
     if (operation == null) {
       throw new QuarantinedStateException("Account JWT signer generation operation is missing");
@@ -723,10 +721,9 @@ public class AccountJwtSignerDesiredStateRepository {
     UUID promotionId =
         state
             .preparedOperationId()
-            .orElseThrow(
-                () ->
-                    new PromotionPrerequisitesIncompleteException(
-                        "Account has no PREPARED JWT signer promotion"));
+            .orElseThrow(() ->
+                new PromotionPrerequisitesIncompleteException(
+                    "Account has no PREPARED JWT signer promotion"));
     StoredPromotion promotion = selectPromotion(promotionId, true);
     if (promotion == null || !"PREPARED".equals(promotion.status())) {
       throw new QuarantinedStateException("Account PREPARED JWT signer operation is missing");
@@ -1321,10 +1318,9 @@ public class AccountJwtSignerDesiredStateRepository {
     UUID generationOperationId =
         state
             .generationOperationId()
-            .orElseThrow(
-                () ->
-                    new MissingGenerationOperationException(
-                        "Account has no current generation operation to promote"));
+            .orElseThrow(() ->
+                new MissingGenerationOperationException(
+                    "Account has no current generation operation to promote"));
     StoredGenerationOperation generation = selectGenerationOperation(generationOperationId, true);
     GenerationResult result = selectGenerationResult(generationOperationId, true);
     if (generation == null || result == null) {
@@ -1605,10 +1601,9 @@ public class AccountJwtSignerDesiredStateRepository {
     EnrollmentIdentity enrolled =
         state
             .enrollmentIdentity()
-            .orElseThrow(
-                () ->
-                    new QuarantinedStateException(
-                        "Account JWT signer state has no independently protected enrollment identity"));
+            .orElseThrow(() ->
+                new QuarantinedStateException(
+                    "Account JWT signer state has no independently protected enrollment identity"));
     if (!enrolled.expectedClusterIncarnationUid().equals(trust.expectedClusterIncarnationUid())
         || !enrolled.expectedNamespaceUid().equals(trust.expectedNamespaceUid())
         || !enrolled.materializerTrustBindingDigest().equals(trust.bindingDigest())
@@ -1932,11 +1927,10 @@ public class AccountJwtSignerDesiredStateRepository {
   private static Map<String, Object> activeMarker(Optional<ActiveSigner> active) {
     Map<String, Object> marker = new LinkedHashMap<>();
     marker.put("present", active.isPresent());
-    active.ifPresent(
-        signer -> {
-          marker.put("generation", signer.generation());
-          marker.put("kid", signer.kid());
-        });
+    active.ifPresent(signer -> {
+      marker.put("generation", signer.generation());
+      marker.put("kid", signer.kid());
+    });
     return marker;
   }
 
@@ -1997,12 +1991,11 @@ public class AccountJwtSignerDesiredStateRepository {
     Optional<PublicKeyIdentity> expectedPrevious =
         promotion
             .expectedPreviousActive()
-            .map(
-                active ->
-                    new PublicKeyIdentity(
-                        active.generation(),
-                        active.kid(),
-                        publicFingerprintForKid(promotion.expectedPublicJwksJson(), active.kid())));
+            .map(active ->
+                new PublicKeyIdentity(
+                    active.generation(),
+                    active.kid(),
+                    publicFingerprintForKid(promotion.expectedPublicJwksJson(), active.kid())));
     PublicKeyIdentity expectedCurrent =
         new PublicKeyIdentity(
             promotion.targetGeneration(),
@@ -4473,13 +4466,11 @@ public class AccountJwtSignerDesiredStateRepository {
       Optional<PublicKeyIdentity> previous =
           promotion
               .expectedPreviousActive()
-              .map(
-                  active ->
-                      new PublicKeyIdentity(
-                          active.generation(),
-                          active.kid(),
-                          publicFingerprintForKid(
-                              promotion.expectedPublicJwksJson(), active.kid())));
+              .map(active ->
+                  new PublicKeyIdentity(
+                      active.generation(),
+                      active.kid(),
+                      publicFingerprintForKid(promotion.expectedPublicJwksJson(), active.kid())));
       PrivatePromotionReceipt calculated =
           from(
               promotion,

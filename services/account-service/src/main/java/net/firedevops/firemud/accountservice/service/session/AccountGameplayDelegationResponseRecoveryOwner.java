@@ -60,10 +60,8 @@ public final class AccountGameplayDelegationResponseRecoveryOwner {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     try {
       RecoveryPreflight preflight =
-          accountTransaction.execute(
-              status ->
-                  responseEnvelopes.preflightCommittedRecovery(
-                      requestId, expectedAccountId, caller));
+          accountTransaction.execute(status ->
+              responseEnvelopes.preflightCommittedRecovery(requestId, expectedAccountId, caller));
       if (preflight == null
           || !requestId.equals(preflight.requestId())
           || !expectedAccountId.equals(preflight.accountId())
@@ -79,15 +77,14 @@ public final class AccountGameplayDelegationResponseRecoveryOwner {
       if (active == null) throw unavailable();
 
       RecoveredCredential credential =
-          accountTransaction.execute(
-              status -> {
-                committedIssuanceOwner.requireOriginalRequestNotDisposed(requestId);
-                RecoveredCredential recovered =
-                    responseEnvelopes.recoverCommittedResponse(
-                        requestId, expectedAccountId, caller, active);
-                committedIssuanceOwner.requireOriginalRequestNotDisposed(requestId);
-                return recovered;
-              });
+          accountTransaction.execute(status -> {
+            committedIssuanceOwner.requireOriginalRequestNotDisposed(requestId);
+            RecoveredCredential recovered =
+                responseEnvelopes.recoverCommittedResponse(
+                    requestId, expectedAccountId, caller, active);
+            committedIssuanceOwner.requireOriginalRequestNotDisposed(requestId);
+            return recovered;
+          });
       if (credential == null) throw unavailable();
       return credential;
     } catch (IdempotencyConflictException | ResponseRecoveryExpiredException failure) {

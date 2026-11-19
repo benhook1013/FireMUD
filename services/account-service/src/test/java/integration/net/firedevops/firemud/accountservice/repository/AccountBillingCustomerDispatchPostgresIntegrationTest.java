@@ -81,17 +81,15 @@ class AccountBillingCustomerDispatchPostgresIntegrationTest {
     var start = new CountDownLatch(1);
     try (var executor = Executors.newFixedThreadPool(2)) {
       var first =
-          executor.submit(
-              () -> {
-                start.await();
-                return claim(c, UUID.randomUUID());
-              });
+          executor.submit(() -> {
+            start.await();
+            return claim(c, UUID.randomUUID());
+          });
       var second =
-          executor.submit(
-              () -> {
-                start.await();
-                return claim(c, UUID.randomUUID());
-              });
+          executor.submit(() -> {
+            start.await();
+            return claim(c, UUID.randomUUID());
+          });
       start.countDown();
       List<DispatchClaimResult> results =
           List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
@@ -140,29 +138,27 @@ class AccountBillingCustomerDispatchPostgresIntegrationTest {
   @Test
   void mismatchedDirectInsertAndConfirmedOwnerCannotAcquireFirstDispatch() {
     Context c = context(true);
-    assertThatThrownBy(
-            () ->
-                c.sql()
-                    .execute(
-                        "INSERT INTO account_billing_customer_dispatch_claim "
-                            + "(account_uuid, customer_provisioning_request_id, provider_idempotency_id, claim_id) VALUES (?, ?, ?, ?)",
-                        c.intent().accountUuid(),
-                        c.intent().customerProvisioningRequestId(),
-                        UUID.randomUUID(),
-                        UUID.randomUUID()))
+    assertThatThrownBy(() ->
+            c.sql()
+                .execute(
+                    "INSERT INTO account_billing_customer_dispatch_claim "
+                        + "(account_uuid, customer_provisioning_request_id, provider_idempotency_id, claim_id) VALUES (?, ?, ?, ?)",
+                    c.intent().accountUuid(),
+                    c.intent().customerProvisioningRequestId(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
     c.tx()
-        .executeWithoutResult(
-            s ->
-                c.repository()
-                    .recordObservation(
-                        c.intent().accountUuid(),
-                        c.intent().customerProvisioningRequestId(),
-                        1,
-                        UUID.randomUUID(),
-                        AccountBillingCustomerRecord.Observation.CONFIRMED,
-                        "cus_preexisting",
-                        "sha256:" + "a".repeat(64)));
+        .executeWithoutResult(s ->
+            c.repository()
+                .recordObservation(
+                    c.intent().accountUuid(),
+                    c.intent().customerProvisioningRequestId(),
+                    1,
+                    UUID.randomUUID(),
+                    AccountBillingCustomerRecord.Observation.CONFIRMED,
+                    "cus_preexisting",
+                    "sha256:" + "a".repeat(64)));
     assertThatThrownBy(() -> claim(c, UUID.randomUUID()))
         .isInstanceOf(AccountBillingCustomerRepository.ConflictException.class);
     assertThat(c.sql().fetchCount(DSL.table("account_billing_customer_dispatch_claim"))).isZero();
@@ -172,15 +168,14 @@ class AccountBillingCustomerDispatchPostgresIntegrationTest {
   void rolledBackClaimDoesNotSurviveAndOnlyFreshCommittedInsertGetsPermission() {
     Context c = context(true);
     c.tx()
-        .executeWithoutResult(
-            s -> {
-              assertThat(
-                      c.repository()
-                          .claimFirstProviderDispatch(c.intent(), UUID.randomUUID())
-                          .inserted())
-                  .isTrue();
-              s.setRollbackOnly();
-            });
+        .executeWithoutResult(s -> {
+          assertThat(
+                  c.repository()
+                      .claimFirstProviderDispatch(c.intent(), UUID.randomUUID())
+                      .inserted())
+              .isTrue();
+          s.setRollbackOnly();
+        });
     assertThat(c.sql().fetchCount(DSL.table("account_billing_customer_dispatch_claim"))).isZero();
     assertThat(claim(c, UUID.randomUUID()).inserted()).isTrue();
     assertThat(claim(c, UUID.randomUUID()).inserted()).isFalse();
@@ -283,16 +278,14 @@ class AccountBillingCustomerDispatchPostgresIntegrationTest {
     var service = customerService(c, transactions, transport);
     try (var executor = Executors.newFixedThreadPool(2)) {
       var first =
-          executor.submit(
-              () ->
-                  service.provision(
-                      c.intent().accountUuid(), c.intent().customerProvisioningRequestId()));
+          executor.submit(() ->
+              service.provision(
+                  c.intent().accountUuid(), c.intent().customerProvisioningRequestId()));
       assertThat(transport.firstRetrieve.await(10, TimeUnit.SECONDS)).isTrue();
       var second =
-          executor.submit(
-              () ->
-                  service.provision(
-                      c.intent().accountUuid(), c.intent().customerProvisioningRequestId()));
+          executor.submit(() ->
+              service.provision(
+                  c.intent().accountUuid(), c.intent().customerProvisioningRequestId()));
       var results = List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
       assertThat(
               results.stream()
@@ -350,13 +343,12 @@ class AccountBillingCustomerDispatchPostgresIntegrationTest {
 
   private static void assertCommittedReceipt(Context c, AccountBillingCustomerRecord expected) {
     c.tx()
-        .executeWithoutResult(
-            status -> {
-              assertThat(c.repository().findByAccountForUpdate(expected.accountUuid()))
-                  .contains(expected);
-              assertThat(c.repository().findObservationByRequestId(expected.changeRequestId()))
-                  .contains(expected);
-            });
+        .executeWithoutResult(status -> {
+          assertThat(c.repository().findByAccountForUpdate(expected.accountUuid()))
+              .contains(expected);
+          assertThat(c.repository().findObservationByRequestId(expected.changeRequestId()))
+              .contains(expected);
+        });
     var currentRow =
         Objects.requireNonNull(
             c.sql()
@@ -547,11 +539,8 @@ class AccountBillingCustomerDispatchPostgresIntegrationTest {
             .get(0, UUID.class);
     var intent =
         Objects.requireNonNull(
-            tx.execute(
-                s ->
-                    repository
-                        .retainIntent(account, UUID.randomUUID(), UUID.randomUUID())
-                        .customer()));
+            tx.execute(s ->
+                repository.retainIntent(account, UUID.randomUUID(), UUID.randomUUID()).customer()));
     Context result = new Context(source, schema, sql, repository, tx, intent);
     if (forward) {
       migrate(result, "1027.1");

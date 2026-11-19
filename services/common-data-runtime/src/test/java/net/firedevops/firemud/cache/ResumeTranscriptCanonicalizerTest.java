@@ -27,40 +27,38 @@ class ResumeTranscriptCanonicalizerTest {
 
   @Test
   void rejectsObjectKeysThatCollapseAfterNfcNormalization() {
-    assertThatThrownBy(
-            () ->
-                ResumeTranscriptCanonicalizer.canonicalJson(
-                    1L,
-                    2L,
-                    3L,
-                    4L,
-                    0L,
-                    "VIEW",
-                    "REPLAY",
-                    "FULL",
-                    "view",
-                    "{\"e\\u0301\":1,\"é\":2}",
-                    "text"))
+    assertThatThrownBy(() ->
+            ResumeTranscriptCanonicalizer.canonicalJson(
+                1L,
+                2L,
+                3L,
+                4L,
+                0L,
+                "VIEW",
+                "REPLAY",
+                "FULL",
+                "view",
+                "{\"e\\u0301\":1,\"é\":2}",
+                "text"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate keys after NFC normalization");
   }
 
   @Test
   void rejectsExactDuplicateJsonKeysBeforeCanonicalization() {
-    assertThatThrownBy(
-            () ->
-                ResumeTranscriptCanonicalizer.canonicalJson(
-                    1L,
-                    2L,
-                    3L,
-                    4L,
-                    0L,
-                    "VIEW",
-                    "REPLAY",
-                    "FULL",
-                    "view",
-                    "{\"room\":\"R-1\",\"room\":\"R-2\"}",
-                    "text"))
+    assertThatThrownBy(() ->
+            ResumeTranscriptCanonicalizer.canonicalJson(
+                1L,
+                2L,
+                3L,
+                4L,
+                0L,
+                "VIEW",
+                "REPLAY",
+                "FULL",
+                "view",
+                "{\"room\":\"R-1\",\"room\":\"R-2\"}",
+                "text"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("duplicate keys");
   }

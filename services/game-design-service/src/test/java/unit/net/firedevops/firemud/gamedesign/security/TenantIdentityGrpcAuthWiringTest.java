@@ -95,50 +95,48 @@ class TenantIdentityGrpcAuthWiringTest {
 
   @Test
   void allowlistedNoTokenReadStillRequiresExactOwnerPeerBeforeOwnerRead() {
-    withConfiguredInterceptor(
-        interceptor -> {
-          GameTenantCreationRepository repository = mock(GameTenantCreationRepository.class);
-          TenantIdentityGrpcService service = new TenantIdentityGrpcService(repository, "test");
-          FreshTenantCreationEvidence evidence = evidence("test", REQUEST_DIGEST);
-          when(repository.read(REQUEST_ID, "test")).thenReturn(Optional.of(evidence));
+    withConfiguredInterceptor(interceptor -> {
+      GameTenantCreationRepository repository = mock(GameTenantCreationRepository.class);
+      TenantIdentityGrpcService service = new TenantIdentityGrpcService(repository, "test");
+      FreshTenantCreationEvidence evidence = evidence("test", REQUEST_DIGEST);
+      when(repository.read(REQUEST_ID, "test")).thenReturn(Optional.of(evidence));
 
-          DispatchResult account = dispatch(interceptor, service, ACCOUNT_URI);
-          assertThat(account.observer().failure).isNull();
-          assertThat(account.observer().completed).isTrue();
-          assertThat(account.observer().response.getEvidenceDigest())
-              .isEqualTo(evidence.evidenceDigest());
-          assertThat(account.handlerDispatched()).isTrue();
-          verify(repository).read(REQUEST_ID, "test");
+      DispatchResult account = dispatch(interceptor, service, ACCOUNT_URI);
+      assertThat(account.observer().failure).isNull();
+      assertThat(account.observer().completed).isTrue();
+      assertThat(account.observer().response.getEvidenceDigest())
+          .isEqualTo(evidence.evidenceDigest());
+      assertThat(account.handlerDispatched()).isTrue();
+      verify(repository).read(REQUEST_ID, "test");
 
-          GameTenantCreationRepository gameSessionRepository =
-              mock(GameTenantCreationRepository.class);
-          TenantIdentityGrpcService gameSessionService =
-              new TenantIdentityGrpcService(gameSessionRepository, "test");
-          when(gameSessionRepository.read(REQUEST_ID, "test")).thenReturn(Optional.of(evidence));
+      GameTenantCreationRepository gameSessionRepository = mock(GameTenantCreationRepository.class);
+      TenantIdentityGrpcService gameSessionService =
+          new TenantIdentityGrpcService(gameSessionRepository, "test");
+      when(gameSessionRepository.read(REQUEST_ID, "test")).thenReturn(Optional.of(evidence));
 
-          DispatchResult gameSession = dispatch(interceptor, gameSessionService, GAME_SESSION_URI);
-          assertThat(gameSession.observer().failure).isNull();
-          assertThat(gameSession.observer().completed).isTrue();
-          assertThat(gameSession.observer().response.getEvidenceDigest())
-              .isEqualTo(evidence.evidenceDigest());
-          assertThat(gameSession.handlerDispatched()).isTrue();
-          verify(gameSessionRepository).read(REQUEST_ID, "test");
+      DispatchResult gameSession = dispatch(interceptor, gameSessionService, GAME_SESSION_URI);
+      assertThat(gameSession.observer().failure).isNull();
+      assertThat(gameSession.observer().completed).isTrue();
+      assertThat(gameSession.observer().response.getEvidenceDigest())
+          .isEqualTo(evidence.evidenceDigest());
+      assertThat(gameSession.handlerDispatched()).isTrue();
+      verify(gameSessionRepository).read(REQUEST_ID, "test");
 
-          GameTenantCreationRepository unauthorizedRepository =
-              mock(GameTenantCreationRepository.class);
-          TenantIdentityGrpcService unauthorizedService =
-              new TenantIdentityGrpcService(unauthorizedRepository, "test");
-          DispatchResult unauthorized =
-              dispatch(
-                  interceptor,
-                  unauthorizedService,
-                  "spiffe://firemud/ns/test/sa/entity-management-service");
-          assertThat(unauthorized.observer().failure).isEqualTo(Status.Code.PERMISSION_DENIED);
-          assertThat(unauthorized.observer().response).isNull();
-          assertThat(unauthorized.observer().completed).isFalse();
-          assertThat(unauthorized.handlerDispatched()).isTrue();
-          verifyNoInteractions(unauthorizedRepository);
-        });
+      GameTenantCreationRepository unauthorizedRepository =
+          mock(GameTenantCreationRepository.class);
+      TenantIdentityGrpcService unauthorizedService =
+          new TenantIdentityGrpcService(unauthorizedRepository, "test");
+      DispatchResult unauthorized =
+          dispatch(
+              interceptor,
+              unauthorizedService,
+              "spiffe://firemud/ns/test/sa/entity-management-service");
+      assertThat(unauthorized.observer().failure).isEqualTo(Status.Code.PERMISSION_DENIED);
+      assertThat(unauthorized.observer().response).isNull();
+      assertThat(unauthorized.observer().completed).isFalse();
+      assertThat(unauthorized.handlerDispatched()).isTrue();
+      verifyNoInteractions(unauthorizedRepository);
+    });
   }
 
   @Test
@@ -186,26 +184,23 @@ class TenantIdentityGrpcAuthWiringTest {
             AutoConfigurations.of(
                 ConfigurationPropertiesAutoConfiguration.class,
                 CommonSecurityAutoConfiguration.class))
-        .withInitializer(
-            context -> {
-              try {
-                context
-                    .getEnvironment()
-                    .getPropertySources()
-                    .addFirst(propertySource("application.yml"));
-              } catch (IOException exception) {
-                throw new IllegalStateException(
-                    "Could not load Game Design configuration", exception);
-              }
-            })
+        .withInitializer(context -> {
+          try {
+            context
+                .getEnvironment()
+                .getPropertySources()
+                .addFirst(propertySource("application.yml"));
+          } catch (IOException exception) {
+            throw new IllegalStateException("Could not load Game Design configuration", exception);
+          }
+        })
         .withPropertyValues("firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234")
-        .run(
-            context -> {
-              assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
-              assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
-                  .containsExactlyElementsOf(ALLOWLISTED_METHODS);
-              action.accept(context.getBean(AuthTokenInterceptor.class));
-            });
+        .run(context -> {
+          assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
+          assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
+              .containsExactlyElementsOf(ALLOWLISTED_METHODS);
+          action.accept(context.getBean(AuthTokenInterceptor.class));
+        });
   }
 
   private static DispatchResult dispatch(

@@ -142,9 +142,8 @@ class AccountSelectedOwnerIntakeSettlementGrpcServiceTest {
     var bindings = ArgumentCaptor.forClass(SelectedOwnerIntakeAuthorizationBinding.class);
     verify(owner, times(2)).settle(bindings.capture());
     assertThat(bindings.getAllValues())
-        .allSatisfy(
-            retained ->
-                assertThat(retained.canonicalBytes()).containsExactly(binding.canonicalBytes()));
+        .allSatisfy(retained ->
+            assertThat(retained.canonicalBytes()).containsExactly(binding.canonicalBytes()));
   }
 
   @Test

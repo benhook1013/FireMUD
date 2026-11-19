@@ -203,10 +203,9 @@ public class WorldCanonicalFrozenTopologyRepository {
                 Long.toString(provenance.localVersionKey()),
                 graph
                     .inboundSourceClosure()
-                    .orElseThrow(
-                        () ->
-                            new ConflictException(
-                                "Selected graph capture requires its exact original inbound closure")))
+                    .orElseThrow(() ->
+                        new ConflictException(
+                            "Selected graph capture requires its exact original inbound closure")))
             : digestService.getDraftDesignDigest(
                 Long.toString(provenance.localTenantKey()),
                 Long.toString(provenance.localVersionKey()));
@@ -436,19 +435,18 @@ public class WorldCanonicalFrozenTopologyRepository {
       try {
         Thread.ofVirtual()
             .name("world-frozen-topology-cancel")
-            .start(
-                () -> {
-                  synchronized (ownership) {
-                    try {
-                      if (active != null) active.cancel();
-                    } catch (SQLException ignored) {
-                      // Deadline refusal is delivered; the JDBC query timeout also remains.
-                    } finally {
-                      cancellationFinished = true;
-                      releaseSlot();
-                    }
-                  }
-                });
+            .start(() -> {
+              synchronized (ownership) {
+                try {
+                  if (active != null) active.cancel();
+                } catch (SQLException ignored) {
+                  // Deadline refusal is delivered; the JDBC query timeout also remains.
+                } finally {
+                  cancellationFinished = true;
+                  releaseSlot();
+                }
+              }
+            });
       } catch (RuntimeException | Error startFailure) {
         synchronized (ownership) {
           // No cancellation worker owns resources. JDBC's timeout remains the backstop, and

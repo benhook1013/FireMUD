@@ -100,10 +100,9 @@ class AccountGameplayCanonicalLoginOwnerTest {
 
     assertThatThrownBy(() -> fixture.owner.authenticate(request("secret"), WORKLOAD, verifier))
         .isInstanceOf(AuthenticationException.class)
-        .satisfies(
-            failure ->
-                assertThat(((AuthenticationException) failure).getCode())
-                    .isEqualTo(AuthenticationErrorCodes.INVALID_CREDENTIALS));
+        .satisfies(failure ->
+            assertThat(((AuthenticationException) failure).getCode())
+                .isEqualTo(AuthenticationErrorCodes.INVALID_CREDENTIALS));
 
     verify(verifier).verifyAbsentAccountCredential("secret");
     verify(verifier, never()).verify(any(), anyString());
@@ -160,12 +159,11 @@ class AccountGameplayCanonicalLoginOwnerTest {
         .thenReturn(Optional.empty(), Optional.empty(), Optional.of(exactRetry));
     when(fixture.issuance.beginPendingForAccount(
             eq(REQUEST_ID), eq(ACCOUNT_ID), eq(WORKLOAD), eq(CONTEXT_ID), eq(binding)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              fixture.transactions.events.add("pending-operation");
-              return newlyPending;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          fixture.transactions.events.add("pending-operation");
+          return newlyPending;
+        });
 
     AccountGameplayCanonicalLoginOwner.CredentialVerifier verifier =
         new AccountGameplayCanonicalLoginOwner.CredentialVerifier() {
@@ -207,12 +205,11 @@ class AccountGameplayCanonicalLoginOwnerTest {
         .commitPendingCandidate(REQUEST_ID);
     when(fixture.responseOwner.recoverInitialLoginResponse(
             eq(REQUEST_ID), eq(ACCOUNT_ID), any(CallerIdentity.class)))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              fixture.transactions.events.add("activate-recover-response");
-              return response;
-            });
+        .thenAnswer(invocation -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          fixture.transactions.events.add("activate-recover-response");
+          return response;
+        });
 
     InitialGameplayLoginResult first = fixture.owner.authenticate(request, WORKLOAD, verifier);
     InitialGameplayLoginResult retry = fixture.owner.authenticate(request, WORKLOAD, verifier);
@@ -358,10 +355,9 @@ class AccountGameplayCanonicalLoginOwnerTest {
     doThrow(new IllegalStateException("private signer or registry detail"))
         .when(commitFailure.commitOwner)
         .commitPendingCandidate(REQUEST_ID);
-    assertThatThrownBy(
-            () ->
-                commitFailure.owner.authenticate(
-                    request("original-secret"), WORKLOAD, unusedVerifier()))
+    assertThatThrownBy(() ->
+            commitFailure.owner.authenticate(
+                request("original-secret"), WORKLOAD, unusedVerifier()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("private signer or registry detail");
     verify(commitFailure.responseOwner, never()).recoverInitialLoginResponse(any(), any(), any());
@@ -370,10 +366,9 @@ class AccountGameplayCanonicalLoginOwnerTest {
     doThrow(new IllegalStateException("private recovery detail"))
         .when(recoveryFailure.responseOwner)
         .recoverInitialLoginResponse(any(), any(), any());
-    assertThatThrownBy(
-            () ->
-                recoveryFailure.owner.authenticate(
-                    request("original-secret"), WORKLOAD, unusedVerifier()))
+    assertThatThrownBy(() ->
+            recoveryFailure.owner.authenticate(
+                request("original-secret"), WORKLOAD, unusedVerifier()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("private recovery detail");
     verify(recoveryFailure.commitOwner).commitPendingCandidate(REQUEST_ID);

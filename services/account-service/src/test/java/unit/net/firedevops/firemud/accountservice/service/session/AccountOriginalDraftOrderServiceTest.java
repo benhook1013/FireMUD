@@ -72,10 +72,8 @@ class AccountOriginalDraftOrderServiceTest {
               org.mockito.ArgumentMatchers.any());
       when(actors.readHeldOriginalDraft(original))
           .thenThrow(new IllegalStateException("ambiguous"));
-      assertThatThrownBy(
-              () ->
-                  service.claimWithEnvironmentCapture(
-                      "expired.original.credential", original, capture))
+      assertThatThrownBy(() ->
+              service.claimWithEnvironmentCapture("expired.original.credential", original, capture))
           .isInstanceOf(IllegalStateException.class);
       verifyNoInteractions(capture);
     } finally {
