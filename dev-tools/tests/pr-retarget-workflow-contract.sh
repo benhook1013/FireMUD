@@ -894,6 +894,7 @@ async function runDispatcher({
   tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
   branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
   hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
+  visibilityResponse = null,
 }) {
   const dispatches = [];
   const postedRuns = [];
@@ -1018,6 +1019,11 @@ async function runDispatcher({
         listWorkflowRuns: async (request) => {
           inventoryCalls.push(request);
           observationPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh").length);
+          if (visibilityResponse && request.created === "2026-01-07T23:59:59.000Z..*") {
+            assert.equal(request.event, "repository_dispatch");
+            const response = visibilityResponse(request, postedRuns);
+            if (response) return {data: response};
+          }
           if (apiFailure === request.event || (typeof apiFailure === "function" && apiFailure(request, inventoryCalls.length))) {
             throw new Error("fixture API unavailable");
           }
@@ -1506,6 +1512,35 @@ async function runDispatcher({
   ], "one timeout must identify every invisible handoff");
   assert.equal(manyInvisible.timerPostCounts[0], 12, "all runtime POSTs precede the first visibility wait");
   assert.equal(manyInvisible.waitedMillis, 120000, "fan-out shares exactly one visibility window");
+  const visibilityFloor = "2026-01-07T23:59:59.000Z..*";
+  const observations = manyInvisible.inventoryCalls.filter(request => request.created === visibilityFloor);
+  assert.equal(observations.length, 25, "each five-second observation queries one narrow dispatch page");
+  assert(observations.every(request => request.event === "repository_dispatch" && request.page === 1 && request.per_page === 100));
+  assert(manyInvisible.inventoryCalls.some(request => request.event === "pull_request" && request.created !== visibilityFloor),
+    "broad preflight still checks native producers");
+  assert(manyInvisible.inventoryCalls.some(request => request.event === "repository_dispatch" && request.created !== visibilityFloor),
+    "broad preflight still checks existing dispatch producers");
+  const multiPageObservation = await runDispatcher({tuples: [tuple], visibilityResponse: ({page}, [posted]) => ({
+    total_count: 101,
+    workflow_runs: page === 1 ? Array.from({length: 100}, (_, index) => ({
+      ...posted, id: 700000 + index, display_title: "unrelated"
+    })) : [posted],
+  })});
+  assert.deepEqual(multiPageObservation.inventoryCalls.filter(request => request.created === visibilityFloor).map(request => request.page), [1, 2]);
+  assert.equal(multiPageObservation.errors.length, 0, "an exact newly visible dispatch on the second page is accepted");
+  const shiftedObservation = await runDispatcher({tuples: [tuple], visibilityResponse: ({page}, [posted]) => ({
+    total_count: page === 1 ? 101 : 102,
+    workflow_runs: page === 1 ? Array.from({length: 100}, (_, index) => ({
+      ...posted, id: 700000 + index, display_title: "unrelated"
+    })) : [posted],
+  })});
+  assert.deepEqual(numbers(shiftedObservation), ["101"], "a shifting observation inventory never retries the accepted POST");
+  assert(shiftedObservation.errors.some(error => error.includes("visibility is uncertain")));
+  const staleObservation = await runDispatcher({tuples: [tuple], visibilityResponse: (_request, [posted]) => ({
+    total_count: 1, workflow_runs: [{...posted, created_at: "2026-01-07T23:59:58Z"}],
+  })});
+  assert.deepEqual(numbers(staleObservation), ["101"], "an out-of-window row cannot confirm or retry an accepted dispatch");
+  assert(staleObservation.errors.some(error => error.includes("visibility is unknown")));
   const previewTuple = {...tuple, labels: [{name: "preview"}]};
   const previewUnknown = await runDispatcher({tuples: [previewTuple], apiFailure: "pull_request"});
   assert.equal(runtimeDispatches(previewUnknown).length, 0);

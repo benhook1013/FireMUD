@@ -642,47 +642,52 @@ jobs:
               return null;
             };
 
-            const loadExistingRuntimeRuns = async () => {
-              const readInventory = async (createdSince) => {
-                const inventory = [];
-                let complete = true;
-                let incompleteReason = null;
-                for (const event of runtimeRunEvents) {
-                  let total;
-                  const eventRuns = [], ids = new Set();
-                  for (let page = 1; page <= 10; page += 1) {
-                    const response = await github.rest.actions.listWorkflowRuns({
-                      ...context.repo, workflow_id: "runtime-images.yml", event,
-                      created: `${createdSince}..*`, per_page: runtimeRunPageSize, page,
-                    });
-                    const payload = response?.data;
-                    total ??= payload?.total_count;
-                    if (!Number.isInteger(total) || total < 0 || !Array.isArray(payload?.workflow_runs) ||
-                        payload.total_count !== total) throw new Error(`runtime-images ${event} inventory shifted or is malformed`);
-                    if (total >= 1000) {
-                      complete = false;
-                      incompleteReason ??= `runtime-images ${event} exceeds 1000-run bound`;
-                      // Retain this untrusted sample only for the existing conservative in-flight refinement.
-                      // It is never treated as a complete inventory or dispatch authority.
-                      eventRuns.push(...payload.workflow_runs);
-                      break;
-                    }
-                    if (payload.workflow_runs.length !== Math.min(runtimeRunPageSize, total - eventRuns.length)) {
-                      throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
-                    }
-                    for (const run of payload.workflow_runs) {
-                      if (!Number.isSafeInteger(run.id) || run.id <= 0 || ids.has(run.id)) {
-                        throw new Error(`runtime-images ${event} inventory has duplicate or invalid run IDs`);
-                      }
-                      ids.add(run.id); eventRuns.push(run);
-                    }
-                    if (eventRuns.length === total) break;
-                  }
-                  inventory.push(...eventRuns);
-                }
-                return {complete, runs: inventory, reason: incompleteReason};
-              };
+            const validTimestamp = (value) => typeof value === "string" &&
+              /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
+              Number.isFinite(Date.parse(value));
 
+            const readInventory = async (createdSince, events = runtimeRunEvents) => {
+              const inventory = [];
+              let complete = true;
+              let incompleteReason = null;
+              for (const event of events) {
+                let total;
+                const eventRuns = [], ids = new Set();
+                for (let page = 1; page <= 10; page += 1) {
+                  const response = await github.rest.actions.listWorkflowRuns({
+                    ...context.repo, workflow_id: "runtime-images.yml", event,
+                    created: `${createdSince}..*`, per_page: runtimeRunPageSize, page,
+                  });
+                  const payload = response?.data;
+                  total ??= payload?.total_count;
+                  if (!Number.isInteger(total) || total < 0 || !Array.isArray(payload?.workflow_runs) ||
+                      payload.total_count !== total) throw new Error(`runtime-images ${event} inventory shifted or is malformed`);
+                  if (total >= 1000) {
+                    complete = false;
+                    incompleteReason ??= `runtime-images ${event} exceeds 1000-run bound`;
+                    // Retain this untrusted sample only for the existing conservative in-flight refinement.
+                    // It is never treated as a complete inventory or dispatch authority.
+                    eventRuns.push(...payload.workflow_runs);
+                    break;
+                  }
+                  if (payload.workflow_runs.length !== Math.min(runtimeRunPageSize, total - eventRuns.length)) {
+                    throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
+                  }
+                  for (const run of payload.workflow_runs) {
+                    if (!Number.isSafeInteger(run.id) || run.id <= 0 || ids.has(run.id)) {
+                      throw new Error(`runtime-images ${event} inventory has duplicate or invalid run IDs`);
+                    }
+                    ids.add(run.id); eventRuns.push(run);
+                  }
+                  if (eventRuns.length === total) break;
+                }
+                inventory.push(...eventRuns);
+              }
+              return {complete, runs: inventory, reason: incompleteReason};
+            };
+
+
+            const loadExistingRuntimeRuns = async () => {
               const createdSince = new Date(Date.now() - runtimeRunLookbackMilliseconds).toISOString();
               const initial = await readInventory(createdSince);
               if (initial.complete) {
@@ -695,9 +700,6 @@ jobs:
                 return initial;
               }
 
-              const validTimestamp = (value) => typeof value === "string" &&
-                /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
-                Number.isFinite(Date.parse(value));
               if (inFlightRuns.some((run) => !runtimeRunEvents.includes(run.event) ||
                 !Number.isSafeInteger(run.id) || run.id <= 0 || !validTimestamp(run.created_at))) {
                 return {
@@ -965,6 +967,7 @@ jobs:
               }
             }
             const pendingVisibility = [];
+            let visibilitySince;
             let runtimeInventoryPromise;
             let runtimeInventoryError = null;
             for (const resolved of refreshTargets) {
@@ -1035,6 +1038,7 @@ jobs:
                     continue;
                   }
                   const previousIds = new Set(inventory?.runs?.map(run => run.id) || []);
+                  const dispatchSince = new Date(Date.now() - 1000).toISOString();
                   try {
                     await github.rest.repos.createDispatchEvent({
                       ...context.repo,
@@ -1048,7 +1052,8 @@ jobs:
                       },
                     });
                     // Collect handoffs first so one slow visibility response cannot starve later PRs.
-                    pendingVisibility.push({tuple, previousIds});
+                    visibilitySince ??= dispatchSince;
+                    pendingVisibility.push({tuple, previousIds, dispatchSince});
                   } catch (error) {
                     core.setFailed(`Runtime refresh handoff for PR #${tuple.prNumber} is uncertain; no retry issued: ${error.message || error}`);
                     runtimeInventoryPromise = undefined;
@@ -1096,13 +1101,14 @@ jobs:
             const visibilityDeadline = Date.now() + 120000;
             while (pendingVisibility.length > 0) {
               try {
-                const observed = await loadExistingRuntimeRuns();
+                const observed = await readInventory(visibilitySince, ["repository_dispatch"]);
                 if (!observed.complete) throw new Error("Accepted refresh has incomplete visibility; no retry issued");
                 for (let index = pendingVisibility.length - 1; index >= 0; index--) {
-                  const {tuple, previousIds} = pendingVisibility[index];
+                  const {tuple, previousIds, dispatchSince} = pendingVisibility[index];
                   const exactTitle = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
                   if (observed.runs.some(run => run.event === "repository_dispatch" &&
-                      run.display_title === exactTitle && !previousIds.has(run.id))) pendingVisibility.splice(index, 1);
+                      run.display_title === exactTitle && !previousIds.has(run.id) &&
+                      validTimestamp(run.created_at) && Date.parse(run.created_at) >= Date.parse(dispatchSince))) pendingVisibility.splice(index, 1);
                 }
               } catch (error) {
                 core.setFailed(`Runtime refresh visibility is uncertain; no retry issued: ${error.message || error}`);
