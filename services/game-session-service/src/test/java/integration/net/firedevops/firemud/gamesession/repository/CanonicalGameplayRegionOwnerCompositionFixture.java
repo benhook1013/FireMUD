@@ -1199,14 +1199,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       byte[] secondMetaTickState =
           redis.admin().hget(ascii(initialMetaKey), ascii("current_tick_state"));
       Objects.requireNonNull(firstTimelineAfter, "retained timeline source row");
-      // Reinstallation refreshes only the current grant and update timestamp. Compare every
-      // other column, including the first actor/origin, source, phase and initial Redis digest.
-      Set<String> refreshedPreparationColumns =
-          Set.of("executor_fence", "lease_token_correlation", "updated_at");
-      List<String> changedImmutableColumns =
+      // Same-grant reuse must preserve the complete row, including its update timestamp.
+      List<String> changedPreparationColumns =
           Arrays.stream(firstTimelineBefore.fields())
               .map(field -> field.getName())
-              .filter(column -> !refreshedPreparationColumns.contains(column))
               .filter(column ->
                   !Objects.deepEquals(
                       firstTimelineBefore.get(column), firstTimelineAfter.get(column)))
@@ -1219,7 +1215,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                   firstTimelineAfter.get("lease_token_correlation", String.class),
                   secondStatus.leaseTokenCorrelation());
       boolean unchangedTimeline =
-          changedImmutableColumns.isEmpty()
+          changedPreparationColumns.isEmpty()
               && firstTimelineOperationId.equals(
                   Objects.requireNonNull(
                           firstTimelineAfter.get("initialization_operation_id", UUID.class),
@@ -1248,8 +1244,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           || redis.admin().pttl(ascii(initialMetaKey)) != -1L) {
         throw new IllegalStateException(
             "Second binding changed first timeline provenance or lost the live region grant; "
-                + "changed immutable preparation columns="
-                + changedImmutableColumns
+                + "changed preparation columns="
+                + changedPreparationColumns
                 + ", preparation grant matches current="
                 + preparationGrantMatchesCurrent);
       }
