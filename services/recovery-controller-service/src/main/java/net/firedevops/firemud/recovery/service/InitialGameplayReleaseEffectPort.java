@@ -58,8 +58,9 @@ public interface InitialGameplayReleaseEffectPort {
       if ((status == ReadbackStatus.AVAILABLE) != (readback != null)) {
         throw new IllegalArgumentException("readback must be present exactly for AVAILABLE");
       }
-      if (status == ReadbackStatus.AVAILABLE && observedAt == null) {
-        throw new IllegalArgumentException("available readback requires observation time");
+      if (status == ReadbackStatus.AVAILABLE && !readback.observedAt().equals(observedAt)) {
+        throw new IllegalArgumentException(
+            "available readback observation time must match receipt");
       }
     }
 

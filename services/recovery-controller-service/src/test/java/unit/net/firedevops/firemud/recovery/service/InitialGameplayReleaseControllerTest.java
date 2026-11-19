@@ -192,6 +192,90 @@ class InitialGameplayReleaseControllerTest {
   }
 
   @Test
+  void unavailableReadbackReloadsLatestOperation() {
+    assertReadbackFailureReloadsLatestOperation(false);
+  }
+
+  @Test
+  void failedReadbackReloadsLatestOperation() {
+    assertReadbackFailureReloadsLatestOperation(true);
+  }
+
+  private void assertReadbackFailureReloadsLatestOperation(boolean throwsException) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var effectPort = mock(InitialGameplayReleaseEffectPort.class);
+    var scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "evidence");
+    var before =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
+    var after =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
+    when(before.scope()).thenReturn(scope);
+    var effect =
+        new PreparePlayableStateFencedEffect(
+            scope.operationId(), UUID.randomUUID(), UUID.randomUUID(), scope, DIGEST, "proof");
+    var attempt = UUID.randomUUID();
+    var outbox =
+        new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry(
+            UUID.randomUUID(),
+            effect,
+            DIGEST,
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState
+                .DISPATCHED,
+            1,
+            attempt,
+            null,
+            null);
+    when(journal.find(scope.operationId()))
+        .thenReturn(java.util.Optional.of(before), java.util.Optional.of(after));
+    when(journal.findNextEffect(scope.operationId())).thenReturn(java.util.Optional.of(outbox));
+    if (throwsException) {
+      when(effectPort.readback(effect, attempt))
+          .thenThrow(new IllegalStateException("owner readback failed"));
+    } else {
+      when(effectPort.readback(effect, attempt))
+          .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.unavailable());
+    }
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            effectPort);
+
+    assertThat(controller.reconcileNextEffect(scope.operationId())).isSameAs(after);
+    verify(effectPort).readback(effect, attempt);
+    verify(journal, never()).recordEffectReadback(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void availableReadbackRequiresReceiptObservationTime() {
+    var readback =
+        mock(
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback.class);
+    var observedAt = java.time.Instant.parse("2026-11-18T12:00:00Z");
+    when(readback.observedAt()).thenReturn(observedAt);
+    var status = InitialGameplayReleaseEffectPort.ReadbackStatus.AVAILABLE;
+    assertThat(
+            new InitialGameplayReleaseEffectPort.EffectReadbackResolution(
+                status, readback, observedAt))
+        .isEqualTo(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback));
+    assertThatThrownBy(
+            () ->
+                new InitialGameplayReleaseEffectPort.EffectReadbackResolution(
+                    status, readback, observedAt.plusSeconds(1)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must match receipt");
+  }
+
+  @Test
   void futureDatedOwnerReadbackCannotAdvanceJournal() {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var effectPort = mock(InitialGameplayReleaseEffectPort.class);

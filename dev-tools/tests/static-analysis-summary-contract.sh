@@ -285,6 +285,7 @@ const core = { info: () => {} };
 const run = new Function("github", "context", "core", `return (async () => {\n${script}\n})()`);
 // Model the two serialized workflow_run callbacks against a persistent comment store.
 async function assertCompletionOrders() {
+  const advancedHeadSha = "f".repeat(40);
   const originalPaginate = github.paginate;
   const originalIssues = github.rest.issues;
   const originalTimeout = global.setTimeout;
@@ -316,24 +317,29 @@ async function assertCompletionOrders() {
         github.paginate = async (method, input) => {
           const rows = await originalPaginate(method, input);
           if (method === commentsList) return comments;
+          const requestedHead = method === codeqlListWorkflowRuns ? input.head_sha : input.ref;
+          const liveHead = requestedHead === advancedHeadSha;
+          const proofHead = liveHead ? advancedHeadSha : headSha;
+          const runOffset = (currentBaseSha === baseSha ? 0 : 1000) + (liveHead ? 2000 : 0);
           if (method === codeqlListWorkflowRuns) {
             if (!currentTuplePublished) return rows;
             const key = input.workflow_id === "codeql.yml" ? "codeql" : "license";
             if (!completed.has(key) && absentCounterpart) return [];
             return rows.filter((row) => [100, 200, 300].includes(row.id)).map((row) => ({ ...row,
-              id: row.id + (currentBaseSha === baseSha ? 0 : 1000),
-              head_sha: currentHeadSha,
-              display_title: row.display_title.replace(`base-${baseSha}`, `base-${currentBaseSha}`).replace(`head-${headSha}`, `head-${currentHeadSha}`),
+              id: row.id + runOffset,
+              head_sha: proofHead,
+              display_title: row.display_title.replace(`base-${baseSha}`, `base-${currentBaseSha}`).replace(`head-${headSha}`, `head-${proofHead}`),
               status: completed.has(key) ? "completed" : "in_progress",
               conclusion: completed.has(key) ? "success" : null,
             }));
           }
           return rows.filter((row) => !absentCounterpart || completed.has(row.id === 3001 ? "license" : "codeql"))
             .map((row) => ({ ...row,
-              details_url: row.details_url.replace(/runs\/(\d+)/, (_, id) => `runs/${Number(id) + (currentBaseSha === baseSha ? 0 : 1000)}`),
+              id: row.id + runOffset,
+              details_url: row.details_url.replace(/runs\/(\d+)/, (_, id) => `runs/${Number(id) + runOffset}`),
               status: completed.has(row.id === 3001 ? "license" : "codeql") ? "completed" : "in_progress",
               conclusion: completed.has(row.id === 3001 ? "license" : "codeql")
-                ? (currentBaseSha !== baseSha && row.id === 2001 ? "failure" : "success") : null,
+                ? (!liveHead && currentBaseSha !== baseSha && row.id === 2001 ? "failure" : "success") : null,
             }));
         };
         const callback = async (key) => {
@@ -378,17 +384,21 @@ async function assertCompletionOrders() {
         }
         // Both producer orders must recover current-head proof even if the
         // final wake is an obsolete head and all current-head wakes coalesced.
-        currentHeadSha = "f".repeat(40);
+        currentHeadSha = advancedHeadSha;
         const writesBeforeHeadAdvance = updates;
         await callback(first);
         if (updates !== writesBeforeHeadAdvance + 1 ||
             !comments[0].body.includes(currentHeadSha)) {
           throw new Error("older-head wake must publish new head identity in the existing comment");
         }
-        if (!comments[0].body.includes("CodeQL gate: `failure`")) {
-          throw new Error("stale-head wake must reconcile live-head failure");
+        if (!comments[0].body.includes("CodeQL gate: `success`")) {
+          throw new Error("stale-head wake must replace the old failure with live-head success");
         }
+        const writesAfterHeadAdvance = updates;
         await callback(counterpart);
+        if (updates !== writesAfterHeadAdvance || creates !== 1 || comments.length !== 1) {
+          throw new Error("counterpart callback must leave the live-head summary unchanged");
+        }
         currentHeadSha = headSha;
         currentBaseSha = "e".repeat(40);
         currentTuplePublished = false;

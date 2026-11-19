@@ -181,10 +181,10 @@ public final class InitialGameplayReleaseController {
     try {
       resolution = effectPort.readback(outbox.effect(), attemptId);
     } catch (RuntimeException exception) {
-      return operation;
+      return requireOperation(operation.scope().operationId());
     }
     if (resolution.status() != InitialGameplayReleaseEffectPort.ReadbackStatus.AVAILABLE) {
-      return operation;
+      return requireOperation(operation.scope().operationId());
     }
     EffectReadback readback = resolution.readback();
     Instant now = clock.instant();
