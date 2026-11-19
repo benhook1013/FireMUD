@@ -36,6 +36,8 @@ public final class PreV1SelfAttestedReadinessDriver {
   private final AccountJwtReadinessProbeService probes;
   private final TransactionTemplate transaction;
   private final Clock clock;
+  // The one-shot claim is durable; reuse it if issuing failed after it was persisted.
+  private AccountJwtReadinessProbeRepository.DeliveryClaim claimed;
 
   public PreV1SelfAttestedReadinessDriver(
       PreV1GateWaivers waivers,
@@ -59,11 +61,26 @@ public final class PreV1SelfAttestedReadinessDriver {
     this.clock = Objects.requireNonNull(clock);
   }
 
-  /** One bounded pass; safe to repeat. Returns true when every planned probe has a receipt. */
+  /**
+   * One bounded pass; safe to repeat. Returns true when every planned probe has a receipt. Never
+   * throws, because a scheduled task that throws is silently never run again.
+   */
   public boolean driveOnce() {
     if (!waivers.enabled()) {
       return false;
     }
+    try {
+      return drive();
+    } catch (RuntimeException notYet) {
+      LOG.info(
+          "Pre-v1 self-attested readiness not complete yet: {}: {}",
+          notYet.getClass().getName(),
+          notYet.getMessage());
+      return false;
+    }
+  }
+
+  private boolean drive() {
     var materializer = materializerTrust.current().orElse(null);
     var readiness = readinessTrust.current().orElse(null);
     if (materializer == null || readiness == null) {
@@ -82,20 +99,20 @@ public final class PreV1SelfAttestedReadinessDriver {
       return false;
     }
     UUID operationId = request.operationId();
+    AccountJwtReadinessProbeRepository.ReadinessProbePlan plan;
     try {
-      AccountJwtReadinessProbeRepository.ReadinessProbePlan plan;
-      try {
-        plan = probes.readCurrentPlan(binding, trust, operationId);
-      } catch (RuntimeException absent) {
-        plan = probes.planCurrent(binding, trust);
-      }
-      if (clock.instant().getEpochSecond() < plan.notBeforeEpochSecond()) {
-        return false;
-      }
-      var entries = plan.entries();
-      if (entries.stream().allMatch(entry -> entry.state() == ProbeState.PLANNED)) {
-        var current = plan;
-        var claim =
+      plan = probes.readCurrentPlan(binding, trust, operationId);
+    } catch (RuntimeException absent) {
+      plan = probes.planCurrent(binding, trust);
+    }
+    if (clock.instant().getEpochSecond() < plan.notBeforeEpochSecond()) {
+      return false;
+    }
+    var entries = plan.entries();
+    if (entries.stream().allMatch(entry -> entry.state() == ProbeState.PLANNED)) {
+      var current = plan;
+      if (claimed == null || !claimed.rotationOperationId().equals(operationId)) {
+        claimed =
             transaction.execute(
                 status ->
                     readinessRepository.claimSingleDelivery(
@@ -106,38 +123,35 @@ public final class PreV1SelfAttestedReadinessDriver {
                         new AccountJwtReadinessTrustBinding.PeerIdentity(
                             readiness.expectedPeerUri(), readiness.peerSpkiSha256Pins().get(0)),
                         clock.instant()));
-        entries =
-            probes.issueCurrentPlan(binding, trust, operationId, claim, (metadata, jwt) -> {});
       }
-      var issued = entries;
-      boolean complete = true;
-      for (ProbeEntry entry : issued) {
-        if (entry.state() != ProbeState.ISSUED) {
-          complete &= entry.verificationReceipt().isPresent();
-          continue;
-        }
-        for (var pod : probes.readCurrentExpectedPods(binding, trust, entry)) {
-          var target = pod.target();
-          var acceptance =
-              AccountJwtReadinessReceiverInvocationPort.authenticatedAcceptance(
-                  target.podUid(),
-                  target.exactPodEndpoint().orElseThrow().toString(),
-                  target.image(),
-                  target.verifierConfigSha256(),
-                  target.canonicalServiceUri().orElseThrow(),
-                  target.podLeafSpkiSha256().orElseThrow(),
-                  entry.jti(),
-                  entry.compactTokenSha256().orElseThrow(),
-                  entry.targetKid(),
-                  target.expectation(),
-                  clock.instant().getEpochSecond());
-          probes.recordPodAcceptance(binding, trust, entry, pod, acceptance);
-        }
-      }
-      return complete;
-    } catch (RuntimeException notYet) {
-      LOG.info("Pre-v1 self-attested readiness not complete yet: {}", notYet.getClass().getName());
-      return false;
+      entries =
+          probes.issueCurrentPlan(binding, trust, operationId, claimed, (metadata, jwt) -> {});
     }
+    var issued = entries;
+    boolean complete = true;
+    for (ProbeEntry entry : issued) {
+      if (entry.state() != ProbeState.ISSUED) {
+        complete &= entry.verificationReceipt().isPresent();
+        continue;
+      }
+      for (var pod : probes.readCurrentExpectedPods(binding, trust, entry)) {
+        var target = pod.target();
+        var acceptance =
+            AccountJwtReadinessReceiverInvocationPort.authenticatedAcceptance(
+                target.podUid(),
+                target.exactPodEndpoint().orElseThrow().toString(),
+                target.image(),
+                target.verifierConfigSha256(),
+                target.canonicalServiceUri().orElseThrow(),
+                target.podLeafSpkiSha256().orElseThrow(),
+                entry.jti(),
+                entry.compactTokenSha256().orElseThrow(),
+                entry.targetKid(),
+                target.expectation(),
+                clock.instant().getEpochSecond());
+        probes.recordPodAcceptance(binding, trust, entry, pod, acceptance);
+      }
+    }
+    return complete;
   }
 }
