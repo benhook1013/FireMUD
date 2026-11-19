@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.config.AccountJwtReadinessTrustBinding;
@@ -122,7 +123,7 @@ public final class PreV1SelfAttestedReadinessDriver {
                         readiness,
                         new AccountJwtReadinessTrustBinding.PeerIdentity(
                             readiness.expectedPeerUri(), readiness.peerSpkiSha256Pins().get(0)),
-                        clock.instant()));
+                        Instant.ofEpochSecond(clock.instant().getEpochSecond())));
       }
       entries =
           probes.issueCurrentPlan(binding, trust, operationId, claimed, (metadata, jwt) -> {});
