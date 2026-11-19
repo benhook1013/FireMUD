@@ -340,6 +340,29 @@ jobs:
           active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
           available_slots=$((max_active - active_count))
           dispatch_sent=false
+          automatic_preview_has_tuple() {
+            local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" jobs latest
+            jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || return 1
+            jq -e --argjson id "$run_id" --argjson attempt "$attempt" \
+              --arg head "$head" --arg tuple "$tuple" '
+                .jobs as $jobs
+                | (($jobs | type) == "array") and (.total_count == ($jobs | length))
+                  and ([$jobs[] | select(.name == "Preview Plan")] | length == 1)
+                  and any($jobs[];
+                    .name == "Preview Plan" and .run_id == $id and .run_attempt == $attempt
+                    and .head_sha == $head and .status == "completed" and .conclusion == "success"
+                    and ([.steps[]? | select(.name | startswith("Preview event tuple "))] | length == 1)
+                    and any(.steps[]?; .name == $tuple and .status == "completed" and .conclusion == "success"))
+              ' <<<"$jobs" >/dev/null || return 1
+            latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 1
+            jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$head" --arg pr "$pr" '
+              .id == $id and .run_attempt == $attempt and .head_sha == $head
+              and .event == "pull_request"
+              and (.path == ".github/workflows/preview.yml" or .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge"))
+              and (.status | IN("requested", "queued", "in_progress", "waiting", "pending"))
+            ' <<<"$latest" >/dev/null
+          }
+
           dispatch_candidates() {
             while IFS=$'\t' read -r _ pr_number head_sha pr_author pr_base_ref pr_state labels_json_base64; do
             if ! labels_json="$(printf '%s' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||
@@ -517,8 +540,8 @@ jobs:
               fi
             fi
 
-            if ! active_preview_run_id="$(
-              jq -r \
+            if ! preview_candidates="$(
+              jq -c \
                 --arg workflow_name "${preview_workflow_name}" \
                 --arg trusted_workflow_name "Trusted Hosted Identity Request" \
                 --arg default_branch "${DEFAULT_BRANCH}" \
@@ -554,7 +577,11 @@ jobs:
                             )
                             and (
                               .display_title == $run_name
-                              or (.display_title == $pr_title
+                              or (.name == $workflow_name and .event == "pull_request"
+                                  and (.path == ".github/workflows/preview.yml" or .path == (".github/workflows/preview.yml@refs/pull/" + ($pr_number | tostring) + "/merge"))
+                                  and .display_title == $pr_title
+                                  and (.id > 0 and .id == (.id | floor))
+                                  and ((.run_attempt | type) == "number" and .run_attempt > 0 and .run_attempt == (.run_attempt | floor))
                                   and .head_sha == $head_sha
                                   and ([.pull_requests[]? | select(.number == $pr_number)] | length) == 1)
                             )
@@ -566,13 +593,27 @@ jobs:
                               or .status == "pending"
                             )
                           )
-                        | .id
+                        | if .display_title == $run_name then {id, exact: true}
+                          else {id, run_attempt, exact: false} end
                       end
                     end
                   ' <<<"${active_preview_runs_json}"
             )"; then
               echo "Unable to parse active preview workflow runs; refusing preview reconcile." >&2
               exit 1
+            fi
+
+            active_preview_run_id="$(jq -rs '[.[] | select(.exact)][0].id // empty' <<<"$preview_candidates")"
+            if [[ -z "$active_preview_run_id" ]]; then
+              # A same-head title is not proof: the base can move independently.
+              tuple_step="Preview event tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
+              while IFS=$'\t' read -r run_id run_attempt; do
+                [[ -n "$run_id" ]] || continue
+                if automatic_preview_has_tuple "$run_id" "$run_attempt" "$head_sha" "$tuple_step" "$pr_number"; then
+                  active_preview_run_id="$run_id"
+                  break
+                fi
+              done < <(jq -rs '[.[] | select(.exact | not)] | sort_by(.id) | reverse | .[:3][] | [.id, .run_attempt] | @tsv' <<<"$preview_candidates")
             fi
 
             if [[ -n "${active_preview_run_id}" ]]; then

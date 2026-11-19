@@ -76,7 +76,9 @@ jobs:
             }
             const plans = jobs.filter(job => job.name === 'Preview Plan');
             if (plans.length !== 1) {
-              core.info('Missing or ambiguous Preview Plan metadata; await a fresh preview render.');
+              core.info(plans.length === 0 && attempt > 1
+                ? 'Preview Plan is absent from this rerun attempt. Use Re-run all jobs so a fresh plan proves this render.'
+                : 'Missing or ambiguous Preview Plan metadata; await a fresh preview render.');
               return;
             }
             const plan = plans[0];
@@ -109,7 +111,7 @@ jobs:
               ...context.repo, ref: recorded[4],
             });
             if (recordedMerge.sha !== recorded[4] || recordedMerge.parents?.length !== 2 ||
-                recordedMerge.parents[0].sha !== recorded[2] ||
+                !sha.test(recordedMerge.parents[0].sha) ||
                 recordedMerge.parents[1].sha !== recorded[3]) {
               core.info('Recorded preview merge does not prove its base/head tuple; no dispatch.');
               return;
@@ -118,16 +120,20 @@ jobs:
               ...context.repo, pull_number: source.number,
             });
             // Execute only the checked-out default-branch eligibility policy.
-            try {
-              require('node:child_process').execFileSync('python3', [
-                './dev-tools/hosted/preview/preview-eligibility.py', '--revalidate-deploy',
-                '--expected-repository', repository, '--expected-head-sha', run.head_sha,
-              ], {encoding: 'utf8', input: JSON.stringify(pr)});
-            } catch (error) {
-              if (error.status !== 1) throw error;
-              core.info('Canonical preview eligibility refused the current PR; no dispatch.');
-              return;
-            }
+            const isEligible = (pull) => {
+              try {
+                require('node:child_process').execFileSync('python3', [
+                  './dev-tools/hosted/preview/preview-eligibility.py', '--revalidate-deploy',
+                  '--expected-repository', repository, '--expected-head-sha', run.head_sha,
+                ], {encoding: 'utf8', input: JSON.stringify(pull)});
+                return true;
+              } catch (error) {
+                if (error.status !== 1) throw error;
+                core.info('Canonical preview eligibility refused the current PR; no dispatch.');
+                return false;
+              }
+            };
+            if (!isEligible(pr)) return;
             const isIntegrationBase = ['main', 'develop'].includes(pr.base?.ref);
             if (pr.state !== 'open' || pr.head?.repo?.full_name !== repository ||
                 pr.base?.repo?.full_name !== repository ||
@@ -151,6 +157,14 @@ jobs:
                 merge.parents[0].sha !== base.object.sha ||
                 merge.parents[1].sha !== pr.head.sha) {
               core.info('Current merge is not the exact current base/head tuple; no dispatch.');
+              return;
+            }
+            // An event can retain an older base while its merge SHA already
+            // identifies the current test merge. Admit that mismatch only when
+            // both independent GitHub reads prove the exact same current merge.
+            if (recordedMerge.parents[0].sha !== recorded[2] &&
+                (recordedMerge.sha !== merge.sha || recordedMerge.parents[0].sha !== base.object.sha)) {
+              core.info('Recorded preview merge does not prove its base/head tuple; no dispatch.');
               return;
             }
             // Reuse the canonical default-branch path classifier rather than
@@ -211,6 +225,24 @@ jobs:
                 if (inventory.workflow_runs.length < 100) break;
                 if (page === 3) throw new Error('Active runtime inventory exceeds bounded lookup');
               }
+            }
+            const {data: latestPr} = await github.rest.pulls.get({
+              ...context.repo, pull_number: source.number,
+            });
+            if (!isEligible(latestPr) || latestPr.number !== pr.number ||
+                latestPr.state !== 'open' || latestPr.head?.repo?.full_name !== repository ||
+                latestPr.base?.repo?.full_name !== repository ||
+                latestPr.head?.sha !== pr.head.sha || latestPr.base?.ref !== pr.base.ref ||
+                latestPr.merge_commit_sha !== merge.sha) {
+              core.info('Preview eligibility or exact tuple changed during runtime lookup; no dispatch.');
+              return;
+            }
+            const {data: latestBase} = await github.rest.git.getRef({
+              ...context.repo, ref: `heads/${pr.base.ref}`,
+            });
+            if (latestBase.object?.sha !== base.object.sha) {
+              core.info('Preview base changed during runtime lookup; no dispatch.');
+              return;
             }
             await github.rest.repos.createDispatchEvent({
               ...context.repo, event_type: 'pr-runtime-base-refresh',

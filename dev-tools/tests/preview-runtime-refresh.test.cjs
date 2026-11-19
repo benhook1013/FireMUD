@@ -43,7 +43,8 @@ async function execute(f, sent = []) {
     },
     pulls: {get: async ({pull_number}) => {
       assert.equal(pull_number, f.pr.number);
-      return {data: f.pr};
+      f.pullReads = (f.pullReads ?? 0) + 1;
+      return {data: f.pullReads === 1 ? f.pr : f.latestPr ?? f.pr};
     }},
     git: {getRef: async ({ref}) => {
       assert.equal(ref, 'heads/' + f.pr.base.ref);
@@ -52,14 +53,14 @@ async function execute(f, sent = []) {
     repos: {getCommit: async ({ref}) => ({data: ref === E ? f.recordedMerge : f.merge}), createDispatchEvent: async p => sent.push(p)},
   }};
   await new AsyncFunction('github', 'context', 'core', 'require', script)(github,
-    {repo: {owner: 'example', repo: 'FireMUD'}, payload: {workflow_run: {id: 99, run_attempt: 2}, repository: {default_branch: 'develop'}}}, {info() {}}, name => {
+    {repo: {owner: 'example', repo: 'FireMUD'}, payload: {workflow_run: {id: 99, run_attempt: 2}, repository: {default_branch: 'develop'}}}, {info(message) {(f.messages ??= []).push(message);}}, name => {
       assert.equal(name, 'node:child_process');
       return {execFileSync(command, args, options) {
         if (command === 'python3') {
           assert.deepEqual(args, ['./dev-tools/hosted/preview/preview-eligibility.py',
             '--revalidate-deploy', '--expected-repository', 'example/FireMUD',
             '--expected-head-sha', f.run.head_sha]);
-          assert.deepEqual(JSON.parse(options.input), f.pr);
+          assert.deepEqual(JSON.parse(options.input), f.pullReads === 1 ? f.pr : f.latestPr ?? f.pr);
           return execFileSync(command, args, {...options, cwd: root});
         }
         assert.equal(command, 'bash');
@@ -258,6 +259,27 @@ test('immutable title repairs base despite current mutable association', async (
   const f = fixture();
   f.run.pull_requests[0].base.sha = B;
   f.run.pull_requests.unshift({number: 99, head: {sha: C}, base: {sha: B}});
+  assert.equal((await execute(f)).length, 1);
+});
+
+test('partial rerun without an exact-attempt plan gives safe full-rerun guidance', async () => {
+  const f = fixture(); f.jobs = [];
+  assert.deepEqual(await execute(f), []);
+  assert.ok(f.messages.some(message => message.includes('Re-run all jobs')));
+});
+
+test('priority removed during active lookup refuses dispatch', async () => {
+  const f = fixture();
+  f.pr.base.ref = 'feature/stack';
+  f.pr.labels = [{name: 'preview:priority'}];
+  f.latestPr = {...f.pr, labels: []};
+  assert.deepEqual(await execute(f), []);
+  assert.equal(f.pullReads, 2);
+});
+
+test('event base drift can repair the independently revalidated current merge', async () => {
+  const f = fixture();
+  f.jobs[0].steps[0].name = `Preview event tuple pr-7 base-${D} head-${C} merge-${A}`;
   assert.equal((await execute(f)).length, 1);
 });
 

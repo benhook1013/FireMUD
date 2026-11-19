@@ -131,13 +131,26 @@ jobs:
             }
             SOURCE_RUN_ID="$WORKFLOW_RUN_ID"
             workflow_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")"
-            require_source_field path '.github/workflows/preview.yml' "$(jq -r '.path // empty' <<<"$workflow_run_json")"
+            SOURCE_EVENT="$(jq -r '.event // empty' <<<"$workflow_run_json")"
+            source_path="$(jq -r '.path // empty' <<<"$workflow_run_json")"
+            source_path_pr=""
+            if [[ "$SOURCE_EVENT" == pull_request &&
+                "$source_path" =~ ^[.]github/workflows/preview[.]yml@refs/pull/([1-9][0-9]{0,50})/merge$ ]]; then
+              source_path_pr="${BASH_REMATCH[1]}"
+              jq -e --arg pr "$source_path_pr" '
+                .head_sha as $head |
+                ([.pull_requests[]? | select((.number | tostring) == $pr)] |
+                  length == 1 and .[0].head.sha == $head)
+              ' <<<"$workflow_run_json" >/dev/null ||
+                emit_no_action "Ignoring qualified source path without a matching pull request and head."
+            else
+              require_source_field path '.github/workflows/preview.yml' "$source_path"
+            fi
             require_source_field conclusion success "$(jq -r '.conclusion // empty' <<<"$workflow_run_json")"
             require_source_field repository "$GITHUB_REPOSITORY" \
               "$(jq -r '.repository.full_name // empty' <<<"$workflow_run_json")"
             require_source_field head "$WORKFLOW_RUN_HEAD_SHA" \
               "$(jq -r '.head_sha // empty' <<<"$workflow_run_json")"
-            SOURCE_EVENT="$(jq -r '.event // empty' <<<"$workflow_run_json")"
             [[ "$SOURCE_EVENT" == pull_request || "$SOURCE_EVENT" == repository_dispatch ]] ||
               emit_no_action "Ignoring source run with unsupported event ${SOURCE_EVENT}."
             if [[ "$SOURCE_EVENT" == pull_request ]]; then
@@ -183,6 +196,8 @@ jobs:
               PR_NUMBER="$(jq -er '.prNumber | select(type == "number" and floor == .)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
               EXPECTED_HEAD_SHA="$(jq -er '.headSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
               if [[ "$SOURCE_EVENT" == pull_request ]]; then
+                [[ -z "$source_path_pr" || "$source_path_pr" == "$PR_NUMBER" ]] ||
+                  emit_no_action "Ignoring artifact not bound to the qualified source path pull request."
                 jq -e --argjson pr "$PR_NUMBER" --arg head "$EXPECTED_HEAD_SHA" \
                   '.head_sha == $head and ([.pull_requests[] | select(.number == $pr)] | length) == 1 and ([.pull_requests[] | select(.number == $pr)][0].head.sha == $head)' \
                   <<<"$workflow_run_json" >/dev/null ||

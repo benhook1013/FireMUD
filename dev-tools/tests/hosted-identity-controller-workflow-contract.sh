@@ -6724,7 +6724,7 @@ target_real_python3="$(command -v python3)"
 canonical_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
 valid_workflow_run_json='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
 distinct_source_sha=dddddddddddddddddddddddddddddddddddddddd
-distinct_source_workflow_run_json='{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
+distinct_source_workflow_run_json='{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml@refs/pull/900/merge","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
 valid_artifacts_json='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
 
 run_deploy_target_fixture() {
@@ -6791,6 +6791,17 @@ run_deploy_target_fixture() {
 
 run_deploy_target_fixture valid 0 'action=deploy'
 grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+qualified_source_run_json="$(jq -c '.path += "@refs/pull/900/merge"' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$qualified_source_run_json" \
+  run_deploy_target_fixture qualified-source-deploy 0 'action=deploy'
+grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
+cross_pr_qualified_source_run_json="$(jq -c '
+  .path += "@refs/pull/901/merge" | .pull_requests += [{number:901,head:{sha:.head_sha}}]
+' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$cross_pr_qualified_source_run_json" \
+  run_deploy_target_fixture qualified-source-cross-pr 0 'Ignoring artifact not bound to the qualified source path pull request.'
+grep -Fxq 'action=none' "$TEMP_DIR/deploy-target-qualified-source-cross-pr.output"
+
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"}]]' \
   run_deploy_target_fixture v2-schema-migration 0 'v2_schema_migration_change=true'
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/R__refresh_runtime_views.sql"}]]' \
@@ -6992,6 +7003,10 @@ run_invalid_source_field \
   path \
   '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/other.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run path::Expected .github/workflows/preview.yml; actual .github/workflows/other.yml.'
+run_invalid_source_field \
+  dispatch-qualified-path \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml@refs/pull/7/merge","event":"repository_dispatch","repository":{"full_name":"example/FireMUD"}}' \
+  '::error title=Unexpected source run path::Expected .github/workflows/preview.yml; actual .github/workflows/preview.yml@refs/pull/7/merge.'
 run_invalid_source_field \
   repository \
   '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"fork/FireMUD"}}' \

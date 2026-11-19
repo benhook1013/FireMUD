@@ -443,6 +443,14 @@ if [[ "$1" == api && ("$resource" == */actions/runs\?branch=* || "$resource" == 
   fi
   exit 0
 fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5254/attempts/2/jobs?per_page=100' ]]; then
+  printf '%s' "${FAKE_PREVIEW_PLAN_JOBS_JSON:-null}"
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5254' ]]; then
+  printf '%s' "${FAKE_PREVIEW_SOURCE_LATEST_JSON:-null}"
+  exit 0
+fi
 if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_DISPATCH_LOG"
   exit 0
@@ -2515,7 +2523,7 @@ test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
-reconciler_source_title_consumer_output="$TEMP_DIR/reconciler-source-title-consumer.out"
+reconciler_source_title_consumer_output="$TEMP_DIR/reconciler-unqualified-consumer.out"
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
@@ -2527,46 +2535,52 @@ PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_source_title_consumer_output"
 grep -Fqx \
-  "Skipping proof retry for PR #901: preview source or trusted consumer run 5253 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+  "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
   "$reconciler_source_title_consumer_output"
-test ! -e "$FAKE_ANNOTATE_LOG"
-test ! -e "$FAKE_DISPATCH_LOG"
+test -s "$FAKE_DISPATCH_LOG"
 
-reset_case
-reconciler_pull_request_target_output="$TEMP_DIR/reconciler-pull-request-target.out"
-(
-  cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
-    FAKE_PR_901_HEAD=head-901 \
-    FAKE_PR_901_REQUESTED_HEAD=head-901 \
-    FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5254,"path":".github/workflows/preview.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"name":"PR Preview Environment","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
-PREVIEW_MAX_ACTIVE=2 \
-    bash "$RECONCILER_RUN"
-) > "$reconciler_pull_request_target_output"
-grep -Fqx \
-  "Skipping proof retry for PR #901: preview source or trusted consumer run 5254 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
-  "$reconciler_pull_request_target_output"
-test ! -e "$FAKE_ANNOTATE_LOG"
-test ! -e "$FAKE_DISPATCH_LOG"
-
-reset_case
-reconciler_workflow_run_output="$TEMP_DIR/reconciler-workflow-run.out"
-(
-  cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
-    FAKE_PR_901_HEAD=head-901 \
-    FAKE_PR_901_REQUESTED_HEAD=head-901 \
-    FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5255,"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"}]}]' \
-PREVIEW_MAX_ACTIVE=2 \
-    bash "$RECONCILER_RUN"
-) > "$reconciler_workflow_run_output"
-grep -Fqx \
-  "Skipping proof retry for PR #901: preview source or trusted consumer run 5255 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
-  "$reconciler_workflow_run_output"
-test ! -e "$FAKE_ANNOTATE_LOG"
-test ! -e "$FAKE_DISPATCH_LOG"
+# An automatic run must prove exactly this tuple in its current native attempt.
+for tuple_case in current qualified old_merge missing ambiguous stale_attempt wrong_list_path wrong_latest_path; do
+  reset_case
+  reconciler_pull_request_output="$TEMP_DIR/reconciler-pull-request-$tuple_case.out"
+  tuple_name="Preview event tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}"
+  old_tuple_name="Preview event tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-dddddddddddddddddddddddddddddddddddddddd"
+  plan_jobs="$(jq -cn --arg tuple "$tuple_name" --arg old "$old_tuple_name" \
+    --arg head "$preview_head_sha" --arg variant "$tuple_case" '
+      def step($name): {name:$name,status:"completed",conclusion:"success"};
+      [{name:"Preview Plan",run_id:5254,run_attempt:2,head_sha:$head,status:"completed",conclusion:"success",
+        steps:(if $variant == "old_merge" then [step($old)]
+               elif $variant == "ambiguous" then [step($tuple),step($old)]
+               else [step($tuple)] end)}] |
+      if $variant == "missing" then {jobs:[],total_count:0} else {jobs:.,total_count:length} end')"
+  latest_source="$(jq -cn --arg head "$preview_head_sha" --arg variant "$tuple_case" '
+    {id:5254,run_attempt:(if $variant == "stale_attempt" then 3 else 2 end),
+     head_sha:$head,event:"pull_request",path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_latest_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),status:"in_progress"}')"
+  (
+    cd "$ROOT_DIR"
+    FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+      FAKE_PR_901_HEAD=head-901 \
+      FAKE_PR_901_REQUESTED_HEAD=head-901 \
+      FAKE_PR_901_PROOF_COMPLETE=false \
+      FAKE_PREVIEW_PLAN_JOBS_JSON="$plan_jobs" \
+      FAKE_PREVIEW_SOURCE_LATEST_JSON="$latest_source" \
+      FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn --arg variant "$tuple_case" '[{workflow_runs:[{id:5254,run_attempt:2,event:"pull_request",path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_list_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",pull_requests:[{number:901}],name:"PR Preview Environment",head_branch:"feature-preview",display_title:"PR preview 901",status:"in_progress"}]}]')" \
+      PREVIEW_MAX_ACTIVE=2 \
+      bash "$RECONCILER_RUN"
+  ) > "$reconciler_pull_request_output"
+  if [[ "$tuple_case" == current || "$tuple_case" == qualified ]]; then
+    grep -Fqx \
+      "Skipping proof retry for PR #901: preview source or trusted consumer run 5254 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
+      "$reconciler_pull_request_output"
+    test ! -e "$FAKE_ANNOTATE_LOG"
+    test ! -e "$FAKE_DISPATCH_LOG"
+  else
+    grep -Fqx \
+      "Dispatching preview render for PR #901 (${preview_base_sha}/${preview_head_sha}/${preview_merge_sha}/${preview_image_tag}) from trusted ref develop" \
+      "$reconciler_pull_request_output"
+    test -s "$FAKE_DISPATCH_LOG"
+  fi
+done
 
 reset_case
 reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-advance.out"
@@ -2576,8 +2590,12 @@ reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-adva
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5256,"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"event":"branch","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"queued"},{"id":5256,"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"event":"workflow_run","name":"Trusted Hosted Identity Request","head_branch":"feature-preview","display_title":"PR preview 901","status":"in_progress"}]}]' \
-PREVIEW_MAX_ACTIVE=2 \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn \
+      --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" '
+        [{workflow_runs:([{id:5256,path:".github/workflows/hosted-identity-request.yml",
+          name:"Trusted Hosted Identity Request",head_branch:"develop",display_title:$title}
+          | . + {event:"branch",status:"queued"}, . + {event:"workflow_run",status:"in_progress"}])}]')" \
+    PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_active_status_advance_output"
 grep -Fqx \

@@ -987,6 +987,31 @@ jobs:
                   newestPreExecutionCancellation ??= run;
                   continue;
                 }
+                if (run.status !== "completed") {
+                  const completed = matchingRuns.filter(({run: older}) =>
+                    older.id !== run.id && older.status === "completed" && older.conclusion === "success");
+                  for (const {run: older} of completed.slice(0, 3)) {
+                    try {
+                      const jobs = await withTransientGitHubRetry("duplicate runtime attempt jobs lookup", () =>
+                        github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
+                          owner, repo, run_id: older.id, attempt_number: older.run_attempt, per_page: 100,
+                        })
+                      );
+                      const producers = jobs.filter((job) => job.name === canonicalSmokeJobName);
+                      const smoke = (producers[0]?.steps ?? []).filter((step) =>
+                        step.name === "Run credential-free full-stack smoke");
+                      if (producers.length === 1 && smoke.length === 1 &&
+                          smoke[0].status === "completed" && smoke[0].conclusion === "success" &&
+                          await verifyCanonicalSmokeProducer(older, producers[0], identity)) {
+                        core.info("A verified completed exact runtime producer precedes the pending duplicate.");
+                        return older;
+                      }
+                    } catch (error) {
+                      if (error instanceof TerminalGitHubRequestError) throw error;
+                      core.info("Older runtime producer proof is unavailable; retain the existing wait.");
+                    }
+                  }
+                }
                 return run;
               }
               return newestPreExecutionCancellation;

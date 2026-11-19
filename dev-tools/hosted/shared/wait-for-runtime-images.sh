@@ -62,7 +62,8 @@ import sys
 import re
 from datetime import datetime, timezone
 
-wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:]
+wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:6]
+exclude_pending_id = sys.argv[6] if len(sys.argv) > 6 else ""
 try:
     payload = json.load(sys.stdin)
 except json.JSONDecodeError:
@@ -108,6 +109,9 @@ def is_matching_run(run):
     )
 
 matching_runs = [run for run in workflow_runs if is_matching_run(run)]
+if exclude_pending_id:
+    matching_runs = [run for run in matching_runs if str(run.get("id")) != exclude_pending_id
+                     and run.get("status") == "completed" and run.get("conclusion") == "success"]
 if not matching_runs:
     print("missing")
     raise SystemExit(0)
@@ -148,7 +152,7 @@ print(
         created_at,
     )
 )
-' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$@"
 }
 
 fetch_publisher_runs() {
@@ -219,7 +223,7 @@ import json
 import re
 import sys
 
-wait_mode, image_tag, merge_sha, base_sha, head_sha, source_run_id = sys.argv[1:]
+wait_mode, image_tag, merge_sha, base_sha, head_sha, source_run_id = sys.argv[1:7]
 if not re.fullmatch(r"[1-9][0-9]*", source_run_id):
     raise SystemExit(1)
 try:
@@ -258,6 +262,9 @@ if wait_mode == "pull-request":
     ]
 else:
     matching_runs = []
+if len(sys.argv) > 7:
+    matching_runs = [run for run in matching_runs if run.get("event") == "repository_dispatch"
+                     and run.get("status") == "completed" and run.get("conclusion") == "success"]
 if not matching_runs:
     print("missing")
     raise SystemExit(0)
@@ -271,7 +278,54 @@ print(
         run.get("html_url", ""),
     )
 )
-' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$1"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$@"
+}
+
+# Only a source-ID-bound typed callback with positive native publication proof
+# can finish the wait ahead of a pending producer. Skipped publication cannot.
+use_completed_duplicate_publication() {
+  local state older_id older_created inventory upper line publisher_id run attempt jobs latest
+  IFS=$'\t' read -r state older_id _ _ _ _ older_created <<<"$1"
+  [[ "$state" == "found" ]] || return 1
+  local source source_attempt source_latest
+  source="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || return 1
+  [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source" | read_run_state)" == "$1" ]] || return 1
+  source_attempt="$(jq -er --arg repo "$GITHUB_REPOSITORY" '
+    select(.repository.full_name == $repo and .head_repository.full_name == $repo)
+    | .run_attempt | select(type == "number" and . >= 1 and floor == .)
+  ' <<<"$source")" || return 1
+  upper="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  inventory="$(fetch_publisher_runs repository_dispatch "$older_created" "$upper")" || return 1
+  line="$(read_publisher_state "$older_id" completed-typed <<<"$inventory")" || return 1
+  IFS=$'\t' read -r state publisher_id _ <<<"$line"
+  [[ "$state" == "found" && "$publisher_id" =~ ^[1-9][0-9]*$ ]] || return 1
+  run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || return 1
+  attempt="$(jq -er --argjson id "$publisher_id" --arg repo "$GITHUB_REPOSITORY" \
+    --arg title "Publish PR Runtime Images source-run-${older_id}" '
+      select(.id == $id and .event == "repository_dispatch" and .display_title == $title
+        and .path == ".github/workflows/publish-pr-runtime-images.yml"
+        and .repository.full_name == $repo and .head_repository.full_name == $repo
+        and .status == "completed" and .conclusion == "success")
+      | .run_attempt | select(type == "number" and . >= 1 and floor == .)
+    ' <<<"$run")" || return 1
+  jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}/attempts/${attempt}/jobs?per_page=100")" || return 1
+  jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" '
+    (.jobs | type == "array") and (.total_count == (.jobs | length)) and
+    ([.jobs[] | select(.name == "Publish Fixed PR Merge Image Tags")] as $jobs |
+      ($jobs | length) == 1 and ($jobs[0] |
+        .run_id == $id and .run_attempt == $attempt and
+        .status == "completed" and .conclusion == "success" and
+        ([.steps[] | select(.name == "Publish fixed PR image tags")] as $steps |
+          ($steps | length) == 1 and $steps[0].status == "completed" and $steps[0].conclusion == "success")))
+  ' <<<"$jobs" >/dev/null || return 1
+  latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || return 1
+  jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" '
+    .id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"
+  ' <<<"$latest" >/dev/null || return 1
+  source_latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || return 1
+  jq -e --argjson attempt "$source_attempt" '.run_attempt == $attempt' <<<"$source_latest" >/dev/null || return 1
+  [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source_latest" | read_run_state)" == "$1" ]] || return 1
+  printf 'Trusted PR image publisher %s succeeded for %s before a duplicate producer.\n' "$publisher_id" "$image_tag"
 }
 
 wait_for_pr_publisher() {
@@ -384,6 +438,12 @@ while (( SECONDS < deadline )); do
       "${image_tag}" "${elapsed_seconds}"
     sleep "${sleep_seconds}"
     continue
+  fi
+
+  if [[ "$wait_mode" == "pull-request" && "$run_status" != "completed" ]] &&
+    older_state="$(read_run_state "$run_id" <<<"$workflow_payload")" &&
+    use_completed_duplicate_publication "$older_state"; then
+    exit 0
   fi
 
   if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then

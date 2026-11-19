@@ -32,8 +32,17 @@ import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.Targ
  * The request identity and fixed target owner are context, deliberately outside the digest.
  */
 public final class InitialGameplayRecoverCodec {
+  /** Raw request limit; every encoded JSON token inherits this same 16,384-byte ceiling. */
   public static final int MAX_RAW_BYTES = 16384;
-  public static final int MAX_RAW_STRING_CHARACTERS = 4096;
+
+  public static final int MAX_DECODED_STRING_UTF16_UNITS = 4096;
+
+  /**
+   * @deprecated This historically named limit measures decoded text, not raw JSON token bytes.
+   */
+  @Deprecated public static final int MAX_RAW_STRING_CHARACTERS = MAX_DECODED_STRING_UTF16_UNITS;
+
+  private static final int MAX_DECODED_STRING_UTF8_BYTES = 4096;
   public static final int MAX_DEPTH = 4;
   public static final int MAX_OBJECT_MEMBERS = 8;
   public static final int MAX_CANONICAL_SEGMENT_BYTES = 8192;
@@ -45,7 +54,7 @@ public final class InitialGameplayRecoverCodec {
           .streamReadConstraints(
               StreamReadConstraints.builder()
                   .maxNestingDepth(MAX_DEPTH)
-                  .maxStringLength(MAX_RAW_STRING_CHARACTERS)
+                  .maxStringLength(MAX_DECODED_STRING_UTF16_UNITS)
                   .maxNumberLength(1)
                   .build())
           .build();
@@ -53,8 +62,12 @@ public final class InitialGameplayRecoverCodec {
   private InitialGameplayRecoverCodec() {}
 
   /**
-   * Reads bounded raw UTF-8 in the declared member order without a generic tree/map decoder.
-   * Original bytes are validated before normalization; no replacement-character repair is used.
+   * Reads bounded raw UTF-8 in the declared member order without a generic tree/map decoder. The
+   * complete byte array is checked before UTF-8 decoding or parser allocation. Because each encoded
+   * token is part of that array, it cannot exceed 16,384 raw bytes. There is no separate raw-token
+   * check: the 4,096 limits apply to decoded string length and UTF-8 bytes, not its escaped JSON
+   * spelling. Malformed UTF-8 is rejected, not repaired. Field-specific text limits still apply
+   * before and after NFC.
    */
   public static InitialGameplayRecoverRequest decode(byte[] raw) {
     Objects.requireNonNull(raw, "raw");
@@ -275,10 +288,10 @@ public final class InitialGameplayRecoverCodec {
   private static String string(JsonParser parser, String name) throws IOException {
     member(parser, name);
     require(parser.nextToken(), JsonToken.VALUE_STRING);
-    String raw = parser.getText();
-    InitialGameplayRecoverRequest.text(raw, MAX_RAW_STRING_CHARACTERS);
-    // Field constructors must see the original value to enforce their raw byte limits.
-    return raw;
+    String decoded = parser.getText();
+    InitialGameplayRecoverRequest.text(decoded, MAX_DECODED_STRING_UTF8_BYTES);
+    // Field constructors need the original decoded value to enforce pre-NFC byte limits.
+    return decoded;
   }
 
   private static void literal(JsonParser parser, String name, String value) throws IOException {

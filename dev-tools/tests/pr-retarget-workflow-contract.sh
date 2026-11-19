@@ -2154,6 +2154,15 @@ if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
   fi
 fi
 
+if [[ -n "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
+  case "$*" in
+    *actions/runs/101) cat "$CONTRACT_DUPLICATE_DIR/duplicate-source.json"; exit 0 ;;
+    *actions/runs/202) cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher.json"; exit 0 ;;
+    *actions/runs/202/attempts/2/jobs?per_page=100)
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-$CONTRACT_DUPLICATE_JOB.json"; exit 0 ;;
+  esac
+fi
+
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
   [[ "$*" != *"--paginate"* ]] || { echo 'publisher inventory must be bounded' >&2; exit 1; }
   if [[ -n "${CONTRACT_PUBLISHER_PAYLOAD:-}" ]]; then
@@ -2238,6 +2247,20 @@ for created_at in [source["created_at"], "2026-02-31T00:01:00Z", "2026-07-24T00:
 def parse_source(run):
     return subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [run]}), capture_output=True, text=True)
 
+pending_duplicate = {**source, "id": 104, "status": "in_progress",
+                     "conclusion": None, "created_at": "2026-07-24T00:05:00Z"}
+source_argv = [sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40,
+               "c" * 40, "b" * 40, "a" * 40]
+def parse_duplicates(*duplicate_runs, completed_alternative=False):
+    return subprocess.run(source_argv + (["104"] if completed_alternative else []),
+                          input=json.dumps({"workflow_runs": list(duplicate_runs)}),
+                          capture_output=True, text=True, check=True).stdout.split("\t")
+
+assert parse_duplicates(pending_duplicate, source)[1] == "104"
+assert parse_duplicates(pending_duplicate, source, completed_alternative=True)[1] == "101"
+wrong_tuple = {**source, "display_title": source["display_title"].replace("merge-" + "c" * 40, "merge-" + "d" * 40)}
+assert parse_duplicates(pending_duplicate, wrong_tuple, completed_alternative=True) == ["missing\n"]
+
 for field, values in {"id": [None, 0, True, "101"], "status": [None, "", "completed\t"], "html_url": [None, "", "https://example.test/\t101"], "conclusion": [None, "", "success\n"]}.items():
     for value in values:
         assert parse_source({**source, field: value}).returncode != 0, f"malformed source {field} must be rejected"
@@ -2251,6 +2274,20 @@ for conclusion in [None, ""]:
     assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"]], "optional conclusion must preserve Bash field positions"
 
 base = {"id": 202, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101", "created_at": "2026-07-24T00:04:00Z"}
+repository = {"full_name": "example/FireMUD"}
+(root / "duplicate-inventory.json").write_text(json.dumps({"workflow_runs": [pending_duplicate, source]}))
+(root / "duplicate-source.json").write_text(json.dumps({**source, "run_attempt": 1,
+    "repository": repository, "head_repository": repository}))
+(root / "duplicate-publisher.json").write_text(json.dumps({**base, "run_attempt": 2,
+    "path": ".github/workflows/publish-pr-runtime-images.yml", "repository": repository,
+    "head_repository": repository}))
+for conclusion in ["success", "skipped"]:
+    (root / f"duplicate-jobs-{conclusion}.json").write_text(json.dumps({"total_count": 1, "jobs": [
+        {"name": "Publish Fixed PR Merge Image Tags", "run_id": 202, "run_attempt": 2,
+         "status": "completed", "conclusion": "success", "steps": [
+             {"name": "Publish fixed PR image tags", "status": "completed", "conclusion": conclusion}
+         ]}
+    ]}))
 fixtures = {
     "dispatch-success": base,
     "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images source-run-999"},
@@ -2270,6 +2307,22 @@ many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images
 (root / "dispatch-outside-window.json").write_text(json.dumps({"total_count": 1, "workflow_runs": [{**base, "created_at": "2026-07-23T00:00:00Z"}]}))
 (root / "dispatch-invalid-date.json").write_text(json.dumps({"total_count": 1, "workflow_runs": [{**base, "created_at": "2026-02-31T00:00:00Z"}]}))
 PY_FIXTURES
+for conclusion in success skipped; do
+  if CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB="$conclusion" \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-inventory.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/duplicate-$conclusion.output" 2>"$contract_fixture_dir/duplicate-$conclusion.error"; then
+    [[ "$conclusion" == "success" ]] || { echo "Skipped publication step bypassed duplicate wait" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/duplicate-$conclusion.output" 'Trusted PR image publisher 202 succeeded'
+  else
+    [[ "$conclusion" == "skipped" ]] || { cat "$contract_fixture_dir/duplicate-$conclusion.error" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/duplicate-$conclusion.output" 'Waiting for runtime-images workflow 104'
+  fi
+done
 for fixture in missing-url empty-url; do
   if CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$fixture.json" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
@@ -2722,6 +2775,59 @@ script_path.write_text(textwrap.dedent("\n".join(body)) + "\n", encoding="utf-8"
 PY
 
 # Exercise the checked-in retry/cache functions without live GitHub requests.
+node - "$smoke_gate_script" <<'NODE_DUPLICATE_SMOKE'
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const script = fs.readFileSync(process.argv[2], "utf8");
+const start = script.indexOf("async function findMatchingRuntimeImagesRun(");
+const end = script.indexOf("async function resolveCurrentIdentity(", start);
+assert.ok(start >= 0 && end > start);
+const source = script.slice(start, end);
+const identity = {baseSha: "a".repeat(40), headSha: "b".repeat(40), mergeSha: "c".repeat(40)};
+const title = "exact runtime producer";
+const name = "PR Full-Stack Smoke (runtime-required=true)";
+const pending = {id: 10, event: "pull_request", head_sha: identity.headSha, display_title: title,
+  status: "in_progress", run_attempt: 1, created_at: "2026-07-24T00:10:00Z"};
+const older = id => ({...pending, id, status: "completed", conclusion: "success",
+  created_at: "2026-07-24T00:01:00Z"});
+async function choose(runs, verifiedId, smokeConclusion = "success") {
+  const lookedUp = [];
+  const paginate = async (route, args) => {
+    assert.match(route, /\/attempts\/\{attempt_number\}\/jobs$/);
+    assert.equal(args.attempt_number, 1);
+    lookedUp.push(args.run_id);
+    return [{id: args.run_id, name, steps: [{name: "Run credential-free full-stack smoke",
+      status: "completed", conclusion: smokeConclusion}]}];
+  };
+  paginate.iterator = async function* (_method, query) {
+    assert.equal(query.head_sha, identity.headSha);
+    yield {data: runs};
+  };
+  const github = {paginate, rest: {actions: {listWorkflowRuns() {}}}};
+  const execute = new Function("owner", "repo", "prNumber", "github", "context", "core",
+    "withTransientGitHubRetry", "positiveInteger", "isPreExecutionCancelledAttempt",
+    "canonicalSmokeJobName", "verifyCanonicalSmokeProducer", "TerminalGitHubRequestError",
+    "identity", "title", source + "\nreturn findMatchingRuntimeImagesRun('pull_request', title, identity);");
+  const selected = await execute("example", "repo", "7", github, {}, {info() {}},
+    (_label, run) => run(), n => Number.isInteger(n) && n > 0, async () => false, name,
+    async (run, job, tuple) => {
+      assert.equal(job.id, run.id);
+      assert.equal(tuple, identity);
+      return run.id === verifiedId;
+    }, class extends Error {}, identity, title);
+  return {id: selected.id, lookedUp};
+}
+(async () => {
+  assert.deepEqual(await choose([pending, older(3)], 3), {id: 3, lookedUp: [3]});
+  assert.deepEqual(await choose([pending, older(3)], 9), {id: 10, lookedUp: [3]});
+  assert.deepEqual(await choose([pending, older(3)], 3, "skipped"), {id: 10, lookedUp: [3]});
+  assert.deepEqual(await choose([pending, {...older(3), display_title: "wrong tuple"}], 3),
+    {id: 10, lookedUp: []});
+  assert.deepEqual(await choose([pending, older(4), older(3), older(2), older(1)], 1),
+    {id: 10, lookedUp: [4, 3, 2]});
+})().catch(error => { console.error(error); process.exitCode = 1; });
+NODE_DUPLICATE_SMOKE
+
 node - "$smoke_gate_script" <<'NODE'
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

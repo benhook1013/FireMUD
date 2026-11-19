@@ -155,6 +155,21 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
+  void encodedTokenCanExceedDecodedStringLimitWithinRawRequestCeiling() {
+    String detail = "a".repeat(700);
+    String escaped = "\\u0061".repeat(700);
+    assertThat(escaped.getBytes(StandardCharsets.UTF_8).length).isGreaterThan(4096);
+    String wire = WIRE.replace("\"initial\"", "\"" + escaped + "\"");
+    int paddingBytes =
+        InitialGameplayRecoverCodec.MAX_RAW_BYTES - wire.getBytes(StandardCharsets.UTF_8).length;
+    String atRawLimit = wire + " ".repeat(paddingBytes);
+
+    assertThat(decode(atRawLimit))
+        .isEqualTo(decode(WIRE.replace("\"initial\"", "\"" + detail + "\"")));
+    rejects(atRawLimit + " ");
+  }
+
+  @Test
   void rejectsRawFieldsThatShrinkBelowTheirLimitOnlyAfterNormalization() {
     rejects(WIRE.replace("\"world\"", "\"" + "e\u0301".repeat(43) + "\""));
     rejects(WIRE.replace("\"initial\"", "\"" + "e\u0301".repeat(342) + "\""));
