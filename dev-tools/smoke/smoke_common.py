@@ -354,7 +354,9 @@ def login_play_look_steps(
     look_timeout=None,
     realm=None,
     character=None,
+    lobby=False,
 ):
+    """Authenticated Telnet LOGIN admits only after the explicit REALMS/JOIN lobby steps."""
     play_parts = ["PLAY", world]
     if realm:
         play_parts.append(realm)
@@ -363,6 +365,13 @@ def login_play_look_steps(
     steps = [
         ("WORLDS", [worlds_expect], "WORLDS"),
         (f"LOGIN {username} {password}", [login_expect], "LOGIN"),
+    ]
+    if lobby:
+        steps += [
+            (f"REALMS {world}", ["OK REALMS"], "REALMS"),
+            (f"JOIN {world}", ["OK JOIN"], "JOIN"),
+        ]
+    steps += [
         (" ".join(play_parts), [play_expect], "PLAY"),
         ("LOOK", [look_expect], "LOOK"),
     ]
@@ -534,6 +543,7 @@ def gameplay_item_container_equipment_steps(
     look_expect,
     world="demo",
     look_timeout=None,
+    lobby=False,
 ):
     steps = login_play_look_steps(
         username,
@@ -543,6 +553,7 @@ def gameplay_item_container_equipment_steps(
         login_expect,
         play_expect,
         look_expect,
+        lobby=lobby,
     ) + [
         ("INV HERE", ["Room Inventory:", "Torch", "Backpack"], "INV HERE"),
         ("GET Torch", ["You pick up Torch."], "GET"),

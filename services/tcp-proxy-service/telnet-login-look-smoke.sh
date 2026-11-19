@@ -166,6 +166,7 @@ if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
         play_expect,
         look_expect,
         world,
+        lobby=True,
     )
 else:
     steps = login_play_look_steps(
@@ -176,6 +177,7 @@ else:
         login_expect,
         play_expect,
         look_expect,
+        lobby=True,
     )
 run_telnet_smoke_session(
     host,

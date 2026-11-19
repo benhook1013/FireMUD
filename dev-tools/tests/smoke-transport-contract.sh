@@ -2016,6 +2016,14 @@ with patch(
         raise AssertionError("unrelated HTTP exception was incorrectly classified")
 
 
+lobby_steps = smoke_common.login_play_look_steps(
+    "demo@example.com", "swordfish", "demo", "OK WORLDS", "OK LOGIN", "OK PLAY", "OK LOOK", lobby=True
+)
+assert [step[2] for step in lobby_steps] == ["WORLDS", "LOGIN", "REALMS", "JOIN", "PLAY", "LOOK"]
+assert lobby_steps[2][:2] == ("REALMS demo", ["OK REALMS"])
+assert lobby_steps[3][:2] == ("JOIN demo", ["OK JOIN"])
+
+
 item_steps = smoke_common.gameplay_item_container_equipment_steps(
     "demo@example.com",
     "swordfish",

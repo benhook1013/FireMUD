@@ -144,7 +144,7 @@ ensure_compose_mtls_certs() {
     for service in "${services[@]}"; do
       local service_dir="$COMPOSE_MTLS_STAGE_DIR/$service"
       mkdir -m 755 -- "$service_dir"
-      if [[ "$service" == account-service || "$service" == game-session-service || "$service" == entity-management-service || "$service" == world-management-service || "$service" == game-design-service ]]; then
+      if [[ "$service" == account-service || "$service" == game-session-service || "$service" == entity-management-service || "$service" == world-management-service || "$service" == game-design-service || "$service" == tcp-proxy-service ]]; then
         "$GENERATOR" --workload \
           "$authority_dir/ca.crt" "$authority_dir/ca.key" \
           "$service_dir/client.crt" "$service_dir/client.key" dev "$service"
@@ -217,7 +217,7 @@ ensure_compose_mtls_certs() {
       echo "Compose mTLS workload has the wrong SPIFFE identity: gateway" >&2
       return 1
     fi
-    for service in account-service game-session-service entity-management-service world-management-service game-design-service; do
+    for service in account-service game-session-service entity-management-service world-management-service game-design-service tcp-proxy-service; do
       local san_output
       san_output="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -ext subjectAltName)"
       if [[ "$service" == game-design-service ]]; then

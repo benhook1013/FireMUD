@@ -30,6 +30,17 @@ services:
       FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH: /app/certs/client.crt
       FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH: /app/certs/client.key
       FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH: /app/certs/ca.crt
+      # Authenticated Telnet: the TCP Proxy reaches Gateway only on the dedicated mTLS listener.
+      FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS: "false"
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED: "true"
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS: 0.0.0.0
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT: "8443"
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH: /app/certs/client.crt
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH: /app/certs/client.key
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH: /app/certs/ca.crt
+      FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT: local-dev
+      FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE: production_uri
+      FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN: spiffe://firemud/ns/dev/sa/tcp-proxy-service
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/gateway:/app/certs:ro
 
@@ -135,6 +146,10 @@ services:
   tcp-proxy-service:
     environment:
       <<: *grpc-mtls-environment
+      GATEWAY_WS_URL: wss://gateway:8443/ws/game
+      FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH: /app/certs/client.crt
+      FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH: /app/certs/client.key
+      FIREMUD_GATEWAY_WS_CA_CERT_PATH: /app/certs/ca.crt
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/tcp-proxy-service:/app/certs:ro
 
