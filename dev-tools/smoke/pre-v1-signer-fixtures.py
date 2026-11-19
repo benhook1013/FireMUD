@@ -91,6 +91,8 @@ def main():
     parser.add_argument("--validator-leaf", type=Path, required=True,
                         help="Game Session mTLS leaf certificate (receiver Pod pin)")
     parser.add_argument("--validator-ip", required=True, help="fixed Game Session container IP")
+    parser.add_argument("--account-leaf", type=Path, required=True,
+                        help="Account mTLS leaf certificate (Account validator Pod pin)")
     args = parser.parse_args()
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -202,7 +204,35 @@ def main():
         "expectedNamespaceUid": identity["expectedNamespaceUid"],
         "apiBindingRevision": api_binding["configRevision"],
         "apiBindingDigest": api_binding["bindingDigest"],
+        # Promotion needs the complete production matrix: Account itself validates every
+        # production profile and Game Session the representative one. Readiness is
+        # self-attested under the waiver, so the Account Pod IP is a placeholder.
         "validators": [
+            {
+                "validatorId": "account-service",
+                "deploymentName": "account-service",
+                "deploymentUid": str(uuid.uuid4()),
+                "selector": {"app": "account-service"},
+                "replicas": 1,
+                "containerName": "account-service",
+                "image": "firemud/account-service@sha256:" + "0" * 63 + "2",
+                "jwksUri": "https://account-service/.well-known/jwks.json",
+                "maxCacheAgeSeconds": 60,
+                "profiles": [
+                    {"tokenProfile": "control-ui", "audience": "control-ui"},
+                    {"tokenProfile": "player-bootstrap", "audience": "player-bootstrap"},
+                    {"tokenProfile": "game-session-account-delegation", "audience": "account-service"},
+                ],
+                "receiverServiceUri": f"spiffe://firemud/ns/{NAMESPACE}/sa/account-service",
+                "receiverPort": 6565,
+                "receiverPods": [
+                    {
+                        "podUid": str(uuid.uuid4()),
+                        "podIp": "172.30.0.21",
+                        "leafSpkiSha256": spki_sha256(args.account_leaf),
+                    }
+                ],
+            },
             {
                 "validatorId": "game-session-service",
                 "deploymentName": "game-session-service",

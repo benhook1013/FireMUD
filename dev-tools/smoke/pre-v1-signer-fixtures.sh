@@ -11,7 +11,8 @@ prepare_pre_v1_signer_fixtures() {
     rm -rf -- "$out"
     python3 "$root_dir/dev-tools/smoke/pre-v1-signer-fixtures.py" "$out" "$cert_root/authority" \
       --validator-leaf "$cert_root/workloads/game-session-service/client.crt" \
-      --validator-ip 172.30.0.20 || return 1
+      --validator-ip 172.30.0.20 \
+      --account-leaf "$cert_root/workloads/account-service/client.crt" || return 1
   fi
   FIREMUD_PRE_V1_SIGNER_FIXTURES="$out"
   FIREMUD_PRE_V1_NAMESPACE_UID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["expectedNamespaceUid"])' "$out/identity.json")"
