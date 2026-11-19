@@ -413,6 +413,96 @@ class ConnectTokenDurableReceiptPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void encodedExactFailureRetryIsReadOnlyAndDifferentIdentityCannotSeeIt() {
+    DSLContext db = database();
+    UUID account = account(db);
+    UUID tenant = UUID.randomUUID();
+    UUID operation = UUID.randomUUID();
+    var original =
+        net.firedevops.firemud.accountservice.repository.ConnectTokenRequestFingerprint.lookup(
+            account, tenant, "scope", "stable-request");
+    assertThat(
+            insert(db, operation, account, tenant, "stable-request", original.requestDigest(), 60))
+        .isEqualTo(1);
+    envelope(db, operation);
+    db.execute(
+        "UPDATE connect_token_issuance_operation SET status='FAILED',failure_code='JOIN_REQUIRED',"
+            + "reconciliation_blocked=false,reconciliation_evidence=? WHERE operation_id=?",
+        new byte[] {1},
+        operation);
+    var before =
+        db.fetchSingle("SELECT to_jsonb(op)::text FROM connect_token_issuance_operation op")
+            .get(0, String.class);
+    var envelopeBefore =
+        db.fetch(
+                "SELECT operation_id,encryption_key_id,encryption_version,encode(encrypted_response,'hex') AS response,"
+                    + "encode(authenticated_binding,'hex') AS binding FROM connect_token_response_envelope")
+            .intoMaps();
+    // Controlled owner-state fixture only: not an authorized JOIN or membership issuance proof.
+    db.execute(
+        "INSERT INTO account_membership_pair_authority "
+            + "(account_uuid,tenant_uuid,tenant_provenance_kind,tenant_source_operation_id,"
+            + "tenant_provenance_digest,membership_exists,membership_version,"
+            + "membership_authority_generation,last_event_sequence,last_transition_invalidated) "
+            + "VALUES (?,?,'FRESH_GAME_DESIGN',?,?,false,1,1,0,false)",
+        account,
+        tenant,
+        UUID.randomUUID(),
+        digest('a'));
+    assertThat(classify(db, original)).isEqualTo(State.FAILURE_ENVELOPE_RETAINED);
+    db.execute(
+        "UPDATE account_membership_pair_authority SET membership_exists=true,membership_version=2,"
+            + "last_event_sequence=1,last_event_id='controlled-membership-created',last_event_digest=? "
+            + "WHERE account_uuid=? AND tenant_uuid=?",
+        digest('b'),
+        account,
+        tenant);
+    assertThat(
+            db.fetchSingle("SELECT membership_exists FROM account_membership_pair_authority")
+                .get(0, Boolean.class))
+        .isTrue();
+    var retry =
+        net.firedevops.firemud.accountservice.repository.ConnectTokenRequestFingerprint.lookup(
+            account, tenant, "scope", "stable-request");
+    assertThat(classify(db, retry)).isEqualTo(State.FAILURE_ENVELOPE_RETAINED);
+    assertThat(
+            classify(
+                db,
+                net.firedevops.firemud.accountservice.repository.ConnectTokenRequestFingerprint
+                    .lookup(account(db), tenant, "scope", "stable-request")))
+        .isEqualTo(State.MISSING_UNCERTAIN);
+    assertThat(
+            classify(
+                db,
+                net.firedevops.firemud.accountservice.repository.ConnectTokenRequestFingerprint
+                    .lookup(account, tenant, "scope", "new-request")))
+        .isEqualTo(State.MISSING_UNCERTAIN);
+    assertThat(
+            classify(
+                db,
+                net.firedevops.firemud.accountservice.repository.ConnectTokenRequestFingerprint
+                    .lookup(account, tenant, "changed-scope", "stable-request")))
+        .isEqualTo(State.MISSING_UNCERTAIN);
+    assertThat(classify(db, new Lookup(account, tenant, "scope", "stable-request", 1, digest('f'))))
+        .isEqualTo(State.IDEMPOTENCY_CONFLICT);
+    assertThat(
+            db.fetchSingle("SELECT to_jsonb(op)::text FROM connect_token_issuance_operation op")
+                .get(0, String.class))
+        .isEqualTo(before);
+    assertThat(
+            db.fetch(
+                    "SELECT operation_id,encryption_key_id,encryption_version,encode(encrypted_response,'hex') AS response,"
+                        + "encode(authenticated_binding,'hex') AS binding FROM connect_token_response_envelope")
+                .intoMaps())
+        .isEqualTo(envelopeBefore);
+    assertThat(
+            db.fetchSingle(
+                    "SELECT count(*) FROM connect_token_issuance_operation WHERE token_jti IS NOT NULL")
+                .get(0, Long.class))
+        .isZero();
+  }
+
   private static State classify(DSLContext db, Lookup lookup) {
     return db.transactionResult(
         configuration ->

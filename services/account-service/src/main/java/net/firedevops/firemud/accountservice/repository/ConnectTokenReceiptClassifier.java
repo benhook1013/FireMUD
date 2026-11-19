@@ -133,7 +133,7 @@ public final class ConnectTokenReceiptClassifier {
   }
 
   private static void requireText(String value, int maxBytes) {
-    if (value == null || value.isBlank())
+    if (value == null || value.isBlank() || value.indexOf('\0') >= 0)
       throw new IllegalArgumentException("Exact request identity is required");
     try {
       int length = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(value)).remaining();
