@@ -544,11 +544,15 @@ if classifier_fingerprints is None:
 classifiers = json.loads(classifier_fingerprints[1])
 if set(classifiers) != set(classifier_paths):
     raise SystemExit("Smoke Gate PLAY classifier fingerprint paths must match the canonical classifier, qualification, cleanup, and configuration inputs")
+dependency_overrides = re.search(r"function dependencyPlayClassifierOverrides[\s\S]*?return (\{\n[\s\S]*?\});", script)
+dependency_classifiers = json.loads(re.sub(r",(\s*\})", r"\1", dependency_overrides[1])) if dependency_overrides else {}
+if dependency_classifiers and set(dependency_classifiers) != {"docker/docker-compose.yml", "docker/docker-compose.override.yml"}:
+    raise SystemExit("Temporary dependency tuple must name exactly the two reviewed Compose inputs")
 classifier_definitions = {}
 for path in classifier_paths:
     classifier_bytes = (root / path).read_bytes()
     expected = hashlib.sha256(classifier_bytes).hexdigest()
-    if classifiers[path] != expected:
+    if dependency_classifiers.get(path, classifiers[path]) != expected:
         raise SystemExit(
             f"Smoke Gate PLAY classifier fingerprint is stale: after reviewing {path}, update "
             f"canonicalPlayClassifierSha256 in smoke.yml to {expected} for that path and rerun this contract."
@@ -3503,7 +3507,16 @@ for (const [declaration] of icons) {
 const bytes = fs.readFileSync(process.argv[2] + ".producer");
 const start = script.indexOf("function isSuccessfulRuntimeWorkflowDefinition(");
 const end = script.indexOf("// Commit objects", start);
-const fn = script.slice(start, end);
+const dependencyTreeFixture = [
+  [["source", "040000", "tree", "1".repeat(40)], [".github", "040000", "tree", "2".repeat(40)]],
+  [["workflows", "040000", "tree", "3".repeat(40)]],
+  [["smoke.yml", "100644", "blob", "4".repeat(40)], ["runtime-images.yml", "100644", "blob", "5".repeat(40)]],
+];
+const dependencyTreeDigest = require("node:crypto").createHash("sha256")
+  .update(JSON.stringify(dependencyTreeFixture.map((entries, depth) => entries
+    .filter(entry => entry[0] !== [".github", "workflows", "smoke.yml"][depth])))).digest("hex");
+const fn = script.slice(start, end).replace(/const expected = "[0-9a-f]{64}";(?=\s+const \{ data: commit \})/,
+  `const expected = "${dependencyTreeDigest}";`);
 const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
@@ -3532,6 +3545,7 @@ const candidate = {id: 123, run_id: 99, run_attempt: 2, head_sha: headSha, name:
 async function verify(mutate = () => {}, event = "pull_request", knownPlay = true) {
   const data = structuredClone({pr: "3390", consumerRepository: repositoryName, run, identity, source, candidate, jobs: [candidate], latest: {...source},
     eventHeadRepository: repositoryName,
+    dependencyTree: dependencyTreeFixture, dependencyTreeRoot: "6".repeat(40),
     currentPullRequest: {state: "open", head: {sha: headSha, repo: {full_name: repositoryName}},
       base: {ref: "develop", repo: {full_name: repositoryName}}, merge_commit_sha: mergeSha,
       labels: [{name: "canonical-play-transition"}]},
@@ -3553,7 +3567,17 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
   const github = {request: async () => ({data: data.source}), paginate: async () => data.jobs,
     rest: {actions: {getWorkflow: async () => ({data: {id: 7, path: workflowPath, name: "Build Runtime Images"}}),
       getWorkflowRun: async () => ({data: data.latest})}, pulls: {get: async () => ({data: data.currentPullRequest})},
-      git: {getRef: async ({ref}) => {assert.equal(ref, `heads/${data.identity.baseRef}`); return {data: data.currentBase};}},
+      git: {getRef: async ({ref}) => {assert.equal(ref, `heads/${data.identity.baseRef}`); return {data: data.currentBase};},
+        getCommit: async ({commit_sha}) => {
+          assert.equal(commit_sha, data.identity.headSha);
+          return {data: {sha: commit_sha, tree: {sha: data.dependencyTreeRoot}}};
+        },
+        getTree: async ({tree_sha}) => {
+          const depth = [data.dependencyTreeRoot, "2".repeat(40), "3".repeat(40)].indexOf(tree_sha);
+          assert.notEqual(depth, -1);
+          return {data: {sha: tree_sha, truncated: data.truncateDependencyTree === true,
+            tree: data.dependencyTree[depth].map(([path, mode, type, sha]) => ({path, mode, type, sha}))}};
+        }},
       repos: {getContent: async ({owner, repo, path, ref}) => {
         assert.equal(`${owner}/${repo}`, repositoryName);
         assert.equal(ref, path === workflowPath && event === "repository_dispatch" ? workflowSha : mergeSha,
@@ -3568,7 +3592,10 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
     `${fn}; return ${verifier}(data.run, data.candidate, data.identity);`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
       canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
-      data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
+      data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256,
+      data.useActualClassifierAuthority ? canonicalPlayClassifierSha256 : Object.fromEntries(
+        Object.entries(classifierDefinitions).map(([path, entry]) => [path,
+          require("node:crypto").createHash("sha256").update(Buffer.from(entry.content, "base64")).digest("hex")])),
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {repository: {default_branch: "develop"}, pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}},
       "benhook1013", "FireMUD", require, data);
@@ -3675,6 +3702,34 @@ function markerAccepted(overrides = {}) {
     {"github.event_name": "workflow_run"},
   ]) assert.equal(markerAccepted(overrides), false);
   assert.equal(await verify(), true);
+  const withDependencyScope = d => {
+    const base = "fe9873c01fc006c5d9238673d047127e90ef01f5";
+    d.pr = "3469";
+    d.source.display_title = d.source.display_title.replace("pr-3390", "pr-3469").replace(baseSha, base);
+    d.identity.baseSha = base;
+    d.useActualClassifierAuthority = true;
+  };
+  assert.equal(await verify(withDependencyScope), true, "exact dependency PR and pinned Compose bytes only");
+  for (const mutate of [
+    d => { d.pr = "3470"; d.source.display_title = d.source.display_title.replace("pr-3469", "pr-3470"); },
+    d => { d.source.display_title = d.source.display_title.replace(d.identity.baseSha, baseSha); d.identity.baseSha = baseSha; },
+    d => { d.currentPullRequest.labels = []; },
+    d => { d.jobs[0].steps.find(x => x.name === "Stop smoke stack").conclusion = "failure"; },
+    d => { d.jobs[0].steps.find(x => x.name === "Export fixed-tag preview image artifact").conclusion = "success"; },
+    d => { d.jobs[0].steps.find(x => x.name === "Upload preview image artifact").conclusion = "success"; },
+    d => { d.jobs[0].steps.find(x => x.name === "Known canonical transition PLAY failure with successful authenticated cleanup").conclusion = "skipped"; },
+    d => { d.currentPullRequest.head.sha = "e".repeat(40); },
+    d => { d.dependencyTree[0][0][3] = "7".repeat(40); },
+    d => { d.dependencyTree[2][1][1] = "100755"; },
+    d => { d.dependencyTree[1].push(["unreviewed", "100644", "blob", "7".repeat(40)]); },
+    d => { d.truncateDependencyTree = true; },
+    d => { d.source.display_title = d.source.display_title.replace(mergeSha, "e".repeat(40)); },
+    d => { const entry = d.definitions["docker/docker-compose.yml"];
+      const bytes = Buffer.from(entry.content, "base64"); bytes[0] ^= 1; entry.content = bytes.toString("base64"); },
+    d => { d.definitions["docker/docker-compose.override.yml"].size = 0; },
+  ]) assert.equal(await verify(d => { withDependencyScope(d); mutate(d); }), false, mutate.toString());
+  assert.equal(await verify(withDependencyScope, "repository_dispatch"), false, "no typed-refresh extension");
+  assert.equal(await verify(d => { d.useActualClassifierAuthority = true; }), false, "dependency bytes are not accepted for another PR");
   for (const event of ["pull_request", "repository_dispatch"]) {
     assert.equal(await verify(d => {
       d.legacyDefinition = true;

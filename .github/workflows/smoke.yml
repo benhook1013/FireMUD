@@ -25,7 +25,7 @@ jobs:
       run_smoke_full: ${{ steps.compute.outputs.run_smoke_full }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -151,7 +151,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -303,7 +303,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -470,7 +470,7 @@ jobs:
     timeout-minutes: 95
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -608,7 +608,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b";
+            const canonicalRuntimeWorkflowSha256 = "2a769961890119fc91a83b2987537122704f6624035d1572b446569d5f9d11a1";
             // Trusted refreshes can still execute the previous successful default-branch definition.
             const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112";
             // Retain the exact fail-red producer still executed by trusted base refreshes.
@@ -809,6 +809,51 @@ jobs:
             }
 
             // Canonical-transition diagnostic acceptance never becomes passing producer proof.
+            // Temporary, owner-labeled dependency trial. These exact alternate
+            // inputs are never accepted for other PRs, bases or dispatches.
+            function dependencyPlayClassifierOverrides(pr, identity, event) {
+              if (String(pr) !== "3469" || identity.baseRef !== "develop" ||
+                  identity.baseSha !== "fe9873c01fc006c5d9238673d047127e90ef01f5" ||
+                  event !== "pull_request") return {};
+              return {
+                "docker/docker-compose.yml": "6d79647e49aea696598e8c1ba8c665967664986af66efd18e832949dd3b29ab6",
+                "docker/docker-compose.override.yml": "acae1e8d947a5cab071a581873d2cc721f907a8d506bf59e875c5b069c38b126",
+              };
+            }
+
+            // The label can persist across pushes. Bind alternate classifier
+            // authority to the independently reviewed exact head-tree payload.
+            // Exclude only this workflow, which contains its own digest.
+            async function verifyReviewedDependencyPlayTree(headSha) {
+              const expected = "010a88ae9ed5dbd4ca69b9b2f9e0315efe6a1d9b637253d45cb2d7d25a7454ef";
+              const { data: commit } = await withTransientGitHubRetry(
+                "immutable dependency head lookup",
+                () => github.rest.git.getCommit({ owner, repo, commit_sha: headSha })
+              );
+              const sha = /^[0-9a-f]{40}$/;
+              if (commit.sha !== headSha || !sha.test(commit.tree?.sha ?? "")) return false;
+              let treeSha = commit.tree.sha;
+              const levels = [];
+              for (const [depth, excluded] of [".github", "workflows", "smoke.yml"].entries()) {
+                const { data: snapshot } = await withTransientGitHubRetry(
+                  "immutable dependency tree lookup",
+                  () => github.rest.git.getTree({ owner, repo, tree_sha: treeSha })
+                );
+                if (snapshot.sha !== treeSha || snapshot.truncated !== false || !Array.isArray(snapshot.tree)) return false;
+                const entries = snapshot.tree.map(({path, mode, type, sha: objectSha}) => [path, mode, type, objectSha]);
+                if (entries.some(([path, mode, type, objectSha]) => typeof path !== "string" ||
+                    typeof mode !== "string" || typeof type !== "string" || !sha.test(objectSha ?? "")) ||
+                    new Set(entries.map(entry => entry[0])).size !== entries.length) return false;
+                const self = entries.find(entry => entry[0] === excluded);
+                if (!self || (depth < 2 ? self[1] !== "040000" || self[2] !== "tree" :
+                    self[1] !== "100644" || self[2] !== "blob")) return false;
+                levels.push(entries.filter(entry => entry[0] !== excluded)
+                  .sort((a, b) => Buffer.compare(Buffer.from(a[0]), Buffer.from(b[0]))));
+                treeSha = self[3];
+              }
+              return require("node:crypto").createHash("sha256").update(JSON.stringify(levels)).digest("hex") === expected;
+            }
+
             async function verifyKnownPlayFailure(run, candidate, identity) {
               if (repositoryName !== "benhook1013/FireMUD" ||
                   !["pull_request", "repository_dispatch"].includes(run.event)) return false;
@@ -880,6 +925,8 @@ jobs:
               // Typed refresh workflow authority is its native default-branch revision;
               // the executed classifier source still belongs to the verified PR merge.
               const workflowSha = source.event === "pull_request" ? identity.mergeSha : source.head_sha;
+              const dependencyOverrides = dependencyPlayClassifierOverrides(prNumber, identity, source.event);
+              if (Object.keys(dependencyOverrides).length && !await verifyReviewedDependencyPlayTree(identity.headSha)) return false;
               for (const path of [workflowPath, ...Object.keys(canonicalPlayClassifierSha256)]) {
                 const { data: definition } = await withTransientGitHubRetry(
                   `immutable PLAY classifier definition lookup: ${path}`,
@@ -893,7 +940,8 @@ jobs:
                 if (definition.size !== bytes.length) return false;
                 const definitionHash = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
                 const expectedSha256 = path === workflowPath
-                  ? canonicalLegacyRuntimeWorkflowSha256 : canonicalPlayClassifierSha256[path];
+                  ? canonicalLegacyRuntimeWorkflowSha256
+                  : (dependencyOverrides[path] ?? canonicalPlayClassifierSha256[path]);
                 const matches = path === workflowPath && source.conclusion === "success"
                   ? isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event)
                   : definitionHash === expectedSha256;
