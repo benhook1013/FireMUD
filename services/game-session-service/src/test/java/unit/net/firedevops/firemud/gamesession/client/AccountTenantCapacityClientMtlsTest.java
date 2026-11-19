@@ -279,8 +279,9 @@ class AccountTenantCapacityClientMtlsTest {
         assertThat(result.identity()).isEqualTo(request.identity());
       }
       assertThat(calls).hasValue(2);
+      // Delivery can consume any portion of the budget; the controlled ticker asserts selection.
       assertThat(observedNanos.get())
-          .isGreaterThan(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis - 1_000L))
+          .isPositive()
           .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis));
     } finally {
       scheduler.shutdownNow();

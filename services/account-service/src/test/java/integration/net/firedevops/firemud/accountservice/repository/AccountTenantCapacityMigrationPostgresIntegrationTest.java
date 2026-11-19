@@ -167,7 +167,14 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               () ->
                   transaction.executeWithoutResult(
                       status -> budgets.provision(tenant.canonicalTenantId(), 2)))
-          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> {
+                assertThat(failure.sqlState()).isEqualTo("23514");
+                assertThat(failure)
+                    .hasMessageContaining(
+                        "Capacity refusal budget cannot exclude retained evidence");
+              });
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
       assertThatThrownBy(
               () ->
@@ -406,8 +413,19 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           dsl.fetchSingle(
                   "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions")
               .intoMap();
-      // Exact retry must not spend another slot or update the immutable evidence.
-      assertThat(dsl.execute(insert, original)).isZero();
+      var retainedBudget =
+          dsl.fetchSingle(
+                  "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget")
+              .intoMap();
+      // The repository generates a new candidate decision ID on an exact retry.
+      Object[] retry = original.clone();
+      retry[retry.length - 1] = UUID.randomUUID();
+      assertThat(dsl.execute(insert, retry)).isZero();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT *, xmin::text AS row_version FROM account_capacity_origin_refusal_budget")
+                  .intoMap())
+          .isEqualTo(retainedBudget);
       assertThatThrownBy(
               () ->
                   dsl.execute(

@@ -34,6 +34,8 @@ import net.firedevops.firemud.gamedesign.v1.PingRequest;
 import net.firedevops.firemud.gamedesign.v1.PingResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.health.contributor.Health;
 
 class AbstractReloadingBlockingGrpcClientTest {
@@ -120,8 +122,10 @@ class AbstractReloadingBlockingGrpcClientTest {
     verify(replacement).shutdown();
   }
 
-  @Test
-  void selectedChannelSurvivesReplacementUntilTheBlockingCallReturns() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void selectedChannelSurvivesReplacementOrCloseUntilTheBlockingCallReturns(boolean close)
+      throws Exception {
     var calls = new AtomicInteger();
     var expectedResponse = PingResponse.getDefaultInstance();
     var server =
@@ -172,8 +176,14 @@ class AbstractReloadingBlockingGrpcClientTest {
                           }));
           try {
             assertThat(selected.await(5, TimeUnit.SECONDS)).isTrue();
-            client.reloadChannel();
-            assertThat(client.requirePublishedExplicitStub().getChannel()).isSameAs(replacement);
+            if (close) {
+              client.close();
+              assertThatThrownBy(client::requirePublishedExplicitStub)
+                  .isInstanceOf(IllegalStateException.class);
+            } else {
+              client.reloadChannel();
+              assertThat(client.requirePublishedExplicitStub().getChannel()).isSameAs(replacement);
+            }
             assertThat(previous.isShutdown()).isFalse();
             assertThat(calls).hasValue(0);
           } finally {

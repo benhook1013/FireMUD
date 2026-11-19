@@ -646,6 +646,7 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   const github = { rest: {
     pulls: { get: async () => ({ data: { state: "open", head: { sha: head }, base: { ref: "develop", sha: base }, merge_commit_sha: merge } }) },
     repos: { getCommit: async () => ({ data: { sha: merge, parents: [{ sha: base }, { sha: head }] } }) },
+    git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: base}}})},
     actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
       getWorkflowRun: async ({run_id}) => ({data: {id: run_id,
@@ -3536,7 +3537,7 @@ const classifierDefinitions = JSON.parse(fs.readFileSync(process.argv[2] + ".cla
 const headSha = "a".repeat(40), baseSha = "b".repeat(40), mergeSha = "c".repeat(40);
 const workflowSha = "d".repeat(40);
 const identity = {headSha, baseSha, mergeSha, baseRef: "develop"};
-const run = {id: 99, run_attempt: 2, event: "pull_request"};
+const run = {id: 99, run_attempt: 2, event: "pull_request", conclusion: "success"};
 const failures = ["Run credential-free full-stack smoke", "Require successful runtime smoke and authenticated cleanup"];
 const step = (name, conclusion) => ({name, conclusion, status: "completed"});
 const source = {...run, status: "completed", conclusion: "success", path: workflowPath,
@@ -3547,7 +3548,7 @@ const candidate = {id: 123, run_id: 99, run_attempt: 2, head_sha: headSha, name:
   steps: [...failures.map(name => step(name, "success")), step("Stop smoke stack", "success"),
     step("Known canonical transition PLAY failure with successful authenticated cleanup", "success"),
     step("Export fixed-tag preview image artifact", "skipped"), step("Upload preview image artifact", "skipped")]};
-async function verify(mutate = () => {}, event = "pull_request", knownPlay = true, allowIncompleteSteps = false) {
+async function verify(mutate = () => {}, event = "pull_request", knownPlay = true, allowIncompleteSteps = false, allowOrdinary = false) {
   const data = structuredClone({pr: "3390", consumerRepository: repositoryName, run, identity, source, candidate, jobs: [candidate], latest: {...source},
     eventHeadRepository: repositoryName,
     currentPullRequest: {state: "open", head: {sha: headSha, repo: {full_name: repositoryName}},
@@ -3583,7 +3584,7 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
   const verifier = knownPlay ? "verifyKnownPlayFailure" : "verifyCanonicalSmokeProducer";
   const accepted = await new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
     "canonicalRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
-    `${fn}; return ${verifier}(data.run, data.candidate, data.identity, ${allowIncompleteSteps});`)(
+    `${fn}; return ${verifier}(data.run, data.candidate, data.identity, ${allowIncompleteSteps}, ${allowOrdinary});`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
       canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
       data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
@@ -3639,10 +3640,10 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
     }, rest: {actions: {getWorkflowRun: async ({run_id}) => {
       assert.equal(run_id, replacement.id);
       return {data: {...replacement, ...options.latest}};
-    }}}}, "benhook1013", "FireMUD", canonicalSmokeJobName, async (selected, job, proofIdentity, allowIncompleteSteps) => {
+    }}}}, "benhook1013", "FireMUD", canonicalSmokeJobName, async (selected, job, proofIdentity, allowIncompleteSteps, allowOrdinary) => {
       verified++;
       assert.deepEqual(proofIdentity, selectedIdentity);
-      assert.equal(selected, replacement); assert.deepEqual(job, selectedCandidate);
+      assert.equal(selected, replacement); assert.deepEqual(job, options.noProducer ? undefined : selectedCandidate);
       return verify(data => {
         data.identity = structuredClone(selectedIdentity);
         Object.assign(data.run, replacement);
@@ -3651,6 +3652,7 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
         });
         Object.assign(data.candidate, structuredClone(selectedCandidate));
         Object.assign(data.jobs[0], structuredClone(selectedCandidate));
+        if (options.noProducer) data.jobs = [];
         data.currentPullRequest.head.sha = selectedIdentity.headSha;
         data.currentPullRequest.base.ref = selectedIdentity.baseRef;
         data.currentPullRequest.merge_commit_sha = selectedIdentity.mergeSha;
@@ -3662,7 +3664,7 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
           }
         }
         if (options.mutateProof) options.mutateProof(data);
-      }, "repository_dispatch", true, allowIncompleteSteps);
+      }, "repository_dispatch", true, allowIncompleteSteps, allowOrdinary);
     }, {payload: {pull_request: {head: {repo: {full_name: options.headRepository || repositoryName}}}}});
   const proof = await recover(original, selectedIdentity);
   return {accepted: raw ? proof : proof?.status === "verified" ? true
@@ -3802,7 +3804,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
         : status === "missing-step" ? {candidate: {steps: candidate.steps.filter(step => step.name !== "Stop smoke stack")}}
         : status === "nonterminal-step" ? {candidate: {steps: candidate.steps.map(step => step.name === "Stop smoke stack" ? {...step, status: "in_progress", conclusion: null} : step)}}
         : status === "missing-job" ? {noProducer: true}
-        : status === "pending-job" ? {candidate: {status: "in_progress"}}
+        : status === "pending-job" ? {candidate: {status: "in_progress", conclusion: null}}
         : {replacement: {status, conclusion: status === "completed" ? "success" : null,
           run_attempt: statuses[0] === "superseded" && polls > 1 ? 3 : 2}},
         selectedRun, selectedIdentity, true)).accepted;
@@ -3857,7 +3859,12 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     assert.deepEqual(outputs, []);
     assert.equal(writes, 0);
   } else if (options.labelRemoved || options.withdrawDuringProof) {
-    assert.deepEqual(failures, ["Canonical PLAY transition exception label is absent or no longer eligible."]);
+    if (options.labelRemoved && statuses[0] === "absent") {
+      assert.equal(failures.length, 1);
+      assert.match(failures[0], /^Timed out waiting for the exact runtime-images/);
+    } else {
+      assert.deepEqual(failures, ["Canonical PLAY transition exception label is absent or no longer eligible."]);
+    }
     assert.deepEqual(outputs, []);
     assert.equal(writes, 0);
   } else if (options.absentExpires) {
@@ -3875,12 +3882,51 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
     assert.equal(writes, 1);
     assert.ok(options.directProof || currentChecks >= 1);
   }
-  assert.equal(polls, options.directSnapshots ? 1 : options.ordinaryAfterDrift || options.directProof || options.labelRemoved ? 0
+  assert.equal(polls, options.directSnapshots ? 1 : options.ordinaryAfterDrift || options.directProof ? 0
     : options.withdrawDuringProof || options.rejectedObject ? 1 : options.absentExpires ? 5
     : options.snapshotExpires ? 3 : options.recoverDrift ? 1 : statuses.length);
-  assert.equal(sleeps, options.directSnapshots ? (options.snapshotExpires ? 2 : options.directSnapshots.length - 1) : options.ordinaryAfterDrift || options.labelRemoved || options.withdrawDuringProof || options.rejectedObject ? 0
-    : options.absentExpires ? 4 : options.snapshotExpires ? 2 : options.finalIdentity ? (statuses[0] === "absent" ? 1 : 0)
+  assert.equal(sleeps, options.directSnapshots ? (options.snapshotExpires ? 2 : options.directSnapshots.length - 1) : options.ordinaryAfterDrift || options.labelRemoved && statuses[0] !== "absent" || options.withdrawDuringProof || options.rejectedObject ? 0
+    : options.labelRemoved && statuses[0] === "absent" ? 1 : options.absentExpires ? 4 : options.snapshotExpires ? 2 : options.finalIdentity ? (statuses[0] === "absent" ? 1 : 0)
     : expires ? statuses.length : statuses.length - 1);
+}
+// Exercise the exact production loop through cancellation of an old tuple and
+// a successful refresh of the new tuple. Only independently verified ordinary
+// proof is accepted; a title match and green job are insufficient.
+async function movedCancellation(ordinaryProof) {
+  let now = 0, typedReads = 0, proofReads = 0, finalReads = 0;
+  const eventIdentity = {...identity, sourceEvent: "pull_request"};
+  const moved = {...identity, baseSha: "d".repeat(40), mergeSha: "e".repeat(40), sourceEvent: "repository_dispatch"};
+  const old = {...source, id: 98, event: "pull_request", status: "completed", conclusion: "cancelled",
+    head_sha: identity.headSha, head_branch: "feature",
+    display_title: `Build Runtime Images secure-pr-artifact pr-3390 base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`};
+  const refresh = {...source, event: "repository_dispatch", status: "completed", conclusion: "success"};
+  const failures = [], outputs = [];
+  const core = {info() {}, warning() {}, setFailed: x => failures.push(x), setOutput: (...x) => outputs.push(x)};
+  const execute = new Function("repositoryName", "workflowPath", "canonicalSmokeJobName", "withTransientGitHubRetry",
+    "verifyKnownPlayFailure", "isCurrentPullRequestObsolete", "core", "resolveCurrentIdentity", "identityKey",
+    "setTimeout", "sleepMs", "Date", "started", "timeoutMs", "pullRequestCheckInterval", "findMatchingRuntimeImagesRun",
+    "prNumber", "identityDiagnostic", "cancelledReplacementTimeoutMs", "context",
+    "refreshDiscoveryTimeoutMs", "completedSnapshotTimeoutMs", "positiveInteger", "isCurrentCanonicalAttempt",
+    `return (async () => { let pollIteration = 0; ${actualPollingLoop} })();`);
+  await execute(repositoryName, workflowPath, canonicalSmokeJobName, (_label, call) => call(),
+    async (run, candidate, selected, incomplete, ordinary) => {
+      proofReads++; assert.equal(run, refresh); assert.equal(candidate, null);
+      assert.deepEqual(selected, moved); assert.equal(incomplete, true); assert.equal(ordinary, true);
+      return ordinaryProof ? "ordinary" : false;
+    }, async () => false, core, async (_label, live) => live ? moved : eventIdentity,
+    selected => JSON.stringify(selected), resolve => {now += 10; resolve();}, 10,
+    {now: () => now}, 0, 100, 1, async (event, _title, selected) => {
+      if (event === "pull_request") return old;
+      typedReads++;
+      return selected.mergeSha === moved.mergeSha ? refresh : null;
+    }, "3390", "test identity", 20,
+    {payload: {pull_request: {head: {ref: "feature", repo: {full_name: repositoryName}}}}},
+    60, 30, value => Number.isSafeInteger(value) && value > 0, async run => {
+      finalReads++; assert.equal(run, refresh); return true;
+    });
+  assert.equal(typedReads, 2); assert.equal(proofReads, 1); assert.equal(finalReads, ordinaryProof ? 1 : 0);
+  assert.deepEqual(outputs, [], "ordinary proof never publishes an exception output");
+  assert.deepEqual(failures, ordinaryProof ? [] : ["Moved cancelled-run recovery did not supply authenticated smoke proof."]);
 }
 // Exercise the real resolver, not merely a stub that honors requireCurrent.
 async function refreshFinalIdentity(eventUnavailable = false) {
@@ -3955,6 +4001,8 @@ function markerAccepted(overrides = {}) {
   const missing = Object.assign(new Error("missing"), {status: 404});
   await assert.rejects(finalAttemptCheck(null, missing), error => error === missing);
   await pendingRefreshCaller(["completed", "completed"], false, {transientFinal: true});
+  await movedCancellation(true);
+  await movedCancellation(false);
   assert.equal((await recoveredFailure({original: {conclusion: "timed_out"}})).accepted, true);
   await pendingRefreshCaller(["queued", "completed"], false, {originalConclusion: "timed_out"});
   for (const siblingStatus of ["in_progress", "queued"]) {
@@ -3993,7 +4041,7 @@ function markerAccepted(overrides = {}) {
   assert.equal((await recoveredFailure({candidate: {steps: candidate.steps.map(step =>
     step.name === "Stop smoke stack" ? {...step, conclusion: "failure"} : step)}})).accepted, false);
   assert.equal((await recoveredFailure({candidate: {steps: candidate.steps.map(step =>
-    step.name.startsWith("Known canonical") ? {...step, conclusion: "skipped"} : step)}})).accepted, false);
+    step.name.startsWith("Known canonical") ? {...step, conclusion: "skipped"} : step)}})).accepted.status, "ordinary");
 
   for (const change of [{run_attempt: 3}, {run_attempt: 1}, {id: 98}, {status: "in_progress"}, {conclusion: "failure"}]) {
     assert.equal(await finalAttemptCheck({...currentAttempt, ...change}), false);
@@ -4049,7 +4097,23 @@ function markerAccepted(overrides = {}) {
   await pendingRefreshCaller(["queued", "in_progress"], true);
   assert.equal((await recoveredFailure({absent: true})).accepted, "absent");
   assert.equal((await recoveredFailure({noProducer: true})).accepted, "snapshot-pending");
-  assert.equal((await recoveredFailure({candidate: {status: "in_progress"}})).accepted, "snapshot-pending");
+  assert.equal((await recoveredFailure({noProducer: true, mutateProof(data) {
+    data.definitions[workflowPath].content = Buffer.from("wrong immutable producer").toString("base64");
+    data.definitions[workflowPath].size = Buffer.byteLength("wrong immutable producer");
+  }})).accepted, false, "an untrusted typed run must fail before waiting for omitted jobs");
+  const marker = "Known canonical transition PLAY failure with successful authenticated cleanup";
+  const ordinary = candidate.steps.map(step => step.name === marker
+    ? {...step, conclusion: "skipped"} : {...step});
+  const ordinaryOptions = {candidate: {steps: ordinary}, mutateProof(data) {data.currentPullRequest.labels = [];}};
+  assert.equal((await recoveredFailure(ordinaryOptions, null, identity, true)).accepted.status, "ordinary",
+    "an authenticated passing typed run with explicitly skipped exception needs no label");
+  const ordinaryMissingCleanup = ordinary.map(step => step.name === "Stop smoke stack"
+    ? {...step, conclusion: "failure"} : step);
+  assert.equal((await recoveredFailure({...ordinaryOptions, candidate: {steps: ordinaryMissingCleanup}})).accepted, false,
+    "a typed recovery with unsuccessful cleanup is not ordinary proof");
+  assert.equal((await recoveredFailure({...ordinaryOptions, candidate: {steps: ordinary.concat(ordinary.find(step => step.name === marker))}})).accepted, false,
+    "duplicate exception markers are terminal");
+  assert.equal((await recoveredFailure({candidate: {status: "in_progress", conclusion: null}})).accepted, "snapshot-pending");
   await pendingRefreshCaller(["absent", "queued", "completed"]);
   await pendingRefreshCaller(["missing-job", "pending-job", "completed"]);
   await pendingRefreshCaller(["absent", "absent"], true);
@@ -4115,7 +4179,6 @@ function markerAccepted(overrides = {}) {
     d => {d.source.head_branch = "other";},
     d => {d.latest.run_attempt++;},
     d => {d.candidate.steps.find(s => s.name === "Stop smoke stack").conclusion = "failure";},
-    d => {d.candidate.steps.find(s => s.name.startsWith("Known canonical transition")).conclusion = "skipped";},
     d => {d.candidate.steps.find(s => s.name === "Export fixed-tag preview image artifact").conclusion = "success";},
     d => {d.definitions[workflowPath].content = Buffer.from("untrusted workflow").toString("base64");},
   ]) assert.equal((await recoveredFailure({mutateProof})).accepted, false);
@@ -4146,7 +4209,7 @@ function markerAccepted(overrides = {}) {
   for (const event of ["pull_request", "repository_dispatch"]) {
     assert.equal(await verify(d => {
       d.legacyDefinition = true;
-      d.source.conclusion = d.latest.conclusion = d.candidate.conclusion = "failure";
+      d.run.conclusion = d.source.conclusion = d.latest.conclusion = d.candidate.conclusion = "failure";
       for (const step of d.candidate.steps) if (failures.includes(step.name)) step.conclusion = "failure";
     }, event), true, "exact old fail-red default-branch producer remains a diagnostic exception only");
   }
@@ -4264,6 +4327,9 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     repository: {full_name: repository}, head_repository: {full_name: repository}, created_at: "2026-11-18T00:00:00Z"};
   const ci = {...source, id: 90, workflow_id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation",
     display_title: `CI — Validation pr-42 base-${base} head-${head}`};
+  const cancelledCase = kind.startsWith("cancel-");
+  const olderCi = cancelledCase && kind !== "cancel-older-failed" ? {...ci, conclusion: "success"} : ci;
+  const newerCancelled = {...ci, id: 91, conclusion: "cancelled"};
   const refresh = {...source, id: 110, event: "repository_dispatch", head_branch: "develop", head_sha: "d".repeat(40)};
   const event = structuredClone(source);
   if (kind === "typed-callback") event.event = "repository_dispatch";
@@ -4278,6 +4344,10 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         : {id: 7, path: source.path, name: source.name}}),
       getWorkflowRun: async ({run_id}) => {
         if (run_id === 91) metadataReads++;
+        if (cancelledCase && run_id === 90) return {data: olderCi};
+        if (cancelledCase && run_id === 91) return {data: {...newerCancelled,
+          ...(kind === "cancel-rerun" && metadataReads > 1 ? {run_attempt: 2} : {}),
+          ...(kind === "cancel-native-failure" ? {conclusion: "failure"} : {})}};
         if (run_id === 90 || run_id === 91) return {data: {...ci, id: run_id,
           ...(kind === "ci-rerun" || ["new-meta-rerun", "old-meta-rerun"].includes(kind) && run_id === 91 && metadataReads > 1 ? {run_attempt: 2} : {})}};
         sourceReads++;
@@ -4291,6 +4361,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
           runs = [{...ci, id: 91, ...(kind === "pending-newer" ? {status: "in_progress"} : {})}, ci];
           if (kind === "new-meta-only") runs = runs.slice(0, 1);
         }
+        if (workflow_id === "ci.yml" && cancelledCase) runs = [newerCancelled, olderCi];
         if (workflow_id === "ci.yml" && ciInventoryReads > 1 && kind.startsWith("late-ci-")) {
           runs = kind === "late-ci-absent" ? [] : [{...ci, id: 91, ...(kind === "late-ci-pending" ? {status: "in_progress"} : {})}, ci];
         }
@@ -4348,6 +4419,40 @@ async function run(kind, shared = {visible: false, posts: 0}) {
       if (kind === "new-meta-mixed") return [job, {...job, id: 32, name: "Validation Gate"}];
       return [job];
     }
+    if (cancelledCase) {
+      const newer = request.run_id === 91;
+      const result = newer ? "cancelled" : olderCi.conclusion;
+      const step = {name: "Enforce validation success", status: "completed",
+        conclusion: newer ? kind === "cancel-enforced" ? "failure" : "skipped" : result,
+        ...(kind === "cancel-missing-time" ? {} : {started_at: kind === "cancel-started" ? "2026-11-18T00:01:00Z" : null})};
+      const gate = {id: 30, run_id: request.run_id, run_attempt: 1, head_sha: head, name: "Validation Gate",
+        workflow_name: "CI — Validation", status: "completed",
+        conclusion: newer && kind === "cancel-gate-failed" ? "failure" : result,
+        check_run_url: `https://api.github.com/repos/${repository}/check-runs/30`,
+        steps: [{name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped"},
+          ...(newer && kind === "cancel-missing-step" ? [] : [step])]};
+      if (!newer) return [gate];
+      if (kind === "cancel-upstream-malformed") return [gate, null];
+      const upstream = {...gate, id: kind === "cancel-upstream-duplicate" ? gate.id : 31,
+        name: "Build and Test (account-service / 3)",
+        run_attempt: kind === "cancel-upstream-wrong-attempt" ? 2 : 1,
+        check_run_url: `https://api.github.com/repos/${repository}/check-runs/31`,
+        conclusion: ({
+          "cancel-upstream-failure": "failure", "cancel-upstream-timeout": "timed_out",
+          "cancel-upstream-action": "action_required", "cancel-upstream-startup": "startup_failure",
+          "cancel-upstream-in-flight": "cancelled",
+        })[kind] ?? "success",
+        steps: kind === "cancel-upstream-step-failed"
+          ? [{name: "Run tests", status: "completed", conclusion: "failure"}]
+          : kind === "cancel-upstream-in-flight"
+            ? [{name: "Run tests", status: "completed", conclusion: "cancelled", started_at: "2026-11-18T00:01:00Z"}]
+            : [{name: "Run tests", status: "completed", conclusion: "success"}]};
+      if (kind === "cancel-metadata-upstream-failure") return [
+        {...gate, name: "PR Metadata Edit (Validation Gate)", conclusion: "skipped", steps: []},
+        {...upstream, conclusion: "failure"},
+      ];
+      return [gate, upstream];
+    }
     const metadata = kind === "metadata" || ["metadata-newer", "old-meta-rerun", "late-ci-old-metadata"].includes(kind) && request.run_id === 91;
     return [{id: 30, run_id: request.run_id, run_attempt: 1, head_sha: head, name: "Validation Gate",
       workflow_name: "CI — Validation", status: "completed", check_run_url: `https://api.github.com/repos/${repository}/check-runs/30`,
@@ -4365,6 +4470,14 @@ async function run(kind, shared = {visible: false, posts: 0}) {
 }
 (async () => {
   assert.equal(await run("valid"), 1);
+  assert.equal(await run("cancel-before-enforcement"), 1);
+  for (const scenario of ["cancel-older-failed", "cancel-native-failure", "cancel-enforced",
+      "cancel-missing-time", "cancel-started", "cancel-rerun", "cancel-gate-failed", "cancel-missing-step",
+      "cancel-upstream-failure", "cancel-upstream-timeout", "cancel-upstream-action", "cancel-upstream-startup",
+      "cancel-upstream-step-failed", "cancel-upstream-in-flight", "cancel-upstream-duplicate",
+      "cancel-upstream-wrong-attempt", "cancel-upstream-malformed", "cancel-metadata-upstream-failure"]) {
+    assert.equal(await run(scenario), 0, scenario);
+  }
   assert.equal(await run("metadata-newer"), 1, "proven metadata completion cannot hide substantive CI");
   for (const scenario of ["new-meta", "new-meta-expression", "new-meta-wrapped"]) {
     assert.equal(await run(scenario), 1, scenario);

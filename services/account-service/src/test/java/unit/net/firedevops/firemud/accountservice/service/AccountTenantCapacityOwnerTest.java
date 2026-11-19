@@ -18,6 +18,8 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -353,15 +355,24 @@ class AccountTenantCapacityOwnerTest {
                 null)
             .withDigest();
     var aborted = serializationFailure();
+    var lookups = new AtomicInteger();
     when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
-        .thenThrow(aborted)
-        .thenReturn(java.util.Optional.empty());
+        .thenAnswer(
+            invocation -> {
+              f.transactionEvents.add("lookup");
+              if (lookups.incrementAndGet() == 1) {
+                throw aborted;
+              }
+              return Optional.empty();
+            });
     var rearm =
         AccountTenantCapacityOwner.class.getDeclaredMethod(
             "rearm", Request.class, Request.class, UUID.class, long.class);
     rearm.setAccessible(true);
     assertThatThrownBy(() -> rearm.invoke(f.owner, f.request, next, UUID.randomUUID(), 7L))
         .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
+    assertThat(f.transactionEvents)
+        .containsExactly("begin", "lookup", "rollback", "begin", "lookup", "rollback");
     verify(f.accounts, times(2)).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
@@ -846,6 +857,7 @@ class AccountTenantCapacityOwnerTest {
   }
 
   private static final class Fixture {
+    private final List<String> transactionEvents = new ArrayList<>();
     private final DSLContext dsl = mock(DSLContext.class);
     private final AccountRepository accounts = mock(AccountRepository.class);
     private final AccountCanonicalRuntimeMembershipSnapshotRepository memberships =
@@ -962,6 +974,7 @@ class AccountTenantCapacityOwnerTest {
           .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
       assertThat(definition.getTimeout()).isEqualTo(5);
       assertThat(definition.isReadOnly()).isFalse();
+      fixture.transactionEvents.add("begin");
       fixture.pendingOriginDecision = null;
       TransactionSynchronizationManager.setActualTransactionActive(true);
       return new SimpleTransactionStatus();
@@ -977,6 +990,7 @@ class AccountTenantCapacityOwnerTest {
 
     @Override
     public void rollback(TransactionStatus status) {
+      fixture.transactionEvents.add("rollback");
       fixture.pendingOriginDecision = null;
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }

@@ -812,7 +812,7 @@ jobs:
             }
 
             // Canonical-transition diagnostic acceptance never becomes passing producer proof.
-            async function verifyKnownPlayFailure(run, candidate, identity, allowIncompleteSteps = false) {
+            async function verifyKnownPlayFailure(run, candidate, identity, allowIncompleteSteps = false, allowOrdinary = false) {
               if (repositoryName !== "benhook1013/FireMUD" ||
                   !["pull_request", "repository_dispatch"].includes(run.event)) return false;
               if (!positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
@@ -826,7 +826,7 @@ jobs:
                 `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
               if (
                 source.id !== run.id || source.run_attempt !== run.run_attempt ||
-                source.status !== "completed" || !["success", "failure"].includes(source.conclusion) ||
+                source.status !== "completed" || source.conclusion !== run.conclusion || !["success", "failure"].includes(source.conclusion) ||
                 source.path !== workflowPath || source.repository?.full_name !== repositoryName ||
                 !positiveInteger(source.workflow_id) || source.display_title !== expectedTitle ||
                 source.event !== run.event
@@ -858,7 +858,7 @@ jobs:
               const job = producers[0];
               let incompleteSteps = !job || job.status !== "completed";
               if (job) {
-                if (!positiveInteger(job.id) || job.id !== candidate?.id ||
+                if (!positiveInteger(job.id) || (candidate && job.id !== candidate.id) ||
                     job.run_id !== source.id || job.run_attempt !== source.run_attempt ||
                     job.head_sha !== source.head_sha ||
                     job.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${job.id}`) return false;
@@ -874,12 +874,22 @@ jobs:
               ];
               const markerName = "Known canonical transition PLAY failure with successful authenticated cleanup";
               const steps = job?.steps ?? [];
+              const markers = steps.filter((step) => step.name === markerName);
+              if (markers.length > 1) return false;
+              const ordinaryCandidate = allowOrdinary && source.event === "repository_dispatch" &&
+                source.conclusion === "success";
+              const ordinary = ordinaryCandidate && markers[0]?.status === "completed" &&
+                markers[0].conclusion === "skipped";
+              const unknownDisposition = ordinaryCandidate &&
+                (!markers.length || markers[0].status !== "completed");
               const requiredSteps = new Map([
-                [markerName, "success"], ["Stop smoke stack", "success"],
-                ["Export fixed-tag preview image artifact", "skipped"],
-                ["Upload preview image artifact", "skipped"],
+                [markerName, ordinary ? "skipped" : "success"], ["Stop smoke stack", "success"],
                 ...expectedSuccessfulSteps.map((name) => [name, source.conclusion]),
               ]);
+              if (!ordinary && !unknownDisposition) {
+                requiredSteps.set("Export fixed-tag preview image artifact", "skipped");
+                requiredSteps.set("Upload preview image artifact", "skipped");
+              }
               for (const [name, conclusion] of requiredSteps) {
                 const matches = steps.filter((step) => step.name === name);
                 if (matches.length > 1) return false;
@@ -937,8 +947,8 @@ jobs:
                 currentPullRequest.base?.repo?.full_name === repositoryName &&
                 currentPullRequest.head?.sha === identity.headSha &&
                 currentPullRequest.base?.ref === identity.baseRef &&
-                Array.isArray(currentPullRequest.labels) &&
-                currentPullRequest.labels.some((label) => label?.name === "canonical-play-transition"))) return false;
+                (ordinary || unknownDisposition || (Array.isArray(currentPullRequest.labels) &&
+                  currentPullRequest.labels.some((label) => label?.name === "canonical-play-transition"))))) return false;
               if (source.event === "repository_dispatch") {
                 if (currentPullRequest.merge_commit_sha !== identity.mergeSha) return false;
                 const { data: currentBase } = await withTransientGitHubRetry(
@@ -948,7 +958,7 @@ jobs:
                 if (currentBase.ref !== `refs/heads/${identity.baseRef}` ||
                     currentBase.object?.sha !== identity.baseSha) return false;
               }
-              return incompleteSteps ? (allowIncompleteSteps ? "snapshot-pending" : false) : true;
+              return incompleteSteps ? (allowIncompleteSteps ? "snapshot-pending" : false) : ordinary ? "ordinary" : true;
             }
 
             // A failed original event is not replaced by arbitrary green history. Only
@@ -998,10 +1008,8 @@ jobs:
               const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
               const proofRun = {id: replacement.id, run_attempt: replacement.run_attempt,
                 conclusion: replacement.conclusion};
-              if (!candidate || candidate.status !== "completed") {
-                return {status: "snapshot-pending", run: proofRun};
-              }
-              const proof = await verifyKnownPlayFailure(replacement, candidate, identity, true);
+              const proof = await verifyKnownPlayFailure(replacement, candidate, identity, true, true);
+              if (proof === "ordinary") return {status: "ordinary", run: proofRun};
               if (proof === "snapshot-pending") return {status: "snapshot-pending", run: proofRun};
               if (proof === true) return {status: "verified", run: proofRun};
               // A new attempt can start between list/proof reads. Invalid current proof
@@ -1247,6 +1255,7 @@ jobs:
             let requireCurrentIdentity = false;
             let cancelledRunId = null;
             let cancelledRunObservedAt = null;
+            let cancelledRecoveryMoved = false;
             smokeGatePolling: while (Date.now() - started < timeoutMs) {
               if (pollIteration % pullRequestCheckInterval === 0 || !currentIdentity) {
                 const resolvedIdentity = await resolveCurrentIdentity(
@@ -1308,6 +1317,17 @@ jobs:
                     matching.head_sha === currentIdentity.headSha && matching.display_title === expectedDisplayTitle &&
                     typeof matching.head_branch === "string" && matching.head_branch.length > 0 &&
                     matching.head_branch === context.payload.pull_request.head.ref;
+                  if (recoverableCancellation && (pollIteration === 1 || pollIteration % pullRequestCheckInterval === 0)) {
+                    const liveIdentity = await resolveCurrentIdentity("Resolving live cancelled-run recovery tuple", true);
+                    if (liveIdentity?.obsolete) return;
+                    if (liveIdentity && identityKey({...liveIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
+                        identityKey(currentIdentity)) {
+                      cancelledRecoveryMoved = true;
+                      requireCurrentIdentity = true;
+                      currentIdentity = liveIdentity;
+                      continue smokeGatePolling;
+                    }
+                  }
                   const cancellationDiscoveryMs = recoverableCancellation
                     ? refreshDiscoveryTimeoutMs : cancelledReplacementTimeoutMs;
                   if (Date.now() - cancelledRunObservedAt >= cancellationDiscoveryMs) {
@@ -1355,8 +1375,7 @@ jobs:
                       const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
                       const directRefresh = matching.event === "repository_dispatch" && matching.conclusion === "failure";
                       const directProof = matching.conclusion !== "failure" ? false
-                        : directRefresh && (!candidate || candidate.status !== "completed") ? "snapshot-pending"
-                        : Boolean(candidate) && await verifyKnownPlayFailure(matching, candidate, currentIdentity, directRefresh);
+                        : (directRefresh || Boolean(candidate)) && await verifyKnownPlayFailure(matching, candidate, currentIdentity, directRefresh);
                       knownPlayVerified = directProof === true;
                       if (directRefresh && directProof === "snapshot-pending") {
                         const snapshotKey = `direct:${identityKey(currentIdentity)}:${matching.id}:${matching.run_attempt}`;
@@ -1393,10 +1412,6 @@ jobs:
                             requireCurrentIdentity = true;
                             currentIdentity = liveIdentity;
                             continue smokeGatePolling;
-                          }
-                          if (!liveIdentity.canonicalPlayEligible) {
-                            core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
-                            return;
                           }
                         }
                         const refreshProof = await verifyFailedPullCanonicalRefresh(matching, currentIdentity);
@@ -1454,6 +1469,23 @@ jobs:
                             currentIdentity = liveIdentity;
                             continue smokeGatePolling;
                           }
+                        }
+                        if (refreshProof?.status === "ordinary") {
+                          const freshIdentity = await resolveCurrentIdentity("Fencing exact passing typed smoke recovery", true);
+                          if (freshIdentity?.obsolete) return;
+                          if (!freshIdentity || identityKey({...freshIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
+                              identityKey(currentIdentity)) {
+                            if (freshIdentity) {
+                              requireCurrentIdentity = true;
+                              currentIdentity = freshIdentity;
+                            }
+                            continue smokeGatePolling;
+                          }
+                          if (!await isCurrentCanonicalAttempt(refreshProof.run)) {
+                            await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                            continue smokeGatePolling;
+                          }
+                          return;
                         }
                         knownPlayVerified = refreshProof?.status === "verified" &&
                           positiveInteger(refreshProof.run?.id) && refreshProof.run.id > matching.id &&
@@ -1521,6 +1553,43 @@ jobs:
                     `Runtime images run ${matching.id} was not accepted because the current PR identity changed or is unavailable; waiting for a fresh exact run.`
                   );
                   continue;
+                }
+
+                if (cancelledRecoveryMoved && matching.event === "repository_dispatch") {
+                  const proof = await verifyKnownPlayFailure(matching, null, currentIdentity, true, true);
+                  if (proof === "snapshot-pending") {
+                    const snapshotKey = `cancelled-move:${matching.id}:${matching.run_attempt}:${identityKey(currentIdentity)}`;
+                    if (incompleteRefreshKey !== snapshotKey) {
+                      incompleteRefreshKey = snapshotKey;
+                      incompleteRefreshObservedAt = Date.now();
+                    }
+                    if (Date.now() - incompleteRefreshObservedAt >= completedSnapshotTimeoutMs) {
+                      core.setFailed("Moved cancelled-run recovery timed out waiting for authenticated smoke proof.");
+                      return;
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
+                  if (proof !== "ordinary" && proof !== true) {
+                    core.setFailed("Moved cancelled-run recovery did not supply authenticated smoke proof.");
+                    return;
+                  }
+                  const freshIdentity = await resolveCurrentIdentity("Fencing moved cancelled-run recovery", true);
+                  if (freshIdentity?.obsolete) return;
+                  if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity) ||
+                      !await isCurrentCanonicalAttempt(matching)) {
+                    if (freshIdentity) currentIdentity = freshIdentity;
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
+                  if (proof === "ordinary") return;
+                  if (!freshIdentity.canonicalPlayEligible) {
+                    core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                    return;
+                  }
+                  core.setOutput("known_play_exception", "true");
+                  core.warning("Canonical PLAY transition exception accepted; no runtime qualification or image publication.");
+                  return;
                 }
 
                 let fullSmokeJob = null;
@@ -1623,6 +1692,22 @@ jobs:
                   const markers = (fullSmokeJob.steps ?? []).filter((step) =>
                     step.name === "Known canonical transition PLAY failure with successful authenticated cleanup"
                   );
+                  if (matching.event === "repository_dispatch" &&
+                      (markers.length === 0 || (markers.length === 1 && markers[0].status !== "completed"))) {
+                    const markerProof = await verifyKnownPlayFailure(
+                      matching, fullSmokeJob, currentIdentity, true, true);
+                    if (["snapshot-pending", "ordinary", true].includes(markerProof)) {
+                      const snapshotKey = `marker:${matching.id}:${matching.run_attempt}:${identityKey(currentIdentity)}`;
+                      if (incompleteRefreshKey !== snapshotKey) {
+                        incompleteRefreshKey = snapshotKey;
+                        incompleteRefreshObservedAt = Date.now();
+                      }
+                      if (Date.now() - incompleteRefreshObservedAt < completedSnapshotTimeoutMs) {
+                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                        continue smokeGatePolling;
+                      }
+                    }
+                  }
                   if (markers.length === 1 && markers[0].status === "completed" &&
                       markers[0].conclusion === "success") {
                     let knownPlayVerified = false;
