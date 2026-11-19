@@ -260,6 +260,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               || current.state() == EffectOutboxState.ACKNOWLEDGED) {
             return current;
           }
+          if (current.state() == EffectOutboxState.RETRYABLE
+              && attemptId.equals(current.lastAttemptId())
+              && hasDurableNoEffectClosure(tx, current)) {
+            throw conflict("a retry must use a new effect attempt identity");
+          }
           requirePhaseForEffect(operation.phase(), current.effect().kind());
           int changed =
               tx.execute(
@@ -680,6 +685,31 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         || !tuple.evidenceDigest().equals(tupleCodec.digest(operation.evidence()))) {
       throw conflict("public transition tuple does not match the operation-owned tuple");
     }
+  }
+
+  private boolean hasDurableNoEffectClosure(DSLContext tx, OutboxEntry current) {
+    Record stored =
+        tx.fetchOne(
+            "SELECT readback_payload, readback_digest FROM "
+                + OUTBOX_TABLE
+                + " WHERE operation_id = ? AND effect_id = ?",
+            current.effect().operationId(),
+            current.effect().effectId());
+    JSONB payload = stored.get("readback_payload", JSONB.class);
+    String digest = stored.get("readback_digest", String.class);
+    if (payload == null && digest == null) {
+      return false;
+    }
+    if (payload == null || digest == null) {
+      throw conflict("retained effect readback is incomplete");
+    }
+    EffectReadback saved = tupleCodec.readEffectReadback(payload.data());
+    if (!digest.equals(tupleCodec.digest(saved))) {
+      throw conflict("retained effect readback digest does not match");
+    }
+    requireReadbackMatches(
+        saved, current, current.effect().operationId(), current.effect().effectId());
+    return saved.state() == EffectReadbackState.PROVEN_NO_EFFECT;
   }
 
   private void requireValidExactStoredReadback(

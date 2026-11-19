@@ -525,6 +525,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(retained);
 
+    assertThatThrownBy(
+            () ->
+                journal.claimEffect(
+                    scope.operationId(), effectId, firstAttempt, base.plusSeconds(8)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("a retry must use a new effect attempt identity");
+    assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(retained);
+
     UUID replacementAttempt = UUID.randomUUID();
     assertThat(
             journal
@@ -864,6 +872,27 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(corrupt);
       assertThat(journal.find(operationId)).contains(settled);
     }
+  }
+
+  @Test
+  void retryableEffectWithoutDurableClosurePreservesSameAttemptClaimBehavior() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatched = authorizedDispatch(base);
+    UUID operationId = dispatched.effect().operationId();
+    UUID effectId = dispatched.effect().effectId();
+    UUID attemptId = dispatched.lastAttemptId();
+    assertThat(
+            journal
+                .recordRetryableEffect(
+                    operationId, effectId, attemptId, "OWNER_REJECTED", base.plusSeconds(5))
+                .state())
+        .isEqualTo(EffectOutboxState.RETRYABLE);
+    assertThat(storedOutbox(operationId, effectId)).contains("\"readback_payload\":null");
+    OutboxEntry retried =
+        journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(6));
+    assertThat(retried.state()).isEqualTo(EffectOutboxState.DISPATCHED);
+    assertThat(retried.lastAttemptId()).isEqualTo(attemptId);
+    assertThat(retried.attemptCount()).isEqualTo(dispatched.attemptCount() + 1);
   }
 
   private static OutboxEntry authorizedDispatch(Instant base) {
