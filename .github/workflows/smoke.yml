@@ -611,7 +611,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "9c5525ba20ef046aaadb800b0fdf2adb460e4b0a2baef992938aa7f17fcfa872";
+            const canonicalRuntimeWorkflowSha256 = "04e7129e537960b2838dc266057955611075bf60d3eb3e9d3f33ad30317f3d75";
             // Trusted refreshes can still execute the previous successful default-branch definition.
             const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112";
             // Retain the exact fail-red producer still executed by trusted base refreshes.

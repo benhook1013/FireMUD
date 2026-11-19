@@ -894,7 +894,7 @@ async function runDispatcher({
   tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
   branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
   hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
-  visibilityResponse = null,
+  visibilityResponse = null, filesFailurePr = null,
 }) {
   const dispatches = [];
   const postedRuns = [];
@@ -906,7 +906,6 @@ async function runDispatcher({
   const observationPostCounts = [];
   const timerPostCounts = [];
   let waitedMillis = 0;
-  const eventInventoryCalls = new Map();
   const currentBaseSha = tuples[0]?.baseSha ?? baseSha;
   const allTuples = [...tuples, ...sourceTuples];
   const tupleByNumber = new Map(allTuples.map((tuple) => [tuple.prNumber, tuple]));
@@ -981,7 +980,10 @@ async function runDispatcher({
             ...(typeof override === "function" ? override(reads) : override ?? {}),
           } };
         },
-        listFiles: async ({ pull_number }) => ({ data: filesByPr[String(pull_number)] ?? [{ filename: "services/example/src/Main.java" }] }),
+        listFiles: async ({ pull_number }) => {
+          if (String(pull_number) === filesFailurePr) throw new Error("fixture changed-files lookup failed");
+          return { data: filesByPr[String(pull_number)] ?? [{ filename: "services/example/src/Main.java" }] };
+        },
       },
       repos: {
         getCommit: async ({ ref }) => {
@@ -1027,13 +1029,12 @@ async function runDispatcher({
           if (apiFailure === request.event || (typeof apiFailure === "function" && apiFailure(request, inventoryCalls.length))) {
             throw new Error("fixture API unavailable");
           }
-          const callNumber = (eventInventoryCalls.get(request.event) ?? 0) + 1;
-          eventInventoryCalls.set(request.event, callNumber);
           const inventory = inventories[request.event] ?? [];
           if (!Array.isArray(inventory) && inventory.malformed) {
             return { data: { malformed: true } };
           }
-          const refinement = callNumber > 1 && !Array.isArray(inventory) && Array.isArray(inventory.refined);
+          const refinement = !Array.isArray(inventory) && Array.isArray(inventory.refined) &&
+            request.created === inventory.refinedCreated;
           const suppliedRuns = Array.isArray(inventory)
             ? inventory
             : refinement ? inventory.refined : inventory.initial ?? inventory.runs ?? [];
@@ -1053,7 +1054,7 @@ async function runDispatcher({
             ? filteredRuns.length
             : refinement
               ? inventory.refinedTotalCount ?? filteredRuns.length
-              : inventory.initialTotalCount ?? inventory.total_count ?? filteredRuns.length;
+              : inventory.initialPageTotals?.[request.page] ?? inventory.initialTotalCount ?? inventory.total_count ?? filteredRuns.length;
           return { data: { total_count: filteredTotalCount, workflow_runs: filteredRuns.slice((request.page - 1) * 100, request.page * 100) } };
         },
       },
@@ -1423,8 +1424,11 @@ async function runDispatcher({
 
   const secondPageRuns = runsDescending("pull_request", "2026-01-02T00:00:00Z");
   secondPageRuns.push(producer(tuple, "pull_request", "in_progress"));
-  const secondPage = await runDispatcher({ tuples: [tuple], inventories: { pull_request: secondPageRuns } });
+  const secondPage = await runDispatcher({ tuples: [tuple], inventories: { pull_request: {
+      initial: secondPageRuns, refined: [], refinedCreated: "2026-01-02T00:00:00Z..*",
+    } } });
   assert.deepEqual(numbers(secondPage), [], "exact page-two producer must suppress duplicate");
+  assert.equal(secondPage.errors.length, 0, "page two at the original cutoff must not be treated as malformed refinement");
   assert(secondPage.inventoryCalls.some(request => request.event === "pull_request" && request.page === 2));
   assert(secondPage.inventoryCalls.every(request => request.page <= 10));
 
@@ -1434,7 +1438,7 @@ async function runDispatcher({
   });
   const refinedBound = await runDispatcher({
     tuples: [tuple], callback: {updated_at: "2026-01-03T00:00:00Z"}, inventories: { pull_request: {
-      total_count: 1001, runs: overBoundPage, refined: [overBoundPage[0]], refinedTotalCount: 1,
+      total_count: 1001, runs: overBoundPage, refinedCreated: "2026-01-02T00:00:00Z..*", refined: [overBoundPage[0]], refinedTotalCount: 1,
     } },
   });
   assert.deepEqual(numbers(refinedBound), [], "complete bounded refinement retains exact in-flight producer");
@@ -1445,7 +1449,7 @@ async function runDispatcher({
   const refinedCompleted = await runDispatcher({
     tuples: [tuple], callback: {updated_at: "2026-01-01T06:00:00Z"},
     inventories: {
-      pull_request: {total_count: 1001, runs: [unrelatedInflight],
+      pull_request: {total_count: 1001, runs: [unrelatedInflight], refinedCreated: "2026-01-01T06:00:00Z..*",
         refined: [unrelatedInflight], refinedTotalCount: 1},
       repository_dispatch: [producer(tuple, "repository_dispatch", "completed", "success", {
         created_at: "2026-01-01T12:00:00Z",
@@ -1457,7 +1461,7 @@ async function runDispatcher({
 
   const narrowedAbsence = await runDispatcher({
     tuples: [tuple], callback: {updated_at: "2026-01-03T00:00:00Z"},
-    inventories: {pull_request: {total_count: 1001, runs: [unrelatedInflight],
+    inventories: {pull_request: {total_count: 1001, runs: [unrelatedInflight], refinedCreated: "2026-01-02T00:00:00Z..*",
       refined: [unrelatedInflight], refinedTotalCount: 1}},
   });
   assert.deepEqual(numbers(narrowedAbsence), [], "narrowed empty exact-producer slice cannot exclude older omitted producers");
@@ -1465,13 +1469,13 @@ async function runDispatcher({
 
   for (const args of [
     { inventories: { pull_request: {
-      total_count: 1001, runs: overBoundPage, refined: overBoundPage, refinedTotalCount: 1001,
+      total_count: 1001, runs: overBoundPage, refinedCreated: "2026-01-02T00:00:00Z..*", refined: overBoundPage, refinedTotalCount: 1001,
     } } },
     { inventories: { pull_request: {
-      total_count: 1001, runs: overBoundPage, refined: [], refinedTotalCount: 0,
+      total_count: 1001, runs: overBoundPage, refinedCreated: "2026-01-02T00:00:00Z..*", refined: [], refinedTotalCount: 0,
     } } },
     { inventories: { pull_request: {
-      initial: secondPageRuns, initialTotalCount: 101, refined: secondPageRuns, refinedTotalCount: 102,
+      initial: secondPageRuns, initialPageTotals: {1: 101, 2: 102},
     } } },
     { inventories: { pull_request: { total_count: 1000, runs: [] } } },
     { inventories: { pull_request: { total_count: 101, runs: [] } } },
@@ -1542,6 +1546,19 @@ async function runDispatcher({
   assert.deepEqual(numbers(staleObservation), ["101"], "an out-of-window row cannot confirm or retry an accepted dispatch");
   assert(staleObservation.errors.some(error => error.includes("visibility is unknown")));
   const previewTuple = {...tuple, labels: [{name: "preview"}]};
+  const changedFilesFailure = await runDispatcher({
+    tuples: [tuple, {...sibling, labels: [{name: "preview"}]}, tupleFor(103, "d", "e")],
+    filesFailurePr: "102",
+  });
+  assert.deepEqual(numbers(changedFilesFailure), ["101", "103"],
+    "a changed-file lookup failure denies only the unproven runtime target");
+  assert(previewDispatches(changedFilesFailure).some(item => item.client_payload.pr_number === "102"),
+    "the failed runtime target still permits independent eligible preview reconciliation");
+  assert(changedFilesFailure.inventoryCalls.some((request, index) =>
+    request.created === visibilityFloor && changedFilesFailure.observationPostCounts[index] === 2),
+    "accepted handoffs before and after the failed target are still observed");
+  assert(changedFilesFailure.errors.some(error => error.includes("Cannot verify runtime changed files for PR #102")));
+  assert(!changedFilesFailure.errors.some(error => error.includes("visibility is unknown")));
   const previewUnknown = await runDispatcher({tuples: [previewTuple], apiFailure: "pull_request"});
   assert.equal(runtimeDispatches(previewUnknown).length, 0);
   assert.equal(previewDispatches(previewUnknown).length, 1, "uncertain runtime inventory must not suppress independent preview reconciliation");
