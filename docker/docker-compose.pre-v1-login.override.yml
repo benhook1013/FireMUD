@@ -95,6 +95,7 @@ services:
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_REGISTRY_CLEANUP_MARGIN_MILLIS: "60000"
       FIREMUD_ACCOUNT_GAMEPLAY_LOGIN_REQUEST_DIGEST_KEYRING_PATH: /var/run/secrets/firemud/request-digest
       FIREMUD_ACCOUNT_RESPONSE_ENVELOPE_KEYRING_PATH: /var/run/secrets/firemud/response-envelope
+      LOGGING_LEVEL_NET_FIREDEVOPS_FIREMUD_ACCOUNTSERVICE_CONFIG: DEBUG
     volumes:
       - ../dev-tools/smoke/pre-v1-account-entrypoint.sh:/pre-v1/pre-v1-account-entrypoint.sh:ro
       - ${FIREMUD_PRE_V1_SIGNER_FIXTURES:?run the pre-v1 signer fixtures first}:/pre-v1-fixtures:ro
